@@ -2,13 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 type AccountType = 'patient' | 'practice_admin';
 
 export default function SignupPage() {
-  const router = useRouter();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -49,7 +47,7 @@ export default function SignupPage() {
       return;
     }
 
-    router.replace('/dashboard');
+    window.location.href = '/dashboard';
   }
 
   return (

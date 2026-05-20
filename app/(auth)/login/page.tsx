@@ -2,11 +2,9 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +28,10 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace('/dashboard');
-    router.refresh();
+    // Hard redirect so the browser sends a fresh HTTP request with the new
+    // session cookies. Using router.replace() + router.refresh() in Next.js 16
+    // creates conflicting navigation operations that can stall rendering.
+    window.location.href = '/dashboard';
   }
 
   return (
