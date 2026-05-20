@@ -27,6 +27,19 @@ export default async function PracticeDashboardPage() {
     }
   }
 
+  const { data: membership } = await supabase
+    .from('practice_members')
+    .select('practice_id, practices(name)')
+    .eq('user_id', user.id)
+    .eq('active', true)
+    .single();
+
+  if (!membership) {
+    redirect('/practice/setup');
+  }
+
+  const practiceName = (membership.practices as { name: string } | null)?.name;
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
@@ -38,7 +51,7 @@ export default async function PracticeDashboardPage() {
 
       <main className="mx-auto max-w-5xl px-6 py-12">
         <h1 className="text-3xl font-semibold text-gray-900">
-          Practice Dashboard
+          Practice Dashboard{practiceName ? ` — ${practiceName}` : ''}
         </h1>
         <p className="mt-2 text-gray-500">
           Welcome, {profile?.first_name ?? user.email}
