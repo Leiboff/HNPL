@@ -127,7 +127,7 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
       total_amount: billAmount,
       plan_type: planType,
       instalment_amount: instalments[0],
-      status: 'active',
+      status: 'pending_acceptance',
     });
 
   if (planError) {
