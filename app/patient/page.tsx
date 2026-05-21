@@ -116,13 +116,84 @@ async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
 
 async function acceptPlan(planId: string): Promise<{ error: string | null }> {
   'use server';
-  console.log('acceptPlan stub', planId);
+
+  const supabase = await createClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: 'Not authenticated.' };
+  }
+
+  const { data: plan } = await supabase
+    .from('plans')
+    .select('id')
+    .eq('id', planId)
+    .eq('patient_id', user.id)
+    .eq('status', 'pending_acceptance')
+    .maybeSingle();
+
+  if (!plan) {
+    return { error: 'Plan not found or already actioned.' };
+  }
+
+  const { error: planError } = await supabase
+    .from('plans')
+    .update({ status: 'active' })
+    .eq('id', planId)
+    .eq('patient_id', user.id);
+
+  if (planError) {
+    return { error: planError.message };
+  }
+
+  const { error: paymentError } = await supabase
+    .from('payments')
+    .update({ status: 'collected', collected_at: new Date().toISOString() })
+    .eq('plan_id', planId)
+    .eq('instalment_number', 1)
+    .eq('patient_id', user.id);
+
+  if (paymentError) {
+    return { error: paymentError.message };
+  }
+
+  revalidatePath('/patient');
   return { error: null };
 }
 
 async function declinePlan(planId: string): Promise<{ error: string | null }> {
   'use server';
-  console.log('declinePlan stub', planId);
+
+  const supabase = await createClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: 'Not authenticated.' };
+  }
+
+  const { data: plan } = await supabase
+    .from('plans')
+    .select('id')
+    .eq('id', planId)
+    .eq('patient_id', user.id)
+    .eq('status', 'pending_acceptance')
+    .maybeSingle();
+
+  if (!plan) {
+    return { error: 'Plan not found or already actioned.' };
+  }
+
+  const { error: planError } = await supabase
+    .from('plans')
+    .update({ status: 'declined' })
+    .eq('id', planId)
+    .eq('patient_id', user.id);
+
+  if (planError) {
+    return { error: planError.message };
+  }
+
+  revalidatePath('/patient');
   return { error: null };
 }
 
