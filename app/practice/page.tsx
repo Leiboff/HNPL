@@ -38,7 +38,7 @@ export default async function PracticeDashboardPage() {
     redirect('/practice/setup');
   }
 
-  const practiceName = (membership.practices as { name: string } | null)?.name;
+  const practiceName = (membership.practices as unknown as { name: string } | null)?.name;
 
   return (
     <div className="min-h-screen bg-gray-50">
