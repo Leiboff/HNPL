@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import SalaryDayForm from './SalaryDayForm';
 import PlanActions from './PlanActions';
+import { calculateFee } from '@/lib/finance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,7 @@ async function acceptPlan(planId: string): Promise<{ error: string | null }> {
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id')
+    .select('id, total_amount, practice_id')
     .eq('id', planId)
     .eq('patient_id', user.id)
     .eq('status', 'pending_acceptance')
@@ -155,6 +156,31 @@ async function acceptPlan(planId: string): Promise<{ error: string | null }> {
 
   if (paymentError) {
     return { error: paymentError.message };
+  }
+
+  const { data: practice } = await supabase
+    .from('practices')
+    .select('fee_percent')
+    .eq('id', plan.practice_id as string)
+    .single();
+
+  const feePercent = Number(practice?.fee_percent ?? 6);
+  const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
+
+  const { error: payoutError } = await supabase
+    .from('payouts')
+    .insert({
+      id: crypto.randomUUID(),
+      practice_id: plan.practice_id as string,
+      plan_id: planId,
+      gross_amount: gross,
+      fee_amount: fee,
+      net_amount: net,
+      status: 'pending',
+    });
+
+  if (payoutError) {
+    return { error: payoutError.message };
   }
 
   revalidatePath('/patient');
