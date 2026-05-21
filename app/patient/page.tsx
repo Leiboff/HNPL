@@ -3,8 +3,8 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import SalaryDayForm from './SalaryDayForm';
-import PlanActions from './PlanActions';
-import { calculateFee } from '@/lib/finance';
+import PendingPlanCard from './PendingPlanCard';
+import { splitInstalments, calculatePaymentDates, calculateFee } from '@/lib/finance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ type PaymentRow = {
 type PlanRow = {
   id: string;
   total_amount: number;
-  plan_type: number;
+  plan_type: number | null;
   status: string;
   created_at: string;
   practices: { name: string } | { name: string }[] | null;
@@ -115,7 +115,7 @@ async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
   return { error: null };
 }
 
-async function acceptPlan(planId: string): Promise<{ error: string | null }> {
+async function acceptPlan(planId: string, planType: 2 | 3): Promise<{ error: string | null }> {
   'use server';
 
   const supabase = await createClient();
@@ -125,9 +125,13 @@ async function acceptPlan(planId: string): Promise<{ error: string | null }> {
     return { error: 'Not authenticated.' };
   }
 
+  if (planType !== 2 && planType !== 3) {
+    return { error: 'Invalid instalment count. Choose 2 or 3.' };
+  }
+
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, total_amount, practice_id')
+    .select('id, total_amount, practice_id, application_id')
     .eq('id', planId)
     .eq('patient_id', user.id)
     .eq('status', 'pending_acceptance')
@@ -137,25 +141,15 @@ async function acceptPlan(planId: string): Promise<{ error: string | null }> {
     return { error: 'Plan not found or already actioned.' };
   }
 
-  const { error: planError } = await supabase
-    .from('plans')
-    .update({ status: 'active' })
-    .eq('id', planId)
-    .eq('patient_id', user.id);
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('salary_day')
+    .eq('id', user.id)
+    .single();
 
-  if (planError) {
-    return { error: planError.message };
-  }
-
-  const { error: paymentError } = await supabase
-    .from('payments')
-    .update({ status: 'collected', collected_at: new Date().toISOString() })
-    .eq('plan_id', planId)
-    .eq('instalment_number', 1)
-    .eq('patient_id', user.id);
-
-  if (paymentError) {
-    return { error: paymentError.message };
+  const salaryDay = profile?.salary_day as number | null;
+  if (!salaryDay) {
+    return { error: 'Please set your salary date before accepting.' };
   }
 
   const { data: practice } = await supabase
@@ -165,7 +159,45 @@ async function acceptPlan(planId: string): Promise<{ error: string | null }> {
     .single();
 
   const feePercent = Number(practice?.fee_percent ?? 6);
-  const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
+  const totalAmount = Number(plan.total_amount);
+
+  const instalments = splitInstalments(totalAmount, planType);
+  const dates = calculatePaymentDates(new Date(), salaryDay, planType);
+  const { gross, fee, net } = calculateFee(totalAmount, feePercent);
+
+  const { error: planError } = await supabase
+    .from('plans')
+    .update({
+      status: 'active',
+      plan_type: planType,
+      instalment_amount: instalments[0],
+    })
+    .eq('id', planId)
+    .eq('patient_id', user.id);
+
+  if (planError) {
+    return { error: planError.message };
+  }
+
+  const now = new Date().toISOString();
+  const paymentRows = instalments.map((amount, i) => ({
+    id: crypto.randomUUID(),
+    plan_id: planId,
+    patient_id: user.id,
+    instalment_number: i + 1,
+    amount,
+    due_date: dates[i].toISOString().split('T')[0],
+    status: i === 0 ? 'collected' : 'scheduled',
+    ...(i === 0 ? { collected_at: now } : {}),
+  }));
+
+  const { error: paymentsError } = await supabase
+    .from('payments')
+    .insert(paymentRows);
+
+  if (paymentsError) {
+    return { error: paymentsError.message };
+  }
 
   const { error: payoutError } = await supabase
     .from('payouts')
@@ -181,6 +213,13 @@ async function acceptPlan(planId: string): Promise<{ error: string | null }> {
 
   if (payoutError) {
     return { error: payoutError.message };
+  }
+
+  if (plan.application_id) {
+    await supabase
+      .from('applications')
+      .update({ plan_type: planType })
+      .eq('id', plan.application_id as string);
   }
 
   revalidatePath('/patient');
@@ -226,27 +265,19 @@ async function declinePlan(planId: string): Promise<{ error: string | null }> {
 // ─── Plan card ────────────────────────────────────────────────────────────────
 
 function PlanCard({ plan }: { plan: PlanRow }) {
-  const isPending = plan.status === 'pending_acceptance';
-
   return (
-    <div className={`rounded-2xl border overflow-hidden ${
-      isPending ? 'border-amber-300' : 'border-gray-200 shadow-sm'
-    }`}>
+    <div className="rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Header */}
-      <div className={`px-6 py-4 border-b ${
-        isPending ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-100'
-      }`}>
+      <div className="px-6 py-4 bg-white border-b border-gray-100">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className={`font-semibold ${isPending ? 'text-amber-900' : 'text-gray-900'}`}>
-              {getPracticeName(plan)}
-            </p>
-            <p className={`text-sm mt-0.5 ${isPending ? 'text-amber-700' : 'text-gray-500'}`}>
-              {plan.plan_type} monthly payments
+            <p className="font-semibold text-gray-900">{getPracticeName(plan)}</p>
+            <p className="text-sm mt-0.5 text-gray-500">
+              {plan.plan_type != null ? `${plan.plan_type} monthly payments` : 'Payment plan'}
             </p>
           </div>
           <div className="text-right shrink-0">
-            <p className={`text-lg font-semibold ${isPending ? 'text-amber-900' : 'text-gray-900'}`}>
+            <p className="text-lg font-semibold text-gray-900">
               R{Number(plan.total_amount).toFixed(2)}
             </p>
             <div className="mt-1">
@@ -257,19 +288,15 @@ function PlanCard({ plan }: { plan: PlanRow }) {
       </div>
 
       {/* Payment schedule */}
-      <div className={`divide-y ${isPending ? 'bg-amber-50 divide-amber-100' : 'bg-white divide-gray-100'}`}>
+      <div className="bg-white divide-y divide-gray-100">
         {plan.payments.map((payment) => (
           <div key={payment.id} className="flex items-center justify-between px-6 py-3">
             <div className="text-sm">
-              <span className={isPending ? 'text-amber-900' : 'text-gray-700'}>
-                Instalment {payment.instalment_number}
-              </span>
-              <span className={`ml-2 text-xs ${isPending ? 'text-amber-600' : 'text-gray-400'}`}>
-                {formatDate(payment.due_date)}
-              </span>
+              <span className="text-gray-700">Instalment {payment.instalment_number}</span>
+              <span className="ml-2 text-xs text-gray-400">{formatDate(payment.due_date)}</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className={`text-sm font-medium ${isPending ? 'text-amber-900' : 'text-gray-900'}`}>
+              <span className="text-sm font-medium text-gray-900">
                 R{Number(payment.amount).toFixed(2)}
               </span>
               <PaymentStatusBadge status={payment.status} />
@@ -277,13 +304,6 @@ function PlanCard({ plan }: { plan: PlanRow }) {
           </div>
         ))}
       </div>
-
-      {/* Accept / Decline */}
-      {isPending && (
-        <div className="px-6 py-4 bg-amber-50 border-t border-amber-200">
-          <PlanActions planId={plan.id} acceptPlan={acceptPlan} declinePlan={declinePlan} />
-        </div>
-      )}
     </div>
   );
 }
@@ -406,7 +426,17 @@ export default async function PatientDashboardPage() {
                   <h2 className="text-lg font-semibold text-amber-900">Awaiting your approval</h2>
                 </div>
                 <div className="space-y-4">
-                  {pending.map((plan) => <PlanCard key={plan.id} plan={plan} />)}
+                  {pending.map((plan) => (
+                    <PendingPlanCard
+                      key={plan.id}
+                      planId={plan.id}
+                      totalAmount={Number(plan.total_amount)}
+                      salaryDay={salaryDay}
+                      practiceName={getPracticeName(plan)}
+                      acceptPlan={acceptPlan}
+                      declinePlan={declinePlan}
+                    />
+                  ))}
                 </div>
               </section>
             )}

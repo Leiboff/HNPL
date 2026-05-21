@@ -1,17 +1,14 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { splitInstalments, calculateFee, calculatePaymentDates } from '@/lib/finance';
+import { calculateFee } from '@/lib/finance';
 import BillForm from './BillForm';
 
 type CreateBillInput = {
   patientEmail: string;
   billAmount: number;
-  planType: 2 | 3;
 };
 
 export type CreateBillSummary = {
-  instalments: number[];
-  dueDates: string[];
   gross: number;
   fee: number;
   net: number;
@@ -23,26 +20,16 @@ export type CreateBillResult = {
   summary?: CreateBillSummary;
 };
 
-function formatDate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
   'use server';
 
-  const { patientEmail, billAmount, planType } = data;
+  const { patientEmail, billAmount } = data;
 
   if (!patientEmail || typeof patientEmail !== 'string') {
     return { error: 'Patient email is required.' };
   }
   if (!Number.isFinite(billAmount) || billAmount < 500 || billAmount > 50000) {
     return { error: 'Bill amount must be between R500 and R50 000.' };
-  }
-  if (planType !== 2 && planType !== 3) {
-    return { error: 'Plan type must be 2 or 3 instalments.' };
   }
 
   const supabase = await createClient();
@@ -79,7 +66,7 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
 
   const { data: patient } = await supabase
     .from('profiles')
-    .select('id, first_name, last_name, salary_day')
+    .select('id, first_name, last_name')
     .eq('email', patientEmail.trim().toLowerCase())
     .eq('role', 'patient')
     .maybeSingle();
@@ -88,14 +75,7 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
     return { error: 'No patient found with that email. Ask them to sign up first.' };
   }
 
-  if (patient.salary_day === null || patient.salary_day === undefined) {
-    return { error: 'This patient has not set their salary date yet. Ask them to set it in their dashboard first.' };
-  }
-
   const { gross, fee, net } = calculateFee(billAmount, feePercent);
-  const instalments = splitInstalments(billAmount, planType);
-  const paymentDates = calculatePaymentDates(new Date(), patient.salary_day as number, planType);
-  const dueDates = paymentDates.map(formatDate);
 
   const applicationId = crypto.randomUUID();
 
@@ -106,9 +86,7 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
       patient_id: patient.id,
       practice_id: practiceId,
       bill_amount: billAmount,
-      plan_type: planType,
-      status: 'approved',
-      approved_at: new Date().toISOString(),
+      status: 'pending',
     });
 
   if (appError) {
@@ -125,8 +103,6 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
       patient_id: patient.id,
       practice_id: practiceId,
       total_amount: billAmount,
-      plan_type: planType,
-      instalment_amount: instalments[0],
       status: 'pending_acceptance',
     });
 
@@ -135,36 +111,9 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
     return { error: `Failed to create plan: ${planError.message}` };
   }
 
-  const paymentRows = instalments.map((amount, i) => ({
-    id: crypto.randomUUID(),
-    plan_id: planId,
-    patient_id: patient.id,
-    instalment_number: i + 1,
-    amount,
-    due_date: dueDates[i],
-    status: 'scheduled',
-  }));
-
-  const { error: paymentsError } = await supabase
-    .from('payments')
-    .insert(paymentRows);
-
-  if (paymentsError) {
-    await supabase.from('plans').delete().eq('id', planId);
-    await supabase.from('applications').delete().eq('id', applicationId);
-    return { error: `Failed to schedule payments: ${paymentsError.message}` };
-  }
-
   return {
     error: null,
-    summary: {
-      instalments,
-      dueDates,
-      gross,
-      fee,
-      net,
-      patientName: `${patient.first_name} ${patient.last_name}`,
-    },
+    summary: { gross, fee, net, patientName: `${patient.first_name} ${patient.last_name}` },
   };
 }
 

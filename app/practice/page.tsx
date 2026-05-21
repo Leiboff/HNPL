@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import LogoutButton from '@/app/dashboard/LogoutButton';
+import { calculateFee } from '@/lib/finance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,7 +11,6 @@ type PayoutRef  = { net_amount: number; status: string };
 type PlanSummary = {
   id: string;
   total_amount: number;
-  plan_type: number;
   status: string;
   created_at: string;
   profiles: PatientRef | PatientRef[] | null;
@@ -84,30 +84,27 @@ function MoneyStatCard({
 
 // ─── Status badges ────────────────────────────────────────────────────────────
 
-const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
-  pending_acceptance: { label: 'Awaiting approval', cls: 'bg-amber-100 text-amber-800' },
-  active:             { label: 'Active',             cls: 'bg-green-100 text-green-700' },
-  completed:          { label: 'Completed',          cls: 'bg-gray-100 text-gray-600'  },
-  defaulted:          { label: 'Defaulted',          cls: 'bg-red-100 text-red-700'    },
-  cancelled:          { label: 'Cancelled',          cls: 'bg-gray-100 text-gray-400'  },
-  declined:           { label: 'Declined',           cls: 'bg-gray-100 text-gray-400'  },
-};
+// Doctor-facing status labels — defaults/active/completed all mean "doctor was paid"
+function doctorStatus(status: string): { label: string; cls: string } {
+  switch (status) {
+    case 'pending_acceptance': return { label: 'Awaiting patient', cls: 'bg-amber-100 text-amber-800' };
+    case 'active':             return { label: 'Accepted',         cls: 'bg-green-100 text-green-700' };
+    case 'completed':          return { label: 'Accepted',         cls: 'bg-green-100 text-green-700' };
+    case 'defaulted':          return { label: 'Accepted',         cls: 'bg-green-100 text-green-700' };
+    case 'declined':           return { label: 'Declined',         cls: 'bg-red-100 text-red-700'    };
+    case 'cancelled':          return { label: 'Cancelled',        cls: 'bg-gray-100 text-gray-400'  };
+    default:                   return { label: status,             cls: 'bg-gray-100 text-gray-600'  };
+  }
+}
 
 function PlanStatusBadge({ status }: { status: string }) {
-  const cfg = PLAN_STATUS[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
+  const cfg = doctorStatus(status);
   return (
     <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`}>
       {cfg.label}
     </span>
   );
 }
-
-const PAYOUT_COLOR: Record<string, string> = {
-  pending:    'text-amber-700',
-  processing: 'text-blue-700',
-  paid:       'text-green-700',
-  failed:     'text-red-600',
-};
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -131,15 +128,17 @@ export default async function PracticeDashboardPage() {
 
   const { data: membership } = await supabase
     .from('practice_members')
-    .select('practice_id, practices(name)')
+    .select('practice_id, practices(name, fee_percent)')
     .eq('user_id', user.id)
     .eq('active', true)
     .single();
 
   if (!membership) redirect('/practice/setup');
 
-  const practiceName = (membership.practices as unknown as { name: string } | null)?.name;
-  const practiceId = membership.practice_id as string;
+  const practiceInfo = membership.practices as unknown as { name: string; fee_percent: number } | null;
+  const practiceName = practiceInfo?.name;
+  const feePercent   = Number(practiceInfo?.fee_percent ?? 6);
+  const practiceId   = membership.practice_id as string;
 
   // All five queries in parallel
   const [
@@ -170,7 +169,7 @@ export default async function PracticeDashboardPage() {
     supabase
       .from('plans')
       .select(`
-        id, total_amount, plan_type, status, created_at,
+        id, total_amount, status, created_at,
         profiles(first_name, last_name),
         payouts(net_amount, status)
       `)
@@ -259,16 +258,19 @@ export default async function PracticeDashboardPage() {
                 <thead>
                   <tr className="border-b border-gray-100 text-left bg-gray-50">
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Patient</th>
-                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Amount</th>
-                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Payments</th>
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Bill</th>
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Fee</th>
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Net payout</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
-                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Payout</th>
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Payout status</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Created</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {plans.map((plan) => {
                     const payout = getPayout(plan);
+                    const isPending = plan.status === 'pending_acceptance';
+                    const { fee, net } = calculateFee(Number(plan.total_amount), feePercent);
                     return (
                       <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
@@ -277,21 +279,30 @@ export default async function PracticeDashboardPage() {
                         <td className="px-6 py-4 text-gray-700 whitespace-nowrap tabular-nums">
                           {formatRand(Number(plan.total_amount))}
                         </td>
-                        <td className="px-6 py-4 text-gray-500 whitespace-nowrap">
-                          {plan.plan_type} payments
+                        <td className="px-6 py-4 whitespace-nowrap tabular-nums">
+                          <span className={isPending ? 'text-gray-400' : 'text-gray-700'}>
+                            −{formatRand(fee)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap tabular-nums">
+                          <span className={`font-medium ${isPending ? 'text-gray-400' : 'text-gray-900'}`}>
+                            {formatRand(net)}
+                          </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <PlanStatusBadge status={plan.status} />
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap tabular-nums">
-                          {payout ? (
-                            <span>
-                              <span className="font-medium text-gray-900">
-                                {formatRand(Number(payout.net_amount))}
-                              </span>{' '}
-                              <span className={`text-xs capitalize ${PAYOUT_COLOR[payout.status] ?? 'text-gray-500'}`}>
-                                {payout.status}
-                              </span>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {isPending ? (
+                            <span className="text-xs text-gray-400">Not yet accepted</span>
+                          ) : payout ? (
+                            <span className={`text-xs font-medium capitalize ${
+                              payout.status === 'paid'       ? 'text-green-700' :
+                              payout.status === 'processing' ? 'text-blue-700'  :
+                              payout.status === 'failed'     ? 'text-red-600'   :
+                              'text-amber-700'
+                            }`}>
+                              {payout.status === 'paid' ? 'Paid' : 'Pending'}
                             </span>
                           ) : (
                             <span className="text-gray-400">—</span>
