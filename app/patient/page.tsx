@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import SalaryDayForm from './SalaryDayForm';
 import PendingPlanCard from './PendingPlanCard';
-import { splitInstalments, calculatePaymentDates, calculateFee } from '@/lib/finance';
+import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,12 +51,13 @@ function getPracticeName(plan: PlanRow): string {
 // ─── Status badges ────────────────────────────────────────────────────────────
 
 const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
-  pending_acceptance: { label: 'Awaiting approval', cls: 'bg-amber-100 text-amber-800' },
-  active:             { label: 'Active',             cls: 'bg-green-100 text-green-700' },
-  completed:          { label: 'Completed',          cls: 'bg-gray-100 text-gray-600'  },
-  defaulted:          { label: 'Defaulted',          cls: 'bg-red-100 text-red-700'    },
-  cancelled:          { label: 'Cancelled',          cls: 'bg-gray-100 text-gray-400'  },
-  declined:           { label: 'Declined',           cls: 'bg-gray-100 text-gray-400'  },
+  pending_acceptance:    { label: 'Awaiting approval',  cls: 'bg-amber-100 text-amber-800' },
+  pending_first_payment: { label: 'Payment processing', cls: 'bg-blue-100 text-blue-700'   },
+  active:                { label: 'Active',              cls: 'bg-green-100 text-green-700' },
+  completed:             { label: 'Completed',           cls: 'bg-gray-100 text-gray-600'  },
+  defaulted:             { label: 'Defaulted',           cls: 'bg-red-100 text-red-700'    },
+  cancelled:             { label: 'Cancelled',           cls: 'bg-gray-100 text-gray-400'  },
+  declined:              { label: 'Declined',            cls: 'bg-gray-100 text-gray-400'  },
 };
 
 function PlanStatusBadge({ status }: { status: string }) {
@@ -152,23 +153,14 @@ async function acceptPlan(planId: string, planType: 2 | 3): Promise<{ error: str
     return { error: 'Please set your salary date before accepting.' };
   }
 
-  const { data: practice } = await supabase
-    .from('practices')
-    .select('fee_percent')
-    .eq('id', plan.practice_id as string)
-    .single();
-
-  const feePercent = Number(practice?.fee_percent ?? 6);
   const totalAmount = Number(plan.total_amount);
-
   const instalments = splitInstalments(totalAmount, planType);
   const dates = calculatePaymentDates(new Date(), salaryDay, planType);
-  const { gross, fee, net } = calculateFee(totalAmount, feePercent);
 
   const { error: planError } = await supabase
     .from('plans')
     .update({
-      status: 'active',
+      status: 'pending_first_payment',
       plan_type: planType,
       instalment_amount: instalments[0],
     })
@@ -179,7 +171,6 @@ async function acceptPlan(planId: string, planType: 2 | 3): Promise<{ error: str
     return { error: planError.message };
   }
 
-  const now = new Date().toISOString();
   const paymentRows = instalments.map((amount, i) => ({
     id: crypto.randomUUID(),
     plan_id: planId,
@@ -187,8 +178,7 @@ async function acceptPlan(planId: string, planType: 2 | 3): Promise<{ error: str
     instalment_number: i + 1,
     amount,
     due_date: dates[i].toISOString().split('T')[0],
-    status: i === 0 ? 'collected' : 'scheduled',
-    ...(i === 0 ? { collected_at: now } : {}),
+    status: i === 0 ? 'processing' : 'scheduled',
   }));
 
   const { error: paymentsError } = await supabase
@@ -197,22 +187,6 @@ async function acceptPlan(planId: string, planType: 2 | 3): Promise<{ error: str
 
   if (paymentsError) {
     return { error: paymentsError.message };
-  }
-
-  const { error: payoutError } = await supabase
-    .from('payouts')
-    .insert({
-      id: crypto.randomUUID(),
-      practice_id: plan.practice_id as string,
-      plan_id: planId,
-      gross_amount: gross,
-      fee_amount: fee,
-      net_amount: net,
-      status: 'pending',
-    });
-
-  if (payoutError) {
-    return { error: payoutError.message };
   }
 
   if (plan.application_id) {
@@ -354,10 +328,11 @@ export default async function PatientDashboardPage() {
     ),
   }));
 
-  const pending   = plans.filter((p) => p.status === 'pending_acceptance');
-  const active    = plans.filter((p) => p.status === 'active');
-  const completed = plans.filter((p) => p.status === 'completed');
-  const past      = plans.filter((p) => p.status === 'cancelled' || p.status === 'declined');
+  const pending    = plans.filter((p) => p.status === 'pending_acceptance');
+  const processing = plans.filter((p) => p.status === 'pending_first_payment');
+  const active     = plans.filter((p) => p.status === 'active');
+  const completed  = plans.filter((p) => p.status === 'completed');
+  const past       = plans.filter((p) => p.status === 'cancelled' || p.status === 'declined');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -437,6 +412,33 @@ export default async function PatientDashboardPage() {
                       declinePlan={declinePlan}
                     />
                   ))}
+                </div>
+              </section>
+            )}
+
+            {processing.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2 mb-4">
+                  <svg
+                    className="w-5 h-5 text-blue-500 shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2}
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                    />
+                  </svg>
+                  <h2 className="text-lg font-semibold text-blue-900">Payment processing</h2>
+                </div>
+                <p className="text-sm text-blue-700 mb-4">
+                  Payment processing — your plan activates once your first payment is confirmed.
+                </p>
+                <div className="space-y-4">
+                  {processing.map((plan) => <PlanCard key={plan.id} plan={plan} />)}
                 </div>
               </section>
             )}
