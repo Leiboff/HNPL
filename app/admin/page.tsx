@@ -12,11 +12,12 @@ type NameRef         = { first_name: string; last_name: string };
 type PracticeRef     = { name: string };
 type PracticeWithFee = { name: string; fee_percent: number };
 type PlanRef         = { plan_type: number | null; status: string; practices: PracticeRef | PracticeRef[] | null };
-type PlanProfileRef  = { profiles: NameRef | NameRef[] | null };
+type PlanProfileRef  = { invoice_number: string | null; profiles: NameRef | NameRef[] | null };
 
 type PendingFirstPaymentPlan = {
   id: string;
   total_amount: number;
+  invoice_number: string | null;
   profiles: NameRef | NameRef[] | null;
   practices: PracticeWithFee | PracticeWithFee[] | null;
 };
@@ -36,6 +37,8 @@ type PlanOverview = {
   plan_type: number | null;
   status: string;
   created_at: string;
+  invoice_number: string | null;
+  practice_reference: string | null;
   profiles: NameRef | NameRef[] | null;
   practices: PracticeRef | PracticeRef[] | null;
   payments: { status: string }[];
@@ -379,6 +382,7 @@ export default async function AdminDashboardPage() {
       .from('plans')
       .select(`
         id, total_amount, plan_type, status, created_at,
+        invoice_number, practice_reference,
         profiles(first_name, last_name),
         practices(name),
         payments(status)
@@ -390,14 +394,14 @@ export default async function AdminDashboardPage() {
       .select(`
         id, gross_amount, fee_amount, net_amount, status, created_at,
         practices(name),
-        plans(profiles(first_name, last_name))
+        plans(invoice_number, profiles(first_name, last_name))
       `)
       .order('created_at', { ascending: false })
       .limit(200),
     supabase
       .from('plans')
       .select(`
-        id, total_amount,
+        id, total_amount, invoice_number,
         profiles(first_name, last_name),
         practices(name, fee_percent)
       `)
@@ -502,8 +506,11 @@ export default async function AdminDashboardPage() {
                     const { fee, net } = calculateFee(total, feePercent);
                     return (
                       <tr key={plan.id} className="hover:bg-blue-50 transition-colors">
-                        <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
-                          {fullName(plan.profiles)}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="block font-medium text-gray-900">{fullName(plan.profiles)}</span>
+                          {plan.invoice_number && (
+                            <span className="block font-mono text-xs text-gray-400 mt-0.5">{plan.invoice_number}</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                           {practice?.name ?? '—'}
@@ -620,6 +627,7 @@ export default async function AdminDashboardPage() {
                   <tr>
                     <TH>Patient</TH>
                     <TH>Practice</TH>
+                    <TH>Reference</TH>
                     <TH>Total</TH>
                     <TH>Status</TH>
                     <TH>Progress</TH>
@@ -636,6 +644,12 @@ export default async function AdminDashboardPage() {
                         </td>
                         <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">
                           {practiceName(plan.practices)}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className="block font-mono text-xs text-gray-700">{plan.invoice_number ?? '—'}</span>
+                          {plan.practice_reference && (
+                            <span className="block text-xs text-gray-400 mt-0.5">Ref: {plan.practice_reference}</span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 tabular-nums text-gray-900 whitespace-nowrap">
                           {formatRand(Number(plan.total_amount))}
@@ -687,8 +701,11 @@ export default async function AdminDashboardPage() {
                         <td className="px-4 py-2.5 font-medium text-gray-900 whitespace-nowrap">
                           {practiceName(payout.practices)}
                         </td>
-                        <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">
-                          {fullName(planRef?.profiles ?? null)}
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className="block text-gray-600">{fullName(planRef?.profiles ?? null)}</span>
+                          {planRef?.invoice_number && (
+                            <span className="block font-mono text-xs text-gray-400 mt-0.5">{planRef.invoice_number}</span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 tabular-nums text-gray-700 whitespace-nowrap">
                           {formatRand(Number(payout.gross_amount))}

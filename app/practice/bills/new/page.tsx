@@ -6,6 +6,7 @@ import BillForm from './BillForm';
 type CreateBillInput = {
   patientEmail: string;
   billAmount: number;
+  practiceReference?: string;
 };
 
 export type CreateBillSummary = {
@@ -13,6 +14,8 @@ export type CreateBillSummary = {
   fee: number;
   net: number;
   patientName: string;
+  invoiceNumber: string;
+  practiceReference?: string;
 };
 
 export type CreateBillResult = {
@@ -23,7 +26,7 @@ export type CreateBillResult = {
 async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
   'use server';
 
-  const { patientEmail, billAmount } = data;
+  const { patientEmail, billAmount, practiceReference } = data;
 
   if (!patientEmail || typeof patientEmail !== 'string') {
     return { error: 'Patient email is required.' };
@@ -77,6 +80,11 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
 
   const { gross, fee, net } = calculateFee(billAmount, feePercent);
 
+  const { data: invoiceNumber, error: invoiceError } = await supabase.rpc('next_invoice_number');
+  if (invoiceError || !invoiceNumber) {
+    return { error: 'Failed to generate invoice number. Please try again.' };
+  }
+
   const applicationId = crypto.randomUUID();
 
   const { error: appError } = await supabase
@@ -104,6 +112,8 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
       practice_id: practiceId,
       total_amount: billAmount,
       status: 'pending_acceptance',
+      invoice_number: invoiceNumber,
+      practice_reference: practiceReference?.trim() || null,
     });
 
   if (planError) {
@@ -111,9 +121,18 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
     return { error: `Failed to create plan: ${planError.message}` };
   }
 
+  const trimmedRef = practiceReference?.trim() || undefined;
+
   return {
     error: null,
-    summary: { gross, fee, net, patientName: `${patient.first_name} ${patient.last_name}` },
+    summary: {
+      gross,
+      fee,
+      net,
+      patientName: `${patient.first_name} ${patient.last_name}`,
+      invoiceNumber,
+      practiceReference: trimmedRef,
+    },
   };
 }
 

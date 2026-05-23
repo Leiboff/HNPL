@@ -13,6 +13,8 @@ type PlanSummary = {
   total_amount: number;
   status: string;
   created_at: string;
+  invoice_number: string | null;
+  practice_reference: string | null;
   profiles: PatientRef | PatientRef[] | null;
   payouts:  PayoutRef  | PayoutRef[]  | null;
 };
@@ -169,7 +171,7 @@ export default async function PracticeDashboardPage() {
     supabase
       .from('plans')
       .select(`
-        id, total_amount, status, created_at,
+        id, total_amount, status, created_at, invoice_number, practice_reference,
         profiles(first_name, last_name),
         payouts(net_amount, status)
       `)
@@ -257,6 +259,7 @@ export default async function PracticeDashboardPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 text-left bg-gray-50">
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Reference</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Patient</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Bill</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Fee</th>
@@ -273,6 +276,16 @@ export default async function PracticeDashboardPage() {
                     const { fee, net } = calculateFee(Number(plan.total_amount), feePercent);
                     return (
                       <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="block font-mono text-xs text-gray-700">
+                            {plan.invoice_number ?? '—'}
+                          </span>
+                          {plan.practice_reference && (
+                            <span className="block text-xs text-gray-400 mt-0.5">
+                              Ref: {plan.practice_reference}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                           {patientDisplay(plan)}
                         </td>

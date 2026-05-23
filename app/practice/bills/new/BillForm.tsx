@@ -9,6 +9,7 @@ type Props = {
   createBill: (data: {
     patientEmail: string;
     billAmount: number;
+    practiceReference?: string;
   }) => Promise<CreateBillResult>;
 };
 
@@ -28,21 +29,33 @@ function SuccessPanel({
 }) {
   return (
     <div className="bg-green-50 border border-green-200 rounded-2xl p-6 space-y-5">
-      <div className="flex items-center gap-2">
-        <svg
-          className="w-5 h-5 text-green-600 shrink-0"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={2}
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-        <h2 className="text-base font-semibold text-green-900">Bill sent successfully</h2>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <svg
+            className="w-5 h-5 text-green-600 shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <h2 className="text-base font-semibold text-green-900">Bill sent successfully</h2>
+        </div>
+        <div className="text-right shrink-0 space-y-0.5">
+          <span className="block text-xs font-mono text-green-700 bg-green-100 rounded px-2 py-0.5">
+            {summary.invoiceNumber}
+          </span>
+          {summary.practiceReference && (
+            <span className="block text-xs text-green-600">
+              Your ref: {summary.practiceReference}
+            </span>
+          )}
+        </div>
       </div>
 
       <p className="text-sm text-green-800">
@@ -78,6 +91,7 @@ function SuccessPanel({
 export default function BillForm({ feePercent, createBill }: Props) {
   const [patientEmail, setPatientEmail] = useState('');
   const [billAmountStr, setBillAmountStr] = useState('');
+  const [practiceReference, setPracticeReference] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CreateBillSummary | null>(null);
@@ -97,6 +111,7 @@ export default function BillForm({ feePercent, createBill }: Props) {
     const result = await createBill({
       patientEmail: patientEmail.trim(),
       billAmount,
+      practiceReference: practiceReference.trim() || undefined,
     });
 
     if (result.error) {
@@ -117,6 +132,7 @@ export default function BillForm({ feePercent, createBill }: Props) {
           setSummary(null);
           setPatientEmail('');
           setBillAmountStr('');
+          setPracticeReference('');
         }}
       />
     );
@@ -167,6 +183,24 @@ export default function BillForm({ feePercent, createBill }: Props) {
             />
           </div>
           <p className="mt-1 text-xs text-gray-400">Between R500 and R50 000</p>
+        </div>
+
+        {/* Practice reference (optional) */}
+        <div>
+          <label htmlFor="practiceReference" className="block text-sm font-medium text-gray-700 mb-1">
+            Your reference <span className="font-normal text-gray-400">(optional)</span>
+          </label>
+          <input
+            id="practiceReference"
+            type="text"
+            value={practiceReference}
+            onChange={(e) => setPracticeReference(e.target.value)}
+            placeholder="e.g. INV-4471"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            If you have your own invoice number, enter it here. We'll also generate an HNPL reference for tracking.
+          </p>
         </div>
       </div>
 

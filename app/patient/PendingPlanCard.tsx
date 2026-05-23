@@ -8,6 +8,8 @@ type Props = {
   totalAmount: number;
   salaryDay: number | null;
   practiceName: string;
+  invoiceNumber?: string | null;
+  practiceReference?: string | null;
   acceptPlan: (planId: string, planType: 2 | 3) => Promise<{ error: string | null }>;
   declinePlan: (planId: string) => Promise<{ error: string | null }>;
 };
@@ -31,6 +33,8 @@ export default function PendingPlanCard({
   totalAmount,
   salaryDay,
   practiceName,
+  invoiceNumber,
+  practiceReference,
   acceptPlan,
   declinePlan,
 }: Props) {
@@ -86,6 +90,12 @@ export default function PendingPlanCard({
           <div>
             <p className="font-semibold text-amber-900">{practiceName}</p>
             <p className="text-sm mt-0.5 text-amber-700">Choose your instalment plan</p>
+            {invoiceNumber && (
+              <p className="font-mono text-xs text-amber-600 mt-1">{invoiceNumber}</p>
+            )}
+            {practiceReference && (
+              <p className="text-xs text-amber-600">Practice ref: {practiceReference}</p>
+            )}
           </div>
           <p className="text-lg font-semibold text-amber-900 shrink-0">
             {formatRand(totalAmount)}

@@ -22,6 +22,8 @@ type PlanRow = {
   plan_type: number | null;
   status: string;
   created_at: string;
+  invoice_number: string | null;
+  practice_reference: string | null;
   practices: { name: string } | { name: string }[] | null;
   payments: PaymentRow[];
 };
@@ -249,6 +251,12 @@ function PlanCard({ plan }: { plan: PlanRow }) {
             <p className="text-sm mt-0.5 text-gray-500">
               {plan.plan_type != null ? `${plan.plan_type} monthly payments` : 'Payment plan'}
             </p>
+            {plan.invoice_number && (
+              <p className="font-mono text-xs text-gray-400 mt-1">{plan.invoice_number}</p>
+            )}
+            {plan.practice_reference && (
+              <p className="text-xs text-gray-400">Practice ref: {plan.practice_reference}</p>
+            )}
           </div>
           <div className="text-right shrink-0">
             <p className="text-lg font-semibold text-gray-900">
@@ -315,6 +323,7 @@ export default async function PatientDashboardPage() {
     .from('plans')
     .select(`
       id, total_amount, plan_type, status, created_at,
+      invoice_number, practice_reference,
       practices(name),
       payments(id, instalment_number, amount, due_date, status)
     `)
@@ -408,6 +417,8 @@ export default async function PatientDashboardPage() {
                       totalAmount={Number(plan.total_amount)}
                       salaryDay={salaryDay}
                       practiceName={getPracticeName(plan)}
+                      invoiceNumber={plan.invoice_number}
+                      practiceReference={plan.practice_reference}
                       acceptPlan={acceptPlan}
                       declinePlan={declinePlan}
                     />
