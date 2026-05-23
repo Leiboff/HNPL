@@ -1,14 +1,25 @@
 import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import LogoutButton from '@/app/dashboard/LogoutButton';
+import { ActionButton, FirstPaymentActions } from './OpsActions';
+import { calculateFee } from '@/lib/finance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type NameRef     = { first_name: string; last_name: string };
-type PracticeRef = { name: string };
-type PlanRef     = { plan_type: number | null; practices: PracticeRef | PracticeRef[] | null };
-type PlanProfileRef = { profiles: NameRef | NameRef[] | null };
+type NameRef         = { first_name: string; last_name: string };
+type PracticeRef     = { name: string };
+type PracticeWithFee = { name: string; fee_percent: number };
+type PlanRef         = { plan_type: number | null; status: string; practices: PracticeRef | PracticeRef[] | null };
+type PlanProfileRef  = { profiles: NameRef | NameRef[] | null };
+
+type PendingFirstPaymentPlan = {
+  id: string;
+  total_amount: number;
+  profiles: NameRef | NameRef[] | null;
+  practices: PracticeWithFee | PracticeWithFee[] | null;
+};
 
 type UpcomingPayment = {
   id: string;
@@ -86,6 +97,160 @@ function planProgress(plan: PlanOverview): string {
   return `${done} / ${plan.plan_type} collected`;
 }
 
+// ─── Server Actions ───────────────────────────────────────────────────────────
+
+async function verifyAdmin() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { supabase: null, error: 'Not authenticated.' } as const;
+  const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+  if (p?.role !== 'admin') return { supabase: null, error: 'Unauthorized.' } as const;
+  return { supabase, error: null } as const;
+}
+
+async function confirmFirstPayment(planId: string): Promise<{ error: string | null }> {
+  'use server';
+  const { supabase, error: authError } = await verifyAdmin();
+  if (authError) return { error: authError };
+
+  const { data: plan } = await supabase!
+    .from('plans')
+    .select('id, total_amount, practice_id, status')
+    .eq('id', planId)
+    .eq('status', 'pending_first_payment')
+    .maybeSingle();
+  if (!plan) return { error: 'Plan not found or not pending first payment.' };
+
+  const now = new Date().toISOString();
+
+  const { error: pe } = await supabase!
+    .from('payments')
+    .update({ status: 'collected', collected_at: now })
+    .eq('plan_id', planId)
+    .eq('instalment_number', 1);
+  if (pe) return { error: pe.message };
+
+  const { error: ple } = await supabase!
+    .from('plans')
+    .update({ status: 'active' })
+    .eq('id', planId);
+  if (ple) return { error: ple.message };
+
+  const { data: practice } = await supabase!
+    .from('practices')
+    .select('fee_percent')
+    .eq('id', plan.practice_id as string)
+    .single();
+  const feePercent = Number(practice?.fee_percent ?? 6);
+  const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
+
+  const { error: poe } = await supabase!
+    .from('payouts')
+    .insert({
+      id: crypto.randomUUID(),
+      practice_id: plan.practice_id as string,
+      plan_id: planId,
+      gross_amount: gross,
+      fee_amount: fee,
+      net_amount: net,
+      status: 'pending',
+    });
+  if (poe) return { error: poe.message };
+
+  revalidatePath('/admin');
+  return { error: null };
+}
+
+async function failFirstPayment(planId: string): Promise<{ error: string | null }> {
+  'use server';
+  const { supabase, error: authError } = await verifyAdmin();
+  if (authError) return { error: authError };
+
+  const { data: plan } = await supabase!
+    .from('plans')
+    .select('id, status')
+    .eq('id', planId)
+    .eq('status', 'pending_first_payment')
+    .maybeSingle();
+  if (!plan) return { error: 'Plan not found or not pending first payment.' };
+
+  const { error: pe } = await supabase!
+    .from('payments')
+    .update({ status: 'failed', failure_reason: 'First payment failed' })
+    .eq('plan_id', planId)
+    .eq('instalment_number', 1);
+  if (pe) return { error: pe.message };
+
+  const { error: ple } = await supabase!
+    .from('plans')
+    .update({ status: 'cancelled' })
+    .eq('id', planId);
+  if (ple) return { error: ple.message };
+
+  revalidatePath('/admin');
+  return { error: null };
+}
+
+async function markPaymentCollected(paymentId: string): Promise<{ error: string | null }> {
+  'use server';
+  const { supabase, error: authError } = await verifyAdmin();
+  if (authError) return { error: authError };
+
+  const { data: payment } = await supabase!
+    .from('payments')
+    .select('id, plan_id, status')
+    .eq('id', paymentId)
+    .in('status', ['scheduled', 'failed', 'retried'])
+    .maybeSingle();
+  if (!payment) return { error: 'Payment not found or not in a collectable state.' };
+
+  const now = new Date().toISOString();
+
+  const { error: pe } = await supabase!
+    .from('payments')
+    .update({ status: 'collected', collected_at: now })
+    .eq('id', paymentId);
+  if (pe) return { error: pe.message };
+
+  const { data: remaining } = await supabase!
+    .from('payments')
+    .select('id')
+    .eq('plan_id', payment.plan_id as string)
+    .neq('status', 'collected');
+  if (!remaining || remaining.length === 0) {
+    await supabase!
+      .from('plans')
+      .update({ status: 'completed', completed_at: now })
+      .eq('id', payment.plan_id as string);
+  }
+
+  revalidatePath('/admin');
+  return { error: null };
+}
+
+async function markPayoutPaid(payoutId: string): Promise<{ error: string | null }> {
+  'use server';
+  const { supabase, error: authError } = await verifyAdmin();
+  if (authError) return { error: authError };
+
+  const { data: payout } = await supabase!
+    .from('payouts')
+    .select('id, status')
+    .eq('id', payoutId)
+    .eq('status', 'pending')
+    .maybeSingle();
+  if (!payout) return { error: 'Payout not found or not pending.' };
+
+  const { error: pe } = await supabase!
+    .from('payouts')
+    .update({ status: 'paid', paid_at: new Date().toISOString() })
+    .eq('id', payoutId);
+  if (pe) return { error: pe.message };
+
+  revalidatePath('/admin');
+  return { error: null };
+}
+
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
 function StatCard({
@@ -110,12 +275,13 @@ function StatCard({
 // ─── Badges ───────────────────────────────────────────────────────────────────
 
 const PLAN_CFG: Record<string, { label: string; cls: string }> = {
-  pending_acceptance: { label: 'Awaiting',  cls: 'bg-amber-100 text-amber-800' },
-  active:             { label: 'Active',    cls: 'bg-green-100 text-green-700' },
-  completed:          { label: 'Completed', cls: 'bg-gray-100  text-gray-500'  },
-  defaulted:          { label: 'Defaulted', cls: 'bg-red-100   text-red-700'   },
-  declined:           { label: 'Declined',  cls: 'bg-gray-100  text-gray-400'  },
-  cancelled:          { label: 'Cancelled', cls: 'bg-gray-100  text-gray-400'  },
+  pending_acceptance:    { label: 'Awaiting',    cls: 'bg-amber-100 text-amber-800' },
+  pending_first_payment: { label: 'Pending 1st', cls: 'bg-blue-100  text-blue-700'  },
+  active:                { label: 'Active',      cls: 'bg-green-100 text-green-700' },
+  completed:             { label: 'Completed',   cls: 'bg-gray-100  text-gray-500'  },
+  defaulted:             { label: 'Defaulted',   cls: 'bg-red-100   text-red-700'   },
+  declined:              { label: 'Declined',    cls: 'bg-gray-100  text-gray-400'  },
+  cancelled:             { label: 'Cancelled',   cls: 'bg-gray-100  text-gray-400'  },
 };
 
 const PAYOUT_CFG: Record<string, { label: string; cls: string }> = {
@@ -191,6 +357,7 @@ export default async function AdminDashboardPage() {
     { data: rawUpcoming },
     { data: rawPlans },
     { data: rawPayouts },
+    { data: rawFirstPayment },
   ] = await Promise.all([
     supabase.from('plans').select('*', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('payments').select('amount').eq('status', 'scheduled'),
@@ -203,7 +370,7 @@ export default async function AdminDashboardPage() {
       .select(`
         id, instalment_number, amount, due_date,
         profiles(first_name, last_name),
-        plans(plan_type, practices(name))
+        plans(plan_type, status, practices(name))
       `)
       .eq('status', 'scheduled')
       .order('due_date', { ascending: true })
@@ -227,6 +394,15 @@ export default async function AdminDashboardPage() {
       `)
       .order('created_at', { ascending: false })
       .limit(200),
+    supabase
+      .from('plans')
+      .select(`
+        id, total_amount,
+        profiles(first_name, last_name),
+        practices(name, fee_percent)
+      `)
+      .eq('status', 'pending_first_payment')
+      .order('created_at', { ascending: true }),
   ]);
 
   // ── Aggregate stats ──
@@ -237,9 +413,13 @@ export default async function AdminDashboardPage() {
   const payoutsPaid   = (paidPayoutAmt    ?? []).reduce((s, p: any) => s + Number(p.net_amount), 0);
   const atRisk        = (atRiskAmt        ?? []).reduce((s, p: any) => s + Number(p.amount),     0);
 
-  const upcomingPayments = (rawUpcoming ?? []) as unknown as UpcomingPayment[];
-  const plans            = (rawPlans    ?? []) as unknown as PlanOverview[];
-  const payouts          = (rawPayouts  ?? []) as unknown as PayoutRow[];
+  const firstPaymentPlans = (rawFirstPayment ?? []) as unknown as PendingFirstPaymentPlan[];
+  const upcomingPayments  = ((rawUpcoming ?? []) as unknown as UpcomingPayment[]).filter((p) => {
+    const plan = Array.isArray(p.plans) ? p.plans[0] : p.plans;
+    return plan?.status === 'active';
+  });
+  const plans   = (rawPlans   ?? []) as unknown as PlanOverview[];
+  const payouts = (rawPayouts ?? []) as unknown as PayoutRow[];
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -298,6 +478,61 @@ export default async function AdminDashboardPage() {
           />
         </div>
 
+        {/* ── Awaiting first payment confirmation ── */}
+        {firstPaymentPlans.length > 0 && (
+          <div className="bg-white border border-blue-200 rounded-lg overflow-hidden">
+            <SectionHeader title="Awaiting first payment confirmation" count={firstPaymentPlans.length} />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <TH>Patient</TH>
+                    <TH>Practice</TH>
+                    <TH>Bill</TH>
+                    <TH>Fee</TH>
+                    <TH>Net payout</TH>
+                    <TH>Action</TH>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {firstPaymentPlans.map((plan) => {
+                    const practice   = Array.isArray(plan.practices) ? plan.practices[0] : plan.practices;
+                    const feePercent = Number(practice?.fee_percent ?? 6);
+                    const total      = Number(plan.total_amount);
+                    const { fee, net } = calculateFee(total, feePercent);
+                    return (
+                      <tr key={plan.id} className="hover:bg-blue-50 transition-colors">
+                        <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
+                          {fullName(plan.profiles)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                          {practice?.name ?? '—'}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-gray-900 whitespace-nowrap">
+                          {formatRand(total)}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums text-gray-500 whitespace-nowrap">
+                          −{formatRand(fee)}
+                        </td>
+                        <td className="px-4 py-3 tabular-nums font-medium text-gray-900 whitespace-nowrap">
+                          {formatRand(net)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <FirstPaymentActions
+                            planId={plan.id}
+                            confirmFirstPayment={confirmFirstPayment}
+                            failFirstPayment={failFirstPayment}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* ── Upcoming & overdue collections ── */}
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           <SectionHeader title="Upcoming & overdue collections" count={upcomingPayments.length} />
@@ -314,6 +549,7 @@ export default async function AdminDashboardPage() {
                     <TH>Amount</TH>
                     <TH>Due date</TH>
                     <TH>Flag</TH>
+                    <TH>Action</TH>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -353,6 +589,15 @@ export default async function AdminDashboardPage() {
                           ) : (
                             <span className="text-gray-300 text-xs">—</span>
                           )}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <ActionButton
+                            id={payment.id}
+                            label="Mark collected"
+                            loadingLabel="Collecting…"
+                            action={markPaymentCollected}
+                            variant="green"
+                          />
                         </td>
                       </tr>
                     );
@@ -430,12 +675,13 @@ export default async function AdminDashboardPage() {
                     <TH>Net</TH>
                     <TH>Status</TH>
                     <TH>Created</TH>
+                    <TH>Action</TH>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {payouts.map((payout) => {
-                    const planRef  = Array.isArray(payout.plans) ? payout.plans[0] : payout.plans;
-                    const cfg      = PAYOUT_CFG[payout.status] ?? { label: payout.status, cls: 'bg-gray-100 text-gray-600' };
+                    const planRef = Array.isArray(payout.plans) ? payout.plans[0] : payout.plans;
+                    const cfg     = PAYOUT_CFG[payout.status] ?? { label: payout.status, cls: 'bg-gray-100 text-gray-600' };
                     return (
                       <tr key={payout.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-2.5 font-medium text-gray-900 whitespace-nowrap">
@@ -458,6 +704,17 @@ export default async function AdminDashboardPage() {
                         </td>
                         <td className="px-4 py-2.5 text-gray-400 whitespace-nowrap">
                           {formatDateTime(payout.created_at)}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          {payout.status === 'pending' && (
+                            <ActionButton
+                              id={payout.id}
+                              label="Mark paid"
+                              loadingLabel="Marking…"
+                              action={markPayoutPaid}
+                              variant="green"
+                            />
+                          )}
                         </td>
                       </tr>
                     );
