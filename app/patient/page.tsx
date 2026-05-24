@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import LogoutButton from '@/app/dashboard/LogoutButton';
 import SalaryDayForm from './SalaryDayForm';
 import PendingPlanCard from './PendingPlanCard';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
@@ -303,19 +302,9 @@ export default async function PatientDashboardPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, first_name, salary_day')
+    .select('first_name, salary_day')
     .eq('id', user.id)
     .single();
-
-  if (profile?.role !== 'patient') {
-    if (profile?.role === 'practice_admin' || profile?.role === 'practice_staff') {
-      redirect('/practice');
-    } else if (profile?.role === 'admin') {
-      redirect('/admin');
-    } else {
-      redirect('/login');
-    }
-  }
 
   const salaryDay: number | null = profile?.salary_day ?? null;
 
@@ -344,15 +333,7 @@ export default async function PatientDashboardPage() {
   const past       = plans.filter((p) => p.status === 'cancelled' || p.status === 'declined');
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between">
-          <span className="text-lg font-semibold text-gray-900">HNPL</span>
-          <LogoutButton />
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-6 py-12 space-y-8">
+    <div className="mx-auto max-w-4xl px-6 py-10 space-y-8">
         {/* Welcome */}
         <div>
           <h1 className="text-3xl font-semibold text-gray-900">Patient Dashboard</h1>
@@ -482,7 +463,6 @@ export default async function PatientDashboardPage() {
             )}
           </div>
         )}
-      </main>
     </div>
   );
 }
