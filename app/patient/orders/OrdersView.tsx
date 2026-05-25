@@ -157,6 +157,7 @@ type Props = {
   salaryDay: number | null;
   acceptPlan: (planId: string, planType: 2 | 3) => Promise<{ error: string | null }>;
   declinePlan: (planId: string) => Promise<{ error: string | null }>;
+  initializeFirstPayment: (planId: string) => Promise<{ error: string | null; authorizationUrl?: string }>;
 };
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -167,6 +168,7 @@ export default function OrdersView({
   salaryDay,
   acceptPlan,
   declinePlan,
+  initializeFirstPayment,
 }: Props) {
   const [tab, setTab] = useState<'current' | 'historic'>('current');
 
@@ -210,6 +212,7 @@ export default function OrdersView({
                 practiceReference={plan.practice_reference}
                 acceptPlan={acceptPlan}
                 declinePlan={declinePlan}
+                initializeFirstPayment={initializeFirstPayment}
               />
             ) : (
               <PlanCard key={plan.id} plan={plan} />

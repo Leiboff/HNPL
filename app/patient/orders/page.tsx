@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { acceptPlan, declinePlan } from '../actions';
+import { acceptPlan, declinePlan, initializeFirstPayment } from '../actions';
 import OrdersView from './OrdersView';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ export default async function OrdersPage() {
         salaryDay={salaryDay}
         acceptPlan={acceptPlan}
         declinePlan={declinePlan}
+        initializeFirstPayment={initializeFirstPayment}
       />
     </div>
   );

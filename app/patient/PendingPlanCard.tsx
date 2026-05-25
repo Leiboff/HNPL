@@ -12,6 +12,7 @@ type Props = {
   practiceReference?: string | null;
   acceptPlan: (planId: string, planType: 2 | 3) => Promise<{ error: string | null }>;
   declinePlan: (planId: string) => Promise<{ error: string | null }>;
+  initializeFirstPayment: (planId: string) => Promise<{ error: string | null; authorizationUrl?: string }>;
 };
 
 const MONTHS = [
@@ -37,11 +38,14 @@ export default function PendingPlanCard({
   practiceReference,
   acceptPlan,
   declinePlan,
+  initializeFirstPayment,
 }: Props) {
   const [planType, setPlanType] = useState<2 | 3 | null>(null);
-  const [accepting, setAccepting] = useState(false);
+  const [stage, setStage] = useState<'idle' | 'accepting' | 'redirecting'>('idle');
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const accepting = stage !== 'idle';
 
   const hasSalaryDay = salaryDay !== null;
   const canAccept = hasSalaryDay && planType !== null;
@@ -58,14 +62,25 @@ export default function PendingPlanCard({
   async function handleAccept() {
     if (!canAccept || !planType) return;
     setError(null);
-    setAccepting(true);
-    const result = await acceptPlan(planId, planType);
-    if (result.error) {
-      setError(result.error);
-      setAccepting(false);
-    } else {
-      window.location.reload();
+    setStage('accepting');
+
+    const acceptResult = await acceptPlan(planId, planType);
+    if (acceptResult.error) {
+      setError(acceptResult.error);
+      setStage('idle');
+      return;
     }
+
+    setStage('redirecting');
+    const initResult = await initializeFirstPayment(planId);
+    if (initResult.error) {
+      setError(initResult.error);
+      setStage('idle');
+      return;
+    }
+
+    // Navigate to Paystack checkout — patient pays first instalment and activates plan
+    window.location.href = initResult.authorizationUrl!;
   }
 
   async function handleDecline() {
@@ -164,6 +179,15 @@ export default function PendingPlanCard({
           </div>
         )}
 
+        {/* Payment notice — shown once an instalment count is chosen */}
+        {preview && !error && (
+          <p className="text-sm text-amber-800">
+            You&apos;ll be taken to our secure payment page to pay your first instalment of{' '}
+            <span className="font-semibold">{formatRand(preview[0].amount)}</span> and activate
+            your plan.
+          </p>
+        )}
+
         {/* Error */}
         {error && (
           <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
@@ -179,7 +203,11 @@ export default function PendingPlanCard({
             disabled={!canAccept || busy}
             className="flex-1 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {accepting ? 'Accepting…' : 'Accept Plan'}
+            {stage === 'redirecting'
+              ? 'Redirecting to payment…'
+              : stage === 'accepting'
+              ? 'Accepting…'
+              : 'Accept & Pay First Instalment'}
           </button>
           <button
             type="button"
