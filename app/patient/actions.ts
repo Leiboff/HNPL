@@ -122,7 +122,7 @@ export async function initializeFirstPayment(
   // Paystack amounts are in the smallest currency unit (cents for ZAR)
   const amountCents = Math.round(Number(payment.amount) * 100);
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
   type InitResponse = {
     status: boolean;
@@ -141,7 +141,7 @@ export async function initializeFirstPayment(
         reference,
         // Card-only: required so Paystack creates a reusable authorization for future debits
         channels:     ['card'],
-        callback_url: `${appUrl}/patient/orders`,
+        callback_url: `${appUrl}/patient/payment-complete`,
         metadata: {
           planId,
           paymentId:         payment.id,
