@@ -172,6 +172,61 @@ export async function initializeFirstPayment(
   return { error: null, authorizationUrl: initData.authorization_url };
 }
 
+export async function initializeCardRegistration(): Promise<{
+  error: string | null;
+  authorizationUrl?: string;
+}> {
+  'use server';
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Not authenticated.' };
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email')
+    .eq('id', user.id)
+    .single();
+
+  if (!profile?.email) return { error: 'Account email not found.' };
+
+  const reference = `hnpl_cardreg_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+  const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+
+  type InitResponse = {
+    status:  boolean;
+    message: string;
+    data: { authorization_url: string; access_code: string; reference: string };
+  };
+
+  try {
+    const result = await paystackRequest<InitResponse>('/transaction/initialize', {
+      method: 'POST',
+      body: JSON.stringify({
+        email:        profile.email,
+        amount:       100,
+        currency:     'ZAR',
+        reference,
+        channels:     ['card'],
+        callback_url: `${appUrl}/patient/payment-methods/complete`,
+        metadata: {
+          purpose:        'card_registration',
+          patientId:      user.id,
+          custom_filters: { reusable: true },
+        },
+      }),
+    });
+
+    if (!result.status) {
+      return { error: result.message ?? 'Failed to initialize card registration.' };
+    }
+
+    return { error: null, authorizationUrl: result.data.authorization_url };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to initialize card registration.' };
+  }
+}
+
 export async function declinePlan(
   planId: string,
 ): Promise<{ error: string | null }> {

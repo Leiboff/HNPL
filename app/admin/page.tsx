@@ -3,8 +3,9 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import LogoutButton from '@/app/dashboard/LogoutButton';
-import { ActionButton, FirstPaymentActions } from './OpsActions';
+import { ActionButton, CollectionActions, FirstPaymentActions } from './OpsActions';
 import { calculateFee } from '@/lib/finance';
+import { paystackRequest } from '@/lib/paystack';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -226,6 +227,78 @@ async function markPaymentCollected(paymentId: string): Promise<{ error: string 
       .update({ status: 'completed', completed_at: now })
       .eq('id', payment.plan_id as string);
   }
+
+  revalidatePath('/admin');
+  return { error: null };
+}
+
+async function chargeInstalment(paymentId: string): Promise<{ error: string | null }> {
+  'use server';
+  const { supabase, error: authError } = await verifyAdmin();
+  if (authError) return { error: authError };
+
+  const { data: payment } = await supabase!
+    .from('payments')
+    .select('id, plan_id, patient_id, instalment_number, amount, status')
+    .eq('id', paymentId)
+    .in('status', ['scheduled', 'failed', 'retried'])
+    .maybeSingle();
+
+  if (!payment) return { error: 'Payment not found or not chargeable. It may already be collected or processing.' };
+
+  const { data: plan } = await supabase!
+    .from('plans')
+    .select('id, paystack_authorization_code, patient_id')
+    .eq('id', payment.plan_id as string)
+    .maybeSingle();
+
+  if (!plan) return { error: 'Plan not found.' };
+  if (!plan.paystack_authorization_code) return { error: 'No saved card for this plan.' };
+
+  const patientId = (plan.patient_id ?? payment.patient_id) as string;
+
+  const { data: profile } = await supabase!
+    .from('profiles')
+    .select('email')
+    .eq('id', patientId)
+    .single();
+
+  if (!profile?.email) return { error: 'Patient email not found.' };
+
+  // Store the reference on the payment row BEFORE charging so the webhook can match it back
+  const reference = `hnpl_${paymentId.replace(/-/g, '').slice(0, 20)}`;
+
+  const { error: refErr } = await supabase!
+    .from('payments')
+    .update({ peach_payment_id: reference })
+    .eq('id', paymentId);
+
+  if (refErr) return { error: refErr.message };
+
+  // Initiate the charge — the definitive result comes via webhook
+  const amountCents = Math.round(Number(payment.amount) * 100);
+  try {
+    await paystackRequest('/transaction/charge_authorization', {
+      method: 'POST',
+      body: JSON.stringify({
+        authorization_code: plan.paystack_authorization_code,
+        email:              profile.email,
+        amount:             amountCents,
+        currency:           'ZAR',
+        reference,
+      }),
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Paystack charge failed.' };
+  }
+
+  // Mark as processing — webhook will flip to collected or failed
+  const { error: updateErr } = await supabase!
+    .from('payments')
+    .update({ status: 'processing' })
+    .eq('id', paymentId);
+
+  if (updateErr) return { error: updateErr.message };
 
   revalidatePath('/admin');
   return { error: null };
@@ -598,12 +671,10 @@ export default async function AdminDashboardPage() {
                           )}
                         </td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <ActionButton
-                            id={payment.id}
-                            label="Mark collected"
-                            loadingLabel="Collecting…"
-                            action={markPaymentCollected}
-                            variant="green"
+                          <CollectionActions
+                            paymentId={payment.id}
+                            chargeInstalment={chargeInstalment}
+                            markPaymentCollected={markPaymentCollected}
                           />
                         </td>
                       </tr>

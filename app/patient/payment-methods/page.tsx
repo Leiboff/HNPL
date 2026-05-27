@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { initializeCardRegistration } from '../actions';
 import PaymentMethods from './PaymentMethods';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -17,53 +18,6 @@ export type CardRow = {
 };
 
 // ─── Server Actions ───────────────────────────────────────────────────────────
-// SECURITY: These actions never accept or log full card numbers or CVV.
-// The client derives brand + last_four from the number client-side, then
-// discards the number before calling these actions.
-
-export async function addCard(data: {
-  card_brand: string;
-  last_four: string;
-  expiry_month: number;
-  expiry_year: number;
-  cardholder_name: string;
-  token: string;
-}): Promise<{ error: string | null }> {
-  'use server';
-
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated.' };
-
-  if (!/^\d{4}$/.test(data.last_four)) return { error: 'Invalid card data.' };
-  if (data.expiry_month < 1 || data.expiry_month > 12) return { error: 'Invalid expiry month.' };
-  if (data.expiry_year < new Date().getFullYear()) return { error: 'Card has expired.' };
-  if (!data.cardholder_name.trim()) return { error: 'Cardholder name is required.' };
-  if (!data.token) return { error: 'Invalid card token.' };
-
-  const { count } = await supabase
-    .from('payment_methods')
-    .select('id', { count: 'exact', head: true })
-    .eq('patient_id', user.id);
-
-  const isFirst = (count ?? 0) === 0;
-
-  const { error } = await supabase.from('payment_methods').insert({
-    patient_id:      user.id,
-    card_brand:      data.card_brand,
-    last_four:       data.last_four,
-    expiry_month:    data.expiry_month,
-    expiry_year:     data.expiry_year,
-    cardholder_name: data.cardholder_name.trim(),
-    token:           data.token,
-    is_default:      isFirst,
-  });
-
-  if (error) return { error: error.message };
-
-  revalidatePath('/patient/payment-methods');
-  return { error: null };
-}
 
 export async function updateCard(
   cardId: string,
@@ -199,7 +153,7 @@ export default async function PaymentMethodsPage() {
       <div className="mt-8">
         <PaymentMethods
           initialCards={cards}
-          addCard={addCard}
+          initializeCardRegistration={initializeCardRegistration}
           updateCard={updateCard}
           removeCard={removeCard}
           setDefaultCard={setDefaultCard}
