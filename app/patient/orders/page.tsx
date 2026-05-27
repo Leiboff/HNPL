@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { acceptPlan, declinePlan, initializeFirstPayment } from '../actions';
+import { declinePlan } from '../actions';
 import OrdersView from './OrdersView';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
@@ -38,23 +38,16 @@ export default async function OrdersPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: rawPlans }, { data: profile }] = await Promise.all([
-    supabase
-      .from('plans')
-      .select(`
-        id, invoice_number, practice_reference,
-        total_amount, plan_type, status, created_at,
-        practices(name),
-        payments(id, instalment_number, amount, due_date, status)
-      `)
-      .eq('patient_id', user.id)
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('profiles')
-      .select('salary_day')
-      .eq('id', user.id)
-      .single(),
-  ]);
+  const { data: rawPlans } = await supabase
+    .from('plans')
+    .select(`
+      id, invoice_number, practice_reference,
+      total_amount, plan_type, status, created_at,
+      practices(name),
+      payments(id, instalment_number, amount, due_date, status)
+    `)
+    .eq('patient_id', user.id)
+    .order('created_at', { ascending: false });
 
   const plans = ((rawPlans ?? []) as unknown as PlanRow[]).map((p) => ({
     ...p,
@@ -65,7 +58,6 @@ export default async function OrdersPage() {
 
   const currentPlans  = plans.filter((p) => CURRENT_STATUSES.has(p.status));
   const historicPlans = plans.filter((p) => HISTORIC_STATUSES.has(p.status));
-  const salaryDay     = (profile?.salary_day as number | null) ?? null;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
@@ -73,10 +65,7 @@ export default async function OrdersPage() {
       <OrdersView
         currentPlans={currentPlans}
         historicPlans={historicPlans}
-        salaryDay={salaryDay}
-        acceptPlan={acceptPlan}
         declinePlan={declinePlan}
-        initializeFirstPayment={initializeFirstPayment}
       />
     </div>
   );

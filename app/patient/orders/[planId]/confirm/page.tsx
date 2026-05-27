@@ -1,0 +1,95 @@
+import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase/server';
+import ConfirmForm from './ConfirmForm';
+
+export default async function ConfirmPage({
+  params,
+}: {
+  params: Promise<{ planId: string }>;
+}) {
+  const { planId } = await params;
+  const supabase = await createClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/login');
+
+  const [{ data: rawPlan }, { data: profile }, { data: rawCards }] = await Promise.all([
+    supabase
+      .from('plans')
+      .select('id, total_amount, status, invoice_number, practice_reference, practices(name)')
+      .eq('id', planId)
+      .eq('patient_id', user.id)
+      .eq('status', 'pending_acceptance')
+      .maybeSingle(),
+    supabase
+      .from('profiles')
+      .select('salary_day')
+      .eq('id', user.id)
+      .single(),
+    supabase
+      .from('payment_methods')
+      .select('id, card_brand, last_four, expiry_month, expiry_year, reusable, is_default')
+      .eq('patient_id', user.id)
+      .order('is_default', { ascending: false })
+      .order('created_at', { ascending: false }),
+  ]);
+
+  if (!rawPlan) redirect('/patient/orders');
+
+  const practicesRaw = rawPlan.practices as { name: string } | { name: string }[] | null;
+  const practiceName = !practicesRaw
+    ? 'Unknown Practice'
+    : Array.isArray(practicesRaw)
+    ? (practicesRaw[0]?.name ?? 'Unknown Practice')
+    : practicesRaw.name;
+
+  const salaryDay = (profile?.salary_day as number | null) ?? null;
+
+  if (!salaryDay) {
+    return (
+      <div className="mx-auto max-w-md px-6 py-16">
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm px-8 py-10 space-y-4 text-center">
+          <h1 className="text-xl font-semibold text-gray-900">Set your salary date first</h1>
+          <p className="text-sm text-gray-600">
+            We need your salary date to schedule your instalment payments around your payday.
+          </p>
+          <div className="flex flex-col items-center gap-3">
+            <Link
+              href="/patient/profile"
+              className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+            >
+              Go to profile →
+            </Link>
+            <Link href="/patient/orders" className="text-sm text-gray-500 hover:underline">
+              Back to orders
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const cards = (rawCards ?? []).map((c) => ({
+    id:            c.id as string,
+    card_brand:    (c.card_brand ?? '') as string,
+    last_four:     (c.last_four ?? '') as string,
+    expiry_month:  Number(c.expiry_month),
+    expiry_year:   Number(c.expiry_year),
+    reusable:      Boolean(c.reusable),
+    is_default:    Boolean(c.is_default),
+  }));
+
+  return (
+    <div className="mx-auto max-w-xl px-6 py-10">
+      <ConfirmForm
+        planId={planId}
+        totalAmount={Number(rawPlan.total_amount)}
+        practiceName={practiceName}
+        invoiceNumber={rawPlan.invoice_number as string | null}
+        salaryDay={salaryDay}
+        cards={cards}
+      />
+    </div>
+  );
+}
