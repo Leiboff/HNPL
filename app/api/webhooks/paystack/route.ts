@@ -146,6 +146,63 @@ async function saveCardForPatient(
   }
 }
 
+// ─── First-payment activation helper ─────────────────────────────────────────
+// Shared by the checkout path and the silent (saved-card) path.
+// Marks instalment 1 as collected, activates the plan, and creates a payout.
+// Returns true on full success so the caller can emit a success log line.
+
+async function activateFirstPayment(
+  supabase: ReturnType<typeof createServiceClient>,
+  payment:  { id: string },
+  plan:     { id: string; total_amount: unknown; practice_id: unknown },
+  now:      string,
+): Promise<boolean> {
+  const { error: pmtErr } = await supabase
+    .from('payments')
+    .update({ status: 'collected', collected_at: now })
+    .eq('id', payment.id);
+  if (pmtErr) {
+    console.error('[paystack-webhook] activateFirstPayment: failed to mark instalment 1 collected', pmtErr.message);
+    return false;
+  }
+
+  const { error: planErr } = await supabase
+    .from('plans')
+    .update({ status: 'active' })
+    .eq('id', plan.id);
+  if (planErr) {
+    console.error('[paystack-webhook] activateFirstPayment: failed to activate plan', planErr.message);
+    return false;
+  }
+
+  const { data: practice } = await supabase
+    .from('practices')
+    .select('fee_percent')
+    .eq('id', plan.practice_id as string)
+    .single();
+
+  const feePercent = Number(practice?.fee_percent ?? 6);
+  const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
+
+  const { error: payoutErr } = await supabase
+    .from('payouts')
+    .insert({
+      id:           crypto.randomUUID(),
+      practice_id:  plan.practice_id as string,
+      plan_id:      plan.id,
+      gross_amount: gross,
+      fee_amount:   fee,
+      net_amount:   net,
+      status:       'pending',
+    });
+  if (payoutErr) {
+    // Non-fatal — plan is active; payout can be reconciled via admin
+    console.error('[paystack-webhook] activateFirstPayment: failed to insert payout', payoutErr.message);
+  }
+
+  return true;
+}
+
 // ─── charge.success handler ───────────────────────────────────────────────────
 
 async function handleChargeSuccess(data: ChargeData): Promise<void> {
@@ -189,7 +246,31 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
       return;
     }
 
-    const auth = data.authorization;
+    const auth    = data.authorization;
+    const purpose = data.metadata?.purpose;
+
+    if (purpose === 'first_instalment_silent') {
+      // ── Silent charge path (saved-card, no checkout) ──────────────────────
+      // Card is already in payment_methods. Store the auth code so instalment
+      // 2/3 recurring debits work, then activate the plan — no card save needed.
+      if (auth?.authorization_code) {
+        const { error: authCodeErr } = await supabase
+          .from('plans')
+          .update({ paystack_authorization_code: auth.authorization_code })
+          .eq('id', plan.id);
+        if (authCodeErr) {
+          // Non-fatal — plan still activates; admin can set auth code manually if needed
+          console.error('[paystack-webhook] charge.success (silent): failed to store auth code', authCodeErr.message);
+        }
+      }
+      const activated = await activateFirstPayment(supabase, payment, plan, now);
+      if (activated) {
+        console.log('[paystack-webhook] charge.success (silent): plan activated', { planId: plan.id, reference });
+      }
+      return;
+    }
+
+    // ── Checkout path (original flow) ────────────────────────────────────────
 
     // Reusable guard — critical: a non-reusable card cannot be used for future debits
     if (!auth?.reusable) {
@@ -219,50 +300,10 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
       );
     }
 
-    const { error: pmtErr } = await supabase
-      .from('payments')
-      .update({ status: 'collected', collected_at: now })
-      .eq('id', payment.id);
-    if (pmtErr) {
-      console.error('[paystack-webhook] charge.success: failed to mark instalment 1 collected', pmtErr.message);
-      return;
+    const activated = await activateFirstPayment(supabase, payment, plan, now);
+    if (activated) {
+      console.log('[paystack-webhook] charge.success: plan activated', { planId: plan.id, reference });
     }
-
-    const { error: planErr } = await supabase
-      .from('plans')
-      .update({ status: 'active' })
-      .eq('id', plan.id);
-    if (planErr) {
-      console.error('[paystack-webhook] charge.success: failed to activate plan', planErr.message);
-      return;
-    }
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('fee_percent')
-      .eq('id', plan.practice_id as string)
-      .single();
-
-    const feePercent = Number(practice?.fee_percent ?? 6);
-    const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
-
-    const { error: payoutErr } = await supabase
-      .from('payouts')
-      .insert({
-        id:           crypto.randomUUID(),
-        practice_id:  plan.practice_id as string,
-        plan_id:      plan.id,
-        gross_amount: gross,
-        fee_amount:   fee,
-        net_amount:   net,
-        status:       'pending',
-      });
-    if (payoutErr) {
-      // Non-fatal — plan is active; payout can be reconciled via admin
-      console.error('[paystack-webhook] charge.success: failed to insert payout', payoutErr.message);
-    }
-
-    console.log('[paystack-webhook] charge.success: plan activated', { planId: plan.id, reference });
     return;
   }
 

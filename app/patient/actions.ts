@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { paystackRequest } from '@/lib/paystack';
+import { isCardValidForPlan } from '@/lib/cardValidity';
 
 export async function acceptPlan(
   planId: string,
@@ -225,6 +226,186 @@ export async function initializeCardRegistration(): Promise<{
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to initialize card registration.' };
   }
+}
+
+export async function payWithSavedCard(
+  planId:          string,
+  planType:        2 | 3,
+  paymentMethodId: string,
+): Promise<{ error: string | null; planId?: string }> {
+  'use server';
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Not authenticated.' };
+
+  if (planType !== 2 && planType !== 3) {
+    return { error: 'Invalid instalment count. Choose 2 or 3.' };
+  }
+
+  // Verify plan belongs to this patient and is awaiting acceptance
+  const { data: plan } = await supabase
+    .from('plans')
+    .select('id, total_amount, practice_id, application_id')
+    .eq('id', planId)
+    .eq('patient_id', user.id)
+    .eq('status', 'pending_acceptance')
+    .maybeSingle();
+
+  if (!plan) return { error: 'Plan not found or already actioned.' };
+
+  // Fetch profile (salary day + email needed later for Paystack)
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('salary_day, email')
+    .eq('id', user.id)
+    .single();
+
+  const salaryDay = profile?.salary_day as number | null;
+  if (!salaryDay) return { error: 'Please set your salary date before accepting.' };
+
+  if (!profile?.email) return { error: 'Account email not found.' };
+
+  // Verify payment method is reusable and belongs to this patient
+  const { data: paymentMethod } = await supabase
+    .from('payment_methods')
+    .select('id, token, expiry_month, expiry_year, last_four, card_brand, reusable')
+    .eq('id', paymentMethodId)
+    .eq('patient_id', user.id)
+    .eq('reusable', true)
+    .maybeSingle();
+
+  if (!paymentMethod) return { error: 'Card not found or not usable.' };
+
+  // Calculate instalment schedule
+  const totalAmount  = Number(plan.total_amount);
+  const instalments  = splitInstalments(totalAmount, planType);
+  const dates        = calculatePaymentDates(new Date(), salaryDay, planType);
+
+  // Validate the card covers the full plan (expiry + 30-day buffer after last instalment)
+  const lastInstalmentDate = dates[dates.length - 1];
+  if (!isCardValidForPlan(
+    { exp_month: paymentMethod.expiry_month, exp_year: paymentMethod.expiry_year },
+    lastInstalmentDate,
+    30,
+  )) {
+    const deadlineMs  = lastInstalmentDate.getTime() + 30 * 24 * 60 * 60 * 1000;
+    const deadlineStr = new Date(deadlineMs).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+    return { error: `This card expires before your final payment. Please add a card valid until at least ${deadlineStr}.` };
+  }
+
+  // Move plan to pending_first_payment and record the chosen schedule
+  const { error: planError } = await supabase
+    .from('plans')
+    .update({
+      status:            'pending_first_payment',
+      plan_type:         planType,
+      instalment_amount: instalments[0],
+    })
+    .eq('id', planId)
+    .eq('patient_id', user.id);
+
+  if (planError) return { error: planError.message };
+
+  // Insert all payment rows — instalment 1 ID is pre-generated so we can use
+  // it in the Paystack reference and store it before charging.
+  const instalment1Id = crypto.randomUUID();
+  const paymentRows   = instalments.map((amount, i) => ({
+    id:                i === 0 ? instalment1Id : crypto.randomUUID(),
+    plan_id:           planId,
+    patient_id:        user.id,
+    instalment_number: i + 1,
+    amount,
+    due_date:          dates[i].toISOString().split('T')[0],
+    status:            i === 0 ? 'processing' : 'scheduled',
+  }));
+
+  const { error: paymentsError } = await supabase.from('payments').insert(paymentRows);
+  if (paymentsError) {
+    // Rollback plan
+    await supabase.from('plans')
+      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
+      .eq('id', planId);
+    return { error: paymentsError.message };
+  }
+
+  if (plan.application_id) {
+    await supabase
+      .from('applications')
+      .update({ plan_type: planType })
+      .eq('id', plan.application_id as string);
+  }
+
+  // Store the Paystack reference on the payment row BEFORE charging so the
+  // webhook can look up the row even if our process crashes after the charge.
+  const reference = `hnpl_pay_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
+
+  const { error: refErr } = await supabase
+    .from('payments')
+    .update({ peach_payment_id: reference })
+    .eq('id', instalment1Id)
+    .eq('patient_id', user.id);
+
+  if (refErr) {
+    await supabase.from('payments').delete().eq('plan_id', planId);
+    await supabase.from('plans')
+      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
+      .eq('id', planId);
+    return { error: refErr.message };
+  }
+
+  // Charge the saved card silently — no checkout redirect needed
+  const amountCents = Math.round(instalments[0] * 100);
+
+  type ChargeAuthResponse = {
+    status:   boolean;
+    message:  string;
+    data?: {
+      status:    string;
+      reference: string;
+      amount:    number;
+    };
+  };
+
+  let chargeResult: ChargeAuthResponse;
+  try {
+    chargeResult = await paystackRequest<ChargeAuthResponse>('/transaction/charge_authorization', {
+      method: 'POST',
+      body: JSON.stringify({
+        authorization_code: paymentMethod.token,
+        email:              profile.email,
+        amount:             amountCents,
+        currency:           'ZAR',
+        reference,
+        metadata: {
+          purpose:           'first_instalment_silent',
+          planId,
+          paymentId:         instalment1Id,
+          instalment_number: 1,
+        },
+      }),
+    });
+  } catch (err) {
+    // Network / API error — roll everything back so the patient can retry
+    await supabase.from('payments').delete().eq('plan_id', planId);
+    await supabase.from('plans')
+      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
+      .eq('id', planId);
+    return { error: err instanceof Error ? err.message : 'Failed to charge card.' };
+  }
+
+  // If Paystack immediately declines, roll back and surface the reason
+  if (!chargeResult.status || chargeResult.data?.status === 'failed') {
+    await supabase.from('payments').delete().eq('plan_id', planId);
+    await supabase.from('plans')
+      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
+      .eq('id', planId);
+    return { error: chargeResult.message ?? 'Card was declined. Please try a different card.' };
+  }
+
+  // Charge is in-flight or succeeded — the webhook will activate the plan.
+  revalidatePath('/patient', 'layout');
+  return { error: null, planId };
 }
 
 export async function declinePlan(
