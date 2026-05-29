@@ -173,7 +173,7 @@ export async function initializeFirstPayment(
   return { error: null, authorizationUrl: initData.authorization_url };
 }
 
-export async function initializeCardRegistration(): Promise<{
+export async function initializeCardRegistration(returnTo?: string): Promise<{
   error: string | null;
   authorizationUrl?: string;
 }> {
@@ -194,6 +194,11 @@ export async function initializeCardRegistration(): Promise<{
   const reference = `hnpl_cardreg_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
   const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
+  // Only accept relative paths — no full URLs, no external redirects.
+  const safePath = (returnTo && returnTo.startsWith('/'))
+    ? returnTo
+    : '/patient/payment-methods/complete';
+
   type InitResponse = {
     status:  boolean;
     message: string;
@@ -209,10 +214,11 @@ export async function initializeCardRegistration(): Promise<{
         currency:     'ZAR',
         reference,
         channels:     ['card'],
-        callback_url: `${appUrl}/patient/payment-methods/complete`,
+        callback_url: `${appUrl}${safePath}`,
         metadata: {
           purpose:        'card_registration',
           patientId:      user.id,
+          return_to:      safePath,
           custom_filters: { reusable: true },
         },
       }),

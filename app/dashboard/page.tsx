@@ -10,11 +10,18 @@ export default async function DashboardPage() {
     redirect('/login');
   }
 
-  const { data: profile } = await supabase
+  const { data: profile, error } = await supabase
     .from('profiles')
     .select('role, first_name')
     .eq('id', user.id)
     .single();
+
+  console.log('[dashboard] routing check:', {
+    userId:       user.id,
+    userEmail:    user.email,
+    profileRole:  profile?.role,
+    profileError: error?.message,
+  });
 
   switch (profile?.role) {
     case 'patient':
@@ -22,6 +29,8 @@ export default async function DashboardPage() {
     case 'practice_admin':
     case 'practice_staff':
       redirect('/practice');
+    case 'practice_provider':
+      redirect('/provider');
     case 'admin':
       redirect('/admin');
   }

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
@@ -421,10 +422,12 @@ export default async function AdminDashboardPage() {
     }
   }
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr  = new Date().toISOString().split('T')[0];
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
   const [
     { count: activePlansCount },
+    { count: outstandingRefundCount },
     { data: scheduledAmt },
     { data: collectedAmt },
     { data: pendingPayoutAmt },
@@ -436,6 +439,7 @@ export default async function AdminDashboardPage() {
     { data: rawFirstPayment },
   ] = await Promise.all([
     supabase.from('plans').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+    supabase.from('refunds').select('*', { count: 'exact', head: true }).in('status', ['initiated', 'pending']).lt('initiated_at', oneHourAgo),
     supabase.from('payments').select('amount').eq('status', 'scheduled'),
     supabase.from('payments').select('amount').eq('status', 'collected'),
     supabase.from('payouts').select('net_amount').eq('status', 'pending'),
@@ -508,7 +512,22 @@ export default async function AdminDashboardPage() {
               Ops
             </span>
           </div>
-          <LogoutButton />
+          <div className="flex items-center gap-4">
+            <Link
+              href="/admin/refunds"
+              className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                (outstandingRefundCount ?? 0) > 0 ? 'text-amber-600 hover:text-amber-700' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Refunds
+              {(outstandingRefundCount ?? 0) > 0 && (
+                <span className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 min-w-[1.25rem] tabular-nums">
+                  {outstandingRefundCount}
+                </span>
+              )}
+            </Link>
+            <LogoutButton />
+          </div>
         </div>
       </header>
 

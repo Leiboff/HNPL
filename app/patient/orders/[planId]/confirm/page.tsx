@@ -5,10 +5,16 @@ import ConfirmForm from './ConfirmForm';
 
 export default async function ConfirmPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ planId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { planId } = await params;
+  const [{ planId }, sp] = await Promise.all([params, searchParams]);
+  const planTypeParam = typeof sp.planType === 'string' ? sp.planType : undefined;
+  const initialPlanType: 2 | 3 | null =
+    planTypeParam === '2' ? 2 : planTypeParam === '3' ? 3 : null;
+  const fromRegistration = sp.from === 'registration';
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -89,6 +95,8 @@ export default async function ConfirmPage({
         invoiceNumber={rawPlan.invoice_number as string | null}
         salaryDay={salaryDay}
         cards={cards}
+        initialPlanType={initialPlanType}
+        fromRegistration={fromRegistration}
       />
     </div>
   );

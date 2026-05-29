@@ -56,6 +56,16 @@ type PaystackPayload = {
   data:  ChargeData;
 };
 
+type PaystackRefundResponse = {
+  status:  boolean;
+  message: string;
+  data?: {
+    id?:     number;
+    status?: string;
+    transaction?: { reference?: string };
+  };
+};
+
 // ─── Shared card-save helper ──────────────────────────────────────────────────
 // Used by both first-payment activation and card-registration flows.
 // Throws on DB error so the caller can decide whether to treat it as fatal.
@@ -154,7 +164,7 @@ async function saveCardForPatient(
 async function activateFirstPayment(
   supabase: ReturnType<typeof createServiceClient>,
   payment:  { id: string },
-  plan:     { id: string; total_amount: unknown; practice_id: unknown },
+  plan:     { id: string; total_amount: unknown; practice_id: unknown; provider_id?: string | null },
   now:      string,
 ): Promise<boolean> {
   const { error: pmtErr } = await supabase
@@ -184,17 +194,39 @@ async function activateFirstPayment(
   const feePercent = Number(practice?.fee_percent ?? 6);
   const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
 
-  const { error: payoutErr } = await supabase
-    .from('payouts')
-    .insert({
-      id:           crypto.randomUUID(),
-      practice_id:  plan.practice_id as string,
-      plan_id:      plan.id,
-      gross_amount: gross,
-      fee_amount:   fee,
-      net_amount:   net,
-      status:       'pending',
-    });
+  // Build payout row — route to provider's personal account if configured
+  const payoutRow: Record<string, unknown> = {
+    id:           crypto.randomUUID(),
+    practice_id:  plan.practice_id as string,
+    plan_id:      plan.id,
+    gross_amount: gross,
+    fee_amount:   fee,
+    net_amount:   net,
+    status:       'pending',
+    payout_destination: 'practice',
+  };
+
+  if (plan.provider_id) {
+    payoutRow.provider_id = plan.provider_id;
+
+    const { data: member } = await supabase
+      .from('practice_members')
+      .select('payout_destination, personal_bank_name, personal_account_holder, personal_account_number, personal_branch_code, personal_account_type')
+      .eq('user_id', plan.provider_id)
+      .eq('practice_id', plan.practice_id as string)
+      .maybeSingle();
+
+    if (member?.payout_destination === 'provider') {
+      payoutRow.payout_destination        = 'provider';
+      payoutRow.snapshot_bank_name        = member.personal_bank_name        ?? null;
+      payoutRow.snapshot_account_holder   = member.personal_account_holder   ?? null;
+      payoutRow.snapshot_account_number   = member.personal_account_number   ?? null;
+      payoutRow.snapshot_branch_code      = member.personal_branch_code      ?? null;
+      payoutRow.snapshot_account_type     = member.personal_account_type     ?? null;
+    }
+  }
+
+  const { error: payoutErr } = await supabase.from('payouts').insert(payoutRow);
   if (payoutErr) {
     // Non-fatal — plan is active; payout can be reconciled via admin
     console.error('[paystack-webhook] activateFirstPayment: failed to insert payout', payoutErr.message);
@@ -222,7 +254,7 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status, total_amount, practice_id, patient_id')
+    .select('id, status, total_amount, practice_id, patient_id, provider_id')
     .eq('id', payment.plan_id)
     .maybeSingle();
 
@@ -462,17 +494,52 @@ async function handleCardRegistrationSuccess(data: ChargeData): Promise<void> {
     console.warn('[paystack-webhook] card_registration: card not reusable — skipping save', { reference });
   }
 
+  // ── Record refund intent before calling Paystack ──────────────────────────
+  // Upsert is idempotent: duplicate charge.success webhooks won't create two rows.
+  const { error: upsertErr } = await supabase
+    .from('refunds')
+    .upsert({
+      transaction_reference: reference,
+      patient_id:            patientId ?? null,
+      amount_cents:          data.amount ?? 100,
+      reason:                'card_registration',
+      status:                'initiated',
+      initiated_at:          new Date().toISOString(),
+      raw_event:             data,
+    }, { onConflict: 'transaction_reference' });
+  if (upsertErr) {
+    console.error('[paystack-webhook] card_registration: failed to record refund row', upsertErr.message, { reference });
+  }
+
   // Always refund the R1 charge, regardless of whether the card was saved
   try {
-    await paystackRequest('/refund', {
+    const refundRes = await paystackRequest<PaystackRefundResponse>('/refund', {
       method: 'POST',
       body:   JSON.stringify({ transaction: reference }),
     });
-    console.log('[paystack-webhook] card_registration: R1 refund initiated', { reference });
+    const paystackRefundId = refundRes.data?.id ? String(refundRes.data.id) : null;
+    await supabase
+      .from('refunds')
+      .update({
+        status:             'pending',
+        paystack_refund_id: paystackRefundId,
+        last_event_at:      new Date().toISOString(),
+      })
+      .eq('transaction_reference', reference);
+    console.log('[paystack-webhook] card_registration: R1 refund initiated', { reference, paystackRefundId });
   } catch (refundErr) {
+    const failureReason = refundErr instanceof Error ? refundErr.message : 'Unknown error';
+    await supabase
+      .from('refunds')
+      .update({
+        status:         'failed',
+        failure_reason: failureReason,
+        last_event_at:  new Date().toISOString(),
+      })
+      .eq('transaction_reference', reference);
     console.error(
       '[paystack-webhook] card_registration: refund FAILED — manual follow-up needed',
-      refundErr instanceof Error ? refundErr.message : refundErr,
+      failureReason,
       { reference },
     );
   }
@@ -484,6 +551,123 @@ function handleCardRegistrationFailed(data: ChargeData): void {
     reference: data.reference,
     reason:    data.gateway_response ?? data.message ?? 'unknown',
   });
+}
+
+// ─── Refund lifecycle handlers ────────────────────────────────────────────────
+// Paystack fires refund.pending / refund.processed / refund.failed after the
+// initial POST /refund call. These keep the `refunds` row in sync.
+//
+// Confirmed payload shape (data object):
+//   data.transaction_reference  — flat string, the original charge reference
+//   data.id                     — string, Paystack's refund ID
+//   data.amount                 — integer cents
+//   data.merchant_note          — failure reason (refund.failed only)
+
+type RefundEventData = {
+  transaction_reference?: string;
+  id?:                    string;
+  amount?:                number;
+  status?:                string;
+  merchant_note?:         string | null;
+};
+
+async function handleRefundPending(data: ChargeData): Promise<void> {
+  const rd         = data as unknown as RefundEventData;
+  const txRef      = rd.transaction_reference;
+  const paystackId = rd.id ?? null;
+  const supabase   = createServiceClient();
+  const now        = new Date().toISOString();
+
+  if (!txRef) {
+    console.warn('[paystack-webhook] refund.pending: no transaction_reference in payload');
+    return;
+  }
+
+  // Upsert handles the normal case (row already exists from charge.success handling)
+  // AND the race case where refund.pending fires before our POST /refund response
+  // is written back to the DB.
+  const { error } = await supabase
+    .from('refunds')
+    .upsert({
+      transaction_reference: txRef,
+      amount_cents:          rd.amount ?? 100,
+      reason:                'card_registration',
+      status:                'pending',
+      paystack_refund_id:    paystackId,
+      last_event_at:         now,
+      raw_event:             data,
+    }, { onConflict: 'transaction_reference' });
+
+  if (error) {
+    console.error('[paystack-webhook] refund.pending: DB upsert failed', error.message, { txRef });
+  } else {
+    console.log('[paystack-webhook] refund.pending: status=pending', { txRef, paystackId });
+  }
+}
+
+async function handleRefundProcessed(data: ChargeData): Promise<void> {
+  const rd         = data as unknown as RefundEventData;
+  const txRef      = rd.transaction_reference;
+  const paystackId = rd.id ?? null;
+  const supabase   = createServiceClient();
+  const now        = new Date().toISOString();
+
+  if (!txRef) {
+    console.warn('[paystack-webhook] refund.processed: no transaction_reference in payload');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('refunds')
+    .upsert({
+      transaction_reference: txRef,
+      amount_cents:          rd.amount ?? 100,
+      reason:                'card_registration',
+      status:                'processed',
+      paystack_refund_id:    paystackId,
+      processed_at:          now,
+      last_event_at:         now,
+      raw_event:             data,
+    }, { onConflict: 'transaction_reference' });
+
+  if (error) {
+    console.error('[paystack-webhook] refund.processed: DB upsert failed', error.message, { txRef });
+  } else {
+    console.log('[paystack-webhook] refund.processed: status=processed', { txRef, paystackId });
+  }
+}
+
+async function handleRefundFailed(data: ChargeData): Promise<void> {
+  const rd            = data as unknown as RefundEventData;
+  const txRef         = rd.transaction_reference;
+  const paystackId    = rd.id ?? null;
+  const failureReason = rd.merchant_note ?? 'Refund failed';
+  const supabase      = createServiceClient();
+  const now           = new Date().toISOString();
+
+  if (!txRef) {
+    console.warn('[paystack-webhook] refund.failed: no transaction_reference in payload');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('refunds')
+    .upsert({
+      transaction_reference: txRef,
+      amount_cents:          rd.amount ?? 100,
+      reason:                'card_registration',
+      status:                'failed',
+      paystack_refund_id:    paystackId,
+      failure_reason:        failureReason,
+      last_event_at:         now,
+      raw_event:             data,
+    }, { onConflict: 'transaction_reference' });
+
+  if (error) {
+    console.error('[paystack-webhook] refund.failed: DB upsert failed', error.message, { txRef });
+  } else {
+    console.error('[paystack-webhook] refund.failed: status=failed — manual follow-up needed', { txRef, paystackId, failureReason });
+  }
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -542,11 +726,17 @@ export async function POST(request: NextRequest) {
   });
 
   // ── 4. Dispatch ─────────────────────────────────────────────────────────────
-  // Branch first on metadata.purpose so card-registration events never reach
-  // the plan-payment handlers. Handlers are awaited before returning 200.
+  // Refund lifecycle events are handled first — they have a different payload
+  // shape and no metadata.purpose, so they must not reach the charge handlers.
   const purpose = data.metadata?.purpose;
 
-  if (purpose === 'card_registration') {
+  if (event === 'refund.pending') {
+    await handleRefundPending(data);
+  } else if (event === 'refund.processed') {
+    await handleRefundProcessed(data);
+  } else if (event === 'refund.failed') {
+    await handleRefundFailed(data);
+  } else if (purpose === 'card_registration') {
     if (event === 'charge.success') {
       await handleCardRegistrationSuccess(data);
     } else if (event === 'charge.failed') {

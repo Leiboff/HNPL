@@ -247,6 +247,7 @@ These are deliberate simplifications taken to keep the core build moving. Addres
 - [ ] **No "invite new patient" flow** — a bill can only be created for a patient who already has an account (exact email match). Inviting unregistered patients is a future enhancement.
 - [ ] **Bill creation is email-only lookup** — adding SA-ID-number lookup is a planned quick follow-up.
 - [ ] **No production hardening** — rate limiting, fraud checks (duplicate applications), monitoring/error tracking all still to come.
+- [x] **Card-registration return-trip race condition** — fixed. Both `/patient/payment-methods/complete` and `/patient/orders/[planId]/confirm` now poll `/api/payment-methods/recent` (every 1 s, up to 10 s) for the card row to appear after Paystack redirects back. The server component still does an immediate DB check first (fast path when the webhook wins the race). On the confirm page, once the card appears `router.refresh()` re-fetches the server component and auto-selects the new card.
 
 ---
 

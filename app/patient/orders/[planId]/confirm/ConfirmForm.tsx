@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { isCardValidForPlan } from '@/lib/cardValidity';
-import { payWithSavedCard } from '@/app/patient/actions';
+import { payWithSavedCard, initializeCardRegistration } from '@/app/patient/actions';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,17 @@ function formatRand(n: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
+function bestValidCard(cards: CardRow[], planType: 2 | 3, salaryDay: number): string | null {
+  const dates    = calculatePaymentDates(new Date(), salaryDay, planType);
+  const lastDate = dates[dates.length - 1];
+  const valid    = cards.filter(
+    (c) =>
+      c.reusable &&
+      isCardValidForPlan({ exp_month: c.expiry_month, exp_year: c.expiry_year }, lastDate, 30),
+  );
+  return (valid.find((c) => c.is_default) ?? valid[0] ?? null)?.id ?? null;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type CardRow = {
@@ -34,14 +46,20 @@ type CardRow = {
   is_default:   boolean;
 };
 
+type CardSearchStatus = 'idle' | 'polling' | 'timed-out';
+
 type Props = {
-  planId:       string;
-  totalAmount:  number;
-  practiceName: string;
-  invoiceNumber: string | null;
-  salaryDay:    number;
-  cards:        CardRow[];
+  planId:           string;
+  totalAmount:      number;
+  practiceName:     string;
+  invoiceNumber:    string | null;
+  salaryDay:        number;
+  cards:            CardRow[];
+  initialPlanType:  2 | 3 | null;
+  fromRegistration: boolean;
 };
+
+const POLL_TIMEOUT_S = 10;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -52,29 +70,54 @@ export default function ConfirmForm({
   invoiceNumber,
   salaryDay,
   cards,
+  initialPlanType,
+  fromRegistration,
 }: Props) {
-  const [planType,       setPlanType]       = useState<2 | 3 | null>(null);
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const router = useRouter();
+
+  // planType: pre-set on return from card registration (via ?planType=N)
+  const [planType,       setPlanType]       = useState<2 | 3 | null>(initialPlanType);
+
+  // Auto-select the best valid card on mount when initialPlanType is known
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(() =>
+    initialPlanType ? bestValidCard(cards, initialPlanType, salaryDay) : null,
+  );
+
+  const [wantsNewCard,   setWantsNewCard]   = useState(false);
   const [submitting,     setSubmitting]     = useState(false);
   const [error,          setError]          = useState<string | null>(null);
+  const [addCardLoading, setAddCardLoading] = useState(false);
+  const [addCardError,   setAddCardError]   = useState<string | null>(null);
+
+  // Card search status: 'polling' when we return from registration and no card visible yet
+  const [cardSearchStatus, setCardSearchStatus] = useState<CardSearchStatus>(() => {
+    if (!fromRegistration || !initialPlanType) return 'idle';
+    const cardIsAlreadyHere = bestValidCard(cards, initialPlanType, salaryDay) !== null;
+    return cardIsAlreadyHere ? 'idle' : 'polling';
+  });
+
+  // Stable "since" for the polling window: covers the full Paystack checkout flow
+  const pollingSince = useRef(
+    fromRegistration ? new Date(Date.now() - 5 * 60 * 1000).toISOString() : '',
+  );
 
   // ── Derived schedule ────────────────────────────────────────────────────────
 
-  const schedule = useMemo(() => {
-    if (!planType) return null;
-    const amounts = splitInstalments(totalAmount, planType);
-    const dates   = calculatePaymentDates(new Date(), salaryDay, planType);
-    return amounts.map((amount, i) => ({ amount, date: dates[i] }));
-  }, [planType, totalAmount, salaryDay]);
+  const schedule = planType
+    ? (() => {
+        const amounts = splitInstalments(totalAmount, planType);
+        const dates   = calculatePaymentDates(new Date(), salaryDay, planType);
+        return amounts.map((amount, i) => ({ amount, date: dates[i] }));
+      })()
+    : null;
 
-  // ── Card validity (depends on schedule / last instalment date) ──────────────
+  // ── Card validity (keyed on last instalment date) ───────────────────────────
 
-  const cardValidity = useMemo(() => {
-    const map = new Map<string, boolean>();
-    if (!schedule) return map;
+  const cardValidity = new Map<string, boolean>();
+  if (schedule) {
     const lastDate = schedule[schedule.length - 1].date;
     for (const card of cards) {
-      map.set(
+      cardValidity.set(
         card.id,
         card.reusable &&
           isCardValidForPlan(
@@ -84,42 +127,116 @@ export default function ConfirmForm({
           ),
       );
     }
-    return map;
-  }, [schedule, cards]);
+  }
 
-  const validCards  = useMemo(() => cards.filter((c) => cardValidity.get(c.id)), [cards, cardValidity]);
+  const validCards   = cards.filter((c) => cardValidity.get(c.id));
   const hasValidCard = validCards.length > 0;
 
-  // Formatted deadline for the "no valid card" callout
-  const deadlineStr = useMemo(() => {
-    if (!schedule) return null;
-    const lastDate = schedule[schedule.length - 1].date;
-    const deadline = new Date(lastDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-    return deadline.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
-  }, [schedule]);
+  const deadlineStr = schedule
+    ? (() => {
+        const lastDate = schedule[schedule.length - 1].date;
+        const deadline = new Date(lastDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+        return deadline.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+      })()
+    : null;
 
-  // ── Plan type change — also picks the best card ─────────────────────────────
+  // ── Poll for newly-registered card after a return trip ──────────────────────
+
+  const pollingStoppedRef = useRef(false);
+  const hasTriggeredRefreshRef = useRef(false);
+
+  useEffect(() => {
+    if (cardSearchStatus !== 'polling') return;
+
+    let elapsed = 0;
+    let timerId: ReturnType<typeof setTimeout>;
+    pollingStoppedRef.current = false;
+
+    const tick = async () => {
+      if (pollingStoppedRef.current) return;
+      elapsed += 1;
+
+      try {
+        const res = await fetch(
+          `/api/payment-methods/recent?since=${encodeURIComponent(pollingSince.current)}`,
+          { cache: 'no-store' },
+        );
+        if (res.ok) {
+          const { card } = (await res.json()) as { card: { id: string } | null };
+          if (card) {
+            pollingStoppedRef.current = true;
+            hasTriggeredRefreshRef.current = true;
+            // Re-fetch the server component — the new card will appear in cards prop
+            router.refresh();
+            return;
+          }
+        }
+      } catch {
+        // network blip — keep trying
+      }
+
+      if (elapsed >= POLL_TIMEOUT_S) {
+        pollingStoppedRef.current = true;
+        setCardSearchStatus('timed-out');
+        return;
+      }
+
+      timerId = setTimeout(tick, 1000);
+    };
+
+    timerId = setTimeout(tick, 1000);
+    return () => { pollingStoppedRef.current = true; clearTimeout(timerId); };
+  }, [cardSearchStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Auto-select the new card once router.refresh() delivers updated props ───
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!hasTriggeredRefreshRef.current) return;
+    if (validCards.length === 0) return; // props not updated yet
+    if (selectedCardId) return; // already selected
+
+    const best = validCards.find((c) => c.is_default) ?? validCards[0] ?? null;
+    if (best) {
+      setSelectedCardId(best.id);
+      setWantsNewCard(false);
+      setCardSearchStatus('idle');
+    }
+  }, [cards.length, validCards.length]); // fires when the refreshed props arrive
+
+  // ── Plan type change — also re-picks the best valid card ───────────────────
 
   function handlePlanTypeChange(type: 2 | 3) {
-    // Compute dates immediately so we can pick the right card before the state re-renders
-    const dates     = calculatePaymentDates(new Date(), salaryDay, type);
-    const lastDate  = dates[dates.length - 1];
-    const nowValid  = cards.filter(
-      (c) =>
-        c.reusable &&
-        isCardValidForPlan({ exp_month: c.expiry_month, exp_year: c.expiry_year }, lastDate, 30),
-    );
-
     setPlanType(type);
 
-    // Keep current selection if still valid; otherwise pick default → first → null
-    if (!selectedCardId || !nowValid.find((c) => c.id === selectedCardId)) {
-      const best = nowValid.find((c) => c.is_default) ?? nowValid[0] ?? null;
-      setSelectedCardId(best?.id ?? null);
+    if (!wantsNewCard) {
+      const nowBest = bestValidCard(cards, type, salaryDay);
+      if (!selectedCardId || !cards.find((c) => c.id === selectedCardId && cardValidity.get(c.id))) {
+        setSelectedCardId(nowBest);
+      }
     }
   }
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ── Add new card — navigate to Paystack with a return URL ──────────────────
+
+  async function handleAddNewCard() {
+    if (!planType) return;
+    setAddCardLoading(true);
+    setAddCardError(null);
+
+    // Include planType and from=registration so the confirm page can restore state
+    const returnTo = `/patient/orders/${planId}/confirm?planType=${planType}&from=registration`;
+    const result   = await initializeCardRegistration(returnTo);
+
+    if (result.error) {
+      setAddCardError(result.error);
+      setAddCardLoading(false);
+      return;
+    }
+    window.location.href = result.authorizationUrl!;
+  }
+
+  // ── Pay with selected card ─────────────────────────────────────────────────
 
   async function handleConfirm() {
     if (!planType || !selectedCardId) return;
@@ -132,13 +249,13 @@ export default function ConfirmForm({
       setSubmitting(false);
       return;
     }
-
-    // Webhook will activate the plan; redirect to orders so the patient can see the status update
+    // Webhook activates the plan; redirect to orders so the patient sees the updated status
     window.location.href = '/patient/orders';
   }
 
-  const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting;
+  const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting && !wantsNewCard;
   const selectedCard = cards.find((c) => c.id === selectedCardId);
+  const busy         = submitting || addCardLoading;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -164,7 +281,7 @@ export default function ConfirmForm({
             <button
               key={n}
               type="button"
-              disabled={submitting}
+              disabled={busy || cardSearchStatus === 'polling'}
               onClick={() => handlePlanTypeChange(n)}
               className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 planType === n
@@ -178,7 +295,7 @@ export default function ConfirmForm({
         </div>
       </div>
 
-      {/* Section 2 — Payment schedule (once planType chosen) */}
+      {/* Section 2 — Payment schedule (once planType is chosen) */}
       {schedule && (
         <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-gray-100">
@@ -190,9 +307,7 @@ export default function ConfirmForm({
             {schedule.map((row, i) => (
               <div key={i} className="flex items-center justify-between px-5 py-3">
                 <div>
-                  <span className="text-sm font-medium text-gray-900">
-                    Instalment {i + 1}
-                  </span>
+                  <span className="text-sm font-medium text-gray-900">Instalment {i + 1}</span>
                   <span className="ml-2 text-xs text-gray-500">
                     {i === 0 ? 'Today' : formatDate(row.date)}
                   </span>
@@ -206,18 +321,29 @@ export default function ConfirmForm({
         </div>
       )}
 
-      {/* Section 3 — Card selector (once planType chosen) */}
+      {/* Section 3 — Card selector (once planType is chosen) */}
       {schedule && (
         <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 space-y-3">
           <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
             Pay with
           </h2>
 
-          {hasValidCard ? (
+          {/* ── Polling: waiting for newly-registered card to appear ── */}
+          {cardSearchStatus === 'polling' ? (
+            <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3.5">
+              <svg className="w-5 h-5 text-blue-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
+              </svg>
+              <p className="text-sm text-gray-600">Confirming your new card…</p>
+            </div>
+
+          ) : hasValidCard ? (
+            // ── Has at least one valid saved card ──────────────────────────────
             <div className="space-y-2">
               {cards.map((card) => {
                 const valid   = cardValidity.get(card.id) ?? false;
-                const checked = selectedCardId === card.id;
+                const checked = !wantsNewCard && selectedCardId === card.id;
                 return (
                   <label
                     key={card.id}
@@ -232,19 +358,21 @@ export default function ConfirmForm({
                     <input
                       type="radio"
                       name="card"
-                      disabled={!valid || submitting}
+                      disabled={!valid || busy}
                       checked={checked}
-                      onChange={() => { if (valid) setSelectedCardId(card.id); }}
+                      onChange={() => {
+                        if (valid) {
+                          setSelectedCardId(card.id);
+                          setWantsNewCard(false);
+                          setAddCardError(null);
+                        }
+                      }}
                       className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-gray-900">
-                          {card.card_brand}
-                        </span>
-                        <span className="font-mono text-sm text-gray-700">
-                          •••• {card.last_four}
-                        </span>
+                        <span className="text-sm font-semibold text-gray-900">{card.card_brand}</span>
+                        <span className="font-mono text-sm text-gray-700">•••• {card.last_four}</span>
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5">
                         Expires {card.expiry_month.toString().padStart(2, '0')}/{card.expiry_year}
@@ -258,26 +386,62 @@ export default function ConfirmForm({
                   </label>
                 );
               })}
+
+              {/* + Use a new card */}
+              <label
+                className={`flex items-center gap-3 rounded-xl border p-3.5 transition-colors ${
+                  wantsNewCard
+                    ? 'border-blue-400 bg-blue-50 cursor-pointer'
+                    : 'border-gray-200 bg-white hover:border-gray-300 cursor-pointer'
+                } ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="card"
+                  disabled={busy}
+                  checked={wantsNewCard}
+                  onChange={() => {
+                    setWantsNewCard(true);
+                    setSelectedCardId(null);
+                    setAddCardError(null);
+                    setError(null);
+                  }}
+                  className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-gray-700">+ Use a new card</span>
+              </label>
             </div>
+
           ) : (
+            // ── No saved card valid for this plan ──────────────────────────────
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+              {cardSearchStatus === 'timed-out' && (
+                <p className="text-xs text-amber-700">
+                  Your new card is taking a moment to confirm — try refreshing if it doesn&apos;t appear below.
+                </p>
+              )}
               <p className="text-sm text-amber-900">
                 You need a card valid until at least{' '}
                 <span className="font-semibold">{deadlineStr}</span> to accept this plan.
               </p>
-              <Link
-                href="/patient/payment-methods"
-                className="inline-flex items-center text-sm font-semibold text-blue-600 hover:underline"
+              {addCardError && (
+                <p className="text-sm text-red-600">{addCardError}</p>
+              )}
+              <button
+                type="button"
+                onClick={handleAddNewCard}
+                disabled={busy}
+                className="inline-flex items-center text-sm font-semibold text-blue-600 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Add a card →
-              </Link>
+                {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue →'}
+              </button>
             </div>
           )}
         </div>
       )}
 
       {/* Section 4 — Consent line */}
-      {schedule && selectedCard && hasValidCard && (
+      {schedule && selectedCard && hasValidCard && !wantsNewCard && (
         <p className="text-sm text-gray-600">
           By confirming, you agree to pay the amounts above on the dates shown, and your
           selected card will be charged immediately for the first instalment of{' '}
@@ -285,23 +449,41 @@ export default function ConfirmForm({
         </p>
       )}
 
-      {/* Error */}
+      {/* Payment error */}
       {error && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
+      {/* Add-card error (shown in button bar area when wantsNewCard) */}
+      {wantsNewCard && addCardError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {addCardError}
+        </div>
+      )}
+
       {/* Buttons */}
       <div className="flex gap-3">
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={!canSubmit}
-          className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {submitting ? 'Processing…' : 'Confirm and Pay First Instalment'}
-        </button>
+        {wantsNewCard ? (
+          <button
+            type="button"
+            onClick={handleAddNewCard}
+            disabled={!planType || busy}
+            className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!canSubmit}
+            className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {submitting ? 'Processing…' : 'Confirm and Pay First Instalment'}
+          </button>
+        )}
         <Link
           href="/patient/orders"
           className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
