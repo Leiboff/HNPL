@@ -460,7 +460,7 @@ export default async function AdminDashboardPage() {
       .select(`
         id, total_amount, plan_type, status, created_at,
         invoice_number, practice_reference,
-        profiles(first_name, last_name),
+        profiles!plans_patient_id_fkey(first_name, last_name),
         practices(name),
         payments(status)
       `)
@@ -471,7 +471,7 @@ export default async function AdminDashboardPage() {
       .select(`
         id, gross_amount, fee_amount, net_amount, status, created_at,
         practices(name),
-        plans(invoice_number, profiles(first_name, last_name))
+        plans(invoice_number, profiles!plans_patient_id_fkey(first_name, last_name))
       `)
       .order('created_at', { ascending: false })
       .limit(200),
@@ -479,7 +479,7 @@ export default async function AdminDashboardPage() {
       .from('plans')
       .select(`
         id, total_amount, invoice_number,
-        profiles(first_name, last_name),
+        profiles!plans_patient_id_fkey(first_name, last_name),
         practices(name, fee_percent)
       `)
       .eq('status', 'pending_first_payment')

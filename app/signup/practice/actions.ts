@@ -56,8 +56,9 @@ export type CreatePracticeInput = {
 };
 
 export type CreatePracticeResult = {
-  error:   string | null;
-  success: boolean;
+  error:               string | null;
+  success:             boolean;
+  requiresManualLogin?: boolean;
 };
 
 function svcClient() {
@@ -116,7 +117,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     const { data: adminAuth, error: authErr } = await svc.auth.admin.createUser({
       email:          input.email.trim().toLowerCase(),
       password:       input.password,
-      email_confirm:  false,
+      email_confirm:  true,
       user_metadata: {
         role:                 'practice_admin',
         first_name:           input.firstName.trim(),
@@ -223,10 +224,16 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
 
     // 6. Sign in the admin so they land on /practice with a live session
     const supabase = await createClient();
-    await supabase.auth.signInWithPassword({
+    const { error: signInError } = await supabase.auth.signInWithPassword({
       email:    input.email.trim().toLowerCase(),
       password: input.password,
     });
+
+    if (signInError) {
+      // Practice was created successfully; sign-in failed (e.g. email not confirmed).
+      // Tell the client to redirect to /login instead of assuming a live session.
+      return { error: null, success: true, requiresManualLogin: true };
+    }
 
     return { error: null, success: true };
 

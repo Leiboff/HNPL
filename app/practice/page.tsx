@@ -5,8 +5,9 @@ import { calculateFee } from '@/lib/finance';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PatientRef = { first_name: string; last_name: string };
-type PayoutRef  = { net_amount: number; status: string };
+type PatientRef  = { first_name: string; last_name: string };
+type ProviderRef = { first_name: string; last_name: string };
+type PayoutRef   = { net_amount: number; status: string };
 
 type PlanSummary = {
   id: string;
@@ -15,8 +16,10 @@ type PlanSummary = {
   created_at: string;
   invoice_number: string | null;
   practice_reference: string | null;
-  profiles: PatientRef | PatientRef[] | null;
-  payouts:  PayoutRef  | PayoutRef[]  | null;
+  provider_id: string | null;
+  patient:  PatientRef  | PatientRef[]  | null;
+  provider: ProviderRef | ProviderRef[] | null;
+  payouts:  PayoutRef   | PayoutRef[]   | null;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -34,9 +37,15 @@ function formatDate(isoStr: string): string {
 }
 
 function patientDisplay(plan: PlanSummary): string {
-  const p = Array.isArray(plan.profiles) ? plan.profiles[0] : plan.profiles;
+  const p = Array.isArray(plan.patient) ? plan.patient[0] : plan.patient;
   if (!p) return '—';
   return `${p.first_name} ${p.last_name.charAt(0).toUpperCase()}.`;
+}
+
+function providerName(plan: PlanSummary): string {
+  const p = Array.isArray(plan.provider) ? plan.provider[0] : plan.provider;
+  if (!p) return '—';
+  return `${p.first_name} ${p.last_name}`;
 }
 
 function getPayout(plan: PlanSummary): PayoutRef | null {
@@ -172,7 +181,9 @@ export default async function PracticeDashboardPage() {
       .from('plans')
       .select(`
         id, total_amount, status, created_at, invoice_number, practice_reference,
-        profiles(first_name, last_name),
+        provider_id,
+        patient:profiles!plans_patient_id_fkey(first_name, last_name),
+        provider:profiles!plans_provider_id_fkey(first_name, last_name),
         payouts(net_amount, status)
       `)
       .eq('practice_id', practiceId)
@@ -188,6 +199,21 @@ export default async function PracticeDashboardPage() {
   );
 
   const plans = (rawPlans ?? []) as PlanSummary[];
+
+  const providerIds = [...new Set(
+    plans.map(p => p.provider_id).filter((id): id is string => Boolean(id))
+  )];
+  const specialtyMap: Record<string, string> = {};
+  if (providerIds.length > 0) {
+    const { data: memberRows } = await supabase
+      .from('practice_members')
+      .select('user_id, specialty')
+      .eq('practice_id', practiceId)
+      .in('user_id', providerIds);
+    for (const m of (memberRows ?? []) as { user_id: string; specialty: string | null }[]) {
+      if (m.specialty) specialtyMap[m.user_id] = m.specialty;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -261,6 +287,8 @@ export default async function PracticeDashboardPage() {
                   <tr className="border-b border-gray-100 text-left bg-gray-50">
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Reference</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Patient</th>
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Provider</th>
+                    <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Specialty</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Bill</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Fee</th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Net payout</th>
@@ -288,6 +316,12 @@ export default async function PracticeDashboardPage() {
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                           {patientDisplay(plan)}
+                        </td>
+                        <td className="px-6 py-4 text-gray-700 whitespace-nowrap">
+                          {providerName(plan)}
+                        </td>
+                        <td className="px-6 py-4 text-gray-500 whitespace-nowrap text-xs">
+                          {plan.provider_id ? (specialtyMap[plan.provider_id] ?? '—') : '—'}
                         </td>
                         <td className="px-6 py-4 text-gray-700 whitespace-nowrap tabular-nums">
                           {formatRand(Number(plan.total_amount))}

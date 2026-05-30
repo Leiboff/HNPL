@@ -388,6 +388,8 @@ export default function PracticeSignupPage() {
 
     if (result.error) {
       setError(result.error);
+    } else if (result.requiresManualLogin) {
+      window.location.href = '/login?message=' + encodeURIComponent('Practice created — please log in to continue.');
     } else {
       window.location.href = '/practice';
     }

@@ -22,9 +22,15 @@ function formatRand(n: number): string {
 }
 
 function getPracticeName(plan: PlanRow): string {
-  if (!plan.practices) return 'Unknown Practice';
-  if (Array.isArray(plan.practices)) return plan.practices[0]?.name ?? 'Unknown Practice';
-  return (plan.practices as { name: string }).name;
+  if (!plan.practice) return 'Unknown Practice';
+  if (Array.isArray(plan.practice)) return plan.practice[0]?.name ?? 'Unknown Practice';
+  return (plan.practice as { name: string }).name;
+}
+
+function getProviderName(plan: PlanRow): string | null {
+  const ref = Array.isArray(plan.provider) ? plan.provider[0] : plan.provider;
+  if (!ref) return null;
+  return `${ref.first_name} ${ref.last_name}`;
 }
 
 // ─── Status configs ───────────────────────────────────────────────────────────
@@ -69,8 +75,9 @@ function PaymentStatusBadge({ status }: { status: string }) {
 
 // ─── Plan card (non-pending) ──────────────────────────────────────────────────
 
-function PlanCard({ plan }: { plan: PlanRow }) {
-  const practiceName = getPracticeName(plan);
+function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null }) {
+  const practiceName   = getPracticeName(plan);
+  const providerNameStr = getProviderName(plan);
   const planTypeLabel =
     plan.plan_type != null
       ? `${plan.plan_type} monthly payment${plan.plan_type !== 1 ? 's' : ''}`
@@ -90,6 +97,15 @@ function PlanCard({ plan }: { plan: PlanRow }) {
               <p className="text-xs text-gray-400">Practice ref: {plan.practice_reference}</p>
             )}
             <p className="text-xs text-gray-400 mt-1">{planTypeLabel}</p>
+            {providerNameStr && (
+              <p className="text-xs text-gray-600 mt-1">Healthcare provider: {providerNameStr}</p>
+            )}
+            {specialty && (
+              <p className="text-xs text-gray-500">Specialty: {specialty}</p>
+            )}
+            {plan.practice && (
+              <p className="text-xs text-gray-500">Practice: {practiceName}</p>
+            )}
           </div>
           <div className="text-right shrink-0 space-y-1">
             <p className="text-base font-semibold text-gray-900 tabular-nums">
@@ -155,6 +171,7 @@ type Props = {
   currentPlans:  PlanRow[];
   historicPlans: PlanRow[];
   declinePlan: (planId: string) => Promise<{ error: string | null }>;
+  specialtyMap:  Record<string, string>;
 };
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -163,6 +180,7 @@ export default function OrdersView({
   currentPlans,
   historicPlans,
   declinePlan,
+  specialtyMap,
 }: Props) {
   const [tab, setTab] = useState<'current' | 'historic'>('current');
 
@@ -206,7 +224,15 @@ export default function OrdersView({
                 declinePlan={declinePlan}
               />
             ) : (
-              <PlanCard key={plan.id} plan={plan} />
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                specialty={
+                  plan.provider_id && plan.practice_id
+                    ? (specialtyMap[`${plan.provider_id}:${plan.practice_id}`] ?? null)
+                    : null
+                }
+              />
             )
           )}
         </div>

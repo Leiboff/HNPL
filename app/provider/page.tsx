@@ -72,7 +72,7 @@ export default async function ProviderDashboardPage() {
   ] = await Promise.all([
     supabase
       .from('plans')
-      .select('id, total_amount, status, created_at, invoice_number, practice_reference, profiles(first_name, last_name), payouts(net_amount, status)')
+      .select('id, total_amount, status, created_at, invoice_number, practice_reference, profiles!plans_patient_id_fkey(first_name, last_name), payouts(net_amount, status)')
       .eq('provider_id', user.id)
       .order('created_at', { ascending: false })
       .limit(50),

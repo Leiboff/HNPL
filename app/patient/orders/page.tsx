@@ -18,6 +18,8 @@ export type PaymentRow = {
   status: string;
 };
 
+export type ProviderRef = { first_name: string; last_name: string };
+
 export type PlanRow = {
   id: string;
   invoice_number: string | null;
@@ -26,7 +28,10 @@ export type PlanRow = {
   plan_type: number | null;
   status: string;
   created_at: string;
-  practices: { name: string } | { name: string }[] | null;
+  provider_id: string | null;
+  practice_id: string;
+  provider: ProviderRef | ProviderRef[] | null;
+  practice: { name: string } | { name: string }[] | null;
   payments: PaymentRow[];
 };
 
@@ -43,7 +48,9 @@ export default async function OrdersPage() {
     .select(`
       id, invoice_number, practice_reference,
       total_amount, plan_type, status, created_at,
-      practices(name),
+      provider_id, practice_id,
+      provider:profiles!plans_provider_id_fkey(first_name, last_name),
+      practice:practices(name),
       payments(id, instalment_number, amount, due_date, status)
     `)
     .eq('patient_id', user.id)
@@ -56,6 +63,22 @@ export default async function OrdersPage() {
     ),
   }));
 
+  const providerIds = [...new Set(
+    plans.map(p => p.provider_id).filter((id): id is string => Boolean(id))
+  )];
+  const practiceIds = [...new Set(plans.map(p => p.practice_id).filter(Boolean))];
+  const specialtyMap: Record<string, string> = {};
+  if (providerIds.length > 0) {
+    const { data: memberRows } = await supabase
+      .from('practice_members')
+      .select('user_id, practice_id, specialty')
+      .in('user_id', providerIds)
+      .in('practice_id', practiceIds);
+    for (const m of (memberRows ?? []) as { user_id: string; practice_id: string; specialty: string | null }[]) {
+      if (m.specialty) specialtyMap[`${m.user_id}:${m.practice_id}`] = m.specialty;
+    }
+  }
+
   const currentPlans  = plans.filter((p) => CURRENT_STATUSES.has(p.status));
   const historicPlans = plans.filter((p) => HISTORIC_STATUSES.has(p.status));
 
@@ -66,6 +89,7 @@ export default async function OrdersPage() {
         currentPlans={currentPlans}
         historicPlans={historicPlans}
         declinePlan={declinePlan}
+        specialtyMap={specialtyMap}
       />
     </div>
   );

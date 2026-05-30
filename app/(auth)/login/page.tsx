@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 
@@ -9,6 +9,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const msg = params.get('message');
+    if (msg) setNotice(decodeURIComponent(msg));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +52,12 @@ export default function LoginPage() {
             Sign in to your HNPL account.
           </p>
         </div>
+
+        {notice && (
+          <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
+            {notice}
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
@@ -103,7 +116,7 @@ export default function LoginPage() {
         <p className="mt-6 text-center text-sm text-gray-500">
           Don&apos;t have an account?{' '}
           <Link
-            href="/signup"
+            href="/"
             className="font-medium text-blue-600 hover:text-blue-700"
           >
             Sign up
