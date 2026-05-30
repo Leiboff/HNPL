@@ -97,10 +97,7 @@ export default async function ProfilePage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select(
-      'first_name, last_name, email, phone, sa_id_number, ' +
-      'address_line1, address_line2, suburb, city, province, postal_code'
-    )
+    .select('first_name, last_name, email, phone, sa_id_number, address_line1, address_line2, suburb, city, province, postal_code')
     .eq('id', user.id)
     .single();
 
