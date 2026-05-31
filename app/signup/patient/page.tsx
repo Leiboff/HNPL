@@ -33,7 +33,7 @@ export default async function PatientSignupPage({ searchParams }: Props) {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
         <div className="mb-7">
-          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>HealthNow</span>
+          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>BetterNow</span>
           <h1 className="mt-3 text-2xl font-semibold text-gray-900">Create your account</h1>
           <p className="mt-1 text-sm text-gray-500">
             Interest-free medical payment plans.

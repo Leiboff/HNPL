@@ -239,7 +239,7 @@ export default async function NewBillPage() {
       <header className="bg-white border-b border-gray-200">
         <div className="mx-auto max-w-3xl px-6 py-4 flex items-center justify-between">
           <div>
-            <span className="text-lg font-semibold text-gray-900">HNPL</span>
+            <span className="text-lg font-semibold text-gray-900">BetterNow</span>
             <span className="ml-2 text-sm text-gray-500">— {practice.name}</span>
           </div>
           <a href="/practice" className="text-sm text-blue-600 hover:text-blue-700">

@@ -303,7 +303,7 @@ export default async function AdminRefundsPage() {
         <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/admin" className="text-base font-semibold text-gray-900 hover:text-gray-700 transition-colors">
-              HNPL
+              BetterNow
             </Link>
             <span className="text-xs font-medium text-gray-400 uppercase tracking-wide border border-gray-200 rounded px-1.5 py-0.5">
               Ops

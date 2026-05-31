@@ -111,11 +111,11 @@ export default function ProviderSetupPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
         <div className="mb-7">
-          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>HealthNow</span>
+          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>BetterNow</span>
           <h1 className="mt-3 text-2xl font-semibold text-gray-900">Set your password</h1>
           {practiceName && (
             <p className="mt-1 text-sm text-gray-500">
-              You&apos;ve been invited to HealthNow by <span className="font-medium text-gray-700">{practiceName}</span>.
+              You&apos;ve been invited to BetterNow by <span className="font-medium text-gray-700">{practiceName}</span>.
             </p>
           )}
         </div>

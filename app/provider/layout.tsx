@@ -28,7 +28,7 @@ export default async function ProviderLayout({ children }: { children: React.Rea
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="mx-auto max-w-6xl px-6 py-3 flex items-center justify-between">
-          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>HealthNow</span>
+          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>BetterNow</span>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600">{name}</span>
             <LogoutButton />

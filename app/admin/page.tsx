@@ -507,7 +507,7 @@ export default async function AdminDashboardPage() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-base font-semibold text-gray-900">HNPL</span>
+            <span className="text-base font-semibold text-gray-900">BetterNow</span>
             <span className="text-xs font-medium text-gray-400 uppercase tracking-wide border border-gray-200 rounded px-1.5 py-0.5">
               Ops
             </span>

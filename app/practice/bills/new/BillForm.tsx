@@ -98,7 +98,7 @@ function SuccessPanel({
           <span>{formatRand(summary.gross)}</span>
         </div>
         <div className="flex justify-between text-gray-500">
-          <span>HNPL fee ({feePercent}%)</span>
+          <span>BetterNow fee ({feePercent}%)</span>
           <span>−{formatRand(summary.fee)}</span>
         </div>
         <div className="flex justify-between font-semibold text-gray-900 border-t border-gray-100 pt-1.5">
@@ -253,7 +253,7 @@ export default function BillForm({ feePercent, providers, createBill }: Props) {
             className={INPUT}
           />
           <p className="mt-1 text-xs text-gray-400">
-            If you have your own invoice number, enter it here. We&apos;ll also generate an HNPL reference for tracking.
+            If you have your own invoice number, enter it here. We&apos;ll also generate a BetterNow reference for tracking.
           </p>
         </div>
       </div>
@@ -267,7 +267,7 @@ export default function BillForm({ feePercent, providers, createBill }: Props) {
               <span>Gross</span><span>{formatRand(preview.gross)}</span>
             </div>
             <div className="flex justify-between text-sm text-gray-500">
-              <span>HNPL fee ({feePercent}%)</span><span>−{formatRand(preview.fee)}</span>
+              <span>BetterNow fee ({feePercent}%)</span><span>−{formatRand(preview.fee)}</span>
             </div>
             <div className="flex justify-between text-sm font-semibold text-gray-900 border-t border-gray-200 pt-1.5">
               <span>Net payout to you</span><span>{formatRand(preview.net)}</span>

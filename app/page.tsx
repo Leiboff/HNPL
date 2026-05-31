@@ -37,7 +37,7 @@ export default function LandingPage() {
       <nav className="border-b border-gray-100">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <span className="text-xl font-bold tracking-tight" style={{ color: '#0F4C75' }}>
-            HealthNow
+            BetterNow
           </span>
           <Link
             href="/login"
@@ -51,8 +51,8 @@ export default function LandingPage() {
       {/* ── Hero ── */}
       <section className="mx-auto max-w-6xl px-6 py-20 text-center">
         <h1 className="text-5xl font-bold tracking-tight text-gray-900 leading-tight">
-          Healthcare now.{' '}
-          <span style={{ color: '#0F4C75' }}>Pay later.</span>
+          BetterNow,{' '}
+          <span style={{ color: '#0F4C75' }}>Pay Later.</span>
         </h1>
         <p className="mt-5 text-xl text-gray-500 max-w-2xl mx-auto leading-relaxed">
           Interest-free payment plans for your patients.
@@ -140,7 +140,7 @@ export default function LandingPage() {
 
       {/* ── Footer ── */}
       <footer className="py-8 text-center text-sm text-gray-400">
-        HealthNow &copy; 2026
+        BetterNow &copy; 2026
       </footer>
     </div>
   );

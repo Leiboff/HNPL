@@ -401,7 +401,7 @@ export default function PracticeSignupPage() {
 
         {/* Header */}
         <div className="mb-8 text-center">
-          <Link href="/" className="text-xl font-bold" style={{ color: '#0F4C75' }}>HealthNow</Link>
+          <Link href="/" className="text-xl font-bold" style={{ color: '#0F4C75' }}>BetterNow</Link>
           <h1 className="mt-3 text-2xl font-semibold text-gray-900">Register your practice</h1>
           <p className="mt-1 text-sm text-gray-500">Start offering interest-free payment plans in minutes.</p>
         </div>

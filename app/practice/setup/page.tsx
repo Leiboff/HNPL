@@ -114,7 +114,7 @@ export default async function PracticeSetupPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-lg">
         <div className="mb-8 text-center">
-          <span className="text-lg font-semibold text-gray-900">HNPL</span>
+          <span className="text-lg font-semibold text-gray-900">BetterNow</span>
           <h1 className="mt-4 text-2xl font-semibold text-gray-900">
             Set up your practice
           </h1>

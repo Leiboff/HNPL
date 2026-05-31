@@ -77,7 +77,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         <h2 className="text-lg font-semibold text-green-900">Check your email</h2>
         <p className="mt-2 text-sm text-green-800 max-w-sm mx-auto">
           We&apos;ve sent you a confirmation link. Click it to activate your account
-          and start using HealthNow.
+          and start using BetterNow.
         </p>
       </div>
     );
