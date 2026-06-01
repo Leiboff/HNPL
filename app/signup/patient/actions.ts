@@ -59,7 +59,7 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
     email,
     password,
     options: {
-      emailRedirectTo: `${appUrl}/patient`,
+      emailRedirectTo: `${appUrl}/auth/confirmed`,
       data: {
         role:         'patient',
         first_name:   firstName.trim(),
