@@ -1,6 +1,7 @@
 'use server';
 
 import { cookies } from 'next/headers';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 
 export type PatientSignupInput = {
@@ -40,8 +41,19 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   if (!Number.isInteger(salaryDay) || salaryDay < 1 || salaryDay > 31)
                                                      return { error: 'Salary day must be between 1 and 31.',    success: false };
 
+  const svc    = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const supabase = await createClient();
   const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? '';
+
+  const { data: existing } = await svc
+    .from('profiles')
+    .select('id')
+    .eq('email', email.trim().toLowerCase())
+    .maybeSingle();
+
+  if (existing) {
+    return { error: 'An account with this email already exists. Please sign in instead.', success: false };
+  }
 
   const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email,
@@ -59,14 +71,8 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
     },
   });
 
-  console.error('[patient-signup] signUp result:', {
-    hasUser:     !!signUpData?.user,
-    error:       signUpError?.message,
-    errorStatus: signUpError?.status,
-  });
-
-  if (signUpError || !signUpData.user) {
-    return { error: signUpError?.message ?? 'Sign up failed. Please try again.', success: false };
+  if (signUpError) {
+    return { error: signUpError.message ?? 'Sign up failed. Please try again.', success: false };
   }
 
   if (token) {
