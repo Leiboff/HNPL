@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { resendConfirmation } from '@/app/auth/resend/actions';
 
 function CheckCircleIcon() {
   return (
@@ -47,11 +48,27 @@ type State = 'loading' | 'success' | 'error';
 export default function ConfirmedView({ destination }: { destination: string }) {
   const [state, setState] = useState<State>('loading');
 
+  // Resend state — only used in the error branch
+  const [resendEmail, setResendEmail] = useState('');
+  const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
+
   useEffect(() => {
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
     setState(params.get('error') ? 'error' : 'success');
   }, []);
+
+  async function handleResend() {
+    if (!resendEmail.trim()) return;
+    setResendState('sending');
+    try {
+      await resendConfirmation(resendEmail.trim());
+    } catch {
+      // Transport-level failure — still show neutral message.
+    }
+    setResendState('sent');
+    setTimeout(() => setResendState('idle'), 30_000);
+  }
 
   if (state === 'loading') {
     return (
@@ -71,15 +88,47 @@ export default function ConfirmedView({ destination }: { destination: string }) 
           <h1 className="text-2xl font-semibold text-gray-900 mb-2">
             Link expired or invalid
           </h1>
-          <p className="text-sm text-gray-500 mb-8">
+          <p className="text-sm text-gray-500 mb-6">
             This confirmation link has expired or has already been used.
             Please sign in, or sign up again to receive a new link.
           </p>
+
+          {/* Resend section */}
+          <div className="mb-6 text-left space-y-2">
+            <p className="text-sm font-medium text-gray-700">
+              Or enter your email to resend the confirmation link:
+            </p>
+            <input
+              type="email"
+              value={resendEmail}
+              onChange={(e) => setResendEmail(e.target.value)}
+              placeholder="your@email.com"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            {resendState === 'sent' && (
+              <p className="text-sm font-medium text-green-700">
+                If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={resendState === 'sending' || resendState === 'sent' || !resendEmail.trim()}
+              className="w-full rounded-xl px-6 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#0F4C75' }}
+            >
+              {resendState === 'sending'
+                ? 'Sending…'
+                : resendState === 'sent'
+                  ? 'Sent ✓'
+                  : 'Resend confirmation email'}
+            </button>
+          </div>
+
           <div className="flex flex-col gap-3">
             <Link
               href="/login"
-              className="inline-flex items-center justify-center w-full rounded-xl px-6 py-3 text-sm font-semibold text-white transition-colors"
-              style={{ backgroundColor: '#0F4C75' }}
+              className="inline-flex items-center justify-center w-full rounded-xl px-6 py-3 text-sm font-semibold text-gray-700 border border-gray-300 hover:bg-gray-50 transition-colors"
             >
               Go to sign in
             </Link>

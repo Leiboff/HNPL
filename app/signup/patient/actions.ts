@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { encryptId } from '@/lib/idEncryption';
 
 export type PatientSignupInput = {
   firstName:   string;
@@ -55,7 +56,18 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
     return { error: 'An account with this email already exists. Please sign in instead.', success: false };
   }
 
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+  // Encrypt before passing to auth metadata; the trigger writes this ciphertext
+  // to profiles. Fail early here so a missing key never reaches signUp.
+  let encryptedSaId: string | null = null;
+  if (saIdNumber.trim()) {
+    try {
+      encryptedSaId = encryptId(saIdNumber.trim());
+    } catch {
+      return { error: 'Encryption error — please contact support.', success: false };
+    }
+  }
+
+  const { error: signUpError } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -65,7 +77,7 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
         first_name:   firstName.trim(),
         last_name:    lastName.trim(),
         phone:        phone.trim(),
-        sa_id_number: saIdNumber.trim(),
+        sa_id_number: encryptedSaId,
         salary_day:   salaryDay,
       },
     },

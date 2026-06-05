@@ -41,7 +41,7 @@ export default function PendingPlanCard({
   }
 
   return (
-    <div className="rounded-2xl border border-amber-300 overflow-hidden">
+    <div className="rounded-2xl border border-amber-300 shadow-sm overflow-hidden">
       {/* Header */}
       <div className="px-6 py-4 bg-amber-50 border-b border-amber-200">
         <div className="flex items-start justify-between gap-4">

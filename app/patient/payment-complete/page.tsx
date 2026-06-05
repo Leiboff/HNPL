@@ -57,7 +57,7 @@ function SuccessCard({ amountKobo }: { amountKobo: number }) {
       </p>
       <Link
         href="/patient/orders"
-        className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+        className="inline-flex items-center justify-center rounded-lg bg-[#0F4C75] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] transition-colors"
       >
         View my plan →
       </Link>
@@ -99,8 +99,8 @@ function FailedCard({ abandoned }: { abandoned?: boolean }) {
 function PendingCard() {
   return (
     <ResultCard>
-      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-blue-50 mx-auto">
-        <svg className="w-7 h-7 text-blue-500 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#0F4C75]/10 mx-auto">
+        <svg className="w-7 h-7 text-[#0F4C75] animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
         </svg>
@@ -113,7 +113,7 @@ function PendingCard() {
       </div>
       <Link
         href="/patient/orders"
-        className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+        className="text-sm font-medium text-[#0F4C75] hover:text-[#0a3a5c] transition-colors"
       >
         Check my orders →
       </Link>

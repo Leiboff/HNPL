@@ -16,13 +16,6 @@ export default async function DashboardPage() {
     .eq('id', user.id)
     .single();
 
-  console.log('[dashboard] routing check:', {
-    userId:       user.id,
-    userEmail:    user.email,
-    profileRole:  profile?.role,
-    profileError: error?.message,
-  });
-
   switch (profile?.role) {
     case 'patient':
       redirect('/patient');

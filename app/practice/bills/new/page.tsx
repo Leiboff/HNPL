@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { redirect } from 'next/navigation';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { calculateFee } from '@/lib/finance';
 import BillForm from './BillForm';
@@ -91,7 +92,14 @@ async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
 
   const feePercent = Number(practice.fee_percent);
 
-  const { data: patient } = await supabase
+  // Use the service-role client for this lookup so RLS can never silently
+  // return null for a registered patient, which would cause patient_id = null
+  // to be written to the plan and make the bill invisible to the patient.
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+  const { data: patient } = await svc
     .from('profiles')
     .select('id, first_name, last_name')
     .eq('email', patientEmail.trim().toLowerCase())

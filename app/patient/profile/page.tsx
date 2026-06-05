@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import AddressForm from './AddressForm';
+import { decryptIdForDisplay } from '@/lib/idEncryption';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -101,6 +102,8 @@ export default async function ProfilePage() {
     .eq('id', user.id)
     .single();
 
+  const decryptedSaId = decryptIdForDisplay(profile?.sa_id_number);
+
   const addressCurrent = {
     phone:          profile?.phone          ?? null,
     address_line1:  profile?.address_line1  ?? null,
@@ -130,7 +133,7 @@ export default async function ProfilePage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
           <ReadOnlyField label="First name"   value={profile?.first_name   ?? '—'} />
           <ReadOnlyField label="Last name"    value={profile?.last_name    ?? '—'} />
-          <ReadOnlyField label="SA ID number" value={profile?.sa_id_number ?? '—'} />
+          <ReadOnlyField label="SA ID number" value={decryptedSaId || '—'} />
           <ReadOnlyField label="Email"        value={profile?.email        ?? '—'} />
         </div>
 

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { decryptIdForDisplay, maskId } from '@/lib/idEncryption';
 
 async function updatePhone(phone: string): Promise<{ error: string | null }> {
   'use server';
@@ -54,9 +55,8 @@ export default async function ProviderProfilePage() {
 
   if (!profile) redirect('/login');
 
-  const saIdMasked = profile.sa_id_number
-    ? `•••••••••${profile.sa_id_number.slice(-4)}`
-    : '—';
+  const plain = decryptIdForDisplay(profile.sa_id_number);
+  const saIdMasked = plain ? maskId(plain) : '—';
 
   const payoutLabel = member?.payout_destination === 'provider'
     ? `Your personal account (•••• ${member.personal_account_number?.slice(-4) ?? '????'})`

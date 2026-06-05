@@ -2,6 +2,7 @@
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { encryptId } from '@/lib/idEncryption';
 
 export type ProviderInput = {
   firstName:          string;
@@ -113,6 +114,12 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
   let   adminUserId: string | null = null;
 
   try {
+    // Encrypt admin SA ID before it enters auth metadata; if the key is missing
+    // encryptId throws and the outer catch aborts signup cleanly.
+    const encryptedAdminSaId = input.saIdNumber.trim()
+      ? encryptId(input.saIdNumber.trim())
+      : null;
+
     // 1. Create admin auth account
     const { data: adminAuth, error: authErr } = await svc.auth.admin.createUser({
       email:          input.email.trim().toLowerCase(),
@@ -123,7 +130,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
         first_name:           input.firstName.trim(),
         last_name:            input.lastName.trim(),
         phone:                input.phone.trim(),
-        sa_id_number:         input.saIdNumber.trim(),
+        sa_id_number:         encryptedAdminSaId,
         must_change_password: false,
       },
     });
@@ -178,6 +185,11 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     // 5. Invite additional providers
     if (!input.isSoleProvider) {
       for (const provider of input.providers) {
+        // Encrypt provider SA ID before it enters auth metadata.
+        const encryptedProviderSaId = provider.saIdNumber.trim()
+          ? encryptId(provider.saIdNumber.trim())
+          : null;
+
         const { data: inviteData, error: inviteErr } = await svc.auth.admin.inviteUserByEmail(
           provider.email.trim().toLowerCase(),
           {
@@ -186,7 +198,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
               role:                 'practice_provider',
               first_name:           provider.firstName.trim(),
               last_name:            provider.lastName.trim(),
-              sa_id_number:         provider.saIdNumber.trim(),
+              sa_id_number:         encryptedProviderSaId,
               hpcsa_number:         provider.hpcsaNumber.trim() || null,
               must_change_password: true,
             },
@@ -206,7 +218,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
           can_create_bills:  false,
           specialty:         provider.specialty || null,
           hpcsa_number:      provider.hpcsaNumber.trim() || null,
-          sa_id_number:      provider.saIdNumber.trim(),
+          sa_id_number:      provider.saIdNumber.trim() ? encryptId(provider.saIdNumber.trim()) : null,
           payout_destination: provider.payoutDestination,
         };
         if (provider.payoutDestination === 'provider') {

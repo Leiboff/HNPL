@@ -483,7 +483,6 @@ async function handleCardRegistrationSuccess(data: ChargeData): Promise<void> {
   if (patientId && auth?.reusable) {
     try {
       await saveCardForPatient(patientId, auth, supabase);
-      console.log('[paystack-webhook] card_registration: card saved', { patientId, reference });
     } catch (err) {
       console.error(
         '[paystack-webhook] card_registration: failed to save card (non-fatal)',
@@ -718,11 +717,9 @@ export async function POST(request: NextRequest) {
 
   console.log('[paystack-webhook] Event received:', {
     event,
-    reference:          data.reference,
-    amount:             data.amount,
-    status:             data.status,
-    authorization_code: data.authorization?.authorization_code,
-    reusable:           data.authorization?.reusable,
+    reference: data.reference,
+    amount:    data.amount,
+    status:    data.status,
   });
 
   // ── 4. Dispatch ─────────────────────────────────────────────────────────────

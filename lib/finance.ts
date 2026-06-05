@@ -29,28 +29,35 @@ export function calculateFee(
 }
 
 function lastDayOfMonth(year: number, month: number): number {
-  // month is 0-indexed (Date convention). Day 0 of next month = last day of this month.
-  return new Date(year, month + 1, 0).getDate();
+  // month is 0-indexed. Day 0 of next month in UTC = last day of this month.
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
 function clampedSalaryDate(year: number, month: number, salaryDay: number): Date {
   const clamped = Math.min(salaryDay, lastDayOfMonth(year, month));
-  return new Date(year, month, clamped);
+  // UTC construction so .toISOString().split('T')[0] yields the correct calendar
+  // day on any server timezone. Local midnight on UTC+2 would serialise to the
+  // previous UTC day, causing instalments to land a day early.
+  return new Date(Date.UTC(year, month, clamped));
 }
 
 function nextSalaryDate(after: Date, salaryDay: number, bufferDays: number): Date {
-  const earliest = new Date(after);
-  earliest.setDate(earliest.getDate() + bufferDays);
+  // All arithmetic in UTC — 'after' is always a UTC-midnight Date here.
+  const earliest = new Date(Date.UTC(
+    after.getUTCFullYear(),
+    after.getUTCMonth(),
+    after.getUTCDate() + bufferDays,   // JS handles month overflow automatically
+  ));
 
-  const candidate = clampedSalaryDate(after.getFullYear(), after.getMonth(), salaryDay);
+  const candidate = clampedSalaryDate(after.getUTCFullYear(), after.getUTCMonth(), salaryDay);
 
   if (candidate >= earliest) {
     return candidate;
   }
 
   // Move to the following month.
-  const nextMonth = after.getMonth() === 11 ? 0 : after.getMonth() + 1;
-  const nextYear = after.getMonth() === 11 ? after.getFullYear() + 1 : after.getFullYear();
+  const nextMonth = after.getUTCMonth() === 11 ? 0 : after.getUTCMonth() + 1;
+  const nextYear  = after.getUTCMonth() === 11 ? after.getUTCFullYear() + 1 : after.getUTCFullYear();
   return clampedSalaryDate(nextYear, nextMonth, salaryDay);
 }
 
@@ -60,7 +67,14 @@ export function calculatePaymentDates(
   planType: 2 | 3,
   bufferDays = 5,
 ): Date[] {
-  const payment1 = new Date(startDate);
+  // Normalize to UTC midnight of startDate's UTC calendar date. Without this,
+  // a mid-day live timestamp serialises correctly by luck; a local-midnight Date
+  // on UTC+2 would shift back one day via .toISOString().
+  const payment1 = new Date(Date.UTC(
+    startDate.getUTCFullYear(),
+    startDate.getUTCMonth(),
+    startDate.getUTCDate(),
+  ));
 
   const payment2 = nextSalaryDate(payment1, salaryDay, bufferDays);
 
@@ -68,12 +82,10 @@ export function calculatePaymentDates(
     return [payment1, payment2];
   }
 
-  // Payment 3: next salaryDay after payment2, always at least 1 day later so
-  // use bufferDays=1 to advance at least one month from payment2's month.
-  const payment3Month = payment2.getMonth() === 11 ? 0 : payment2.getMonth() + 1;
-  const payment3Year =
-    payment2.getMonth() === 11 ? payment2.getFullYear() + 1 : payment2.getFullYear();
-  const payment3 = clampedSalaryDate(payment3Year, payment3Month, salaryDay);
+  // Payment 3: hard-advance to the month after payment2's UTC month.
+  const payment3Month = payment2.getUTCMonth() === 11 ? 0 : payment2.getUTCMonth() + 1;
+  const payment3Year  = payment2.getUTCMonth() === 11 ? payment2.getUTCFullYear() + 1 : payment2.getUTCFullYear();
+  const payment3      = clampedSalaryDate(payment3Year, payment3Month, salaryDay);
 
   return [payment1, payment2, payment3];
 }

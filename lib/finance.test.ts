@@ -99,8 +99,10 @@ describe('calculateFee', () => {
 // ---------------------------------------------------------------------------
 
 describe('calculatePaymentDates', () => {
+  // UTC construction so Date-object comparisons are timezone-independent and
+  // consistent with the UTC-midnight dates that calculatePaymentDates now returns.
   function d(year: number, month: number, day: number): Date {
-    return new Date(year, month - 1, day);
+    return new Date(Date.UTC(year, month - 1, day));
   }
 
   it('returns 2 dates for planType 2', () => {
@@ -192,5 +194,61 @@ describe('calculatePaymentDates', () => {
     const [, p2, p3] = calculatePaymentDates(d(2025, 11, 1), 15, 3);
     expect(p2).toEqual(d(2025, 11, 15));
     expect(p3).toEqual(d(2025, 12, 15));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// calculatePaymentDates — serialized due_dates (UTC correctness)
+//
+// The existing tests above compare Date objects and are therefore blind to the
+// timezone bug: new Date(year, month, day) creates LOCAL midnight, which on a
+// UTC+2 server serialises via .toISOString() to the PREVIOUS UTC day.
+// These tests assert on the string actually stored in the DB and would FAIL
+// under the old local-midnight construction on a UTC+2 machine.
+// ---------------------------------------------------------------------------
+
+describe('calculatePaymentDates — serialized due_dates (UTC correctness)', () => {
+  it('salary_day=18, start=4 Jun: payment2=18 Jun, payment3=18 Jul (not 17th)', () => {
+    // This is the exact scenario that produced "17 Jun / 17 Jul" in production
+    // on a UTC+2 server with salary_day=18. Old code: clampedSalaryDate built
+    // new Date(2026, 5, 18) = local midnight = 2026-06-17T22:00:00Z, which
+    // serialised to "2026-06-17". New UTC construction must produce "2026-06-18".
+    const start = new Date(Date.UTC(2026, 5, 4)); // 4 Jun 2026 UTC midnight
+    const [p1, p2, p3] = calculatePaymentDates(start, 18, 3);
+    expect(p1.toISOString().split('T')[0]).toBe('2026-06-04');
+    expect(p2.toISOString().split('T')[0]).toBe('2026-06-18');
+    expect(p3.toISOString().split('T')[0]).toBe('2026-07-18');
+  });
+
+  it('all returned Dates are UTC midnight (time portion is T00:00:00.000Z)', () => {
+    // Verifies that every date, including payment1, is a UTC-midnight value so
+    // serialisation is deterministic regardless of server timezone.
+    const start = new Date(Date.UTC(2026, 5, 4));
+    const dates = calculatePaymentDates(start, 18, 3);
+    for (const date of dates) {
+      expect(date.toISOString()).toMatch(/T00:00:00\.000Z$/);
+    }
+  });
+
+  it('payment1 serialises to the UTC calendar date of a mid-day startDate', () => {
+    // In production, startDate = new Date() which carries a time component
+    // (e.g. 10:30 SAST = 08:30 UTC). payment1 must still serialise to that
+    // UTC calendar date, not shift due to timezone offset.
+    const startDate = new Date('2026-06-04T08:30:00.000Z'); // 10:30 SAST
+    const [p1] = calculatePaymentDates(startDate, 18, 2);
+    expect(p1.toISOString().split('T')[0]).toBe('2026-06-04');
+    expect(p1.toISOString()).toMatch(/T00:00:00\.000Z$/);
+  });
+
+  it('salary_day=31 clamps to Feb 28 and serialises correctly', () => {
+    const start = new Date(Date.UTC(2025, 0, 5)); // 5 Jan 2025
+    const [, , p3] = calculatePaymentDates(start, 31, 3);
+    expect(p3.toISOString().split('T')[0]).toBe('2025-02-28');
+  });
+
+  it('salary_day=31 clamps to Feb 29 in a leap year and serialises correctly', () => {
+    const start = new Date(Date.UTC(2024, 0, 5)); // 5 Jan 2024 (leap year)
+    const [, , p3] = calculatePaymentDates(start, 31, 3);
+    expect(p3.toISOString().split('T')[0]).toBe('2024-02-29');
   });
 });

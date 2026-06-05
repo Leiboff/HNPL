@@ -49,7 +49,7 @@ function Field({
 
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
-  'focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+  'focus:border-[#0F4C75] focus:outline-none focus:ring-1 focus:ring-[#0F4C75]';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -287,7 +287,7 @@ export default function PaymentMethods({
           <button
             type="submit"
             disabled={loading}
-            className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            className="rounded-lg bg-[#0F4C75] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] focus:outline-none focus:ring-2 focus:ring-[#0F4C75] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Saving…' : 'Save changes'}
           </button>
@@ -363,7 +363,7 @@ export default function PaymentMethods({
                         type="button"
                         onClick={() => handleSetDefault(card.id)}
                         disabled={loading}
-                        className="text-xs font-medium text-blue-600 hover:text-blue-700 disabled:opacity-60 transition-colors"
+                        className="text-xs font-medium text-[#0F4C75] hover:text-[#0a3a5c] disabled:opacity-60 transition-colors"
                       >
                         Set as default
                       </button>
@@ -390,7 +390,7 @@ export default function PaymentMethods({
         </div>
       )}
 
-      <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3 text-sm text-blue-700">
+      <div className="rounded-lg bg-[#0F4C75]/5 border border-[#0F4C75]/20 px-4 py-3 text-sm text-[#0F4C75]">
         We&apos;ll charge R1.00 to verify your card and refund it immediately. This adds your card so you can pay future plans without re-entering details.
       </div>
 
@@ -404,7 +404,7 @@ export default function PaymentMethods({
         type="button"
         onClick={handleAddCard}
         disabled={addLoading || loading}
-        className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 px-5 py-3 text-sm font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors w-full disabled:opacity-60 disabled:cursor-not-allowed"
+        className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 px-5 py-3 text-sm font-medium text-gray-600 hover:border-[#0F4C75] hover:text-[#0F4C75] transition-colors w-full disabled:opacity-60 disabled:cursor-not-allowed"
       >
         <span className="text-lg leading-none" aria-hidden>+</span>
         {addLoading ? 'Redirecting to payment…' : 'Add a card'}

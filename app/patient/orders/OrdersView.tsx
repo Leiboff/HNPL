@@ -86,7 +86,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 border-b border-gray-100">
+      <div className="px-6 py-5 border-b border-gray-100">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="font-semibold text-gray-900">{practiceName}</p>
@@ -108,7 +108,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
             )}
           </div>
           <div className="text-right shrink-0 space-y-1">
-            <p className="text-base font-semibold text-gray-900 tabular-nums">
+            <p className="text-base font-semibold tabular-nums" style={{ color: '#0F4C75' }}>
               {formatRand(Number(plan.total_amount))}
             </p>
             <PlanStatusBadge status={plan.status} />
@@ -122,7 +122,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
           {plan.payments.map((payment: PaymentRow) => (
             <div
               key={payment.id}
-              className="flex items-center justify-between px-5 py-2.5"
+              className="flex items-center justify-between px-6 py-3"
             >
               <div className="flex items-baseline gap-3 text-sm">
                 <span className="text-gray-600 whitespace-nowrap">
@@ -142,7 +142,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
           ))}
         </div>
       ) : (
-        <p className="px-5 py-3 text-xs text-gray-400">No payment schedule yet.</p>
+        <p className="px-6 py-4 text-xs text-gray-400">No payment schedule yet.</p>
       )}
     </div>
   );
@@ -152,7 +152,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
 
 function EmptyState({ tab }: { tab: 'current' | 'historic' }) {
   return (
-    <div className="rounded-2xl border border-dashed border-gray-200 py-14 text-center">
+    <div className="rounded-2xl border-2 border-dashed border-gray-200 py-14 text-center">
       <p className="font-medium text-gray-500">
         {tab === 'current' ? 'No current plans' : 'No historic plans'}
       </p>
@@ -190,7 +190,7 @@ export default function OrdersView({
     return [
       'px-4 py-2 text-sm font-medium rounded-lg transition-colors',
       tab === t
-        ? 'bg-white text-gray-900 shadow-sm'
+        ? 'bg-white text-[#0F4C75] shadow-sm'
         : 'text-gray-500 hover:text-gray-700',
     ].join(' ');
   }

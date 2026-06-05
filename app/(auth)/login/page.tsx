@@ -3,13 +3,18 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { resendConfirmation } from '@/app/auth/resend/actions';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError]       = useState<string | null>(null);
+  const [loading, setLoading]   = useState(false);
+  const [notice, setNotice]     = useState<string | null>(null);
+
+  // Unconfirmed-email recovery state
+  const [notConfirmed, setNotConfirmed] = useState(false);
+  const [resendState, setResendState]   = useState<'idle' | 'sending' | 'sent'>('idle');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -20,6 +25,8 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setNotConfirmed(false);
+    setResendState('idle');
     setLoading(true);
 
     const supabase = createClient();
@@ -30,7 +37,11 @@ export default function LoginPage() {
     });
 
     if (signInError) {
-      setError(signInError.message);
+      if (signInError.message.includes('not confirmed')) {
+        setNotConfirmed(true);
+      } else {
+        setError(signInError.message);
+      }
       setLoading(false);
       return;
     }
@@ -39,6 +50,17 @@ export default function LoginPage() {
     // session cookies. Using router.replace() + router.refresh() in Next.js 16
     // creates conflicting navigation operations that can stall rendering.
     window.location.href = '/dashboard';
+  }
+
+  async function handleResend() {
+    setResendState('sending');
+    try {
+      await resendConfirmation(email);
+    } catch {
+      // Server action failed at transport level — still show neutral message.
+    }
+    setResendState('sent');
+    setTimeout(() => setResendState('idle'), 30_000);
   }
 
   return (
@@ -62,6 +84,32 @@ export default function LoginPage() {
         {error && (
           <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {notConfirmed && (
+          <div className="mb-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-4 text-sm text-amber-800 space-y-3">
+            <p>
+              Please confirm your email before signing in — check your inbox for the link.
+            </p>
+            {resendState === 'sent' && (
+              <p className="font-medium text-green-700">
+                If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleResend}
+              disabled={resendState === 'sending' || resendState === 'sent'}
+              className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#0F4C75' }}
+            >
+              {resendState === 'sending'
+                ? 'Sending…'
+                : resendState === 'sent'
+                  ? 'Sent ✓'
+                  : 'Resend confirmation email'}
+            </button>
           </div>
         )}
 

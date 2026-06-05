@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import LogoutButton from '@/app/dashboard/LogoutButton';
 import PatientNav from './PatientNav';
+import SettingsSheet from './SettingsSheet';
 
 export default async function PatientLayout({
   children,
@@ -15,7 +15,7 @@ export default async function PatientLayout({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, first_name')
+    .select('role, first_name, last_name, email, phone')
     .eq('id', user.id)
     .single();
 
@@ -32,17 +32,21 @@ export default async function PatientLayout({
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Top bar */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shrink-0">
-        <div className="flex items-center justify-between px-4 sm:px-6 h-14">
-          <span className="text-base font-semibold text-gray-900">BetterNow</span>
-          <div className="flex items-center gap-3">
-            {profile?.first_name && (
-              <span className="text-sm text-gray-500 hidden sm:inline">
-                {profile.first_name}
-              </span>
-            )}
-            <LogoutButton />
-          </div>
+      <header className="sticky top-0 z-20 shrink-0" style={{ backgroundColor: '#0F4C75' }}>
+        <div className="relative flex items-center justify-between px-4 sm:px-6 h-16">
+          {/* Left spacer (balances the gear on the right) */}
+          <div className="w-9" />
+          {/* Centered wordmark */}
+          <span className="absolute left-1/2 -translate-x-1/2 text-base font-semibold text-white tracking-wide select-none">
+            BetterNow
+          </span>
+          {/* Right: gear / settings */}
+          <SettingsSheet
+            firstName={profile?.first_name ?? ''}
+            lastName={profile?.last_name ?? ''}
+            email={profile?.email ?? ''}
+            phone={profile?.phone ?? ''}
+          />
         </div>
       </header>
 
