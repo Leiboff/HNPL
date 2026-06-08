@@ -149,9 +149,7 @@ export default async function PatientDashboardPage() {
   const totalCount   = allPlans.length;
   const pendingPlans = allPlans.filter((p) => p.status === 'pending_acceptance');
   const pendingCount = pendingPlans.length;
-  const currentCount = allPlans.filter((p) =>
-    ['pending_acceptance', 'pending_first_payment', 'active'].includes(p.status)
-  ).length;
+  const currentCount = allPlans.filter((p) => p.status === 'active').length;
 
   // Today in SA time — YYYY-MM-DD string compared directly against due_date
   // (also YYYY-MM-DD from the DB). String comparison is timezone-safe and avoids

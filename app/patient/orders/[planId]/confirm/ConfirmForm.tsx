@@ -57,6 +57,7 @@ type Props = {
   cards:            CardRow[];
   initialPlanType:  2 | 3 | null;
   fromRegistration: boolean;
+  blocked:          boolean;
 };
 
 const POLL_TIMEOUT_S = 10;
@@ -72,6 +73,7 @@ export default function ConfirmForm({
   cards,
   initialPlanType,
   fromRegistration,
+  blocked,
 }: Props) {
   const router = useRouter();
 
@@ -253,7 +255,7 @@ export default function ConfirmForm({
     window.location.href = '/patient/orders';
   }
 
-  const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting && !wantsNewCard;
+  const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting && !wantsNewCard && !blocked;
   const selectedCard = cards.find((c) => c.id === selectedCardId);
   const busy         = submitting || addCardLoading;
 
@@ -270,6 +272,29 @@ export default function ConfirmForm({
         )}
         <p className="text-3xl font-bold text-gray-900 mt-2">{formatRand(totalAmount)}</p>
       </div>
+
+      {/* Blocked notice */}
+      {blocked && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4">
+          <svg
+            className="w-5 h-5 text-amber-700 shrink-0 mt-0.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+            aria-hidden
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z"
+            />
+          </svg>
+          <p className="text-sm font-medium text-amber-900">
+            You can only have more than one payment plan once you&apos;ve completed your first.
+          </p>
+        </div>
+      )}
 
       {/* Section 1 — Choose payment plan */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 space-y-3">
@@ -430,7 +455,7 @@ export default function ConfirmForm({
               <button
                 type="button"
                 onClick={handleAddNewCard}
-                disabled={busy}
+                disabled={busy || blocked}
                 className="inline-flex items-center text-sm font-semibold text-[#0F4C75] hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue →'}
@@ -469,7 +494,7 @@ export default function ConfirmForm({
           <button
             type="button"
             onClick={handleAddNewCard}
-            disabled={!planType || busy}
+            disabled={!planType || busy || blocked}
             className="flex-1 rounded-lg bg-[#0F4C75] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] focus:outline-none focus:ring-2 focus:ring-[#0F4C75] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue'}

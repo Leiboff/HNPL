@@ -5,7 +5,8 @@ import OrdersView from './OrdersView';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
 
-const CURRENT_STATUSES  = new Set(['pending_acceptance', 'pending_first_payment', 'active']);
+const PENDING_STATUSES  = new Set(['pending_acceptance', 'pending_first_payment']);
+const CURRENT_STATUSES  = new Set(['active']);
 const HISTORIC_STATUSES = new Set(['completed', 'declined', 'cancelled', 'defaulted']);
 
 // ─── Types (shared with OrdersView via props) ─────────────────────────────────
@@ -79,17 +80,26 @@ export default async function OrdersPage() {
     }
   }
 
+  const pendingPlans  = plans.filter((p) => PENDING_STATUSES.has(p.status));
   const currentPlans  = plans.filter((p) => CURRENT_STATUSES.has(p.status));
   const historicPlans = plans.filter((p) => HISTORIC_STATUSES.has(p.status));
+
+  const hasInProgress = plans.some(
+    (p) => p.status === 'pending_first_payment' || p.status === 'active',
+  );
+  const hasCompleted   = plans.some((p) => p.status === 'completed');
+  const patientBlocked = hasInProgress && !hasCompleted;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
       <h1 className="text-2xl font-semibold text-gray-900 mb-6">Orders</h1>
       <OrdersView
+        pendingPlans={pendingPlans}
         currentPlans={currentPlans}
         historicPlans={historicPlans}
         declinePlan={declinePlan}
         specialtyMap={specialtyMap}
+        patientBlocked={patientBlocked}
       />
     </div>
   );

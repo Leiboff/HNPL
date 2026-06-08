@@ -231,7 +231,7 @@ export default async function NewBillPage() {
     .select('user_id, profiles(first_name, last_name)')
     .eq('practice_id', practiceId)
     .eq('active', true)
-    .in('role', ['admin', 'provider']);
+    .eq('role', 'provider');
 
   const providers: ProviderOption[] = (memberRows ?? []).map((m: any) => {
     const p = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;

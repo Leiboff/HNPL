@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { createPractice, type ProviderInput } from './actions';
+import { createPractice, type MemberInput } from './actions';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ const BANK_BRANCH_CODES: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const INPUT = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-[#0F4C75] focus:outline-none focus:ring-1 focus:ring-[#0F4C75] bg-white';
+const INPUT = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20 bg-white';
 const LABEL = 'block text-sm font-medium text-gray-700 mb-1';
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -46,23 +46,29 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 // ─── State types ──────────────────────────────────────────────────────────────
 
-type Step1 = { firstName: string; lastName: string; email: string; password: string; confirm: string; phone: string; saIdNumber: string };
-type Step2 = { practiceName: string; specialty: string; hpcsaNumber: string; practiceRegNumber: string; adminEmail: string; contactPhone: string; addressLine1: string; addressLine2: string; suburb: string; city: string; province: string; postalCode: string };
-type Step3 = { accountHolder: string; bankName: string; bankAccountNumber: string; branchCode: string; accountType: string };
-type Step4 = { isSoleProvider: boolean; adminSpecialty: string; adminHpcsaNumber: string; providers: ProviderInput[] };
+type StepAdmin     = { firstName: string; lastName: string; email: string; password: string; confirm: string; phone: string; saIdNumber: string };
+type StepPractice  = { practiceName: string; specialty: string; hpcsaNumber: string; practiceRegNumber: string; adminEmail: string; contactPhone: string; addressLine1: string; addressLine2: string; suburb: string; city: string; province: string; postalCode: string };
+type StepBanking   = { accountHolder: string; bankName: string; bankAccountNumber: string; branchCode: string; accountType: string };
+type StepProviders = { adminIsProvider: boolean; adminSpecialty: string; adminHpcsaNumber: string; members: MemberInput[] };
 
-const blank1: Step1 = { firstName: '', lastName: '', email: '', password: '', confirm: '', phone: '', saIdNumber: '' };
-const blank2: Step2 = { practiceName: '', specialty: '', hpcsaNumber: '', practiceRegNumber: '', adminEmail: '', contactPhone: '', addressLine1: '', addressLine2: '', suburb: '', city: '', province: '', postalCode: '' };
-const blank3: Step3 = { accountHolder: '', bankName: '', bankAccountNumber: '', branchCode: '', accountType: '' };
-const blankProvider: () => ProviderInput = () => ({ firstName: '', lastName: '', email: '', specialty: '', hpcsaNumber: '', saIdNumber: '', payoutDestination: 'practice', bankName: '', accountHolder: '', accountNumber: '', branchCode: '', accountType: '' });
+const blankAdmin:    StepAdmin    = { firstName: '', lastName: '', email: '', password: '', confirm: '', phone: '', saIdNumber: '' };
+const blankPractice: StepPractice = { practiceName: '', specialty: '', hpcsaNumber: '', practiceRegNumber: '', adminEmail: '', contactPhone: '', addressLine1: '', addressLine2: '', suburb: '', city: '', province: '', postalCode: '' };
+const blankBanking:  StepBanking  = { accountHolder: '', bankName: '', bankAccountNumber: '', branchCode: '', accountType: '' };
+const blankMember: () => MemberInput = () => ({ memberRole: 'provider', canCreateBills: false, canManagePractice: false, firstName: '', lastName: '', email: '', specialty: '', hpcsaNumber: '', saIdNumber: '', payoutDestination: 'practice', bankName: '', accountHolder: '', accountNumber: '', branchCode: '', accountType: '' });
 
 // ─── Step components ──────────────────────────────────────────────────────────
 
-function Step1Form({ data, onChange }: { data: Step1; onChange: (d: Step1) => void }) {
-  const set = (key: keyof Step1) => (e: React.ChangeEvent<HTMLInputElement>) =>
+function StepAdminForm({ data, onChange }: { data: StepAdmin; onChange: (d: StepAdmin) => void }) {
+  const set = (key: keyof StepAdmin) => (e: React.ChangeEvent<HTMLInputElement>) =>
     onChange({ ...data, [key]: e.target.value });
   return (
     <div className="space-y-5">
+      <div className="rounded-xl border border-[#13294B]/20 bg-[#13294B]/5 px-4 py-3">
+        <p className="text-xs font-semibold text-[#13294B] mb-0.5">Your BetterNow account</p>
+        <p className="text-xs text-[#13294B]/80 leading-relaxed">
+          This is your personal BetterNow account — the person completing this setup. You&apos;ll have full management access to the practice. In the next step, tell us whether you&apos;re admin staff or a clinician.
+        </p>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="First name"><input className={INPUT} type="text" required value={data.firstName} onChange={set('firstName')} placeholder="Jane" /></Field>
         <Field label="Last name"><input className={INPUT} type="text" required value={data.lastName} onChange={set('lastName')} placeholder="Smith" /></Field>
@@ -76,8 +82,8 @@ function Step1Form({ data, onChange }: { data: Step1; onChange: (d: Step1) => vo
   );
 }
 
-function Step2Form({ data, onChange }: { data: Step2; onChange: (d: Step2) => void }) {
-  const set = (key: keyof Step2) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+function StepPracticeForm({ data, onChange }: { data: StepPractice; onChange: (d: StepPractice) => void }) {
+  const set = (key: keyof StepPractice) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     onChange({ ...data, [key]: e.target.value });
   return (
     <div className="space-y-5">
@@ -113,8 +119,8 @@ function Step2Form({ data, onChange }: { data: Step2; onChange: (d: Step2) => vo
   );
 }
 
-function Step3Form({ data, onChange }: { data: Step3; onChange: (d: Step3) => void }) {
-  const set = (key: keyof Step3) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+function StepBankingForm({ data, onChange }: { data: StepBanking; onChange: (d: StepBanking) => void }) {
+  const set = (key: keyof StepBanking) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const update = { ...data, [key]: e.target.value };
     if (key === 'bankName') {
       update.branchCode = BANK_BRANCH_CODES[e.target.value] ?? '';
@@ -123,7 +129,7 @@ function Step3Form({ data, onChange }: { data: Step3; onChange: (d: Step3) => vo
   };
   return (
     <div className="space-y-5">
-      <p className="text-sm text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-4 py-3">
+      <p className="text-sm text-gray-600 rounded-lg px-4 py-3" style={{ background: 'rgba(21,168,158,.07)', border: '1px solid rgba(21,168,158,.2)' }}>
         This account will receive practice-level payouts. Individual providers can also have their own payout accounts set up below.
       </p>
       <Field label="Account holder"><input className={INPUT} type="text" required value={data.accountHolder} onChange={set('accountHolder')} placeholder="Jane Smith" /></Field>
@@ -146,117 +152,199 @@ function Step3Form({ data, onChange }: { data: Step3; onChange: (d: Step3) => vo
   );
 }
 
-function ProviderCard({
-  p, idx, onChange, onRemove,
+function MemberCard({
+  m, idx, onChange, onRemove,
 }: {
-  p: ProviderInput;
+  m: MemberInput;
   idx: number;
-  onChange: (updated: ProviderInput) => void;
+  onChange: (updated: MemberInput) => void;
   onRemove: () => void;
 }) {
-  const set = (key: keyof ProviderInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const update = { ...p, [key]: e.target.value } as ProviderInput;
+  const set = (key: keyof MemberInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const update = { ...m, [key]: e.target.value } as MemberInput;
     if (key === 'bankName') {
       (update as any).branchCode = BANK_BRANCH_CODES[e.target.value] ?? '';
     }
     onChange(update);
   };
-  const setDest = (dest: 'practice' | 'provider') => onChange({ ...p, payoutDestination: dest });
+  const setRole = (role: 'provider' | 'manager') => onChange({ ...m, memberRole: role });
+  const setDest = (dest: 'practice' | 'provider') => onChange({ ...m, payoutDestination: dest });
+  const setBool = (key: 'canCreateBills' | 'canManagePractice', val: boolean) => onChange({ ...m, [key]: val });
 
   return (
     <div className="border border-gray-200 rounded-xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-gray-700">Provider {idx + 1}</span>
+        <span className="text-sm font-semibold text-gray-700">Member {idx + 1}</span>
         <button type="button" onClick={onRemove} className="text-xs text-red-500 hover:text-red-700">× Remove</button>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="First name"><input className={INPUT} type="text" required value={p.firstName} onChange={set('firstName')} placeholder="John" /></Field>
-        <Field label="Last name"><input className={INPUT} type="text" required value={p.lastName} onChange={set('lastName')} placeholder="Doe" /></Field>
-      </div>
-      <Field label="Email address"><input className={INPUT} type="email" required value={p.email} onChange={set('email')} placeholder="john@practice.co.za" /></Field>
-      <Field label="Specialty">
-        <select className={INPUT} required value={p.specialty} onChange={set('specialty')}>
-          <option value="">Select…</option>
-          {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="HPCSA number (optional)"><input className={INPUT} type="text" value={p.hpcsaNumber} onChange={set('hpcsaNumber')} placeholder="Optional" /></Field>
-        <Field label="SA ID number"><input className={INPUT} type="text" required maxLength={13} inputMode="numeric" value={p.saIdNumber} onChange={set('saIdNumber')} placeholder="13 digits" /></Field>
-      </div>
 
+      {/* Role selector */}
       <div>
-        <p className={LABEL}>Payout destination</p>
-        <div className="grid grid-cols-2 gap-2">
-          {(['practice', 'provider'] as const).map(dest => (
-            <button
-              key={dest}
-              type="button"
-              onClick={() => setDest(dest)}
-              className={`rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors ${p.payoutDestination === dest ? 'border-[#0F4C75] bg-[#0F4C75]/5 text-[#0F4C75]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-            >
-              {dest === 'practice' ? 'Practice account' : "Provider's own account"}
-            </button>
-          ))}
+        <p className={LABEL}>Role</p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setRole('provider')}
+            className={`flex flex-col items-start rounded-xl border-2 p-4 text-left cursor-pointer transition-colors ${m.memberRole === 'provider' ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}
+          >
+            <svg className="w-5 h-5 mb-2 shrink-0" style={{ color: '#13294B' }} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+            </svg>
+            <p className="text-sm font-semibold leading-tight">Doctor / Clinician</p>
+            <p className="text-xs mt-0.5 opacity-75 leading-snug">Sees patients at this practice</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setRole('manager')}
+            className={`flex flex-col items-start rounded-xl border-2 p-4 text-left cursor-pointer transition-colors ${m.memberRole === 'manager' ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'}`}
+          >
+            <svg className="w-5 h-5 mb-2 shrink-0" style={{ color: '#13294B' }} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
+            </svg>
+            <p className="text-sm font-semibold leading-tight">Admin staff</p>
+            <p className="text-xs mt-0.5 opacity-75 leading-snug">Admin or reception staff at this practice</p>
+          </button>
         </div>
       </div>
 
-      {p.payoutDestination === 'provider' && (
-        <div className="space-y-4 border-t border-gray-100 pt-4">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Personal banking details</p>
-          <Field label="Bank">
-            <select className={INPUT} required value={p.bankName} onChange={set('bankName')}>
-              <option value="">Select bank…</option>
-              {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-          </Field>
-          <Field label="Account holder"><input className={INPUT} type="text" required value={p.accountHolder} onChange={set('accountHolder')} /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Account number"><input className={INPUT} type="text" required value={p.accountNumber} onChange={set('accountNumber')} /></Field>
-            <Field label="Branch code"><input className={INPUT} type="text" required value={p.branchCode} onChange={set('branchCode')} /></Field>
+      {/* Always shown */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="First name"><input className={INPUT} type="text" required value={m.firstName} onChange={set('firstName')} placeholder="John" /></Field>
+        <Field label="Last name"><input className={INPUT} type="text" required value={m.lastName} onChange={set('lastName')} placeholder="Doe" /></Field>
+      </div>
+      <Field label="Email address"><input className={INPUT} type="email" required value={m.email} onChange={set('email')} placeholder="john@practice.co.za" /></Field>
+      <Field label="SA ID number"><input className={INPUT} type="text" required maxLength={13} inputMode="numeric" value={m.saIdNumber} onChange={set('saIdNumber')} placeholder="13 digits" /></Field>
+
+      {/* Capabilities */}
+      <div className="space-y-3">
+        <p className={LABEL}>Permissions</p>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-700">Can create bills</span>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setBool('canCreateBills', true)}
+              className={`rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${m.canCreateBills ? 'border-green-400 bg-green-50 text-green-700' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>Yes</button>
+            <button type="button" onClick={() => setBool('canCreateBills', false)}
+              className={`rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${!m.canCreateBills ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>No</button>
           </div>
-          <Field label="Account type">
-            <select className={INPUT} required value={p.accountType} onChange={set('accountType')}>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-700">Admin access</span>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setBool('canManagePractice', true)}
+              className={`rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${m.canManagePractice ? 'border-green-400 bg-green-50 text-green-700' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>Yes</button>
+            <button type="button" onClick={() => setBool('canManagePractice', false)}
+              className={`rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${!m.canManagePractice ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'}`}>No</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Clinical details + payout — providers only */}
+      {m.memberRole === 'provider' && (
+        <>
+          <Field label="Specialty">
+            <select className={INPUT} required value={m.specialty} onChange={set('specialty')}>
               <option value="">Select…</option>
-              <option value="current">Current</option>
-              <option value="savings">Savings</option>
+              {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
-        </div>
+          <Field label="HPCSA number (optional)">
+            <input className={INPUT} type="text" value={m.hpcsaNumber} onChange={set('hpcsaNumber')} placeholder="Optional" />
+          </Field>
+          <div>
+            <p className={LABEL}>Payout destination</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(['practice', 'provider'] as const).map(dest => (
+                <button
+                  key={dest}
+                  type="button"
+                  onClick={() => setDest(dest)}
+                  className={`rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors ${m.payoutDestination === dest ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                >
+                  {dest === 'practice' ? 'Practice account' : "Provider's own account"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {m.payoutDestination === 'provider' && (
+            <div className="space-y-4 border-t border-gray-100 pt-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Personal banking details</p>
+              <Field label="Bank">
+                <select className={INPUT} required value={m.bankName} onChange={set('bankName')}>
+                  <option value="">Select bank…</option>
+                  {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </Field>
+              <Field label="Account holder"><input className={INPUT} type="text" required value={m.accountHolder} onChange={set('accountHolder')} /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Account number"><input className={INPUT} type="text" required value={m.accountNumber} onChange={set('accountNumber')} /></Field>
+                <Field label="Branch code"><input className={INPUT} type="text" required value={m.branchCode} onChange={set('branchCode')} /></Field>
+              </div>
+              <Field label="Account type">
+                <select className={INPUT} required value={m.accountType} onChange={set('accountType')}>
+                  <option value="">Select…</option>
+                  <option value="current">Current</option>
+                  <option value="savings">Savings</option>
+                </select>
+              </Field>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function Step4Form({ data, onChange }: { data: Step4; onChange: (d: Step4) => void }) {
-  const setProvider = (idx: number, updated: ProviderInput) => {
-    const providers = data.providers.map((p, i) => i === idx ? updated : p);
-    onChange({ ...data, providers });
+function StepProvidersForm({ data, onChange }: { data: StepProviders; onChange: (d: StepProviders) => void }) {
+  const setMember    = (idx: number, updated: MemberInput) => {
+    const members = data.members.map((m, i) => i === idx ? updated : m);
+    onChange({ ...data, members });
   };
-  const addProvider = () => onChange({ ...data, providers: [...data.providers, blankProvider()] });
-  const removeProvider = (idx: number) => onChange({ ...data, providers: data.providers.filter((_, i) => i !== idx) });
+  const addMember    = () => onChange({ ...data, members: [...data.members, blankMember()] });
+  const removeMember = (idx: number) => onChange({ ...data, members: data.members.filter((_, i) => i !== idx) });
 
   return (
     <div className="space-y-6">
+
+      {/* Section A — admin's own clinical role (independent of other providers) */}
       <div>
-        <p className={LABEL}>Are you the sole healthcare provider at this practice?</p>
-        <div className="grid grid-cols-2 gap-2">
-          {[true, false].map(val => (
-            <button
-              key={String(val)}
-              type="button"
-              onClick={() => onChange({ ...data, isSoleProvider: val, providers: val ? [] : data.providers.length ? data.providers : [blankProvider()] })}
-              className={`rounded-lg border-2 px-3 py-2.5 text-sm font-medium transition-colors ${data.isSoleProvider === val ? 'border-[#0F4C75] bg-[#0F4C75]/5 text-[#0F4C75]' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
-            >
-              {val ? 'Yes, I\'m the only provider' : 'No, I have providers to add'}
-            </button>
-          ))}
+        <p className={LABEL}>What is your role at this practice?</p>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => onChange({ ...data, adminIsProvider: false })}
+            className={`flex flex-col items-start rounded-xl border-2 p-4 text-left cursor-pointer transition-colors ${
+              data.adminIsProvider === false
+                ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
+                : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <svg className="w-5 h-5 mb-2 shrink-0" style={{ color: '#13294B' }} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
+            </svg>
+            <p className="text-sm font-semibold leading-tight">Admin staff</p>
+            <p className="text-xs mt-0.5 opacity-75 leading-snug">I manage the practice but don&apos;t see patients</p>
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange({ ...data, adminIsProvider: true })}
+            className={`flex flex-col items-start rounded-xl border-2 p-4 text-left cursor-pointer transition-colors ${
+              data.adminIsProvider === true
+                ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
+                : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <svg className="w-5 h-5 mb-2 shrink-0" style={{ color: '#13294B' }} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+            </svg>
+            <p className="text-sm font-semibold leading-tight">Doctor / Clinician</p>
+            <p className="text-xs mt-0.5 opacity-75 leading-snug">I see patients and may also manage the practice</p>
+          </button>
         </div>
       </div>
 
-      {data.isSoleProvider && (
+      {data.adminIsProvider && (
         <div className="space-y-4 border border-gray-200 rounded-xl p-5">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Your provider details</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Your clinical details</p>
           <Field label="Specialty">
             <select className={INPUT} value={data.adminSpecialty} onChange={e => onChange({ ...data, adminSpecialty: e.target.value })}>
               <option value="">Select specialty…</option>
@@ -269,26 +357,30 @@ function Step4Form({ data, onChange }: { data: Step4; onChange: (d: Step4) => vo
         </div>
       )}
 
-      {!data.isSoleProvider && (
-        <div className="space-y-4">
-          {data.providers.map((p, idx) => (
-            <ProviderCard
-              key={idx}
-              p={p}
-              idx={idx}
-              onChange={updated => setProvider(idx, updated)}
-              onRemove={() => removeProvider(idx)}
-            />
-          ))}
-          <button
-            type="button"
-            onClick={addProvider}
-            className="w-full rounded-lg border-2 border-dashed border-gray-300 py-3 text-sm font-medium text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors"
-          >
-            + Add another provider
-          </button>
+      {/* Section B — team members (always visible, always independent) */}
+      <div className="space-y-4">
+        <div>
+          <p className={LABEL}>Add team members</p>
+          <p className="mt-0.5 text-xs text-gray-400">Add doctors, specialists, managers, or admin staff. Each person will receive an email invite to set up their account.</p>
         </div>
-      )}
+        {data.members.map((m, idx) => (
+          <MemberCard
+            key={idx}
+            m={m}
+            idx={idx}
+            onChange={updated => setMember(idx, updated)}
+            onRemove={() => removeMember(idx)}
+          />
+        ))}
+        <button
+          type="button"
+          onClick={addMember}
+          className="w-full rounded-lg border-2 border-dashed border-gray-300 py-3 text-sm font-medium text-gray-500 hover:border-gray-400 hover:text-gray-700 transition-colors"
+        >
+          + Add team member
+        </button>
+      </div>
+
     </div>
   );
 }
@@ -316,45 +408,59 @@ function ReviewSection({ title, children }: { title: string; children: React.Rea
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const STEPS = ['Admin account', 'Practice details', 'Banking', 'Providers', 'Review'];
+const STEPS = ['Practice details', 'Banking', 'Your account', 'Providers', 'Review'];
 
 export default function PracticeSignupPage() {
-  const [step, setStep]   = useState(1);
-  const [step1, setStep1] = useState<Step1>(blank1);
-  const [step2, setStep2] = useState<Step2>(blank2);
-  const [step3, setStep3] = useState<Step3>(blank3);
-  const [step4, setStep4] = useState<Step4>({ isSoleProvider: true, adminSpecialty: '', adminHpcsaNumber: '', providers: [] });
+  const [step, setStep]                     = useState(1);
+  const [stepAdmin,     setStepAdmin]       = useState<StepAdmin>(blankAdmin);
+  const [stepPractice,  setStepPractice]    = useState<StepPractice>(blankPractice);
+  const [stepBanking,   setStepBanking]     = useState<StepBanking>(blankBanking);
+  const [stepProviders, setStepProviders]   = useState<StepProviders>({ adminIsProvider: false, adminSpecialty: '', adminHpcsaNumber: '', members: [] });
   const [error,   setError]   = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   function validateStep(): string | null {
     if (step === 1) {
-      if (!step1.firstName.trim()) return 'First name is required.';
-      if (!step1.lastName.trim())  return 'Last name is required.';
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(step1.email)) return 'Enter a valid email address.';
-      if (step1.password.length < 8) return 'Password must be at least 8 characters.';
-      if (step1.password !== step1.confirm) return 'Passwords do not match.';
-      if (!/^\d{13}$/.test(step1.saIdNumber)) return 'SA ID number must be 13 digits.';
-      if (!step1.phone.trim()) return 'Phone number is required.';
+      if (!stepPractice.practiceName.trim()) return 'Practice name is required.';
+      if (!stepPractice.specialty) return 'Specialty is required.';
+      if (!stepPractice.adminEmail.trim()) return 'Practice email is required.';
+      if (!stepPractice.contactPhone.trim()) return 'Contact phone is required.';
+      if (!stepPractice.addressLine1.trim()) return 'Street address is required.';
+      if (!stepPractice.city.trim()) return 'City is required.';
+      if (!stepPractice.province) return 'Province is required.';
     }
     if (step === 2) {
-      if (!step2.practiceName.trim()) return 'Practice name is required.';
-      if (!step2.specialty) return 'Specialty is required.';
-      if (!step2.adminEmail.trim()) return 'Practice email is required.';
-      if (!step2.contactPhone.trim()) return 'Contact phone is required.';
-      if (!step2.addressLine1.trim()) return 'Street address is required.';
-      if (!step2.city.trim()) return 'City is required.';
-      if (!step2.province) return 'Province is required.';
+      if (!stepBanking.accountHolder.trim()) return 'Account holder is required.';
+      if (!stepBanking.bankName) return 'Bank is required.';
+      if (!stepBanking.bankAccountNumber.trim()) return 'Account number is required.';
+      if (!stepBanking.branchCode.trim()) return 'Branch code is required.';
+      if (!stepBanking.accountType) return 'Account type is required.';
     }
     if (step === 3) {
-      if (!step3.accountHolder.trim()) return 'Account holder is required.';
-      if (!step3.bankName) return 'Bank is required.';
-      if (!step3.bankAccountNumber.trim()) return 'Account number is required.';
-      if (!step3.branchCode.trim()) return 'Branch code is required.';
-      if (!step3.accountType) return 'Account type is required.';
+      if (!stepAdmin.firstName.trim()) return 'First name is required.';
+      if (!stepAdmin.lastName.trim())  return 'Last name is required.';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stepAdmin.email)) return 'Enter a valid email address.';
+      if (stepAdmin.password.length < 8) return 'Password must be at least 8 characters.';
+      if (stepAdmin.password !== stepAdmin.confirm) return 'Passwords do not match.';
+      if (!/^\d{13}$/.test(stepAdmin.saIdNumber)) return 'SA ID number must be 13 digits.';
+      if (!stepAdmin.phone.trim()) return 'Phone number is required.';
     }
-    if (step === 4 && !step4.isSoleProvider && step4.providers.length === 0) {
-      return 'Add at least one provider, or select "I\'m the only provider".';
+    if (step === 4) {
+      const hasClinician = stepProviders.adminIsProvider || stepProviders.members.some(m => m.memberRole === 'provider');
+      if (!hasClinician) return 'At least one doctor or clinician is required.';
+      if (stepProviders.adminIsProvider && !stepProviders.adminSpecialty) return 'Please select your specialty.';
+      for (const m of stepProviders.members) {
+        if (!m.firstName.trim() || !m.lastName.trim()) return 'Team member name is required.';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m.email)) return 'Team member email is invalid.';
+        if (!/^\d{13}$/.test(m.saIdNumber)) return 'Team member SA ID must be 13 digits.';
+        if (m.memberRole === 'provider') {
+          if (!m.specialty) return `Specialty is required for ${m.firstName || 'this provider'}.`;
+          if (m.payoutDestination === 'provider') {
+            if (!m.bankName || !m.accountHolder.trim() || !m.accountNumber.trim() || !m.branchCode.trim() || !m.accountType)
+              return `Banking details required for ${m.firstName}'s personal payout.`;
+          }
+        }
+      }
     }
     return null;
   }
@@ -371,17 +477,17 @@ export default function PracticeSignupPage() {
     setLoading(true);
 
     const result = await createPractice({
-      ...step1,
-      ...step2,
-      accountHolder:     step3.accountHolder,
-      bankName:          step3.bankName,
-      bankAccountNumber: step3.bankAccountNumber,
-      branchCode:        step3.branchCode,
-      accountType:       step3.accountType as 'current' | 'savings',
-      isSoleProvider:    step4.isSoleProvider,
-      adminSpecialty:    step4.adminSpecialty,
-      adminHpcsaNumber:  step4.adminHpcsaNumber,
-      providers:         step4.providers,
+      ...stepAdmin,
+      ...stepPractice,
+      accountHolder:     stepBanking.accountHolder,
+      bankName:          stepBanking.bankName,
+      bankAccountNumber: stepBanking.bankAccountNumber,
+      branchCode:        stepBanking.branchCode,
+      accountType:       stepBanking.accountType as 'current' | 'savings',
+      adminIsProvider:   stepProviders.adminIsProvider,
+      adminSpecialty:    stepProviders.adminSpecialty,
+      adminHpcsaNumber:  stepProviders.adminHpcsaNumber,
+      members:           stepProviders.members,
     });
 
     setLoading(false);
@@ -396,13 +502,27 @@ export default function PracticeSignupPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
+    <div
+      className="min-h-screen py-12 px-4"
+      style={{
+        background: '#f7fbfb',
+        backgroundImage: 'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
+      }}
+    >
       <div className="mx-auto max-w-xl">
 
         {/* Header */}
         <div className="mb-8 text-center">
-          <Link href="/" className="text-xl font-bold" style={{ color: '#0F4C75' }}>BetterNow</Link>
-          <h1 className="mt-3 text-2xl font-semibold text-gray-900">Register your practice</h1>
+          <Link
+            href="/"
+            className="inline-block text-2xl font-bold tracking-tight mb-1"
+            style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
+          >
+            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+          </Link>
+          <h1 className="mt-2 text-2xl font-semibold text-gray-900" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+            Register your practice
+          </h1>
           <p className="mt-1 text-sm text-gray-500">Start offering interest-free payment plans in minutes.</p>
         </div>
 
@@ -415,7 +535,7 @@ export default function PracticeSignupPage() {
             return (
               <div key={n} className="flex items-center gap-1 flex-1">
                 <div className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold shrink-0 transition-colors ${active ? 'text-white' : complete ? 'text-white' : 'bg-gray-200 text-gray-500'}`}
-                  style={active || complete ? { backgroundColor: '#0F4C75' } : undefined}>
+                  style={active || complete ? { backgroundColor: '#13294B' } : undefined}>
                   {complete ? '✓' : n}
                 </div>
                 <span className={`text-xs hidden sm:block truncate ${active ? 'font-semibold text-gray-900' : 'text-gray-400'}`}>{label}</span>
@@ -431,44 +551,125 @@ export default function PracticeSignupPage() {
             Step {step}: {STEPS[step - 1]}
           </h2>
 
-          {step === 1 && <Step1Form data={step1} onChange={setStep1} />}
-          {step === 2 && <Step2Form data={step2} onChange={setStep2} />}
-          {step === 3 && <Step3Form data={step3} onChange={setStep3} />}
-          {step === 4 && <Step4Form data={step4} onChange={setStep4} />}
+          {step === 1 && <StepPracticeForm  data={stepPractice}  onChange={setStepPractice}  />}
+          {step === 2 && <StepBankingForm   data={stepBanking}   onChange={setStepBanking}   />}
+          {step === 3 && <StepAdminForm     data={stepAdmin}     onChange={setStepAdmin}     />}
+          {step === 4 && <StepProvidersForm data={stepProviders} onChange={setStepProviders} />}
 
           {step === 5 && (
             <div className="space-y-5">
-              <ReviewSection title="Admin account">
-                <ReviewRow label="Name"  value={`${step1.firstName} ${step1.lastName}`} />
-                <ReviewRow label="Email" value={step1.email} />
-                <ReviewRow label="Phone" value={step1.phone} />
-              </ReviewSection>
               <ReviewSection title="Practice details">
-                <ReviewRow label="Name"      value={step2.practiceName} />
-                <ReviewRow label="Specialty" value={step2.specialty} />
-                <ReviewRow label="Email"     value={step2.adminEmail} />
-                <ReviewRow label="Phone"     value={step2.contactPhone} />
-                <ReviewRow label="Address"   value={[step2.addressLine1, step2.addressLine2, step2.suburb, step2.city, step2.province, step2.postalCode].filter(Boolean).join(', ')} />
+                <ReviewRow label="Name"      value={stepPractice.practiceName} />
+                <ReviewRow label="Specialty" value={stepPractice.specialty} />
+                <ReviewRow label="Email"     value={stepPractice.adminEmail} />
+                <ReviewRow label="Phone"     value={stepPractice.contactPhone} />
+                <ReviewRow label="Address"   value={[stepPractice.addressLine1, stepPractice.addressLine2, stepPractice.suburb, stepPractice.city, stepPractice.province, stepPractice.postalCode].filter(Boolean).join(', ')} />
               </ReviewSection>
-              <ReviewSection title="Banking">
-                <ReviewRow label="Bank"           value={step3.bankName} />
-                <ReviewRow label="Account holder" value={step3.accountHolder} />
-                <ReviewRow label="Account number" value={`•••• ${step3.bankAccountNumber.slice(-4)}`} />
-                <ReviewRow label="Account type"   value={step3.accountType} />
+              <ReviewSection title="Practice banking details">
+                <ReviewRow label="Bank"           value={stepBanking.bankName} />
+                <ReviewRow label="Account holder" value={stepBanking.accountHolder} />
+                <ReviewRow label="Account number" value={`•••• ${stepBanking.bankAccountNumber.slice(-4)}`} />
+                <ReviewRow label="Account type"   value={stepBanking.accountType} />
               </ReviewSection>
-              <ReviewSection title="Providers">
-                {step4.isSoleProvider ? (
-                  <ReviewRow label="Setup" value="Sole provider (admin)" />
-                ) : (
-                  step4.providers.map((p, i) => (
-                    <ReviewRow
-                      key={i}
-                      label={`Provider ${i + 1}`}
-                      value={`${p.firstName} ${p.lastName} — ${p.specialty} — Pays to: ${p.payoutDestination === 'practice' ? 'practice' : 'personal account'}`}
-                    />
-                  ))
-                )}
+              <ReviewSection title="Practice accounts">
+                <div className="space-y-5 py-3">
+
+                  {/* PROVIDERS sub-section */}
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Providers</p>
+                    <div className="space-y-3">
+                      {stepProviders.adminIsProvider && (
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Provider 1 (You)</span>
+                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#13294B]/10 text-[#13294B]">Doctor / Clinician</span>
+                          </div>
+                          <p className="text-sm font-semibold text-gray-900">{stepAdmin.firstName} {stepAdmin.lastName}</p>
+                          <p className="text-sm text-gray-500">{stepAdmin.email}</p>
+                          {stepProviders.adminSpecialty && <p className="text-sm text-gray-600">Specialty: {stepProviders.adminSpecialty}</p>}
+                          <p className="text-sm text-gray-600">Payout: Practice account</p>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Can create bills</span>
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Admin access</span>
+                          </div>
+                        </div>
+                      )}
+                      {(() => {
+                        let pIdx = stepProviders.adminIsProvider ? 1 : 0;
+                        const providerMembers = stepProviders.members.filter(m => m.memberRole === 'provider');
+                        if (!stepProviders.adminIsProvider && providerMembers.length === 0) {
+                          return <p className="text-sm text-gray-400">None added</p>;
+                        }
+                        return providerMembers.map((m, i) => (
+                          <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Provider {++pIdx}</span>
+                              <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#13294B]/10 text-[#13294B]">Doctor / Clinician</span>
+                            </div>
+                            <p className="text-sm font-semibold text-gray-900">{m.firstName} {m.lastName}</p>
+                            <p className="text-sm text-gray-500">{m.email}</p>
+                            {m.specialty && <p className="text-sm text-gray-600">Specialty: {m.specialty}</p>}
+                            {m.hpcsaNumber && <p className="text-sm text-gray-600">HPCSA: {m.hpcsaNumber}</p>}
+                            <p className="text-sm text-gray-600">
+                              Payout: {m.payoutDestination === 'provider'
+                                ? `Personal account${m.bankName ? ` · ${m.bankName}` : ''}`
+                                : 'Practice account'}
+                            </p>
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${m.canCreateBills ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>Can create bills</span>
+                              {m.canManagePractice && <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Admin access</span>}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* ADMIN STAFF sub-section */}
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Admin staff</p>
+                    <div className="space-y-3">
+                      {!stepProviders.adminIsProvider && (
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">You</span>
+                            <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">Admin staff</span>
+                          </div>
+                          <p className="text-sm font-semibold text-gray-900">{stepAdmin.firstName} {stepAdmin.lastName}</p>
+                          <p className="text-sm text-gray-500">{stepAdmin.email}</p>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Can create bills</span>
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Admin access</span>
+                          </div>
+                        </div>
+                      )}
+                      {(() => {
+                        let mIdx = 0;
+                        const managerMembers = stepProviders.members.filter(m => m.memberRole === 'manager');
+                        if (stepProviders.adminIsProvider && managerMembers.length === 0) {
+                          return <p className="text-sm text-gray-400">None added</p>;
+                        }
+                        return managerMembers.map((m, i) => (
+                          <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Admin {++mIdx}</span>
+                              <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">Admin staff</span>
+                            </div>
+                            <p className="text-sm font-semibold text-gray-900">{m.firstName} {m.lastName}</p>
+                            <p className="text-sm text-gray-500">{m.email}</p>
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${m.canCreateBills ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>Can create bills</span>
+                              {m.canManagePractice && <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">Admin access</span>}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+
+                </div>
               </ReviewSection>
+              <p className="text-xs text-gray-400">Need to add an office manager or receptionist? You can do this from your practice dashboard after setup.</p>
             </div>
           )}
 
@@ -492,8 +693,8 @@ export default function PracticeSignupPage() {
               <button
                 type="button"
                 onClick={handleNext}
-                className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors"
-                style={{ backgroundColor: '#0F4C75' }}
+                className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+                style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
               >
                 Continue
               </button>
@@ -502,8 +703,8 @@ export default function PracticeSignupPage() {
                 type="button"
                 onClick={handleSubmit}
                 disabled={loading}
-                className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ backgroundColor: '#0F4C75' }}
+                className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
               >
                 {loading ? 'Creating practice…' : 'Create practice'}
               </button>
@@ -513,7 +714,7 @@ export default function PracticeSignupPage() {
 
         <p className="mt-6 text-center text-sm text-gray-500">
           Already registered?{' '}
-          <Link href="/login" className="font-medium" style={{ color: '#0F4C75' }}>Sign in →</Link>
+          <Link href="/login" className="font-semibold hover:underline" style={{ color: '#13294B' }}>Sign in →</Link>
         </p>
       </div>
     </div>

@@ -20,7 +20,7 @@ export default async function ConfirmPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: rawPlan }, { data: profile }, { data: rawCards }] = await Promise.all([
+  const [{ data: rawPlan }, { data: profile }, { data: rawCards }, { data: rawProgress }] = await Promise.all([
     supabase
       .from('plans')
       .select('id, total_amount, status, invoice_number, practice_reference, practices(name)')
@@ -39,9 +39,21 @@ export default async function ConfirmPage({
       .eq('patient_id', user.id)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false }),
+    supabase
+      .from('plans')
+      .select('status')
+      .eq('patient_id', user.id)
+      .in('status', ['pending_first_payment', 'active', 'completed']),
   ]);
 
   if (!rawPlan) redirect('/patient/orders');
+
+  const progressRows = (rawProgress ?? []) as { status: string }[];
+  const hasInProgress = progressRows.some(
+    (r) => r.status === 'pending_first_payment' || r.status === 'active',
+  );
+  const hasCompleted = progressRows.some((r) => r.status === 'completed');
+  const blocked = hasInProgress && !hasCompleted;
 
   const practicesRaw = rawPlan.practices as { name: string } | { name: string }[] | null;
   const practiceName = !practicesRaw
@@ -97,6 +109,7 @@ export default async function ConfirmPage({
         cards={cards}
         initialPlanType={initialPlanType}
         fromRegistration={fromRegistration}
+        blocked={blocked}
       />
     </div>
   );

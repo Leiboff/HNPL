@@ -6,6 +6,22 @@ import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { paystackRequest } from '@/lib/paystack';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 
+async function isBlockedFromNewPlan(patientId: string): Promise<boolean> {
+  const supabase = await createClient();
+  const { data: rows } = await supabase
+    .from('plans')
+    .select('status')
+    .eq('patient_id', patientId)
+    .in('status', ['pending_first_payment', 'active', 'completed']);
+
+  if (!rows || rows.length === 0) return false;
+  const hasInProgress = rows.some(
+    (r) => r.status === 'pending_first_payment' || r.status === 'active',
+  );
+  const hasCompleted = rows.some((r) => r.status === 'completed');
+  return hasInProgress && !hasCompleted;
+}
+
 export async function acceptPlan(
   planId: string,
   planType: 2 | 3,
@@ -37,6 +53,10 @@ export async function acceptPlan(
 
   const salaryDay = profile?.salary_day as number | null;
   if (!salaryDay) return { error: 'Please set your salary date before accepting.' };
+
+  if (await isBlockedFromNewPlan(user.id)) {
+    return { error: 'Please complete your current payment plan before starting another.' };
+  }
 
   const totalAmount = Number(plan.total_amount);
   const instalments = splitInstalments(totalAmount, planType);
@@ -282,6 +302,10 @@ export async function payWithSavedCard(
     .maybeSingle();
 
   if (!paymentMethod) return { error: 'Card not found or not usable.' };
+
+  if (await isBlockedFromNewPlan(user.id)) {
+    return { error: 'Please complete your current payment plan before starting another.' };
+  }
 
   // Calculate instalment schedule
   const totalAmount  = Number(plan.total_amount);

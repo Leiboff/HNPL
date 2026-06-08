@@ -4,7 +4,10 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { encryptId } from '@/lib/idEncryption';
 
-export type ProviderInput = {
+export type MemberInput = {
+  memberRole:         'provider' | 'manager';
+  canCreateBills:     boolean;
+  canManagePractice:  boolean;
   firstName:          string;
   lastName:           string;
   email:              string;
@@ -49,11 +52,11 @@ export type CreatePracticeInput = {
   branchCode:         string;
   accountType:        'current' | 'savings';
 
-  // Step 4 — providers
-  isSoleProvider:      boolean;
+  // Step 4 — team members
+  adminIsProvider:     boolean;
   adminSpecialty:      string;
   adminHpcsaNumber:    string;
-  providers:           ProviderInput[];
+  members:             MemberInput[];
 };
 
 export type CreatePracticeResult = {
@@ -88,16 +91,15 @@ function validate(input: CreatePracticeInput): string | null {
   if (!input.branchCode.trim()) return 'Branch code is required.';
   if (!input.accountType) return 'Account type is required.';
 
-  if (!input.isSoleProvider) {
-    if (input.providers.length === 0) return 'Add at least one provider.';
-    for (const p of input.providers) {
-      if (!p.firstName.trim() || !p.lastName.trim()) return 'Provider name is required.';
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) return 'Provider email is invalid.';
-      if (!p.specialty) return 'Provider specialty is required.';
-      if (!/^\d{13}$/.test(p.saIdNumber)) return 'Provider SA ID must be 13 digits.';
-      if (p.payoutDestination === 'provider') {
-        if (!p.bankName || !p.accountHolder.trim() || !p.accountNumber.trim() || !p.branchCode.trim() || !p.accountType)
-          return `Banking details required for ${p.firstName}'s personal payout.`;
+  for (const m of input.members) {
+    if (!m.firstName.trim() || !m.lastName.trim()) return 'Team member name is required.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m.email)) return 'Team member email is invalid.';
+    if (!/^\d{13}$/.test(m.saIdNumber)) return 'Team member SA ID must be 13 digits.';
+    if (m.memberRole === 'provider') {
+      if (!m.specialty) return 'Provider specialty is required.';
+      if (m.payoutDestination === 'provider') {
+        if (!m.bankName || !m.accountHolder.trim() || !m.accountNumber.trim() || !m.branchCode.trim() || !m.accountType)
+          return `Banking details required for ${m.firstName}'s personal payout.`;
       }
     }
   }
@@ -163,9 +165,9 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       account_type:                 input.accountType,
       status:                       'approved',
       fee_percent:                  6,
-      admin_is_provider:            input.isSoleProvider,
-      admin_specialty:              input.isSoleProvider ? (input.adminSpecialty || null) : null,
-      admin_hpcsa_number:           input.isSoleProvider ? (input.adminHpcsaNumber.trim() || null) : null,
+      admin_is_provider:            input.adminIsProvider,
+      admin_specialty:              input.adminIsProvider ? (input.adminSpecialty || null) : null,
+      admin_hpcsa_number:           input.adminIsProvider ? (input.adminHpcsaNumber.trim() || null) : null,
     });
     if (practiceErr) throw new Error(`Practice: ${practiceErr.message}`);
 
@@ -175,63 +177,64 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       user_id:           adminUserId,
       role:              'admin',
       active:            true,
-      can_create_bills:  true,
-      payout_destination: 'practice',
-      specialty:         input.isSoleProvider ? (input.adminSpecialty || null) : null,
-      hpcsa_number:      input.isSoleProvider ? (input.adminHpcsaNumber.trim() || null) : null,
+      can_create_bills:    true,
+      can_manage_practice: true,
+      payout_destination:  'practice',
+      specialty:           input.adminIsProvider ? (input.adminSpecialty || null) : null,
+      hpcsa_number:        input.adminIsProvider ? (input.adminHpcsaNumber.trim() || null) : null,
     });
     if (memberErr) throw new Error(`Member: ${memberErr.message}`);
 
-    // 5. Invite additional providers
-    if (!input.isSoleProvider) {
-      for (const provider of input.providers) {
-        // Encrypt provider SA ID before it enters auth metadata.
-        const encryptedProviderSaId = provider.saIdNumber.trim()
-          ? encryptId(provider.saIdNumber.trim())
+    // 5. Invite team members (array is empty when none were added)
+    for (const member of input.members) {
+        const encryptedMemberSaId = member.saIdNumber.trim()
+          ? encryptId(member.saIdNumber.trim())
           : null;
 
+        const authRole = member.memberRole === 'provider' ? 'practice_provider' : 'practice_admin';
+
         const { data: inviteData, error: inviteErr } = await svc.auth.admin.inviteUserByEmail(
-          provider.email.trim().toLowerCase(),
+          member.email.trim().toLowerCase(),
           {
             redirectTo: `${appUrl}/provider/setup`,
             data: {
-              role:                 'practice_provider',
-              first_name:           provider.firstName.trim(),
-              last_name:            provider.lastName.trim(),
-              sa_id_number:         encryptedProviderSaId,
-              hpcsa_number:         provider.hpcsaNumber.trim() || null,
+              role:                 authRole,
+              first_name:           member.firstName.trim(),
+              last_name:            member.lastName.trim(),
+              sa_id_number:         encryptedMemberSaId,
+              hpcsa_number:         member.memberRole === 'provider' ? (member.hpcsaNumber.trim() || null) : null,
               must_change_password: true,
             },
           },
         );
         if (inviteErr || !inviteData.user) {
-          throw new Error(`Invite ${provider.email}: ${inviteErr?.message ?? 'Failed'}`);
+          throw new Error(`Invite ${member.email}: ${inviteErr?.message ?? 'Failed'}`);
         }
 
-        const providerUserId = inviteData.user.id;
+        const memberUserId = inviteData.user.id;
 
         const memberRow: Record<string, unknown> = {
-          practice_id:       practiceId,
-          user_id:           providerUserId,
-          role:              'provider',
-          active:            true,
-          can_create_bills:  false,
-          specialty:         provider.specialty || null,
-          hpcsa_number:      provider.hpcsaNumber.trim() || null,
-          sa_id_number:      provider.saIdNumber.trim() ? encryptId(provider.saIdNumber.trim()) : null,
-          payout_destination: provider.payoutDestination,
+          practice_id:         practiceId,
+          user_id:             memberUserId,
+          role:                member.memberRole === 'provider' ? 'provider' : 'admin',
+          active:              true,
+          can_create_bills:    member.canCreateBills,
+          can_manage_practice: member.canManagePractice,
+          sa_id_number:        encryptedMemberSaId,
+          specialty:           member.memberRole === 'provider' ? (member.specialty || null) : null,
+          hpcsa_number:        member.memberRole === 'provider' ? (member.hpcsaNumber.trim() || null) : null,
+          payout_destination:  member.memberRole === 'provider' ? member.payoutDestination : 'practice',
         };
-        if (provider.payoutDestination === 'provider') {
-          memberRow.personal_bank_name       = provider.bankName       || null;
-          memberRow.personal_account_holder  = provider.accountHolder.trim() || null;
-          memberRow.personal_account_number  = provider.accountNumber.trim() || null;
-          memberRow.personal_branch_code     = provider.branchCode.trim()   || null;
-          memberRow.personal_account_type    = provider.accountType    || null;
+        if (member.memberRole === 'provider' && member.payoutDestination === 'provider') {
+          memberRow.personal_bank_name       = member.bankName       || null;
+          memberRow.personal_account_holder  = member.accountHolder.trim() || null;
+          memberRow.personal_account_number  = member.accountNumber.trim() || null;
+          memberRow.personal_branch_code     = member.branchCode.trim()   || null;
+          memberRow.personal_account_type    = member.accountType    || null;
         }
 
-        const { error: provMemberErr } = await svc.from('practice_members').insert(memberRow);
-        if (provMemberErr) throw new Error(`Provider member ${provider.email}: ${provMemberErr.message}`);
-      }
+        const { error: memberInsertErr } = await svc.from('practice_members').insert(memberRow);
+        if (memberInsertErr) throw new Error(`Member ${member.email}: ${memberInsertErr.message}`);
     }
 
     // 6. Sign in the admin so they land on /practice with a live session

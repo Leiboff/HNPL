@@ -4,17 +4,37 @@ import { useState } from 'react';
 import Link from 'next/link';
 
 type Props = {
-  planId:            string;
-  totalAmount:       number;
-  practiceName:      string;
-  invoiceNumber?:    string | null;
+  planId:             string;
+  totalAmount:        number;
+  practiceName:       string;
+  invoiceNumber?:     string | null;
   practiceReference?: string | null;
   declinePlan: (planId: string) => Promise<{ error: string | null }>;
+  blocked?:           boolean;
 };
 
 function formatRand(n: number): string {
   const [integer, decimal] = n.toFixed(2).split('.');
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
+}
+
+function LockIcon() {
+  return (
+    <svg
+      className="w-4 h-4 text-amber-700 shrink-0 mt-0.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      stroke="currentColor"
+      aria-hidden
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z"
+      />
+    </svg>
+  );
 }
 
 export default function PendingPlanCard({
@@ -24,6 +44,7 @@ export default function PendingPlanCard({
   invoiceNumber,
   practiceReference,
   declinePlan,
+  blocked = false,
 }: Props) {
   const [declining, setDeclining] = useState(false);
   const [error,     setError]     = useState<string | null>(null);
@@ -68,13 +89,31 @@ export default function PendingPlanCard({
           </div>
         )}
 
+        {blocked && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-white px-4 py-3">
+            <LockIcon />
+            <p className="text-sm text-amber-800">
+              You can only have more than one payment plan once you&apos;ve completed your first.
+            </p>
+          </div>
+        )}
+
         <div className="flex gap-3">
-          <Link
-            href={`/patient/orders/${planId}/confirm`}
-            className="flex-1 inline-flex items-center justify-center rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600 transition-colors"
-          >
-            Review &amp; accept →
-          </Link>
+          {blocked ? (
+            <span
+              aria-disabled="true"
+              className="flex-1 inline-flex items-center justify-center rounded-lg bg-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-400 cursor-not-allowed select-none"
+            >
+              Review &amp; accept →
+            </span>
+          ) : (
+            <Link
+              href={`/patient/orders/${planId}/confirm`}
+              className="flex-1 inline-flex items-center justify-center rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600 transition-colors"
+            >
+              Review &amp; accept →
+            </Link>
+          )}
           <button
             type="button"
             onClick={handleDecline}

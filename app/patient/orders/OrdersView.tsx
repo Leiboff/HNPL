@@ -150,17 +150,18 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ tab }: { tab: 'current' | 'historic' }) {
+const EMPTY_STATE: Record<'pending' | 'current' | 'historic', { heading: string; sub: string }> = {
+  pending:  { heading: 'No bills awaiting action',  sub: 'Bills to review and processing payments will appear here.' },
+  current:  { heading: 'No active plans',           sub: 'Plans with an active payment schedule will appear here.' },
+  historic: { heading: 'No past plans',             sub: 'Completed and cancelled plans will appear here.' },
+};
+
+function EmptyState({ tab }: { tab: 'pending' | 'current' | 'historic' }) {
+  const { heading, sub } = EMPTY_STATE[tab];
   return (
     <div className="rounded-2xl border-2 border-dashed border-gray-200 py-14 text-center">
-      <p className="font-medium text-gray-500">
-        {tab === 'current' ? 'No current plans' : 'No historic plans'}
-      </p>
-      <p className="mt-1 text-sm text-gray-400">
-        {tab === 'current'
-          ? 'Active and processing plans will appear here.'
-          : 'Completed and past plans will appear here.'}
-      </p>
+      <p className="font-medium text-gray-500">{heading}</p>
+      <p className="mt-1 text-sm text-gray-400">{sub}</p>
     </div>
   );
 }
@@ -168,25 +169,34 @@ function EmptyState({ tab }: { tab: 'current' | 'historic' }) {
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 type Props = {
-  currentPlans:  PlanRow[];
-  historicPlans: PlanRow[];
+  pendingPlans:   PlanRow[];
+  currentPlans:   PlanRow[];
+  historicPlans:  PlanRow[];
   declinePlan: (planId: string) => Promise<{ error: string | null }>;
-  specialtyMap:  Record<string, string>;
+  specialtyMap:   Record<string, string>;
+  patientBlocked: boolean;
 };
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function OrdersView({
+  pendingPlans,
   currentPlans,
   historicPlans,
   declinePlan,
   specialtyMap,
+  patientBlocked,
 }: Props) {
-  const [tab, setTab] = useState<'current' | 'historic'>('current');
+  const [tab, setTab] = useState<'pending' | 'current' | 'historic'>(
+    pendingPlans.length > 0 ? 'pending' : 'current'
+  );
 
-  const plans = tab === 'current' ? currentPlans : historicPlans;
+  const plans =
+    tab === 'pending'  ? pendingPlans  :
+    tab === 'current'  ? currentPlans  :
+                         historicPlans;
 
-  function tabCls(t: 'current' | 'historic') {
+  function tabCls(t: 'pending' | 'current' | 'historic') {
     return [
       'px-4 py-2 text-sm font-medium rounded-lg transition-colors',
       tab === t
@@ -199,6 +209,9 @@ export default function OrdersView({
     <div className="space-y-5">
       {/* Tab bar */}
       <div className="inline-flex items-center bg-gray-100 rounded-xl p-1 gap-1">
+        <button type="button" onClick={() => setTab('pending')} className={tabCls('pending')}>
+          Pending ({pendingPlans.length})
+        </button>
         <button type="button" onClick={() => setTab('current')} className={tabCls('current')}>
           Current ({currentPlans.length})
         </button>
@@ -222,6 +235,7 @@ export default function OrdersView({
                 invoiceNumber={plan.invoice_number}
                 practiceReference={plan.practice_reference}
                 declinePlan={declinePlan}
+                blocked={patientBlocked}
               />
             ) : (
               <PlanCard
