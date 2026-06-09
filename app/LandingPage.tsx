@@ -36,19 +36,21 @@ export default function LandingPage() {
     const timeouts: ReturnType<typeof setTimeout>[] = [];
 
     function cycle() {
+      // Remove any lingering 'out' verbs — guards against background-tab RAF suspension
+      clip.querySelectorAll<HTMLElement>('.verb.out').forEach(el => el.remove());
+
       const old = clip.querySelector('.verb.current') as HTMLElement | null;
       i = (i + 1) % WORDS.length;
       const next = document.createElement('span');
       next.className   = 'verb enter';
       next.textContent = WORDS[i];
       clip.appendChild(next);
-      void next.offsetWidth;
-      requestAnimationFrame(() => {
-        old?.classList.remove('current');
-        old?.classList.add('out');
-        next.classList.remove('enter');
-        next.classList.add('current');
-      });
+      void next.offsetWidth; // flush layout so enter styles are committed
+      // Switch classes synchronously — no RAF needed after forced layout
+      old?.classList.remove('current');
+      old?.classList.add('out');
+      next.classList.remove('enter');
+      next.classList.add('current');
       timeouts.push(setTimeout(() => old?.remove(), 700));
     }
 

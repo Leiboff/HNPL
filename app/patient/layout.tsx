@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import PatientNav from './PatientNav';
+import PatientBottomNav from './PatientBottomNav';
 import SettingsSheet from './SettingsSheet';
 
 export default async function PatientLayout({
@@ -50,13 +51,17 @@ export default async function PatientLayout({
         </div>
       </header>
 
-      {/* Body: sidebar + page content, responsive */}
-      <div className="flex flex-col md:flex-row flex-1">
+      {/* Body: sidebar + page content */}
+      <div className="flex flex-row flex-1">
         <PatientNav />
-        <main className="flex-1 min-w-0">
+        {/* pb-20 on mobile leaves room for the fixed bottom nav */}
+        <main className="flex-1 min-w-0 pb-20 md:pb-0">
           {children}
         </main>
       </div>
+
+      {/* Fixed bottom nav — mobile only */}
+      <PatientBottomNav />
     </div>
   );
 }

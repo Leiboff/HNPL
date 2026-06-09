@@ -90,7 +90,7 @@ async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
 
 // ─── Shared card class (applied to every block for consistency) ───────────────
 // hero keeps rounded-3xl per design; all others use rounded-2xl.
-const card = 'bg-white rounded-2xl shadow-sm p-6';
+const card = 'bg-white rounded-2xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6';
 
 // Card label: small uppercase navy, used as the title in every card.
 function CardLabel({ children }: { children: React.ReactNode }) {
@@ -168,12 +168,12 @@ export default async function PatientDashboardPage() {
       const plan         = pendingPlans[0];
       const practiceName = getPracticeName(plan.practice);
       hero = (
-        <div className="bg-white rounded-3xl shadow-sm p-6 border border-amber-200">
+        <div className="bg-white rounded-3xl shadow-sm p-5 sm:p-6 border border-amber-200">
           <p className="text-xs font-semibold uppercase tracking-widest text-amber-600">
             Bill to Review
           </p>
           <p
-            className="mt-3 text-5xl font-bold tabular-nums"
+            className="mt-3 text-4xl sm:text-5xl font-bold tabular-nums"
             style={{ color: '#13294B' }}
           >
             {formatRand(Number(plan.total_amount))}
@@ -190,7 +190,7 @@ export default async function PatientDashboardPage() {
       );
     } else {
       hero = (
-        <div className="bg-white rounded-3xl shadow-sm p-6 border border-amber-200">
+        <div className="bg-white rounded-3xl shadow-sm p-5 sm:p-6 border border-amber-200">
           <p className="text-xs font-semibold uppercase tracking-widest text-amber-600">
             Bills to Review
           </p>
@@ -244,7 +244,7 @@ export default async function PatientDashboardPage() {
   } else {
     // ── C: all paid up ──────────────────────────────────────────────────────
     hero = (
-      <div className="bg-white rounded-3xl shadow-sm p-6">
+      <div className="bg-white rounded-3xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6">
         <CardLabel>Payments</CardLabel>
         <p
           className="mt-3 text-2xl font-semibold"
@@ -261,10 +261,10 @@ export default async function PatientDashboardPage() {
 
   return (
     <div className="bg-[#f7fbfb] min-h-full">
-      <div className="mx-auto max-w-2xl px-5 py-8 space-y-4">
+      <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8 space-y-4">
 
         {/* Greeting */}
-        <p className="text-lg font-semibold text-gray-700">
+        <p className="text-lg font-semibold" style={{ color: '#13294B' }}>
           Hi, {profile?.first_name ?? user.email?.split('@')[0] ?? 'there'} 👋
         </p>
 
@@ -287,7 +287,7 @@ export default async function PatientDashboardPage() {
         <div className={card}>
           <CardLabel>Spending Allowance</CardLabel>
           <p
-            className="mt-3 text-5xl font-bold tabular-nums"
+            className="mt-3 text-4xl sm:text-5xl font-bold tabular-nums"
             style={{ color: '#13294B' }}
           >
             R0.00

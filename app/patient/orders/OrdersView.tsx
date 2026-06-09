@@ -86,7 +86,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-5 border-b border-gray-100">
+      <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-100">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="font-semibold text-gray-900">{practiceName}</p>
@@ -122,9 +122,9 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
           {plan.payments.map((payment: PaymentRow) => (
             <div
               key={payment.id}
-              className="flex items-center justify-between px-6 py-3"
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 sm:px-6 py-3"
             >
-              <div className="flex items-baseline gap-3 text-sm">
+              <div className="flex items-baseline gap-2 sm:gap-3 text-sm min-w-0">
                 <span className="text-gray-600 whitespace-nowrap">
                   Instalment {payment.instalment_number}
                 </span>
@@ -132,7 +132,7 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
                   {formatDate(payment.due_date)}
                 </span>
               </div>
-              <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                 <span className="text-sm font-medium text-gray-900 tabular-nums">
                   {formatRand(Number(payment.amount))}
                 </span>
@@ -207,17 +207,19 @@ export default function OrdersView({
 
   return (
     <div className="space-y-5">
-      {/* Tab bar */}
-      <div className="inline-flex items-center bg-gray-100 rounded-xl p-1 gap-1">
-        <button type="button" onClick={() => setTab('pending')} className={tabCls('pending')}>
-          Pending ({pendingPlans.length})
-        </button>
-        <button type="button" onClick={() => setTab('current')} className={tabCls('current')}>
-          Current ({currentPlans.length})
-        </button>
-        <button type="button" onClick={() => setTab('historic')} className={tabCls('historic')}>
-          Historic ({historicPlans.length})
-        </button>
+      {/* Tab bar — scrollable on small screens */}
+      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <div className="inline-flex items-center bg-gray-100 rounded-xl p-1 gap-1 min-w-max">
+          <button type="button" onClick={() => setTab('pending')} className={tabCls('pending')}>
+            Pending ({pendingPlans.length})
+          </button>
+          <button type="button" onClick={() => setTab('current')} className={tabCls('current')}>
+            Current ({currentPlans.length})
+          </button>
+          <button type="button" onClick={() => setTab('historic')} className={tabCls('historic')}>
+            Historic ({historicPlans.length})
+          </button>
+        </div>
       </div>
 
       {/* Plan list */}

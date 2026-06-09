@@ -21,14 +21,14 @@ export default function PatientNav() {
     <nav
       className={[
         'bg-white shrink-0',
-        // Mobile: horizontal scrollable bar below top bar
-        'flex flex-row overflow-x-auto border-b border-gray-200',
+        // Hidden on mobile — bottom nav handles mobile navigation
+        'hidden',
         // Desktop: vertical sidebar
-        'md:flex-col md:overflow-visible md:w-56 md:border-b-0 md:border-r md:border-gray-200',
-        'md:sticky md:top-14 md:self-start md:min-h-[calc(100vh-3.5rem)]',
+        'md:flex md:flex-col md:w-56 md:border-r md:border-gray-200',
+        'md:sticky md:top-16 md:self-start md:min-h-[calc(100vh-4rem)]',
       ].join(' ')}
     >
-      <div className="flex flex-row md:flex-col md:p-3 md:space-y-0.5">
+      <div className="flex flex-col p-3 space-y-0.5">
         {NAV_LINKS.map(({ href, label }) => {
           const active = isActive(href);
           return (
@@ -36,14 +36,10 @@ export default function PatientNav() {
               key={href}
               href={href}
               className={[
-                'shrink-0 px-4 py-3 md:px-3 md:py-2 text-sm font-medium whitespace-nowrap transition-colors',
-                // Mobile active: blue bottom border
-                'border-b-2 md:border-b-0',
-                // Desktop active: blue pill background
-                'md:rounded-lg',
+                'px-3 py-2 text-sm font-medium rounded-lg transition-colors',
                 active
-                  ? 'border-[#15A89E] text-[#13294B] md:border-0 md:bg-[#13294B]/10 md:text-[#13294B]'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 md:text-gray-600 md:hover:bg-gray-100 md:hover:text-gray-900',
+                  ? 'bg-[#13294B]/10 text-[#13294B]'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
               ].join(' ')}
             >
               {label}
