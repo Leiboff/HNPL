@@ -35,33 +35,42 @@ export default async function PatientLayout({
       {/* Top bar */}
       <header className="sticky top-0 z-20 shrink-0" style={{ background: 'linear-gradient(135deg, #13294B 0%, #0E2140 100%)' }}>
         <div className="relative flex items-center justify-between px-4 sm:px-6 h-16">
-          {/* Left spacer (balances the gear on the right) */}
+          {/* Left spacer (balances right side) */}
           <div className="w-9" />
           {/* Centered wordmark */}
           <span className="absolute left-1/2 -translate-x-1/2 text-base font-semibold tracking-wide select-none">
             <span style={{ color: '#fff', fontWeight: 400 }}>better</span><span style={{ color: '#15A89E', fontWeight: 700 }}>now</span>
           </span>
-          {/* Right: gear / settings */}
-          <SettingsSheet
-            firstName={profile?.first_name ?? ''}
-            lastName={profile?.last_name ?? ''}
-            email={profile?.email ?? ''}
-            phone={profile?.phone ?? ''}
-          />
+          {/* Gear — desktop only; mobile uses bottom nav Profile tab */}
+          <div className="hidden md:block">
+            <SettingsSheet
+              firstName={profile?.first_name ?? ''}
+              lastName={profile?.last_name ?? ''}
+              email={profile?.email ?? ''}
+              phone={profile?.phone ?? ''}
+            />
+          </div>
+          {/* Spacer keeps wordmark centered on mobile */}
+          <div className="w-9 md:hidden" />
         </div>
       </header>
 
       {/* Body: sidebar + page content */}
       <div className="flex flex-row flex-1">
         <PatientNav />
-        {/* pb-20 on mobile leaves room for the fixed bottom nav */}
-        <main className="flex-1 min-w-0 pb-20 md:pb-0">
+        {/* pb-28 on mobile leaves room for the floating bottom nav */}
+        <main className="flex-1 min-w-0 pb-28 md:pb-0">
           {children}
         </main>
       </div>
 
-      {/* Fixed bottom nav — mobile only */}
-      <PatientBottomNav />
+      {/* Fixed bottom nav — mobile only (Profile tab opens settings sheet) */}
+      <PatientBottomNav
+        firstName={profile?.first_name ?? ''}
+        lastName={profile?.last_name ?? ''}
+        email={profile?.email ?? ''}
+        phone={profile?.phone ?? ''}
+      />
     </div>
   );
 }

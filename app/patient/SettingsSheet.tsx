@@ -9,6 +9,10 @@ interface Props {
   lastName: string;
   email: string;
   phone: string;
+  // Controlled mode: pass open+onClose from the parent (no gear trigger rendered).
+  // Uncontrolled mode (default): component renders its own gear trigger.
+  open?: boolean;
+  onClose?: () => void;
 }
 
 function GearIcon() {
@@ -87,10 +91,15 @@ function LogOutIcon() {
   );
 }
 
-export default function SettingsSheet({ firstName, lastName, email, phone }: Props) {
-  const [open, setOpen] = useState(false);
+export default function SettingsSheet({ firstName, lastName, email, phone, open: controlledOpen, onClose }: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
 
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => {
+    if (isControlled) onClose?.();
+    else setInternalOpen(false);
+  }, [isControlled, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -117,14 +126,16 @@ export default function SettingsSheet({ firstName, lastName, email, phone }: Pro
 
   return (
     <>
-      {/* Gear trigger */}
-      <button
-        onClick={() => setOpen(true)}
-        aria-label="Settings"
-        className="flex items-center justify-center w-9 h-9 rounded-full text-white/80 hover:text-white hover:bg-white/10 transition-colors"
-      >
-        <GearIcon />
-      </button>
+      {/* Gear trigger — only rendered in uncontrolled (header) mode */}
+      {!isControlled && (
+        <button
+          onClick={() => setInternalOpen(true)}
+          aria-label="Settings"
+          className="flex items-center justify-center w-9 h-9 rounded-full text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+        >
+          <GearIcon />
+        </button>
+      )}
 
       {/* Overlay */}
       {open && (
