@@ -16,15 +16,22 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function BrandBadge({ brand }: { brand: string }) {
-  const cls =
-    brand === 'Visa'       ? 'bg-blue-700 text-white' :
-    brand === 'Mastercard' ? 'bg-red-600 text-white'  :
-                             'bg-gray-600 text-white';
+function CardThumbnail({ brand }: { brand: string }) {
+  const bg =
+    brand === 'Visa'       ? 'linear-gradient(135deg,#1a1f71,#4361ee)' :
+    brand === 'Mastercard' ? 'linear-gradient(135deg,#eb001b,#ff5f00)' :
+                             'linear-gradient(135deg,#13294B,#15A89E)';
+  const label =
+    brand === 'Visa'       ? 'VISA' :
+    brand === 'Mastercard' ? 'MC'   :
+                             brand.slice(0, 2).toUpperCase();
   return (
-    <span className={`inline-flex items-center justify-center rounded px-2 py-0.5 text-xs font-bold tracking-wide ${cls}`}>
-      {brand.toUpperCase()}
-    </span>
+    <div
+      className="w-11 h-8 rounded-lg flex items-center justify-center shrink-0 text-white text-[10px] font-black tracking-wider select-none"
+      style={{ background: bg }}
+    >
+      {label}
+    </div>
   );
 }
 
@@ -341,45 +348,44 @@ export default function PaymentMethods({
                   </div>
                 </div>
               ) : (
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <BrandBadge brand={card.card_brand} />
-                      <span className="font-mono text-sm text-gray-900">•••• {card.last_four}</span>
+                <div className="flex items-center gap-3">
+                  <CardThumbnail brand={card.card_brand} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-semibold text-gray-900">•••• {card.last_four}</span>
                       {card.is_default && (
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(21,168,158,.12)', color: '#15A89E' }}>
                           Default
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-500">
-                      Expires {formatExpiry(card.expiry_month, card.expiry_year)}
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {card.cardholder_name} · Exp {formatExpiry(card.expiry_month, card.expiry_year)}
                     </p>
-                    <p className="text-xs text-gray-500">{card.cardholder_name}</p>
                   </div>
-
-                  <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                  <div className="flex items-center gap-2 shrink-0">
                     {!card.is_default && (
                       <button
                         type="button"
                         onClick={() => handleSetDefault(card.id)}
                         disabled={loading}
-                        className="text-xs font-medium text-[#13294B] hover:text-[#0E2140] disabled:opacity-60 transition-colors"
+                        className="text-xs font-medium disabled:opacity-60 transition-colors"
+                        style={{ color: '#15A89E' }}
                       >
-                        Set as default
+                        Default
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => openEdit(card)}
-                      className="text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                      className="text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors"
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => setConfirmRemoveId(card.id)}
-                      className="text-xs font-medium text-red-600 hover:text-red-700 transition-colors"
+                      className="text-xs font-medium text-red-500 hover:text-red-700 transition-colors"
                     >
                       Remove
                     </button>
@@ -391,8 +397,8 @@ export default function PaymentMethods({
         </div>
       )}
 
-      <div className="rounded-lg bg-[#13294B]/5 border border-[#13294B]/20 px-4 py-3 text-sm text-[#13294B]">
-        We&apos;ll charge R1.00 to verify your card and refund it immediately. This adds your card so you can pay future plans without re-entering details.
+      <div className="rounded-xl px-4 py-3 text-xs text-[#13294B]" style={{ background: 'rgba(19,41,75,.05)', border: '1px solid rgba(19,41,75,.10)' }}>
+        We charge R1.00 to verify your card and refund it immediately.
       </div>
 
       {addError && (
@@ -405,10 +411,13 @@ export default function PaymentMethods({
         type="button"
         onClick={handleAddCard}
         disabled={addLoading || loading}
-        className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 px-5 py-3 text-sm font-medium text-gray-600 hover:border-[#15A89E] hover:text-[#13294B] transition-colors w-full disabled:opacity-60 disabled:cursor-not-allowed"
+        className="flex items-center justify-center gap-2 w-full rounded-2xl border border-dashed px-5 py-3.5 text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        style={{ borderColor: 'rgba(21,168,158,.4)', color: '#13294B' }}
       >
-        <span className="text-lg leading-none" aria-hidden>+</span>
-        {addLoading ? 'Redirecting to payment…' : 'Add a card'}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden>
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        {addLoading ? 'Redirecting…' : 'Add a card'}
       </button>
     </div>
   );

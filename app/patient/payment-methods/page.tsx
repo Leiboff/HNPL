@@ -145,12 +145,12 @@ export default async function PaymentMethodsPage() {
   const cards = (rawCards ?? []) as CardRow[];
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-10">
-      <h1 className="text-2xl font-semibold text-gray-900">Payment Methods</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        Your cards are stored securely. We never store your full card number.
+    <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8">
+      <h1 className="text-2xl font-semibold mb-1" style={{ color: '#13294B' }}>Payment Methods</h1>
+      <p className="text-sm text-gray-500 mb-6">
+        Cards are stored securely — we never see your full card number.
       </p>
-      <div className="mt-8">
+      <div>
         <PaymentMethods
           initialCards={cards}
           initializeCardRegistration={initializeCardRegistration}

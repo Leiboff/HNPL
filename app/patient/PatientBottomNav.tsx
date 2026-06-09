@@ -1,16 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import SettingsSheet from './SettingsSheet';
-
-type Props = {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-};
 
 function HomeIcon({ active }: { active: boolean }) {
   return (
@@ -50,85 +41,54 @@ function ProfileIcon({ active }: { active: boolean }) {
 }
 
 const LINKS = [
-  { href: '/patient',                 label: 'Home',   Icon: HomeIcon   },
-  { href: '/patient/orders',          label: 'Orders', Icon: OrdersIcon },
-  { href: '/patient/payment-methods', label: 'Cards',  Icon: CardIcon   },
+  { href: '/patient',                 label: 'Home',    Icon: HomeIcon    },
+  { href: '/patient/orders',          label: 'Orders',  Icon: OrdersIcon  },
+  { href: '/patient/payment-methods', label: 'Cards',   Icon: CardIcon    },
+  { href: '/patient/profile',         label: 'Profile', Icon: ProfileIcon },
 ];
 
-export default function PatientBottomNav({ firstName, lastName, email, phone }: Props) {
+export default function PatientBottomNav() {
   const pathname = usePathname();
-  const [sheetOpen, setSheetOpen] = useState(false);
 
   function isActive(href: string) {
     return href === '/patient' ? pathname === '/patient' : pathname.startsWith(href);
   }
 
-  const profileActive = pathname.startsWith('/patient/profile');
-
   return (
-    <>
-      {/* Settings sheet — controlled by the Profile tab */}
-      <SettingsSheet
-        firstName={firstName}
-        lastName={lastName}
-        email={email}
-        phone={phone}
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-      />
-
-      {/* Floating bottom nav — mobile only */}
-      <div
-        className="fixed bottom-0 inset-x-0 z-30 md:hidden px-4"
-        style={{ paddingBottom: 'max(14px, env(safe-area-inset-bottom))' }}
+    <div
+      className="fixed bottom-0 inset-x-0 z-30 md:hidden px-4"
+      style={{ paddingBottom: 'max(14px, env(safe-area-inset-bottom))' }}
+    >
+      <nav
+        className="flex h-15.5 rounded-2xl overflow-hidden"
+        style={{
+          background: 'rgba(255,255,255,0.93)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(19,41,75,0.10)',
+          boxShadow: '0 8px 32px -6px rgba(19,41,75,0.18), 0 2px 8px -2px rgba(19,41,75,0.08)',
+        }}
       >
-        <nav
-          className="flex h-[62px] rounded-2xl overflow-hidden"
-          style={{
-            background: 'rgba(255,255,255,0.92)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            border: '1px solid rgba(19,41,75,0.10)',
-            boxShadow: '0 8px 32px -6px rgba(19,41,75,0.18), 0 2px 8px -2px rgba(19,41,75,0.08)',
-          }}
-        >
-          {LINKS.map(({ href, label, Icon }) => {
-            const active = isActive(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className="flex-1 flex flex-col items-center justify-center gap-[4px]"
-                style={{ color: active ? '#15A89E' : '#94a3b8', transition: 'color 0.15s' }}
-              >
-                <Icon active={active} />
-                <span
-                  className="text-[10px] leading-none font-semibold"
-                  style={{ color: active ? '#13294B' : '#94a3b8', transition: 'color 0.15s' }}
-                >
-                  {label}
-                </span>
-              </Link>
-            );
-          })}
-
-          {/* Profile tab — opens settings sheet */}
-          <button
-            type="button"
-            onClick={() => setSheetOpen(true)}
-            className="flex-1 flex flex-col items-center justify-center gap-[4px]"
-            style={{ color: profileActive ? '#15A89E' : '#94a3b8', transition: 'color 0.15s' }}
-          >
-            <ProfileIcon active={profileActive} />
-            <span
-              className="text-[10px] leading-none font-semibold"
-              style={{ color: profileActive ? '#13294B' : '#94a3b8', transition: 'color 0.15s' }}
+        {LINKS.map(({ href, label, Icon }) => {
+          const active = isActive(href);
+          return (
+            <Link
+              key={href}
+              href={href}
+              className="flex-1 flex flex-col items-center justify-center gap-1"
+              style={{ color: active ? '#15A89E' : '#94a3b8', transition: 'color 0.15s' }}
             >
-              Profile
-            </span>
-          </button>
-        </nav>
-      </div>
-    </>
+              <Icon active={active} />
+              <span
+                className="text-[10px] leading-none font-semibold"
+                style={{ color: active ? '#13294B' : '#94a3b8', transition: 'color 0.15s' }}
+              >
+                {label}
+              </span>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
   );
 }

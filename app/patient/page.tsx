@@ -277,75 +277,47 @@ export default async function PatientDashboardPage() {
         ──────────────────────────────────────────────────────────────────── */}
         {hero}
 
-        {/* ── ALLOWANCE CARD ───────────────────────────────────────────────────
-            PLACEHOLDER: R0 is a static placeholder, NOT a real credit limit.
-            No credit-limit/underwriting system exists yet. A real spending
-            allowance must be computed by a future credit engine before this
-            figure means anything. Displaying a real allowance amount requires
-            NCA-compliant credit assessment.
-        ──────────────────────────────────────────────────────────────────── */}
-        <div className={card}>
-          <CardLabel>Spending Allowance</CardLabel>
-          <p
-            className="mt-3 text-4xl sm:text-5xl font-bold tabular-nums"
-            style={{ color: '#13294B' }}
-          >
-            R0.00
-          </p>
-          <p className="mt-2 text-sm text-gray-400">
-            Coming soon — flexible spending is on the way.
-          </p>
-        </div>
-
         {/* ── SALARY DATE CARD ─────────────────────────────────────────────── */}
-        <div className={`${card} space-y-4`}>
-          <div>
-            <CardLabel>Salary Date</CardLabel>
-            {salaryDay !== null ? (
-              <p className="mt-3 text-sm text-gray-500">
-                Payments are scheduled around the{' '}
-                <span className="font-semibold text-gray-900">{ordinal(salaryDay)}</span>{' '}
-                of each month.
-              </p>
-            ) : (
-              <p className="mt-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                Set your salary date so we can schedule your payments around payday.
-              </p>
-            )}
+        <div className={`${card} space-y-3`}>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <CardLabel>Salary Date</CardLabel>
+              {salaryDay !== null ? (
+                <p className="mt-2 text-sm text-gray-500">
+                  Instalments collected around the{' '}
+                  <span className="font-semibold text-gray-800">{ordinal(salaryDay)}</span>{' '}
+                  of each month.
+                </p>
+              ) : (
+                <p className="mt-2 text-sm text-amber-700">
+                  Set your salary date so we can time your payments.
+                </p>
+              )}
+            </div>
           </div>
           <SalaryDayForm currentDay={salaryDay} saveSalaryDay={saveSalaryDay} />
         </div>
 
         {/* ── PLANS CARD ───────────────────────────────────────────────────── */}
-        <div className={`${card} space-y-4`}>
+        <div className={card}>
           <CardLabel>Your Plans</CardLabel>
-
           {totalCount === 0 ? (
-            <div className="rounded-xl border-2 border-dashed border-gray-100 py-10 text-center">
-              <p className="font-medium text-gray-400">No payment plans yet</p>
-              <p className="mt-1 text-sm text-gray-400">
-                Plans will appear here when a practice sends you a bill.
-              </p>
+            <div className="mt-3 rounded-xl border border-dashed border-gray-200 py-8 text-center">
+              <p className="text-sm font-medium text-gray-400">No payment plans yet</p>
+              <p className="mt-1 text-xs text-gray-400">Plans appear here when a practice sends you a bill.</p>
             </div>
           ) : (
-            <div className="flex items-center justify-between pt-1">
+            <div className="mt-3 flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                  Current plans
-                </p>
-                <p
-                  className="text-4xl font-bold tabular-nums mt-1"
-                  style={{ color: '#13294B' }}
-                >
-                  {currentCount}
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Active</p>
+                <p className="text-4xl font-bold tabular-nums mt-0.5" style={{ color: '#13294B' }}>{currentCount}</p>
               </div>
               <a
                 href="/patient/orders"
-                className="text-sm font-medium transition-colors hover:opacity-70"
-                style={{ color: '#13294B' }}
+                className="text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+                style={{ color: '#13294B', background: 'rgba(19,41,75,.06)' }}
               >
-                View all orders →
+                View all →
               </a>
             </div>
           )}
