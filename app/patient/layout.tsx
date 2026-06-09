@@ -33,11 +33,14 @@ export default async function PatientLayout({
   return (
     <div className="min-h-screen bg-[#f7fbfb] flex flex-col">
       {/* Top bar */}
-      <header className="sticky top-0 z-20 shrink-0" style={{ background: 'linear-gradient(135deg, #13294B 0%, #0E2140 100%)' }}>
-        <div className="relative flex items-center justify-between px-4 sm:px-6 h-16">
-          <div className="w-9" />
-          <span className="absolute left-1/2 -translate-x-1/2 text-base font-semibold tracking-wide select-none">
-            <span style={{ color: '#fff', fontWeight: 400 }}>better</span><span style={{ color: '#15A89E', fontWeight: 700 }}>now</span>
+      <header className="sticky top-0 z-20 shrink-0 bg-white border-b border-gray-200">
+        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5">
+          <span
+            className="text-lg font-semibold tracking-tight"
+            style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
+          >
+            <span style={{ color: '#13294B' }}>better</span>
+            <span style={{ color: '#15A89E' }}>now</span>
           </span>
           <LogoutButton />
         </div>

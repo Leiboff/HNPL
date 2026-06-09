@@ -31,6 +31,15 @@ function CardIcon({ active }: { active: boolean }) {
   );
 }
 
+function ExploreIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.35-4.35" />
+    </svg>
+  );
+}
+
 function ProfileIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
@@ -43,6 +52,7 @@ function ProfileIcon({ active }: { active: boolean }) {
 const LINKS = [
   { href: '/patient',                 label: 'Home',    Icon: HomeIcon    },
   { href: '/patient/orders',          label: 'Orders',  Icon: OrdersIcon  },
+  { href: '/patient/explore',         label: 'Explore', Icon: ExploreIcon },
   { href: '/patient/payment-methods', label: 'Cards',   Icon: CardIcon    },
   { href: '/patient/profile',         label: 'Profile', Icon: ProfileIcon },
 ];

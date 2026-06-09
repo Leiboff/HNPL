@@ -279,23 +279,27 @@ export default async function PatientDashboardPage() {
 
         {/* ── SALARY DATE CARD ─────────────────────────────────────────────── */}
         <div className={`${card} space-y-3`}>
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <CardLabel>Salary Date</CardLabel>
-              {salaryDay !== null ? (
-                <p className="mt-2 text-sm text-gray-500">
-                  Instalments collected around the{' '}
-                  <span className="font-semibold text-gray-800">{ordinal(salaryDay)}</span>{' '}
-                  of each month.
-                </p>
-              ) : (
-                <p className="mt-2 text-sm text-amber-700">
-                  Set your salary date so we can time your payments.
-                </p>
-              )}
+          <CardLabel>Salary Date</CardLabel>
+          {salaryDay === null && (
+            <p className="text-sm text-amber-700">
+              Set your salary date so we can time your payments.
+            </p>
+          )}
+          <div className="flex flex-col sm:flex-row sm:items-start gap-5">
+            <div
+              className="sm:order-last sm:w-44 sm:ml-auto rounded-xl p-4 text-xs leading-relaxed space-y-1.5"
+              style={{ background: 'rgba(19,41,75,.04)' }}
+            >
+              <p className="font-semibold text-[#13294B]">Heads up</p>
+              <p className="text-gray-500">
+                Your salary date sets when we collect your monthly instalments.
+              </p>
+              <p className="text-gray-500">
+                Changes here only apply to <span className="font-medium text-gray-700">new plans</span> — existing active plans will continue collecting on their current schedule.
+              </p>
             </div>
+            <SalaryDayForm currentDay={salaryDay} saveSalaryDay={saveSalaryDay} />
           </div>
-          <SalaryDayForm currentDay={salaryDay} saveSalaryDay={saveSalaryDay} />
         </div>
 
         {/* ── PLANS CARD ───────────────────────────────────────────────────── */}
@@ -314,8 +318,7 @@ export default async function PatientDashboardPage() {
               </div>
               <a
                 href="/patient/orders"
-                className="text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
-                style={{ color: '#13294B', background: 'rgba(19,41,75,.06)' }}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
               >
                 View all →
               </a>
