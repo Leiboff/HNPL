@@ -234,7 +234,7 @@ export default function PaymentMethods({
           <div>
             <h2 className="text-base font-semibold text-gray-900">Edit card</h2>
             <div className="flex items-center gap-2 mt-1">
-              <BrandBadge brand={editingCard.card_brand} />
+              <CardThumbnail brand={editingCard.card_brand} />
               <span className="font-mono text-sm text-gray-600">•••• {editingCard.last_four}</span>
             </div>
           </div>
