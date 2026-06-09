@@ -191,7 +191,9 @@ export default function VerifyIdentityPage() {
 
         {/* Wordmark */}
         <div className="mb-7">
-          <span className="text-lg font-bold" style={{ color: '#0F4C75' }}>BetterNow</span>
+          <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+          </span>
           <h1 className="mt-3 text-2xl font-semibold text-gray-900">Verify your identity</h1>
           <p className="mt-1 text-sm text-gray-500">
             One quick face scan confirms you&apos;re a real person. This keeps BetterNow secure for everyone.
@@ -204,7 +206,7 @@ export default function VerifyIdentityPage() {
             onClick={startScan}
             disabled={!sdkReady || scanState === 'scanning'}
             className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-            style={{ backgroundColor: '#0F4C75' }}
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             {!sdkReady
               ? 'Preparing secure verification…'
@@ -223,7 +225,7 @@ export default function VerifyIdentityPage() {
             <a
               href="/patient"
               className="inline-flex items-center justify-center w-full rounded-lg px-4 py-3 text-sm font-semibold text-white transition-colors"
-              style={{ backgroundColor: '#0F4C75' }}
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
               Continue
             </a>
@@ -240,7 +242,7 @@ export default function VerifyIdentityPage() {
               onClick={startScan}
               disabled={!sdkReady}
               className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{ backgroundColor: '#0F4C75' }}
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
               Try again
             </button>
@@ -257,7 +259,7 @@ export default function VerifyIdentityPage() {
               onClick={startScan}
               disabled={!sdkReady}
               className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{ backgroundColor: '#0F4C75' }}
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
               Try again
             </button>

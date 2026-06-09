@@ -52,7 +52,7 @@ function SuccessCard({ brand, lastFour }: { brand?: string; lastFour?: string })
       </p>
       <Link
         href="/patient/payment-methods"
-        className="inline-flex items-center justify-center rounded-lg bg-[#0F4C75] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] transition-colors"
+        className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
       >
         View my cards →
       </Link>

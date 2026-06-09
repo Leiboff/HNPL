@@ -44,19 +44,19 @@ export default function InstalmentHero({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full text-left bg-white rounded-3xl shadow-sm p-6 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0F4C75] focus-visible:ring-offset-2"
+        className="w-full text-left bg-white rounded-3xl shadow-sm p-6 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2"
       >
         {/* Label row with affordance */}
         <div className="flex items-start justify-between gap-2">
           <p
             className={`text-xs font-semibold uppercase tracking-widest ${isOverdue ? 'text-red-600' : ''}`}
-            style={isOverdue ? undefined : { color: '#0F4C75', opacity: 0.6 }}
+            style={isOverdue ? undefined : { color: '#13294B', opacity: 0.6 }}
           >
             {isOverdue ? 'Amount Overdue' : 'Next Instalment'}
           </p>
           <span
             className="text-sm font-medium shrink-0 mt-0.5 transition-colors hover:opacity-70"
-            style={{ color: '#0F4C75' }}
+            style={{ color: '#13294B' }}
           >
             View breakdown →
           </span>
@@ -65,7 +65,7 @@ export default function InstalmentHero({
         {/* Amount */}
         <p
           className={`mt-3 text-5xl font-bold tabular-nums ${isOverdue ? 'text-red-600' : ''}`}
-          style={isOverdue ? undefined : { color: '#0F4C75' }}
+          style={isOverdue ? undefined : { color: '#13294B' }}
         >
           {formatRand(total)}
         </p>

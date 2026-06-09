@@ -30,11 +30,11 @@ function MoneyStatCard({
 }: {
   label: string;
   value: string;
-  theme: 'green' | 'blue';
+  theme: 'green' | 'teal';
 }) {
   const t = {
-    green: { card: 'bg-green-50 border-green-200', label: 'text-green-700', value: 'text-green-900' },
-    blue:  { card: 'bg-blue-50 border-blue-200',   label: 'text-blue-700',  value: 'text-blue-900'  },
+    green: { card: 'bg-green-50 border-green-200',                      label: 'text-green-700',      value: 'text-green-900'      },
+    teal:  { card: 'bg-[#f0fbfa] border-[rgba(21,168,158,.2)]',         label: 'text-[#15A89E]',      value: 'text-[#0E2140]'      },
   }[theme];
   return (
     <div className={`rounded-2xl border shadow-sm p-5 ${t.card}`}>
@@ -144,10 +144,12 @@ export default async function PracticeDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#f7fbfb]">
       <header className="bg-white border-b border-gray-200">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <span className="text-lg font-semibold text-gray-900">BetterNow</span>
+          <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+          </span>
           <LogoutButton />
         </div>
       </header>
@@ -175,7 +177,8 @@ export default async function PracticeDashboardPage() {
             )}
             <a
               href="/practice/bills/new"
-              className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+              className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
               + Create a bill
             </a>
@@ -188,7 +191,7 @@ export default async function PracticeDashboardPage() {
           <StatCard label="Active plans"         value={String(activePlans ?? 0)}       valueClass="text-green-700" />
           <StatCard label="Awaiting acceptance"  value={String(pendingAcceptance ?? 0)} valueClass="text-amber-700" />
           <MoneyStatCard label="Total paid out to you" value={formatRand(totalPaidOut)}  theme="green" />
-          <MoneyStatCard label="Pending payout"        value={formatRand(pendingPayout)} theme="blue"  />
+          <MoneyStatCard label="Pending payout"        value={formatRand(pendingPayout)} theme="teal"  />
         </div>
 
         {/* Bills table with filters + export */}

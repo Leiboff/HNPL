@@ -97,7 +97,7 @@ function CardLabel({ children }: { children: React.ReactNode }) {
   return (
     <p
       className="text-xs font-semibold uppercase tracking-widest"
-      style={{ color: '#0F4C75', opacity: 0.6 }}
+      style={{ color: '#13294B', opacity: 0.6 }}
     >
       {children}
     </p>
@@ -174,15 +174,15 @@ export default async function PatientDashboardPage() {
           </p>
           <p
             className="mt-3 text-5xl font-bold tabular-nums"
-            style={{ color: '#0F4C75' }}
+            style={{ color: '#13294B' }}
           >
             {formatRand(Number(plan.total_amount))}
           </p>
           <p className="mt-2 text-sm text-gray-500">from {practiceName}</p>
           <Link
             href={`/patient/orders/${plan.id}/confirm`}
-            className="mt-4 inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors"
-            style={{ backgroundColor: '#0F4C75' }}
+            className="mt-4 inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             Review &amp; accept →
           </Link>
@@ -196,14 +196,14 @@ export default async function PatientDashboardPage() {
           </p>
           <p
             className="mt-3 text-2xl font-bold"
-            style={{ color: '#0F4C75' }}
+            style={{ color: '#13294B' }}
           >
             {pendingCount} bills awaiting your approval
           </p>
           <Link
             href="/patient/orders"
-            className="mt-4 inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors"
-            style={{ backgroundColor: '#0F4C75' }}
+            className="mt-4 inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             Review →
           </Link>
@@ -248,7 +248,7 @@ export default async function PatientDashboardPage() {
         <CardLabel>Payments</CardLabel>
         <p
           className="mt-3 text-2xl font-semibold"
-          style={{ color: '#0F4C75' }}
+          style={{ color: '#13294B' }}
         >
           You&apos;re all paid up
         </p>
@@ -260,7 +260,7 @@ export default async function PatientDashboardPage() {
   }
 
   return (
-    <div className="bg-gray-50 min-h-full">
+    <div className="bg-[#f7fbfb] min-h-full">
       <div className="mx-auto max-w-2xl px-5 py-8 space-y-4">
 
         {/* Greeting */}
@@ -288,7 +288,7 @@ export default async function PatientDashboardPage() {
           <CardLabel>Spending Allowance</CardLabel>
           <p
             className="mt-3 text-5xl font-bold tabular-nums"
-            style={{ color: '#0F4C75' }}
+            style={{ color: '#13294B' }}
           >
             R0.00
           </p>
@@ -335,7 +335,7 @@ export default async function PatientDashboardPage() {
                 </p>
                 <p
                   className="text-4xl font-bold tabular-nums mt-1"
-                  style={{ color: '#0F4C75' }}
+                  style={{ color: '#13294B' }}
                 >
                   {currentCount}
                 </p>
@@ -343,7 +343,7 @@ export default async function PatientDashboardPage() {
               <a
                 href="/patient/orders"
                 className="text-sm font-medium transition-colors hover:opacity-70"
-                style={{ color: '#0F4C75' }}
+                style={{ color: '#13294B' }}
               >
                 View all orders →
               </a>

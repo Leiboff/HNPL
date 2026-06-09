@@ -730,6 +730,122 @@
 
 .lp-root .reveal.in { opacity: 1; transform: none; }
 
+/* ── Practice dark band ────────────────────────────────────────────────────── */
+
+.lp-root .practice-band {
+  background: var(--navy);
+  border-top: none;
+  border-bottom: none;
+}
+
+.lp-root .practice-band .kicker { color: var(--teal-bright); }
+.lp-root .practice-band h2 { color: #fff; }
+.lp-root .practice-band .sec-head p { color: rgba(255,255,255,.7); }
+
+.lp-root .practice-band .step {
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.12);
+  box-shadow: none;
+}
+
+.lp-root .practice-band .step .num { color: var(--teal-bright); }
+.lp-root .practice-band .step h3 { color: #fff; }
+.lp-root .practice-band .step p { color: rgba(255,255,255,.65); }
+
+.lp-root .practice-band .step .ic {
+  background: rgba(21,168,158,.18);
+  color: var(--teal-bright);
+}
+
+.lp-root .practice-band .feature {
+  background: rgba(255,255,255,.05);
+  border-color: rgba(255,255,255,.10);
+}
+
+.lp-root .practice-band .feature h4 { color: #fff; }
+.lp-root .practice-band .feature p { color: rgba(255,255,255,.65); }
+
+.lp-root .practice-band .feature .ic {
+  background: rgba(21,168,158,.18);
+  color: var(--teal-bright);
+}
+
+.lp-root .practice-band .example {
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.15);
+}
+
+.lp-root .practice-band .example .lead { color: #fff; }
+
+.lp-root .practice-band .chip {
+  background: rgba(255,255,255,.08);
+  border-color: rgba(255,255,255,.15);
+}
+
+.lp-root .practice-band .chip .amt { color: #fff; }
+.lp-root .practice-band .chip .lbl { color: rgba(255,255,255,.6); }
+.lp-root .practice-band .example .note { color: rgba(255,255,255,.5); }
+
+.lp-root .practice-band .tag.pro {
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.25);
+}
+
+.lp-root .practice-band .sec-cta .btn-ghost {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255,255,255,.4);
+}
+
+.lp-root .practice-band .sec-cta .btn-ghost:hover {
+  border-color: #fff;
+  background: rgba(255,255,255,.08);
+}
+
+/* ── Requirements grid (What you need) ─────────────────────────────────────── */
+
+.lp-root .reqs {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+@media(min-width: 600px) {
+  .lp-root .reqs { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── Specialty pills ────────────────────────────────────────────────────────── */
+
+.lp-root .specialty-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin: 0 auto;
+  max-width: 680px;
+}
+
+.lp-root .pill {
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 20px;
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.lp-root .specialty-note {
+  margin-top: 22px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--muted);
+}
+
 /* ── Reduced motion ────────────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

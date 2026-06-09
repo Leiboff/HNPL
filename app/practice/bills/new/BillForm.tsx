@@ -77,7 +77,7 @@ function SuccessPanel({
             <button
               type="button"
               onClick={() => navigator.clipboard.writeText(summary.invitation!.shareUrl)}
-              className="text-xs text-blue-600 hover:text-blue-700 font-medium shrink-0"
+              className="text-xs text-[#15A89E] hover:text-[#13294B] font-medium shrink-0"
             >
               Copy
             </button>
@@ -288,7 +288,8 @@ export default function BillForm({ feePercent, providers, createBill }: Props) {
       <button
         type="submit"
         disabled={loading || !validAmount || !patientEmail.trim() || !providerId}
-        className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
+        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
       >
         {loading ? 'Sending bill…' : 'Send bill to patient'}
       </button>

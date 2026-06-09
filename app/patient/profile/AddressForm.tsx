@@ -53,7 +53,7 @@ function Field({
 
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
-  'focus:border-[#0F4C75] focus:outline-none focus:ring-1 focus:ring-[#0F4C75]';
+  'focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]';
 
 export default function AddressForm({ current, updateProfile }: Props) {
   const [phone, setPhone]               = useState(current.phone         ?? '');
@@ -197,7 +197,8 @@ export default function AddressForm({ current, updateProfile }: Props) {
       <button
         type="submit"
         disabled={loading}
-        className="rounded-lg bg-[#0F4C75] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] focus:outline-none focus:ring-2 focus:ring-[#0F4C75] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
+        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
       >
         {loading ? 'Saving…' : 'Save changes'}
       </button>

@@ -138,9 +138,9 @@ export default function DateRangePicker({ fromDate, toDate, onChange }: Props) {
     const inRange = draftFrom && effectiveTo && dayStr > draftFrom && dayStr < effectiveTo;
     const isToday = dayStr === todayStr();
 
-    if (isFrom || isTo)   return 'bg-blue-600 text-white font-semibold rounded-lg';
-    if (inRange)          return 'bg-blue-50 text-blue-600 rounded-lg';
-    if (isToday)          return 'text-blue-600 font-bold rounded-lg hover:bg-gray-100';
+    if (isFrom || isTo)   return 'text-white font-semibold rounded-lg [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)]';
+    if (inRange)          return 'bg-[#15A89E]/10 text-[#13294B] rounded-lg';
+    if (isToday)          return 'text-[#15A89E] font-bold rounded-lg hover:bg-gray-100';
     return 'text-gray-700 rounded-lg hover:bg-gray-100';
   }
 

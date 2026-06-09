@@ -42,7 +42,7 @@ export default function PatientNav() {
                 // Desktop active: blue pill background
                 'md:rounded-lg',
                 active
-                  ? 'border-[#0F4C75] text-[#0F4C75] md:border-0 md:bg-[#0F4C75]/10 md:text-[#0F4C75]'
+                  ? 'border-[#15A89E] text-[#13294B] md:border-0 md:bg-[#13294B]/10 md:text-[#13294B]'
                   : 'border-transparent text-gray-500 hover:text-gray-700 md:text-gray-600 md:hover:bg-gray-100 md:hover:text-gray-900',
               ].join(' ')}
             >

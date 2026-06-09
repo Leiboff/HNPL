@@ -99,12 +99,12 @@ const BLANK_ADD: AddDraft = {
 
 // ─── Primitive UI helpers ─────────────────────────────────────────────────────
 
-const INPUT_CLS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-colors';
+const INPUT_CLS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#15A89E]/30 focus:border-[#15A89E] transition-colors';
 const SELECT_CLS = INPUT_CLS;
 
 function RolePill({ role }: { role: 'admin' | 'provider' }) {
   return role === 'provider'
-    ? <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#0F4C75] text-white">Doctor / Clinician</span>
+    ? <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#13294B] text-white">Doctor / Clinician</span>
     : <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">Admin staff</span>;
 }
 
@@ -384,7 +384,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="font-semibold text-gray-900">{name}</p>
                 {opts.isMe && (
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-600 bg-blue-50 rounded-full px-2 py-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[#15A89E] bg-[#15A89E]/10 rounded-full px-2 py-0.5">
                     You
                   </span>
                 )}
@@ -396,7 +396,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               {isManager && (
                 <button
                   onClick={() => isEditing ? closeEdit() : openEdit(m)}
-                  className="text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors px-2 py-1 rounded-lg hover:bg-blue-50"
+                  className="text-xs font-medium text-[#15A89E] hover:text-[#13294B] transition-colors px-2 py-1 rounded-lg hover:bg-[#15A89E]/10"
                 >
                   {isEditing ? 'Cancel' : 'Edit'}
                 </button>
@@ -541,7 +541,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                     onClick={() => patchDraft({ payout_destination: opt })}
                     className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors ${
                       editDraft.payout_destination === opt
-                        ? 'border-[#0F4C75] bg-[#0F4C75]/5 text-[#0F4C75]'
+                        ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
                         : 'border-gray-200 text-gray-600 hover:border-gray-300'
                     }`}
                   >
@@ -597,7 +597,8 @@ export default function MembersView({ members: initialMembers, currentUserId, is
           <button
             onClick={() => handleSaveEdit(m)}
             disabled={editLoading || wouldLoseLastManager}
-            className="px-5 py-2 bg-[#0F4C75] text-white text-sm font-semibold rounded-lg hover:bg-[#0a3a5c] disabled:opacity-50 transition-colors"
+            className="px-5 py-2 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             {editLoading ? 'Saving…' : 'Save changes'}
           </button>
@@ -644,11 +645,11 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                 onClick={() => setAddDraft(d => ({ ...d, memberRole: opt.value }))}
                 className={`rounded-xl border p-4 text-left transition-colors ${
                   addDraft.memberRole === opt.value
-                    ? 'border-[#0F4C75] bg-[#0F4C75]/5'
+                    ? 'border-[#13294B] bg-[#13294B]/5'
                     : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
-                <p className={`text-sm font-semibold ${addDraft.memberRole === opt.value ? 'text-[#0F4C75]' : 'text-gray-800'}`}>{opt.label}</p>
+                <p className={`text-sm font-semibold ${addDraft.memberRole === opt.value ? 'text-[#13294B]' : 'text-gray-800'}`}>{opt.label}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{opt.sub}</p>
               </button>
             ))}
@@ -711,7 +712,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                     onClick={() => setAddDraft(d => ({ ...d, payoutDestination: opt }))}
                     className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors ${
                       addDraft.payoutDestination === opt
-                        ? 'border-[#0F4C75] bg-[#0F4C75]/5 text-[#0F4C75]'
+                        ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
                         : 'border-gray-200 text-gray-600 hover:border-gray-300'
                     }`}
                   >
@@ -762,7 +763,8 @@ export default function MembersView({ members: initialMembers, currentUserId, is
         <button
           onClick={handleAddMember}
           disabled={addLoading}
-          className="w-full py-2.5 bg-[#0F4C75] text-white text-sm font-semibold rounded-xl hover:bg-[#0a3a5c] disabled:opacity-50 transition-colors"
+          className="w-full py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-all hover:shadow-lg"
+          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
         >
           {addLoading ? 'Sending invitation…' : 'Invite & add to practice'}
         </button>
@@ -785,7 +787,8 @@ export default function MembersView({ members: initialMembers, currentUserId, is
         {isManager && !showAdd && (
           <button
             onClick={() => { setShowAdd(true); closeEdit(); setConfirmingId(null); }}
-            className="shrink-0 rounded-lg bg-[#0F4C75] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] transition-colors"
+            className="shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             + Add team member
           </button>

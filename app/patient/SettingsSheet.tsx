@@ -174,7 +174,7 @@ export default function SettingsSheet({ firstName, lastName, email, phone }: Pro
               <div className="bg-gray-50 rounded-xl p-4 flex gap-3">
                 <div
                   className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center"
-                  style={{ backgroundColor: '#0F4C75' }}
+                  style={{ backgroundColor: '#13294B' }}
                 >
                   <span className="text-white">
                     <UserIcon />

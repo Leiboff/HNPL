@@ -209,7 +209,7 @@ export default function BillsBlock({ plans, feePercent, specialtyMap, practiceNa
               {/* New bill */}
               <a
                 href="/practice/bills/new"
-                className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                className="text-sm font-medium text-[#15A89E] hover:text-[#13294B] transition-colors"
               >
                 + New bill
               </a>
@@ -266,7 +266,8 @@ export default function BillsBlock({ plans, feePercent, specialtyMap, practiceNa
           <p className="mt-1 text-sm text-gray-400">Create your first bill to start accepting patients.</p>
           <a
             href="/practice/bills/new"
-            className="mt-5 inline-block rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+            className="mt-5 inline-block rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             Create a bill
           </a>
@@ -276,7 +277,7 @@ export default function BillsBlock({ plans, feePercent, specialtyMap, practiceNa
           <p className="font-medium text-gray-500">No bills in this date range</p>
           <button
             onClick={clearFilters}
-            className="mt-3 text-sm text-blue-600 hover:text-blue-700 transition-colors"
+            className="mt-3 text-sm text-[#15A89E] hover:text-[#13294B] transition-colors"
           >
             Clear filters
           </button>

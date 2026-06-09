@@ -75,7 +75,8 @@ export default async function ConfirmPage({
           <div className="flex flex-col items-center gap-3">
             <Link
               href="/patient/profile"
-              className="inline-flex items-center justify-center rounded-lg bg-[#0F4C75] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] transition-colors"
+              className="inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
               Go to profile →
             </Link>

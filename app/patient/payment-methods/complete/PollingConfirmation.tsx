@@ -37,8 +37,8 @@ function BrandBadge({ brand }: { brand: string }) {
 function PollingView() {
   return (
     <ResultCard>
-      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#0F4C75]/10 mx-auto">
-        <svg className="w-7 h-7 text-[#0F4C75] animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)]/10 mx-auto">
+        <svg className="w-7 h-7 text-[#13294B] animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
         </svg>
@@ -79,7 +79,7 @@ function SuccessView({ card }: { card: CardInfo }) {
       </p>
       <Link
         href="/patient/payment-methods"
-        className="inline-flex items-center justify-center rounded-lg bg-[#0F4C75] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] transition-colors"
+        className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
       >
         View my cards →
       </Link>
@@ -90,8 +90,8 @@ function SuccessView({ card }: { card: CardInfo }) {
 function TimeoutView() {
   return (
     <ResultCard>
-      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#0F4C75]/10 mx-auto">
-        <svg className="w-7 h-7 text-[#0F4C75]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden>
+      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)]/10 mx-auto">
+        <svg className="w-7 h-7 text-[#13294B]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden>
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       </div>
@@ -103,7 +103,7 @@ function TimeoutView() {
       </div>
       <Link
         href="/patient/payment-methods"
-        className="inline-flex items-center justify-center rounded-lg bg-[#0F4C75] px-6 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] transition-colors"
+        className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
       >
         Check payment methods →
       </Link>

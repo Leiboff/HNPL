@@ -310,7 +310,7 @@ export default function ConfirmForm({
               onClick={() => handlePlanTypeChange(n)}
               className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 planType === n
-                  ? 'border-[#0F4C75] bg-[#0F4C75]/10 text-[#0F4C75]'
+                  ? 'border-[#13294B] bg-[#13294B]/10 text-[#13294B]'
                   : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
               }`}
             >
@@ -356,7 +356,7 @@ export default function ConfirmForm({
           {/* ── Polling: waiting for newly-registered card to appear ── */}
           {cardSearchStatus === 'polling' ? (
             <div className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3.5">
-              <svg className="w-5 h-5 text-[#0F4C75] animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden>
+              <svg className="w-5 h-5 text-[#15A89E] animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden>
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
               </svg>
@@ -376,7 +376,7 @@ export default function ConfirmForm({
                       !valid
                         ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
                         : checked
-                        ? 'border-[#0F4C75] bg-[#0F4C75]/10 cursor-pointer'
+                        ? 'border-[#13294B] bg-[#13294B]/10 cursor-pointer'
                         : 'border-gray-200 bg-white hover:border-gray-300 cursor-pointer'
                     }`}
                   >
@@ -392,7 +392,7 @@ export default function ConfirmForm({
                           setAddCardError(null);
                         }
                       }}
-                      className="mt-0.5 h-4 w-4 border-gray-300 text-[#0F4C75] focus:ring-[#0F4C75]"
+                      className="mt-0.5 h-4 w-4 border-gray-300 text-[#15A89E] focus:ring-[#15A89E]"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -416,7 +416,7 @@ export default function ConfirmForm({
               <label
                 className={`flex items-center gap-3 rounded-xl border p-3.5 transition-colors ${
                   wantsNewCard
-                    ? 'border-[#0F4C75] bg-[#0F4C75]/10 cursor-pointer'
+                    ? 'border-[#13294B] bg-[#13294B]/10 cursor-pointer'
                     : 'border-gray-200 bg-white hover:border-gray-300 cursor-pointer'
                 } ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
@@ -431,7 +431,7 @@ export default function ConfirmForm({
                     setAddCardError(null);
                     setError(null);
                   }}
-                  className="h-4 w-4 border-gray-300 text-[#0F4C75] focus:ring-[#0F4C75]"
+                  className="h-4 w-4 border-gray-300 text-[#15A89E] focus:ring-[#15A89E]"
                 />
                 <span className="text-sm font-medium text-gray-700">+ Use a new card</span>
               </label>
@@ -456,7 +456,7 @@ export default function ConfirmForm({
                 type="button"
                 onClick={handleAddNewCard}
                 disabled={busy || blocked}
-                className="inline-flex items-center text-sm font-semibold text-[#0F4C75] hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center text-sm font-semibold text-[#13294B] hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue →'}
               </button>
@@ -495,7 +495,8 @@ export default function ConfirmForm({
             type="button"
             onClick={handleAddNewCard}
             disabled={!planType || busy || blocked}
-            className="flex-1 rounded-lg bg-[#0F4C75] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] focus:outline-none focus:ring-2 focus:ring-[#0F4C75] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue'}
           </button>
@@ -504,7 +505,8 @@ export default function ConfirmForm({
             type="button"
             onClick={handleConfirm}
             disabled={!canSubmit}
-            className="flex-1 rounded-lg bg-[#0F4C75] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0a3a5c] focus:outline-none focus:ring-2 focus:ring-[#0F4C75] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:shadow-lg"
+            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
             {submitting ? 'Processing…' : 'Confirm and Pay First Instalment'}
           </button>

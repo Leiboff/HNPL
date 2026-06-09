@@ -57,20 +57,22 @@ export default async function MembersPage() {
   const members = (rawMembers ?? []) as MemberRow[];
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#f7fbfb]">
 
       <header className="bg-white border-b border-gray-200">
         <div className="mx-auto max-w-4xl px-6 py-4 flex items-center justify-between">
-          <div>
-            <span className="text-lg font-semibold text-gray-900">BetterNow</span>
-            <span className="ml-2 text-sm text-gray-500">— {practiceName}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+              <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+            </span>
+            <span className="text-sm text-gray-400">— {practiceName}</span>
           </div>
           <LogoutButton />
         </div>
       </header>
 
       <div className="mx-auto max-w-4xl px-6 pt-4">
-        <a href="/practice" className="text-sm text-blue-600 hover:text-blue-700 transition-colors">
+        <a href="/practice" className="text-sm text-[#15A89E] hover:text-[#13294B] transition-colors">
           ← Back to dashboard
         </a>
       </div>

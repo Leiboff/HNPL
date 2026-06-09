@@ -119,7 +119,7 @@ export default function InstalmentBreakdownModal({
               <span className="text-sm font-semibold text-gray-700">Total</span>
               <span
                 className={`text-lg font-bold tabular-nums ${isOverdue ? 'text-red-600' : ''}`}
-                style={isOverdue ? undefined : { color: '#0F4C75' }}
+                style={isOverdue ? undefined : { color: '#13294B' }}
               >
                 {formatRand(total)}
               </span>

@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import './landing.css';
 
 const WORDS = ['Smile', 'See', 'Hear', 'Move', 'Heal', 'Feel', 'Live'];
 
 export default function LandingPage() {
-  const [tab, setTab] = useState<'patient' | 'practice'>('patient');
   const slotRef = useRef<HTMLSpanElement>(null);
 
   // Verb cycling animation
@@ -17,6 +16,10 @@ export default function LandingPage() {
 
     const clip  = slot.querySelector('.verb-clip')  as HTMLElement;
     const strut = slot.querySelector('.verb-strut') as HTMLElement;
+
+    // Reset clip to a single clean verb (guards against Strict Mode double-invoke
+    // leaving stale elements from the first run)
+    clip.innerHTML = `<span class="verb current">${WORDS[0]}</span>`;
 
     const probe = document.createElement('span');
     const cs    = getComputedStyle(clip.querySelector('.verb.current') as Element);
@@ -30,9 +33,10 @@ export default function LandingPage() {
     probe.remove();
 
     let i = 0;
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
 
     function cycle() {
-      const old = clip.querySelector('.verb.current') as HTMLElement;
+      const old = clip.querySelector('.verb.current') as HTMLElement | null;
       i = (i + 1) % WORDS.length;
       const next = document.createElement('span');
       next.className   = 'verb enter';
@@ -40,16 +44,19 @@ export default function LandingPage() {
       clip.appendChild(next);
       void next.offsetWidth;
       requestAnimationFrame(() => {
-        old.classList.remove('current');
-        old.classList.add('out');
+        old?.classList.remove('current');
+        old?.classList.add('out');
         next.classList.remove('enter');
         next.classList.add('current');
       });
-      setTimeout(() => old.remove(), 700);
+      timeouts.push(setTimeout(() => old?.remove(), 700));
     }
 
     const id = setInterval(cycle, 2200);
-    return () => clearInterval(id);
+    return () => {
+      clearInterval(id);
+      timeouts.forEach(clearTimeout);
+    };
   }, []);
 
   // Scroll-reveal IntersectionObserver
@@ -64,16 +71,10 @@ export default function LandingPage() {
     return () => io.disconnect();
   }, []);
 
-  // Reveal items in newly-shown tab panel
-  useEffect(() => {
-    const panelId = tab === 'patient' ? 'p-patient' : 'p-practice';
-    document.getElementById(panelId)?.querySelectorAll('.reveal').forEach(el => el.classList.add('in'));
-  }, [tab]);
-
   return (
     <div className="lp-root">
 
-      {/* ── Header ───────────────────────────────────────────────────────── */}
+      {/* ── Header — DO NOT EDIT ──────────────────────────────────────────── */}
       <header>
         <div className="wrap nav">
           <Link className="brand" href="/">
@@ -87,7 +88,6 @@ export default function LandingPage() {
           </nav>
           <div className="nav-cta">
             <Link className="signin" href="/login">Sign in</Link>
-            <Link className="btn btn-primary btn-sm" href="/signup/practice">Get started</Link>
           </div>
         </div>
       </header>
@@ -95,8 +95,7 @@ export default function LandingPage() {
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <div className="stage">
         <div className="wrap hero">
-          <span className="eyebrow"><span className="dot" />&nbsp;Pay later for healthcare</span>
-          <h1 aria-label="Smile better, now">
+          <h1 aria-label="betternow">
             <span ref={slotRef} className="verb-slot" aria-hidden={true}>
               <span className="verb-strut">Smile</span>
               <span className="verb-clip">
@@ -108,119 +107,17 @@ export default function LandingPage() {
             </span>
           </h1>
           <p className="sub">
-            Split healthcare bills into interest-free instalments. Patients get the care they need
-            today&nbsp;— practices get paid upfront.
+            Split any healthcare bill into interest-free instalments on your credit card. Get the care you need today.
           </p>
           <div className="ctas">
-            <Link className="btn btn-primary btn-lg" href="/signup/practice">Get started as a practice</Link>
-            <Link className="btn btn-ghost btn-lg"   href="/signup/patient">I&apos;m a patient</Link>
-          </div>
-          <div className="microtrust">
-            <span><PlusIcon />Always interest-free</span>
-            <span><PlusIcon />No paperwork</span>
-            <span><PlusIcon />Proudly SA-built</span>
+            <Link className="btn btn-primary btn-lg" href="/signup/patient">I&apos;m a patient</Link>
+            <Link className="btn btn-ghost btn-lg"   href="/signup/practice">I run a practice</Link>
           </div>
         </div>
       </div>
 
-      {/* ── How it works ─────────────────────────────────────────────────── */}
-      <section id="how">
-        <div className="wrap">
-          <div className="sec-head reveal">
-            <div className="kicker">How it works</div>
-            <h2>One flow. Two happy sides.</h2>
-            <p>The same simple plan works whether you&apos;re getting care or providing it. Pick your view.</p>
-          </div>
-          <div className="toggle-wrap reveal">
-            <div className="toggle" role="tablist" aria-label="Choose your view">
-              <button
-                role="tab"
-                aria-selected={tab === 'patient'}
-                aria-controls="p-patient"
-                id="t-patient"
-                onClick={() => setTab('patient')}
-              >
-                For patients
-              </button>
-              <button
-                role="tab"
-                aria-selected={tab === 'practice'}
-                aria-controls="p-practice"
-                id="t-practice"
-                onClick={() => setTab('practice')}
-              >
-                For practices
-              </button>
-            </div>
-          </div>
-
-          {/* Patient panel */}
-          <div className="panel" id="p-patient" role="tabpanel" aria-labelledby="t-patient" hidden={tab !== 'patient'}>
-            <div className="steps">
-              <div className="step reveal">
-                <div className="num">STEP 1</div>
-                <div className="ic"><HeartIcon /></div>
-                <h3>Get the care you need</h3>
-                <p>Ask for BetterNow at the practice, or tap the payment link they send you. No waiting for payday.</p>
-              </div>
-              <div className="step reveal">
-                <div className="num">STEP 2</div>
-                <div className="ic"><CalendarIcon /></div>
-                <h3>Split it, interest-free</h3>
-                <p>Choose 2 or 3 instalments, timed to your salary date. The price never changes — no interest, no fees stacking up.</p>
-              </div>
-              <div className="step reveal">
-                <div className="num">STEP 3</div>
-                <div className="ic"><CheckIcon /></div>
-                <h3>Pay over time</h3>
-                <p>Instalments come off automatically on the dates you chose. Track everything in your portal. Done.</p>
-              </div>
-            </div>
-            <div className="example reveal">
-              <div className="lead">A R3,600 bill becomes</div>
-              <div className="split">
-                <div className="chip"><div className="amt">R1,200</div><div className="lbl">today</div></div>
-                <div className="chip"><div className="amt">R1,200</div><div className="lbl">next payday</div></div>
-                <div className="chip"><div className="amt">R1,200</div><div className="lbl">payday after</div></div>
-              </div>
-              <div className="note">Illustrative example. Interest-free — you pay R3,600 in total, never a cent more.</div>
-            </div>
-          </div>
-
-          {/* Practice panel */}
-          <div className="panel" id="p-practice" role="tabpanel" aria-labelledby="t-practice" hidden={tab !== 'practice'}>
-            <div className="steps">
-              <div className="step reveal">
-                <div className="num">STEP 1</div>
-                <div className="ic"><PencilIcon /></div>
-                <h3>Record the bill</h3>
-                <p>Capture the patient&apos;s shortfall in seconds. No portals to log into, no forms to file, no chasing.</p>
-              </div>
-              <div className="step reveal">
-                <div className="num">STEP 2</div>
-                <div className="ic"><ClockIcon /></div>
-                <h3>Patient pays over time</h3>
-                <p>They split into 2–3 interest-free instalments around their salary date — approved in minutes.</p>
-              </div>
-              <div className="step reveal">
-                <div className="num">STEP 3</div>
-                <div className="ic"><CashIcon /></div>
-                <h3>Get paid upfront</h3>
-                <p>Receive ~94% within days. We collect the remaining instalments and carry the risk — so your cash flow doesn&apos;t.</p>
-              </div>
-            </div>
-            <div className="example reveal">
-              <div className="lead">On a R3,600 shortfall, you receive</div>
-              <div className="split">
-                <div className="chip"><div className="amt">~R3,384</div><div className="lbl">upfront, in days</div></div>
-                <div className="chip"><div className="amt">R0</div><div className="lbl">collection risk</div></div>
-                <div className="chip"><div className="amt">0 min</div><div className="lbl">admin chasing</div></div>
-              </div>
-              <div className="note">Illustrative example. We handle collection of all instalments after you&apos;ve been paid.</div>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Anchor for "How it works" nav link — scrolls to the patient section */}
+      <div id="how" aria-hidden="true" />
 
       {/* ── For patients ─────────────────────────────────────────────────── */}
       <section id="patients" className="band">
@@ -228,73 +125,188 @@ export default function LandingPage() {
           <div className="sec-head reveal">
             <div className="split-head"><span className="tag pat">For patients</span></div>
             <h2>Care shouldn&apos;t wait for payday.</h2>
-            <p>Get treated now and spread the cost over instalments you can actually plan around — with zero interest.</p>
+            <p>Get treated now and spread the cost over instalments you can plan around — using your own credit card, with zero interest.</p>
           </div>
-          <div className="lp-grid">
+
+          <div className="steps">
+            <div className="step reveal">
+              <div className="num">STEP 1</div>
+              <div className="ic"><HeartIcon /></div>
+              <h3>Get treated today</h3>
+              <p>Ask for betternow at your practice, or tap the payment link they send you. No waiting for payday.</p>
+            </div>
+            <div className="step reveal">
+              <div className="num">STEP 2</div>
+              <div className="ic"><CalendarIcon /></div>
+              <h3>Choose Pay in 2 or Pay in 3</h3>
+              <p>Split your bill into 2 or 3 equal, interest-free instalments on your credit card, timed to your salary dates. Pay the first today, the rest on your next paydays.</p>
+            </div>
+            <div className="step reveal">
+              <div className="num">STEP 3</div>
+              <div className="ic"><CheckIcon /></div>
+              <h3>Pay over your paydays</h3>
+              <p>Each instalment comes off automatically on the date you chose. The price never changes — you pay your bill, never a cent more. Pay early any time, free.</p>
+            </div>
+          </div>
+
+          <div className="example reveal">
+            <div className="lead">A R3,600 bill — Pay in 3</div>
+            <div className="split">
+              <div className="chip"><div className="amt">R1,200</div><div className="lbl">today</div></div>
+              <div className="chip"><div className="amt">R1,200</div><div className="lbl">next payday</div></div>
+              <div className="chip"><div className="amt">R1,200</div><div className="lbl">payday after</div></div>
+            </div>
+            <div className="note">Interest-free. You pay R3,600 in total — never more.</div>
+          </div>
+
+          <div className="lp-grid" style={{ marginTop: '42px' }}>
             <div className="feature reveal"><div className="ic"><EcgIcon /></div><h4>Always interest-free</h4><p>The amount you see is the amount you pay. No interest, no surprise fees, no growing balance.</p></div>
+            <div className="feature reveal"><div className="ic"><CardIcon /></div><h4>Your own credit, used smarter</h4><p>betternow works with the limit on your existing credit card — no new debt, no lengthy applications.</p></div>
             <div className="feature reveal"><div className="ic"><CalendarIcon /></div><h4>Timed to your salary</h4><p>Instalments land on the dates that suit your pay cycle, so repayments never blindside you.</p></div>
-            <div className="feature reveal"><div className="ic"><BoltIcon /></div><h4>Approved in minutes</h4><p>A quick check at the practice or on your link. No stacks of documents, no week-long wait.</p></div>
+            <div className="feature reveal"><div className="ic"><LayersIcon /></div><h4>One simple portal</h4><p>See every instalment, date and balance in one place. Pay early any time, free of charge.</p></div>
+            <div className="feature reveal"><div className="ic"><BoltIcon /></div><h4>Approved on the spot</h4><p>If your card has the available limit, you&apos;re good to go. No documents, no week-long wait.</p></div>
             <div className="feature reveal"><div className="ic"><ShieldIcon /></div><h4>Your data, protected</h4><p>Your information is encrypted and handled with care — never sold, never shared without cause.</p></div>
-            <div className="feature reveal"><div className="ic"><CardIcon /></div><h4>One simple portal</h4><p>See every instalment, date and balance in one place. Pay early any time, free of charge.</p></div>
-            <div className="feature reveal"><div className="ic"><ChatIcon /></div><h4>Real support</h4><p>Friendly, local help when you need it. We&apos;re here to keep your care on track, not trip you up.</p></div>
           </div>
+
           <div className="sec-cta reveal">
             <Link className="btn btn-primary btn-lg" href="/signup/patient">Get care now, pay later</Link>
           </div>
         </div>
       </section>
 
-      {/* ── For practices ────────────────────────────────────────────────── */}
-      <section id="practices">
+      {/* ── All you need ─────────────────────────────────────────────────── */}
+      <section>
         <div className="wrap">
           <div className="sec-head reveal">
-            <div className="split-head"><span className="tag pro">For practices</span></div>
-            <h2>Get paid upfront. Carry zero risk.</h2>
-            <p>Turn unaffordable shortfalls into treatments that go ahead — without adding a cent of credit risk or admin to your day.</p>
+            <div className="kicker">Getting started</div>
+            <h2>All you need to get started</h2>
           </div>
-          <div className="lp-grid">
-            <div className="feature reveal"><div className="ic"><CashIcon /></div><h4>~94% within days</h4><p>Stop waiting 30–90 days for shortfalls. The bulk of the bill hits your account almost immediately.</p></div>
-            <div className="feature reveal"><div className="ic"><ShieldCheckIcon /></div><h4>We carry the risk</h4><p>Once you&apos;re paid, collection is on us. If a patient misses a payment, that&apos;s our problem — not yours.</p></div>
-            <div className="feature reveal"><div className="ic"><PeopleIcon /></div><h4>More patients say yes</h4><p>When cost stops being the barrier, more recommended treatments actually go ahead. Better care, fuller books.</p></div>
-            <div className="feature reveal"><div className="ic"><DocCheckIcon /></div><h4>Zero paperwork</h4><p>Record a bill in seconds. No portals to manage, no statements to reconcile, no debtors to chase.</p></div>
-            <div className="feature reveal"><div className="ic"><BrushIcon /></div><h4>Onboard in a day</h4><p>No hardware, no integration headache. Get set up and start offering instalments to patients fast.</p></div>
-            <div className="feature reveal"><div className="ic"><LayersIcon /></div><h4>Built for SA practices</h4><p>Made for South African billing, salary cycles and patients — by a team that understands the shortfall problem.</p></div>
-          </div>
-          <div className="sec-cta reveal">
-            <Link className="btn btn-primary btn-lg" href="/signup/practice">Offer BetterNow at your practice</Link>
+          <div className="reqs">
+            <div className="pillar reveal">
+              <div className="ic"><CardIcon /></div>
+              <h4>A credit card</h4>
+              <p>betternow uses the available limit on your Visa or Mastercard credit card. No new debt, no separate loan.</p>
+            </div>
+            <div className="pillar reveal">
+              <div className="ic"><ClockIcon /></div>
+              <h4>30 seconds</h4>
+              <p>Set up your first plan in the time it takes to tap in your card details.</p>
+            </div>
           </div>
         </div>
       </section>
 
+      {/* ── For practices (navy band) ─────────────────────────────────────── */}
+      <section id="practices" className="practice-band">
+        <div className="wrap">
+          <div className="sec-head reveal">
+            <div className="split-head"><span className="tag pro">For practices</span></div>
+            <h2>Turn shortfalls into treatments that go ahead.</h2>
+            <p>Get paid upfront and add zero risk or admin to your day — by letting patients spread their shortfall, interest-free.</p>
+          </div>
+
+          <div className="steps">
+            <div className="step reveal">
+              <div className="num">STEP 1</div>
+              <div className="ic"><PencilIcon /></div>
+              <h3>Record the bill</h3>
+              <p>Capture the patient&apos;s shortfall in seconds. No portals to log into, no forms to file, no debtors to chase.</p>
+            </div>
+            <div className="step reveal">
+              <div className="num">STEP 2</div>
+              <div className="ic"><ClockIcon /></div>
+              <h3>Patient pays in 2 or 3</h3>
+              <p>They split it into interest-free instalments on their credit card, timed to their salary dates. No lengthy approvals.</p>
+            </div>
+            <div className="step reveal">
+              <div className="num">STEP 3</div>
+              <div className="ic"><CashIcon /></div>
+              <h3>Get paid upfront</h3>
+              <p>Get paid within days — we keep a small percentage as our fee and handle everything else. We collect every instalment and run the whole process, so chasing payment is never your job again.</p>
+            </div>
+          </div>
+
+          <div className="example reveal">
+            <div className="lead">On a R3,600 shortfall</div>
+            <div className="split">
+              <div className="chip"><div className="amt">Days</div><div className="lbl">to get paid</div></div>
+              <div className="chip"><div className="amt">R0</div><div className="lbl">to chase</div></div>
+              <div className="chip"><div className="amt">0 min</div><div className="lbl">admin</div></div>
+            </div>
+            <div className="note">You receive the bill amount less a small fee. We collect all instalments after you&apos;ve been paid — collection is on us.</div>
+          </div>
+
+          <div className="lp-grid" style={{ marginTop: '42px' }}>
+            <div className="feature reveal"><div className="ic"><CashIcon /></div><h4>Paid upfront</h4><p>Stop waiting 30–90 days for shortfalls. The bulk of the bill hits your account within days.</p></div>
+            <div className="feature reveal"><div className="ic"><ShieldCheckIcon /></div><h4>Collection is on us</h4><p>Once you&apos;re paid, the entire collection process is ours. If a patient misses a payment, chasing it is our job — not yours.</p></div>
+            <div className="feature reveal"><div className="ic"><PeopleIcon /></div><h4>More patients say yes</h4><p>When cost stops being the barrier, more recommended treatments go ahead. Better care, fuller books.</p></div>
+            <div className="feature reveal"><div className="ic"><DocCheckIcon /></div><h4>Zero paperwork</h4><p>Record a bill in seconds. No portals to manage, no statements to reconcile, no debtors to chase.</p></div>
+            <div className="feature reveal"><div className="ic"><BrushIcon /></div><h4>Onboard in 30 seconds</h4><p>No hardware, no integration headache. Set up and start offering instalments to patients fast.</p></div>
+            <div className="feature reveal"><div className="ic"><LayersIcon /></div><h4>Built for SA practices</h4><p>Made for South African billing, salary cycles and patients.</p></div>
+          </div>
+
+          <div className="sec-cta reveal">
+            <Link className="btn btn-primary btn-lg" href="/signup/practice">Offer betternow at your practice</Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Who it's for ─────────────────────────────────────────────────── */}
+      <section className="band">
+        <div className="wrap">
+          <div className="sec-head reveal">
+            <div className="kicker">Specialties</div>
+            <h2>Built for South African healthcare.</h2>
+          </div>
+          <div className="specialty-pills reveal">
+            <span className="pill">Dental</span>
+            <span className="pill">Optometry</span>
+            <span className="pill">Audiology</span>
+            <span className="pill">Physiotherapy</span>
+            <span className="pill">GP &amp; Family</span>
+            <span className="pill">Specialists</span>
+            <span className="pill">Dermatology</span>
+            <span className="pill">Fertility</span>
+          </div>
+          <p className="specialty-note reveal">
+            If your patients face out-of-pocket shortfalls, betternow fits.{' '}
+            Don&apos;t see your field?{' '}
+            <a href="mailto:hello@betternow.co.za" style={{ color: 'var(--teal)' }}>Get in touch.</a>
+          </p>
+        </div>
+      </section>
+
       {/* ── Trust ────────────────────────────────────────────────────────── */}
-      <section className="band trustsec">
+      <section>
         <div className="wrap">
           <div className="sec-head reveal">
             <div className="kicker">Why you can trust it</div>
-            <h2>Built for South Africa, built on trust.</h2>
+            <h2>Built on trust.</h2>
           </div>
           <div className="pillars">
-            <div className="pillar reveal"><div className="ic"><EcgIcon size={26} /></div><h4>Genuinely interest-free</h4><p>Instalments, not a loan that snowballs. The total never grows beyond the original bill.</p></div>
+            <div className="pillar reveal"><div className="ic"><EcgIcon size={26} /></div><h4>Genuinely interest-free</h4><p>Instalments, not a loan that snowballs. The total never grows beyond your original bill.</p></div>
+            <div className="pillar reveal"><div className="ic"><CardIcon /></div><h4>No new debt</h4><p>betternow uses your existing credit card limit — we don&apos;t issue new credit or pile on extra debt.</p></div>
             <div className="pillar reveal"><div className="ic"><ShieldIcon size={26} /></div><h4>Bank-grade security</h4><p>Payments and personal data are encrypted end-to-end and processed over secure, audited rails.</p></div>
-            <div className="pillar reveal"><div className="ic"><DocIcon size={26} /></div><h4>Clear, upfront terms</h4><p>Every instalment, date and amount is spelled out before you agree. No hidden clauses, no fine-print traps.</p></div>
-            <div className="pillar reveal"><div className="ic"><PopiaIcon size={26} /></div><h4>POPIA-conscious</h4><p>Your information is collected lawfully, kept secure, and never sold. Privacy is the default, not an add-on.</p></div>
+            <div className="pillar reveal"><div className="ic"><PopiaIcon size={26} /></div><h4>POPIA-conscious</h4><p>Your information is collected lawfully, kept secure, and never sold.</p></div>
           </div>
         </div>
       </section>
 
       {/* ── FAQ ──────────────────────────────────────────────────────────── */}
-      <section id="faq">
+      <section id="faq" className="band">
         <div className="wrap">
           <div className="sec-head reveal">
             <div className="kicker">Questions</div>
             <h2>Good to know</h2>
           </div>
           <div className="faq">
-            <details className="q reveal"><summary>Is it really interest-free?<span className="pm" /></summary><div className="a">Yes. You repay exactly the amount of your bill, split across 2 or 3 instalments. There&apos;s no interest added to the plan.</div></details>
-            <details className="q reveal"><summary>How are repayments collected?<span className="pm" /></summary><div className="a">Instalments are collected automatically on the dates you choose, around your salary cycle. You can also pay early at any time, free of charge.</div></details>
-            <details className="q reveal"><summary>What does it cost my practice?<span className="pm" /></summary><div className="a">Practices receive the large majority of the bill upfront, with a small fee retained for carrying collection and risk. Get in touch and we&apos;ll walk you through the exact terms for your practice.</div></details>
-            <details className="q reveal"><summary>How fast do practices get paid?<span className="pm" /></summary><div className="a">Typically within a few days of recording the bill — not the weeks or months shortfalls usually take to recover.</div></details>
-            <details className="q reveal"><summary>Which practices can offer BetterNow?<span className="pm" /></summary><div className="a">We&apos;re built for South African healthcare providers dealing with patient shortfalls — dental, optometry, audiology, physio, GP and specialist practices, and more. Reach out and we&apos;ll get you set up.</div></details>
+            <details className="q reveal"><summary>Is it really interest-free?<span className="pm" /></summary><div className="a">Yes. You repay exactly your bill amount, split into 2 or 3 instalments. No interest, no fees added to your plan.</div></details>
+            <details className="q reveal"><summary>How does it work on my card?<span className="pm" /></summary><div className="a">betternow works with your existing credit card. When you start a plan, we reserve the bill amount against your available credit — a hold, not a charge, and completely interest-free. We then collect one instalment at a time around your salary dates, and the hold shrinks as you pay.</div></details>
+            <details className="q reveal"><summary>Have I been charged the full amount?<span className="pm" /></summary><div className="a">No. The reserve simply sets the funds aside so they&apos;re there for your instalments. You&apos;re only ever charged one instalment at a time. It&apos;s not a charge and it&apos;s interest-free.</div></details>
+            <details className="q reveal"><summary>What do I need to use betternow?<span className="pm" /></summary><div className="a">A Visa or Mastercard credit card with enough available limit to cover your bill. Because we use your existing credit, there are no applications and no credit checks.</div></details>
+            <details className="q reveal"><summary>Will I see the hold on my statement?<span className="pm" /></summary><div className="a">You may see the reserved amount as &apos;pending&apos; or &apos;uncleared,&apos; and your bank may SMS you when funds are reserved. This is normal — it&apos;s not a charge, and it reduces as you pay down your plan.</div></details>
+            <details className="q reveal"><summary>When are instalments collected?<span className="pm" /></summary><div className="a">Automatically, on the dates you choose around your salary cycle. Pay early any time, free of charge.</div></details>
+            <details className="q reveal"><summary>What does it cost my practice?<span className="pm" /></summary><div className="a">You receive the bill upfront, less a small percentage we keep as our fee for running collection and carrying the process. The exact fee depends on your practice — get in touch and we&apos;ll walk you through your terms.</div></details>
             <details className="q reveal"><summary>Is my information safe?<span className="pm" /></summary><div className="a">Your data is encrypted, processed over secure rails, and handled in line with POPIA. We never sell your information.</div></details>
           </div>
         </div>
@@ -305,10 +317,10 @@ export default function LandingPage() {
         <div className="wrap">
           <div className="final reveal">
             <h2>Healthcare you can afford. Now.</h2>
-            <p>Whether you&apos;re getting care or giving it, BetterNow makes the money part simple, fair and interest-free.</p>
+            <p>Split any healthcare bill into interest-free instalments on your credit card.</p>
             <div className="ctas">
-              <Link className="btn btn-primary btn-lg" href="/signup/practice">Get started as a practice</Link>
-              <Link className="btn btn-ghost btn-lg"   href="/signup/patient">I&apos;m a patient</Link>
+              <Link className="btn btn-primary btn-lg" href="/signup/patient">I&apos;m a patient</Link>
+              <Link className="btn btn-ghost btn-lg"   href="/signup/practice">I run a practice</Link>
             </div>
           </div>
         </div>
@@ -324,7 +336,6 @@ export default function LandingPage() {
             </div>
             <div className="col">
               <h5>Product</h5>
-              <a href="#how">How it works</a>
               <a href="#patients">For patients</a>
               <a href="#practices">For practices</a>
               <a href="#faq">FAQ</a>
@@ -343,7 +354,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="copy">
-            <span>BetterNow &copy; 2026</span>
+            <span>betternow &copy; 2026</span>
             <span>Made in South Africa</span>
           </div>
         </div>
@@ -354,14 +365,6 @@ export default function LandingPage() {
 }
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
-
-function PlusIcon() {
-  return (
-    <svg className="plus" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  );
-}
 
 function HeartIcon() {
   return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z" /></svg>;
@@ -403,10 +406,6 @@ function CardIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /></svg>;
 }
 
-function ChatIcon() {
-  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
-}
-
 function ShieldCheckIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg>;
 }
@@ -425,10 +424,6 @@ function BrushIcon() {
 
 function LayersIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 2 7l10 5 10-5z" /><path d="m2 17 10 5 10-5M2 12l10 5 10-5" /></svg>;
-}
-
-function DocIcon({ size = 26 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M19 8v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7z" /></svg>;
 }
 
 function PopiaIcon({ size = 26 }: { size?: number }) {

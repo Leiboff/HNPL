@@ -247,10 +247,12 @@ export default async function NewBillPage() {
       <header className="bg-white border-b border-gray-200">
         <div className="mx-auto max-w-3xl px-6 py-4 flex items-center justify-between">
           <div>
-            <span className="text-lg font-semibold text-gray-900">BetterNow</span>
-            <span className="ml-2 text-sm text-gray-500">— {practice.name}</span>
+            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+              <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+            </span>
+            <span className="ml-2 text-sm text-gray-400">— {practice.name}</span>
           </div>
-          <a href="/practice" className="text-sm text-blue-600 hover:text-blue-700">
+          <a href="/practice" className="text-sm text-[#15A89E] hover:text-[#13294B]">
             ← Back to dashboard
           </a>
         </div>

@@ -30,15 +30,15 @@ export default async function PatientLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-[#f7fbfb] flex flex-col">
       {/* Top bar */}
-      <header className="sticky top-0 z-20 shrink-0" style={{ backgroundColor: '#0F4C75' }}>
+      <header className="sticky top-0 z-20 shrink-0" style={{ background: 'linear-gradient(135deg, #13294B 0%, #0E2140 100%)' }}>
         <div className="relative flex items-center justify-between px-4 sm:px-6 h-16">
           {/* Left spacer (balances the gear on the right) */}
           <div className="w-9" />
           {/* Centered wordmark */}
-          <span className="absolute left-1/2 -translate-x-1/2 text-base font-semibold text-white tracking-wide select-none">
-            BetterNow
+          <span className="absolute left-1/2 -translate-x-1/2 text-base font-semibold tracking-wide select-none">
+            <span style={{ color: '#fff', fontWeight: 400 }}>better</span><span style={{ color: '#15A89E', fontWeight: 700 }}>now</span>
           </span>
           {/* Right: gear / settings */}
           <SettingsSheet
