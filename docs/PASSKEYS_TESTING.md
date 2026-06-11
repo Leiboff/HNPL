@@ -26,7 +26,7 @@ to run before each release that touches passkey code.
    so the new columns from `supabase/migrations/0037_passkey_prompt_dismissal.sql`
    exist on `profiles`.
 
-4. Dev server running: `npm run dev`.
+4. Dev server running: `pnpm run dev`.
 
 5. A confirmed, non-anonymous patient account to test with. Anonymous and
    SSO users can NOT register passkeys (Supabase restriction).
