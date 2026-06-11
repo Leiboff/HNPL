@@ -12,5 +12,11 @@ export function createClient() {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      // Opt into the experimental passkey API. @supabase/ssr 0.10.3 spreads
+      // options.auth into the inner createClient call, so this nested
+      // `experimental` flag threads through cleanly.
+      auth: { experimental: { passkey: true } },
+    },
   );
 }

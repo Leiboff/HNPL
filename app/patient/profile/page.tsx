@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import AddressForm from './AddressForm';
 import SignOutButton from './SignOutButton';
+import PasskeysSection from './PasskeysSection';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 
 const VALID_PROVINCES = new Set([
@@ -141,6 +142,12 @@ export default async function ProfilePage() {
       <div className={`${card} p-5 space-y-4`}>
         <p className="text-sm font-semibold" style={{ color: '#13294B' }}>Contact &amp; billing address</p>
         <AddressForm current={addressCurrent} updateProfile={updateProfile} />
+      </div>
+
+      {/* ── Passkeys ───────────────────────────────────────────── */}
+      <div className={`${card} p-5 space-y-4`}>
+        <p className="text-sm font-semibold" style={{ color: '#13294B' }}>Passkeys</p>
+        <PasskeysSection />
       </div>
 
       {/* ── Account ───────────────────────────────────────────── */}

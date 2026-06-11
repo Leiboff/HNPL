@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { resendConfirmation } from '@/app/auth/resend/actions';
+import { mapPasskeyError, passkeyErrorMessage } from '@/lib/hooks/usePasskeys';
 
 export default function LoginPage() {
   const [email,    setEmail]    = useState('');
@@ -12,14 +13,41 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false);
   const [notice,   setNotice]   = useState<string | null>(null);
 
-  const [notConfirmed, setNotConfirmed] = useState(false);
-  const [resendState,  setResendState]  = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [notConfirmed,    setNotConfirmed]    = useState(false);
+  const [resendState,     setResendState]     = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [passkeySupport,  setPasskeySupport]  = useState(false);
+  const [passkeyLoading,  setPasskeyLoading]  = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const msg = params.get('message');
     if (msg) setNotice(decodeURIComponent(msg));
+    setPasskeySupport(typeof window !== 'undefined' && 'PublicKeyCredential' in window);
   }, []);
+
+  async function handlePasskeySignIn() {
+    setError(null);
+    setNotConfirmed(false);
+    setPasskeyLoading(true);
+    try {
+      const supabase = createClient();
+      const { error: signInError } = await supabase.auth.signInWithPasskey();
+      if (signInError) {
+        const code = mapPasskeyError(signInError);
+        if (code === 'user_cancelled') return;            // user backed out, no-op
+        if (code === 'email_not_confirmed') { setNotConfirmed(true); return; }
+        setError(passkeyErrorMessage(code) || signInError.message);
+        return;
+      }
+      window.location.href = '/dashboard';
+    } catch (err) {
+      const code = mapPasskeyError(err);
+      if (code === 'user_cancelled') return;
+      setError(passkeyErrorMessage(code));
+    } finally {
+      setPasskeyLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -102,6 +130,28 @@ export default function LoginPage() {
               >
                 {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? 'Sent ✓' : 'Resend confirmation email'}
               </button>
+            </div>
+          )}
+
+          {passkeySupport && (
+            <div className="mb-5 space-y-3">
+              <button
+                type="button"
+                onClick={handlePasskeySignIn}
+                disabled={passkeyLoading || loading}
+                className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="3" y="11" width="18" height="11" rx="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                {passkeyLoading ? 'Authenticating…' : 'Sign in with a passkey'}
+              </button>
+              <div className="relative flex items-center">
+                <div className="grow border-t border-gray-200" />
+                <span className="mx-3 text-xs text-gray-400">or with password</span>
+                <div className="grow border-t border-gray-200" />
+              </div>
             </div>
           )}
 

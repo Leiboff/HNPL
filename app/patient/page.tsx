@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import SalaryDayForm from './SalaryDayForm';
 import InstalmentHero, { type InstalmentRow } from './InstalmentHero';
+import PasskeySetupCard from './PasskeySetupCard';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ export default async function PatientDashboardPage() {
     await Promise.all([
       supabase
         .from('profiles')
-        .select('first_name, salary_day')
+        .select('first_name, salary_day, passkey_prompt_dismissed_at, passkey_prompt_dismissed_count')
         .eq('id', user.id)
         .single(),
       // No profiles embed here — plans has two FKs to profiles (patient + provider)
@@ -142,6 +143,18 @@ export default async function PatientDashboardPage() {
     ]);
 
   const salaryDay: number | null = (profile?.salary_day as number | null) ?? null;
+
+  // Passkey nudge: show on first dismissal allowance, and one re-prompt
+  // 30+ days after the first dismissal. The card itself self-hides when the
+  // patient already has a registered passkey.
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  const dismissedAtMs  = profile?.passkey_prompt_dismissed_at
+    ? new Date(profile.passkey_prompt_dismissed_at as string).getTime()
+    : null;
+  const dismissedCount = (profile?.passkey_prompt_dismissed_count as number | null) ?? 0;
+  const showPasskeyPrompt =
+    dismissedCount === 0 ||
+    (dismissedCount === 1 && dismissedAtMs !== null && Date.now() - dismissedAtMs > THIRTY_DAYS_MS);
 
   const allPlans     = (rawPlans   ?? []) as unknown as PlanSummary[];
   const payments     = (rawPayments ?? []) as unknown as UpcomingPayment[];
@@ -267,6 +280,8 @@ export default async function PatientDashboardPage() {
         <p className="text-lg font-semibold" style={{ color: '#13294B' }}>
           Hi, {profile?.first_name ?? user.email?.split('@')[0] ?? 'there'} 👋
         </p>
+
+        {showPasskeyPrompt && <PasskeySetupCard />}
 
         {/* ── HERO CARD ─────────────────────────────────────────────────────────
             Priority A: pending bill(s) to review (amber border, action CTA)
