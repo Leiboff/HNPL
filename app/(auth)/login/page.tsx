@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { resendConfirmation } from '@/app/auth/resend/actions';
-import { mapPasskeyError, passkeyErrorMessage } from '@/lib/hooks/usePasskeys';
+import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
+import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
 
 export default function LoginPage() {
   const [email,    setEmail]    = useState('');
@@ -13,40 +14,37 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false);
   const [notice,   setNotice]   = useState<string | null>(null);
 
-  const [notConfirmed,    setNotConfirmed]    = useState(false);
-  const [resendState,     setResendState]     = useState<'idle' | 'sending' | 'sent'>('idle');
-  const [passkeySupport,  setPasskeySupport]  = useState(false);
-  const [passkeyLoading,  setPasskeyLoading]  = useState(false);
+  const [notConfirmed, setNotConfirmed] = useState(false);
+  const [resendState,  setResendState]  = useState<'idle' | 'sending' | 'sent'>('idle');
+
+  // Conditional UI + modal passkey sign-in. The hook starts a hanging
+  // navigator.credentials.get() with mediation:'conditional' on mount; the
+  // input below carries autocomplete="username webauthn" so the browser
+  // surfaces the saved passkey as an autofill suggestion. Tapping the
+  // suggestion → Face ID / fingerprint → signed in, no button required.
+  const onPasskeySuccess = useCallback(() => { window.location.href = '/dashboard'; }, []);
+  const { supported: passkeySupport, signIn: signInWithPasskey, loading: passkeyLoading, error: passkeyError } =
+    usePasskeySignIn({ onSuccess: onPasskeySuccess });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const msg = params.get('message');
     if (msg) setNotice(decodeURIComponent(msg));
-    setPasskeySupport(typeof window !== 'undefined' && 'PublicKeyCredential' in window);
   }, []);
+
+  // Surface passkey hook errors in the existing error region. user_cancelled
+  // is filtered out by the hook before it sets state, so anything we see
+  // here is worth showing.
+  useEffect(() => {
+    if (!passkeyError) return;
+    if (passkeyError === 'email_not_confirmed') { setNotConfirmed(true); return; }
+    setError(passkeyErrorMessage(passkeyError));
+  }, [passkeyError]);
 
   async function handlePasskeySignIn() {
     setError(null);
     setNotConfirmed(false);
-    setPasskeyLoading(true);
-    try {
-      const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithPasskey();
-      if (signInError) {
-        const code = mapPasskeyError(signInError);
-        if (code === 'user_cancelled') return;            // user backed out, no-op
-        if (code === 'email_not_confirmed') { setNotConfirmed(true); return; }
-        setError(passkeyErrorMessage(code) || signInError.message);
-        return;
-      }
-      window.location.href = '/dashboard';
-    } catch (err) {
-      const code = mapPasskeyError(err);
-      if (code === 'user_cancelled') return;
-      setError(passkeyErrorMessage(code));
-    } finally {
-      setPasskeyLoading(false);
-    }
+    await signInWithPasskey();
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -166,6 +164,11 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
+                // "username webauthn" tells the browser this field can be
+                // filled by a passkey suggestion (Conditional UI). The hook
+                // mounts the conditional ceremony so the suggestion appears
+                // on focus.
+                autoComplete="username webauthn"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
                 placeholder="jane@example.com"
               />
@@ -181,6 +184,7 @@ export default function LoginPage() {
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
+                autoComplete="current-password webauthn"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
                 placeholder="Your password"
               />

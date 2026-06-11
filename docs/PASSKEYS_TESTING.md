@@ -53,7 +53,31 @@ Visit `/dev/passkey-smoke` (dev-only route; returns 404 in production).
   adapter isn't persisting the passkey session and the rest of the build
   won't work. Stop and dig before continuing.
 
-### 2. Login page button
+### 2a. Login page — Conditional UI (the headline experience)
+
+Conditional UI surfaces the saved passkey as a browser autofill suggestion
+on the email field. Tap the suggestion → Face ID / fingerprint → signed
+in. One tap total, no button.
+
+- On a browser that supports it (Safari 16+, Chrome 108+, Edge 108+) with
+  a passkey already registered for the RP:
+  - Visit `/login`. Click into the email field.
+  - The browser surfaces a "Sign in with [passkey friendly name]"
+    suggestion in the autofill dropdown.
+  - Tap the suggestion → platform authenticator prompt → success →
+    redirect to `/dashboard` → role-based redirect.
+- Verify via DevTools: the email input has `autocomplete="username webauthn"`
+  and Console shows no errors from `@simplewebauthn/browser`.
+- Browsers WITHOUT conditional support (Firefox on most platforms today)
+  still show the explicit "Sign in with a passkey" button — fall back to
+  that path.
+- Conditional UI cancellation (user dismisses the autofill suggestion):
+  silent, no error banner, the explicit button still works.
+- Navigate away from `/login` mid-ceremony: the conditional ceremony is
+  cancelled by `WebAuthnAbortService.cancelCeremony()` in the hook's
+  cleanup; no zombie WebAuthn prompt should linger.
+
+### 2b. Login page button (modal fallback)
 
 - Visit `/login` in a browser that supports WebAuthn → "Sign in with a
   passkey" button is visible above the email/password fields.
@@ -65,6 +89,10 @@ Visit `/dev/passkey-smoke` (dev-only route; returns 404 in production).
   from `window`), the button does not render.
 - Trigger `email_not_confirmed` (unconfirmed test user) → the existing
   "please confirm your email" banner appears (NOT a generic error).
+- Click the modal button while the conditional ceremony is still pending
+  on focus: the modal flow should succeed (the second `startAuthentication`
+  call aborts the conditional one via the library's internal
+  `WebAuthnAbortService`).
 
 ### 3. Post-first-login prompt
 
