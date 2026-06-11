@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { encryptId } from '@/lib/idEncryption';
+import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
 export type PatientSignupInput = {
   firstName:   string;
@@ -39,8 +40,8 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   if (password.length < 8)                           return { error: 'Password must be at least 8 characters.', success: false };
   if (!validateSaId(saIdNumber))                     return { error: 'SA ID number must be 13 digits.',         success: false };
   if (!validatePhone(phone))                         return { error: 'Enter a valid South African phone number.', success: false };
-  if (!Number.isInteger(salaryDay) || salaryDay < 1 || salaryDay > 31)
-                                                     return { error: 'Salary day must be between 1 and 31.',    success: false };
+  if (!isAllowedSalaryDay(salaryDay))
+                                                     return { error: `Salary day must be one of: ${ALLOWED_SALARY_DAYS.join(', ')}.`, success: false };
 
   const svc    = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const supabase = await createClient();

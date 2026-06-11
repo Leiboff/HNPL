@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { signUpPatient } from './actions';
+import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 
 type Invitation = {
   email:        string;
@@ -147,7 +148,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           <label className={LABEL_CLS}>Salary day</label>
           <select required value={fields.salaryDay} onChange={set('salaryDay')} className={INPUT_CLS}>
             <option value="">Select day…</option>
-            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+            {ALLOWED_SALARY_DAYS.map(d => (
               <option key={d} value={d}>{d}</option>
             ))}
           </select>

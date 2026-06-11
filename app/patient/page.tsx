@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import SalaryDayForm from './SalaryDayForm';
 import InstalmentHero, { type InstalmentRow } from './InstalmentHero';
 import PasskeySetupCard from './PasskeySetupCard';
+import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -70,8 +71,8 @@ type UpcomingPayment = {
 async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
   'use server';
 
-  if (!Number.isInteger(day) || day < 1 || day > 31) {
-    return { error: 'Salary day must be a whole number between 1 and 31.' };
+  if (!isAllowedSalaryDay(day)) {
+    return { error: `Salary day must be one of: ${ALLOWED_SALARY_DAYS.join(', ')}.` };
   }
 
   const supabase = await createClient();
