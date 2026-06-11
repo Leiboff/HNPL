@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { updateSession } from '@/lib/supabase/middleware';
 
@@ -77,44 +77,6 @@ export async function proxy(request: NextRequest) {
       } catch {
         // Transient DB/network error — leave the cookie so the claim retries
         // on the next request.
-      }
-    }
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ── Patient verification gate ─────────────────────────────────────────────
-  // Runs on every request (including RSC navigations) so the gate holds on
-  // client-side navigation, not just hard loads.
-  const path = request.nextUrl.pathname;
-  if (path.startsWith('/patient') && path !== '/patient/verify-identity') {
-    // Use modifiedRequest.cookies — updateSession's setAll mutates these in
-    // memory, so they reflect any token refresh that just happened.
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() { return modifiedRequest.cookies.getAll(); },
-          setAll() {},  // read-only context; refresh already handled above
-        },
-      },
-    );
-
-    const { data: { user } } = await supabase.auth.getUser();
-
-    // No user → let the layout's existing /login redirect handle it.
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('sa_id_verified')
-        .eq('id', user.id)
-        .single();
-
-      // Fail closed: anything other than exactly true → redirect.
-      if (profile?.sa_id_verified !== true) {
-        return NextResponse.redirect(
-          new URL('/patient/verify-identity', request.url),
-        );
       }
     }
   }
