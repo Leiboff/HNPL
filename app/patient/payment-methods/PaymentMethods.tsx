@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { CardRow, RemoveCardResult } from './page';
+import type {
+  CardRow,
+  ChangeDefaultResult,
+  PreviewDefaultChange,
+  RemoveCardResult,
+} from './page';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,27 +39,41 @@ function CardThumbnail({ brand }: { brand: string }) {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Props = {
-  initialCards: CardRow[];
+  initialCards:               CardRow[];
   initializeCardRegistration: () => Promise<{ error: string | null; authorizationUrl?: string }>;
+  previewDefaultChange:       (cardId: string) => Promise<PreviewDefaultChange>;
+  changeDefaultCard:          (cardId: string) => Promise<ChangeDefaultResult>;
   removeCard:                 (cardId: string) => Promise<RemoveCardResult>;
-  setDefaultCard:             (cardId: string) => Promise<{ error: string | null }>;
 };
+
+type Confirm =
+  | { kind: 'none' }
+  | { kind: 'remove'; cardId: string }
+  | {
+      kind:           'make-default';
+      cardId:         string;
+      repointedPlans: number;
+      planRefs:       string[];
+      newLastFour:    string;
+      oldLastFour:    string | null;
+    };
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function PaymentMethods({
   initialCards,
   initializeCardRegistration,
+  previewDefaultChange,
+  changeDefaultCard,
   removeCard,
-  setDefaultCard,
 }: Props) {
   const router = useRouter();
 
-  const [cards,           setCards]           = useState<CardRow[]>(initialCards);
-  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
-  const [loading,         setLoading]         = useState(false);
-  const [error,           setError]           = useState<string | null>(null);
-  const [notice,          setNotice]          = useState<string | null>(null);
+  const [cards,   setCards]   = useState<CardRow[]>(initialCards);
+  const [confirm, setConfirm] = useState<Confirm>({ kind: 'none' });
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+  const [notice,  setNotice]  = useState<string | null>(null);
 
   // Add-card button state
   const [addLoading, setAddLoading] = useState(false);
@@ -70,26 +89,15 @@ export default function PaymentMethods({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCardsKey]);
 
-  // ── Derived for the confirm dialog: what happens if user removes this card?
-  // Mirrors the server planner so the consequence copy is honest.
+  // ── Preview helper for the remove dialog (which target gets promoted).
   function previewRemoval(cardId: string) {
     const card = cards.find((c) => c.id === cardId);
-    if (!card)                  return { kind: 'not_found'   as const };
-    if (cards.length <= 1)      return { kind: 'block_only_card' as const };
-
-    const currentDefault = cards.find((c) => c.is_default);
-    const target =
-      currentDefault && currentDefault.id !== cardId
-        ? currentDefault
-        : [...cards]
-            .filter((c) => c.id !== cardId)
-            .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-
-    return {
-      kind:                 'remove' as const,
-      willPromoteToDefault: card.is_default,
-      target,
-    };
+    if (!card) return null;
+    if (!card.is_default) return { willPromoteToDefault: false, target: null };
+    const target = [...cards]
+      .filter((c) => c.id !== cardId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    return { willPromoteToDefault: true, target };
   }
 
   // ─── Add card ─────────────────────────────────────────────────────────────
@@ -109,6 +117,58 @@ export default function PaymentMethods({
     }
   }
 
+  // ─── Make default ─────────────────────────────────────────────────────────
+
+  async function handleMakeDefaultClick(cardId: string) {
+    setError(null);
+    setNotice(null);
+    setLoading(true);
+    const preview = await previewDefaultChange(cardId);
+    setLoading(false);
+
+    if (preview.error !== null) {
+      setError(preview.error);
+      return;
+    }
+
+    // N = 0 → skip the dialog and apply the change immediately.
+    if (preview.repointedPlans === 0) {
+      await commitMakeDefault(cardId);
+      return;
+    }
+
+    // Otherwise open the consequence dialog.
+    setConfirm({
+      kind:           'make-default',
+      cardId,
+      repointedPlans: preview.repointedPlans,
+      planRefs:       preview.planRefs,
+      newLastFour:    preview.newLastFour,
+      oldLastFour:    preview.oldLastFour,
+    });
+  }
+
+  async function commitMakeDefault(cardId: string) {
+    setLoading(true);
+    setError(null);
+    const result = await changeDefaultCard(cardId);
+    setLoading(false);
+    setConfirm({ kind: 'none' });
+
+    if (result.error !== null) {
+      setError(result.error);
+      return;
+    }
+
+    if (result.repointedPlans > 0) {
+      const plural = result.repointedPlans === 1 ? 'plan' : 'plans';
+      setNotice(
+        `${result.repointedPlans} active ${plural} now collecting from •••• ${result.newLastFour}.`,
+      );
+    }
+    router.refresh();
+  }
+
   // ─── Remove ───────────────────────────────────────────────────────────────
 
   async function handleRemove(cardId: string) {
@@ -118,43 +178,21 @@ export default function PaymentMethods({
 
     const result = await removeCard(cardId);
     setLoading(false);
+    setConfirm({ kind: 'none' });
 
     if (result.error !== null) {
       setError(result.error);
-      setConfirmRemoveId(null);
       return;
     }
 
-    setConfirmRemoveId(null);
     if (result.repointedPlans > 0) {
-      setNotice(
-        result.repointedPlans === 1
-          ? '1 active plan was moved to your default card.'
-          : `${result.repointedPlans} active plans were moved to your default card.`,
-      );
+      const plural = result.repointedPlans === 1 ? 'plan was' : 'plans were';
+      setNotice(`${result.repointedPlans} active ${plural} moved to your default card.`);
     }
     router.refresh();
   }
 
-  // ─── Set default ──────────────────────────────────────────────────────────
-
-  async function handleSetDefault(cardId: string) {
-    setLoading(true);
-    setError(null);
-
-    const result = await setDefaultCard(cardId);
-    setLoading(false);
-
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-
-    setCards((prev) => prev.map((c) => ({ ...c, is_default: c.id === cardId })));
-    router.refresh();
-  }
-
-  // ─── Card list view ───────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
@@ -177,9 +215,10 @@ export default function PaymentMethods({
       ) : (
         <div className="space-y-3">
           {cards.map((card) => {
-            const isConfirming = confirmRemoveId === card.id;
-            const preview      = isConfirming ? previewRemoval(card.id) : null;
-            const onlyCard     = cards.length <= 1;
+            const isConfirmRemove        = confirm.kind === 'remove'       && confirm.cardId === card.id;
+            const isConfirmMakeDefault   = confirm.kind === 'make-default' && confirm.cardId === card.id;
+            const onlyCard               = cards.length <= 1;
+            const removalPreview         = isConfirmRemove ? previewRemoval(card.id) : null;
             return (
               <div
                 key={card.id}
@@ -210,7 +249,7 @@ export default function PaymentMethods({
                     {!card.is_default && (
                       <button
                         type="button"
-                        onClick={() => handleSetDefault(card.id)}
+                        onClick={() => handleMakeDefaultClick(card.id)}
                         disabled={loading}
                         className="text-xs font-medium disabled:opacity-60 transition-colors"
                         style={{ color: '#15A89E' }}
@@ -220,10 +259,14 @@ export default function PaymentMethods({
                     )}
                     <button
                       type="button"
-                      onClick={() => { if (!onlyCard) { setConfirmRemoveId(card.id); setError(null); setNotice(null); } }}
+                      onClick={() => {
+                        if (onlyCard) return;
+                        setError(null);
+                        setNotice(null);
+                        setConfirm({ kind: 'remove', cardId: card.id });
+                      }}
                       disabled={loading || onlyCard}
-                      // Quiet at rest: gray. Red only on hover / focus, so
-                      // a resting card doesn't look "armed".
+                      // Quiet at rest, red on hover/focus only.
                       className="text-xs font-medium text-gray-500 hover:text-red-700 focus-visible:text-red-700 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
                       title={onlyCard ? 'Add another card first.' : undefined}
                     >
@@ -232,16 +275,15 @@ export default function PaymentMethods({
                   </div>
                 </div>
 
-                {/* ── Confirm dialog (inline) ─────────────────────────── */}
-                {isConfirming && preview?.kind === 'remove' && (
+                {/* ── Confirm: Remove ─────────────────────────────────── */}
+                {isConfirmRemove && removalPreview && (
                   <div className="border-t border-gray-100 bg-gray-50 px-5 py-4 space-y-3">
                     <div>
                       <p className="text-sm font-medium text-gray-900">Remove this card?</p>
                       <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                        {preview.willPromoteToDefault
-                          ? `Your default will change to ${preview.target.card_brand} •••• ${preview.target.last_four}. `
-                          : `Future instalments will be collected from your default card (${preview.target.card_brand} •••• ${preview.target.last_four}). `}
-                        Active plans on this card will collect from there going forward.
+                        {removalPreview.willPromoteToDefault && removalPreview.target
+                          ? `Your default will change to ${removalPreview.target.card_brand} •••• ${removalPreview.target.last_four}. Active plans on this card will collect from there going forward.`
+                          : 'This card is not collecting any active plans. Removing it just takes it off your profile.'}
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -255,7 +297,46 @@ export default function PaymentMethods({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setConfirmRemoveId(null)}
+                        onClick={() => setConfirm({ kind: 'none' })}
+                        className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Confirm: Make default ───────────────────────────── */}
+                {isConfirmMakeDefault && confirm.kind === 'make-default' && (
+                  <div className="border-t border-gray-100 bg-gray-50 px-5 py-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">Make this card default?</p>
+                      <p className="text-xs text-gray-600 mt-1 leading-relaxed">
+                        {confirm.repointedPlans === 1
+                          ? `1 active plan will collect from •••• ${confirm.newLastFour} going forward.`
+                          : `${confirm.repointedPlans} active plans will collect from •••• ${confirm.newLastFour} going forward.`}
+                      </p>
+                      {confirm.planRefs.length > 0 && confirm.planRefs.length === confirm.repointedPlans && (
+                        <ul className="mt-2 text-xs text-gray-500 space-y-0.5">
+                          {confirm.planRefs.map((ref) => (
+                            <li key={ref} className="font-mono">· {ref}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => commitMakeDefault(card.id)}
+                        disabled={loading}
+                        className="rounded-lg px-4 py-1.5 text-sm font-medium text-white disabled:opacity-60 transition-all"
+                        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+                      >
+                        {loading ? 'Updating…' : 'Make default'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirm({ kind: 'none' })}
                         className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                       >
                         Cancel

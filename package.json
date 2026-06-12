@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts"
+    "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts",
+    "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
