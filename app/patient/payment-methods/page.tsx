@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { initializeCardRegistration } from '../actions';
 import { planCardRemoval, type RemovalCard } from '@/lib/cardRemoval';
+import { callChangeDefaultCardRpc } from '@/lib/changeDefaultCard';
 import PaymentMethods from './PaymentMethods';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ export async function previewDefaultChange(newCardId: string): Promise<PreviewDe
 
   const { data: newCard } = await supabase
     .from('payment_methods')
-    .select('id, last_four, is_default')
+    .select('id, token, last_four, is_default')
     .eq('id', newCardId)
     .eq('patient_id', user.id)
     .maybeSingle();
@@ -79,26 +80,24 @@ export async function previewDefaultChange(newCardId: string): Promise<PreviewDe
     return { error: null, repointedPlans: 0, planRefs: [], newLastFour: newCard.last_four, oldLastFour: null };
   }
 
-  // Current default — needed to count which plans would be repointed.
+  // Old default last_four for display — best-effort, allowed to be null.
   const { data: oldCard } = await supabase
     .from('payment_methods')
-    .select('token, last_four')
+    .select('last_four')
     .eq('patient_id', user.id)
     .eq('is_default', true)
     .maybeSingle();
 
-  if (!oldCard) {
-    // No current default → nothing to repoint. The RPC will just flip the flag.
-    return { error: null, repointedPlans: 0, planRefs: [], newLastFour: newCard.last_four, oldLastFour: null };
-  }
-
-  // Fetch up to 4 affected plans (we only need to show ≤3; the 4th is just
-  // to know we'd be hiding extras).
+  // Count plans that would actually be repointed by the RPC: any active /
+  // pending plan whose current token is NOT already the new card's token.
+  // This matches the predicate in change_default_card (migration 0039) so
+  // the dialog count exactly reflects what the RPC will do — including
+  // orphaned-token plans that self-heal on this change.
   const { data: plans } = await supabase
     .from('plans')
     .select('id, invoice_number')
     .eq('patient_id', user.id)
-    .eq('paystack_authorization_code', oldCard.token)
+    .neq('paystack_authorization_code', newCard.token)
     .in('status', ACTIVE_PLAN_STATUSES)
     .order('created_at', { ascending: false })
     .limit(4);
@@ -109,7 +108,7 @@ export async function previewDefaultChange(newCardId: string): Promise<PreviewDe
     repointedPlans:  list.length,
     planRefs:        list.slice(0, 3).map((p) => p.invoice_number ?? p.id.slice(0, 8)),
     newLastFour:     newCard.last_four,
-    oldLastFour:     oldCard.last_four,
+    oldLastFour:     oldCard?.last_four ?? null,
   };
 }
 
@@ -127,26 +126,9 @@ export async function changeDefaultCard(cardId: string): Promise<ChangeDefaultRe
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated.' };
 
-  const { data, error } = await supabase.rpc('change_default_card', { p_card_id: cardId });
-  if (error) return { error: error.message };
-
-  type RpcResult = {
-    changed:           boolean;
-    repointed_plans:   number;
-    plan_refs:         Array<{ id: string; invoice_number: string | null }>;
-    old_last_four:     string | null;
-    new_last_four:     string | null;
-  };
-  const result = data as RpcResult;
-
-  revalidatePath('/patient/payment-methods');
-  return {
-    error:           null,
-    changed:         result.changed,
-    repointedPlans:  result.repointed_plans,
-    oldLastFour:     result.old_last_four,
-    newLastFour:     result.new_last_four,
-  };
+  const result = await callChangeDefaultCardRpc(supabase, cardId);
+  if (result.error === null) revalidatePath('/patient/payment-methods');
+  return result;
 }
 
 /**
@@ -194,12 +176,12 @@ export async function removeCard(cardId: string): Promise<RemoveCardResult> {
 
   if (plan.kind === 'remove_default') {
     // Promote the newest other card AND repoint all active plans atomically.
-    const { data: rpc, error: rpcErr } = await supabase.rpc('change_default_card', {
-      p_card_id: plan.promoteToDefaultId,
-    });
-    if (rpcErr) return { error: rpcErr.message };
+    // Reuses the same callChangeDefaultCardRpc seam as the standalone
+    // Make-default action — both paths converge on the RPC.
+    const rpcResult = await callChangeDefaultCardRpc(supabase, plan.promoteToDefaultId);
+    if (rpcResult.error !== null) return { error: rpcResult.error };
     promotedDefaultId = plan.promoteToDefaultId;
-    repointedPlans    = (rpc as { repointed_plans: number }).repointed_plans;
+    repointedPlans    = rpcResult.repointedPlans;
   } else {
     // remove_non_default — under the invariant, no active plan should
     // collect from this card. If we find any, fix the data before delete.

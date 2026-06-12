@@ -165,6 +165,11 @@ export default function PaymentMethods({
       setNotice(
         `${result.repointedPlans} active ${plural} now collecting from •••• ${result.newLastFour}.`,
       );
+    } else if (result.changed) {
+      // Default flag flipped but no active plans were repointed — usually
+      // because there are no active plans yet. Surface confirmation so
+      // the user knows the click did something.
+      setNotice(`Default card is now •••• ${result.newLastFour}.`);
     }
     router.refresh();
   }
