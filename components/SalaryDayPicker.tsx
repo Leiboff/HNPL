@@ -163,14 +163,16 @@ function Pill({ day, selected, onSelect, tabIndex, currentBadge, fullRowOnMobile
   // unselected / disabled (all border-2). The Save button stays the only
   // solid-teal element on the screen; chips just tint.
   //   Selected:   2px teal border, 8% teal tint, teal text, leading ✓
-  //   Unselected: 2px neutral border (gray-200), white bg, gray-700 text
-  //               — WCAG AA ≥ 4.5:1 on white
+  //   Unselected: 2px gray-300 border (one step darker than the previous
+  //               gray-200 so the pill reads clearly as tappable on
+  //               white-on-white card backgrounds), white bg, gray-700
+  //               text — WCAG AA ≥ 4.5:1 on white
   //   Disabled:   gray-500 text on gray-50 (≥ 4.5:1, dimmed)
   const stateClass = selected
     ? 'border-2 border-[#15A89E] bg-[#15A89E]/10 text-[#15A89E]'
     : disabled
       ? 'border-2 border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
-      : 'border-2 border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300';
+      : 'border-2 border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400';
 
   const layoutClass = fullRowOnMobile ? 'col-span-full sm:col-auto' : '';
 

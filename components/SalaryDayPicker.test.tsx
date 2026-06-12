@@ -185,10 +185,12 @@ describe('SalaryDayPicker — selected-state styling', () => {
     expect(selected.getAttribute('style')).toBeFalsy();
   });
 
-  it('unselected pill has neutral border + white background', () => {
+  it('unselected pill has a visible (gray-300) border + white background', () => {
     render(<Harness initial={25} />);
     const unselected = screen.getByRole('radio', { name: /^15th$/ });
-    expect(unselected.className).toMatch(/border-gray-200/);
+    // gray-300 is one step darker than the earlier gray-200 — needed so
+    // the chip reads as tappable on white-on-white card backgrounds.
+    expect(unselected.className).toMatch(/border-gray-300/);
     expect(unselected.className).toMatch(/bg-white/);
     expect(unselected.className).toMatch(/text-gray-700/);
   });
