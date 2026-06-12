@@ -173,6 +173,42 @@ describe('SalaryDayPicker — keyboard navigation', () => {
   });
 });
 
+describe('SalaryDayPicker — selected-state styling', () => {
+  it('selected pill carries teal border + teal text + tinted background classes (not a solid fill)', () => {
+    render(<Harness initial={25} />);
+    const selected = screen.getByRole('radio', { name: /^25th$/ });
+    expect(selected.className).toMatch(/border-\[#15A89E\]/);
+    expect(selected.className).toMatch(/text-\[#15A89E\]/);
+    expect(selected.className).toMatch(/bg-\[#15A89E\]\/10/);
+    // No gradient/solid-fill inline style — Save is the only solid-teal
+    // element on the screen.
+    expect(selected.getAttribute('style')).toBeFalsy();
+  });
+
+  it('unselected pill has neutral border + white background', () => {
+    render(<Harness initial={25} />);
+    const unselected = screen.getByRole('radio', { name: /^15th$/ });
+    expect(unselected.className).toMatch(/border-gray-200/);
+    expect(unselected.className).toMatch(/bg-white/);
+    expect(unselected.className).toMatch(/text-gray-700/);
+  });
+
+  it('both pill states use border-2 — selection does not change dimensions', () => {
+    render(<Harness initial={25} />);
+    const selected   = screen.getByRole('radio', { name: /^25th$/ });
+    const unselected = screen.getByRole('radio', { name: /^15th$/ });
+    expect(selected.className).toMatch(/\bborder-2\b/);
+    expect(unselected.className).toMatch(/\bborder-2\b/);
+  });
+
+  it('"Last day" pill spans the full row on mobile (col-span-full) and reverts at sm:', () => {
+    render(<Harness />);
+    const lastDay = screen.getByRole('radio', { name: /Last day/ });
+    expect(lastDay.className).toMatch(/col-span-full/);
+    expect(lastDay.className).toMatch(/sm:col-auto/);
+  });
+});
+
 describe('SalaryDayPicker — ARIA wiring', () => {
   it('renders a radiogroup labelled by the question text', () => {
     render(<Harness />);

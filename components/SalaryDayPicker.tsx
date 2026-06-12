@@ -117,6 +117,10 @@ export default function SalaryDayPicker({
             selected={value === d}
             onSelect={() => onChange(d)}
             tabIndex={value === d ? 0 : -1}
+            // On mobile (3-col grid) "Last day" would sit alone in a
+            // row of three with two empty cells; span the full row to
+            // avoid the orphan. Reverts to a single cell from sm: up.
+            fullRowOnMobile={d === 31}
           />
         ))}
       </div>
@@ -148,19 +152,27 @@ type PillProps = {
   tabIndex:     0 | -1;
   /** Renders the small "current" badge on the grandfathered legacy pill. */
   currentBadge?: boolean;
+  /** Make this pill span the full grid width on the 3-col mobile layout. */
+  fullRowOnMobile?: boolean;
 };
 
-function Pill({ day, selected, onSelect, tabIndex, currentBadge }: PillProps) {
+function Pill({ day, selected, onSelect, tabIndex, currentBadge, fullRowOnMobile }: PillProps) {
   const disabled = !onSelect;
 
-  // Selected: brand gradient + white text. Unselected: white bg + gray-700
-  // text (WCAG AA ≥ 4.5:1 on white). Disabled (grandfathered after move-off):
-  // gray-500 (still ≥ 4.5:1, just dimmed).
+  // Colour-only state change — dimensions are identical across selected /
+  // unselected / disabled (all border-2). The Save button stays the only
+  // solid-teal element on the screen; chips just tint.
+  //   Selected:   2px teal border, 8% teal tint, teal text, leading ✓
+  //   Unselected: 2px neutral border (gray-200), white bg, gray-700 text
+  //               — WCAG AA ≥ 4.5:1 on white
+  //   Disabled:   gray-500 text on gray-50 (≥ 4.5:1, dimmed)
   const stateClass = selected
-    ? 'text-white border border-transparent shadow-sm'
+    ? 'border-2 border-[#15A89E] bg-[#15A89E]/10 text-[#15A89E]'
     : disabled
-      ? 'text-gray-500 bg-gray-50 border border-gray-200 cursor-not-allowed'
-      : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400';
+      ? 'border-2 border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
+      : 'border-2 border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300';
+
+  const layoutClass = fullRowOnMobile ? 'col-span-full sm:col-auto' : '';
 
   return (
     <button
@@ -172,12 +184,25 @@ function Pill({ day, selected, onSelect, tabIndex, currentBadge }: PillProps) {
       data-day={day}
       disabled={disabled}
       onClick={onSelect}
-      className={`flex w-full items-center justify-center gap-1.5 min-h-11 px-3 py-2.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2 ${stateClass}`}
-      style={selected ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
+      className={`${layoutClass} flex w-full items-center justify-center gap-1.5 min-h-11 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2 ${stateClass}`}
     >
+      {selected && (
+        <svg
+          aria-hidden
+          viewBox="0 0 20 20"
+          className="w-3.5 h-3.5 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M5 10.5l3 3 7-7" />
+        </svg>
+      )}
       <span>{pillLabel(day)}</span>
       {currentBadge && (
-        <span className={`text-[10px] font-semibold uppercase tracking-wider rounded px-1.5 py-0.5 ${selected ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'}`}>
+        <span className={`text-[10px] font-semibold uppercase tracking-wider rounded px-1.5 py-0.5 ${selected ? 'bg-[#15A89E]/15 text-[#15A89E]' : 'bg-gray-200 text-gray-700'}`}>
           current
         </span>
       )}
