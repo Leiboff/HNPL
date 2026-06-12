@@ -7,6 +7,10 @@ import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { calculateFee } from '@/lib/finance';
 import { paystackRequest } from '@/lib/paystack';
+import {
+  saveCardForPatient as saveCardForPatientShared,
+  type PaystackAuthorization,
+} from '@/lib/paystack/saveCardForPatient';
 
 // Note: the middleware (proxy.ts / updateSession) only refreshes Supabase session
 // cookies and never redirects — so this unauthenticated route is unaffected by it.
@@ -66,93 +70,21 @@ type PaystackRefundResponse = {
   };
 };
 
-// ─── Shared card-save helper ──────────────────────────────────────────────────
-// Used by both first-payment activation and card-registration flows.
-// Throws on DB error so the caller can decide whether to treat it as fatal.
+// ─── Card-save helper ────────────────────────────────────────────────────────
+// Thin wrapper around the shared lib helper. Both the first-payment
+// activation path and the card-registration path call this; both treat a
+// SaveCardResult.kind === 'error' as non-fatal (logged + swallowed) so the
+// webhook still acks 200 to Paystack and the rest of the side effects
+// (refund, plan activation) still run.
 
 async function saveCardForPatient(
   patientId: string,
   auth: Authorization,
   supabase: ReturnType<typeof createServiceClient>,
 ): Promise<void> {
-  const authCode      = auth.authorization_code!;
-  const cardSignature = auth.signature ?? null;
-
-  const { data: patientProfile } = await supabase
-    .from('profiles')
-    .select('first_name, last_name')
-    .eq('id', patientId)
-    .single();
-
-  const cardholderName = patientProfile
-    ? `${patientProfile.first_name} ${patientProfile.last_name}`.trim()
-    : (auth.account_name ?? '');
-
-  if (cardSignature) {
-    const { data: existingPm } = await supabase
-      .from('payment_methods')
-      .select('id')
-      .eq('patient_id', patientId)
-      .eq('signature', cardSignature)
-      .maybeSingle();
-
-    if (existingPm) {
-      const { error } = await supabase
-        .from('payment_methods')
-        .update({
-          token:        authCode,
-          card_brand:   auth.brand   ?? 'Card',
-          last_four:    auth.last4   ?? '0000',
-          expiry_month: Number(auth.exp_month ?? 0),
-          expiry_year:  Number(auth.exp_year  ?? 0),
-          reusable:     true,
-        })
-        .eq('id', existingPm.id);
-      if (error) throw error;
-    } else {
-      const { count } = await supabase
-        .from('payment_methods')
-        .select('id', { count: 'exact', head: true })
-        .eq('patient_id', patientId);
-
-      const { error } = await supabase
-        .from('payment_methods')
-        .insert({
-          patient_id:      patientId,
-          card_brand:      auth.brand      ?? 'Card',
-          last_four:       auth.last4      ?? '0000',
-          expiry_month:    Number(auth.exp_month ?? 0),
-          expiry_year:     Number(auth.exp_year  ?? 0),
-          cardholder_name: cardholderName,
-          token:           authCode,
-          signature:       cardSignature,
-          reusable:        true,
-          is_default:      (count ?? 0) === 0,
-        });
-      if (error) throw error;
-    }
-  } else {
-    // No signature (rare) — insert without dedup
-    const { count } = await supabase
-      .from('payment_methods')
-      .select('id', { count: 'exact', head: true })
-      .eq('patient_id', patientId);
-
-    const { error } = await supabase
-      .from('payment_methods')
-      .insert({
-        patient_id:      patientId,
-        card_brand:      auth.brand      ?? 'Card',
-        last_four:       auth.last4      ?? '0000',
-        expiry_month:    Number(auth.exp_month ?? 0),
-        expiry_year:     Number(auth.exp_year  ?? 0),
-        cardholder_name: cardholderName,
-        token:           authCode,
-        signature:       null,
-        reusable:        true,
-        is_default:      (count ?? 0) === 0,
-      });
-    if (error) throw error;
+  const result = await saveCardForPatientShared(patientId, auth as PaystackAuthorization, supabase);
+  if (result.kind === 'error') {
+    throw new Error(result.message);
   }
 }
 

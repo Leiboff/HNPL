@@ -8,6 +8,14 @@ import Link from 'next/link';
 type CardInfo = { id: string; card_brand: string; last_four: string };
 type PollingState = 'polling' | 'success' | 'timeout';
 
+// Safety-net only. The primary path is server-side Paystack /verify on
+// the parent page; this component is rendered when that path throws
+// (network blip to Paystack, etc.) so we can still recover if the
+// webhook lands a row in time.
+
+const POLL_INTERVAL_MS = 1000;
+const POLL_TIMEOUT_MS  = 60_000;   // bumped from 10s — the brief
+
 // ─── Shared layout wrapper ────────────────────────────────────────────────────
 
 function ResultCard({ children }: { children: React.ReactNode }) {
@@ -34,7 +42,7 @@ function BrandBadge({ brand }: { brand: string }) {
 
 // ─── State views ─────────────────────────────────────────────────────────────
 
-function PollingView() {
+function PollingView({ secondsLeft }: { secondsLeft: number }) {
   return (
     <ResultCard>
       <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)]/10 mx-auto">
@@ -46,15 +54,14 @@ function PollingView() {
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Confirming your card…</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Checking for your new card. This usually takes just a moment.
+          Checking for your new card.
+          {secondsLeft > 0 && (
+            <span className="block mt-1 text-xs text-gray-400 tabular-nums">
+              Up to {secondsLeft}s remaining.
+            </span>
+          )}
         </p>
       </div>
-      <Link
-        href="/patient/payment-methods"
-        className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-6 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-      >
-        Check payment methods
-      </Link>
     </ResultCard>
   );
 }
@@ -87,47 +94,56 @@ function SuccessView({ card }: { card: CardInfo }) {
   );
 }
 
-function TimeoutView() {
+function TimeoutView({ reference }: { reference: string }) {
   return (
     <ResultCard>
-      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)]/10 mx-auto">
-        <svg className="w-7 h-7 text-[#13294B]" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-100 mx-auto">
+        <svg className="w-7 h-7 text-red-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
         </svg>
       </div>
       <div>
-        <h1 className="text-xl font-semibold text-gray-900">Still confirming your card…</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Taking longer than expected. Your card may still be processing — please check your payment methods in a moment.
+        <h1 className="text-xl font-semibold text-gray-900">We couldn&apos;t confirm your card</h1>
+        <p className="mt-1 text-sm text-gray-500 leading-relaxed">
+          We waited 60 seconds and didn&apos;t see your card on file. If the
+          charge succeeded on Paystack the row should appear shortly —
+          otherwise try the verification again.
         </p>
       </div>
-      <Link
-        href="/patient/payment-methods"
-        className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
-      >
-        Check payment methods →
-      </Link>
+      <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
+        <Link
+          href={`/patient/payment-methods/complete?reference=${encodeURIComponent(reference)}`}
+          className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+        >
+          Try again
+        </Link>
+        <Link
+          href="/patient/payment-methods"
+          className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-6 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          View payment methods
+        </Link>
+      </div>
     </ResultCard>
   );
 }
 
 // ─── Polling component ────────────────────────────────────────────────────────
 
-const POLL_TIMEOUT_S = 10;
-
-export default function PollingConfirmation({ since }: { since: string }) {
+export default function PollingConfirmation({ since, reference }: { since: string; reference: string }) {
   const [state, setState] = useState<PollingState>('polling');
   const [card,  setCard]  = useState<CardInfo | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(Math.ceil(POLL_TIMEOUT_MS / 1000));
   const stopped = useRef(false);
 
   useEffect(() => {
-    let elapsed = 0;
+    const startedAt = Date.now();
     let timerId: ReturnType<typeof setTimeout>;
 
     const tick = async () => {
       if (stopped.current) return;
-
-      elapsed += 1;
+      const elapsedMs = Date.now() - startedAt;
+      setSecondsLeft(Math.max(0, Math.ceil((POLL_TIMEOUT_MS - elapsedMs) / 1000)));
 
       try {
         const res = await fetch(
@@ -147,20 +163,19 @@ export default function PollingConfirmation({ since }: { since: string }) {
         // network blip — keep trying
       }
 
-      if (elapsed >= POLL_TIMEOUT_S) {
+      if (Date.now() - startedAt >= POLL_TIMEOUT_MS) {
         stopped.current = true;
         setState('timeout');
         return;
       }
-
-      timerId = setTimeout(tick, 1000);
+      timerId = setTimeout(tick, POLL_INTERVAL_MS);
     };
 
-    timerId = setTimeout(tick, 1000);
+    timerId = setTimeout(tick, POLL_INTERVAL_MS);
     return () => { stopped.current = true; clearTimeout(timerId); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [since]);
 
   if (state === 'success' && card) return <SuccessView card={card} />;
-  if (state === 'timeout')         return <TimeoutView />;
-  return <PollingView />;
+  if (state === 'timeout')         return <TimeoutView reference={reference} />;
+  return <PollingView secondsLeft={secondsLeft} />;
 }
