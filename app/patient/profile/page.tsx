@@ -4,7 +4,9 @@ import { createClient } from '@/lib/supabase/server';
 import AddressForm from './AddressForm';
 import SignOutButton from './SignOutButton';
 import PasskeysSection from './PasskeysSection';
+import ProfileAccordion from './ProfileAccordion';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
+import { maskSaId } from '@/lib/saIdMask';
 
 const VALID_PROVINCES = new Set([
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal',
@@ -52,14 +54,6 @@ async function updateProfile(data: {
   return { error: null };
 }
 
-function LockIcon() {
-  return (
-    <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25z" />
-    </svg>
-  );
-}
-
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -82,6 +76,7 @@ export default async function ProfilePage() {
     .single();
 
   const decryptedSaId = decryptIdForDisplay(profile?.sa_id_number);
+  const saIdMasked    = maskSaId(decryptedSaId);
 
   const firstName = profile?.first_name ?? '';
   const lastName  = profile?.last_name  ?? '';
@@ -98,12 +93,26 @@ export default async function ProfilePage() {
     postal_code:   profile?.postal_code   ?? null,
   };
 
+  // ── Collapsed-state summaries ───────────────────────────────────────────
+  // Personal: show the masked SA ID (the most identifying piece visible).
+  const personalSummary = saIdMasked || '—';
+  // Address: "Suburb, City" when both are present; otherwise prompt.
+  const hasAddressBits  = profile?.suburb && profile?.city;
+  const addressSummary  = hasAddressBits ? `${profile.suburb}, ${profile.city}` : 'Add your address';
+
+  // ── Default-open logic ─────────────────────────────────────────────────
+  // Address is the only section with required fields. If the patient hasn't
+  // entered any address yet, open that section on mount; otherwise stay
+  // fully collapsed and let them tap to expand.
+  const addressIncomplete = !profile?.address_line1;
+  const initialOpen       = addressIncomplete ? 'address' as const : null;
+
   const card = 'bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm';
 
   return (
     <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8 space-y-4">
 
-      {/* ── Identity hero ─────────────────────────────────────── */}
+      {/* ── Header — avatar + name only, always visible ──────────────── */}
       <div className={`${card} p-5 flex items-center gap-4`}>
         <div
           className="w-14 h-14 rounded-full flex items-center justify-center shrink-0 text-white text-lg font-bold select-none"
@@ -111,44 +120,36 @@ export default async function ProfilePage() {
         >
           {initials}
         </div>
-        <div className="min-w-0">
-          <p className="font-semibold text-gray-900 truncate">{fullName || '—'}</p>
-          <p className="text-sm text-gray-500 truncate mt-0.5">{profile?.email ?? ''}</p>
-        </div>
-      </div>
-
-      {/* ── Locked identity ────────────────────────────────────── */}
-      <div className={`${card} p-5 space-y-4`}>
-        <div className="flex items-center gap-1.5" style={{ color: '#13294B', opacity: 0.45 }}>
-          <LockIcon />
-          <p className="text-[11px] font-semibold uppercase tracking-widest">Identity — read only</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
-          <ReadOnlyField label="First name"   value={firstName} />
-          <ReadOnlyField label="Last name"    value={lastName} />
-          <ReadOnlyField label="SA ID number" value={decryptedSaId || ''} />
-          <ReadOnlyField label="Email"        value={profile?.email ?? ''} />
-        </div>
-        <p className="text-xs text-gray-400 border-t border-gray-100 pt-4">
-          Name and ID are locked for security.{' '}
-          <a href="mailto:support@betternow.co.za" className="underline underline-offset-2 hover:text-gray-600 transition-colors">
-            Contact support
-          </a>{' '}
-          if these need to change.
+        <p className="font-semibold text-gray-900 truncate min-w-0">
+          {fullName || '—'}
         </p>
       </div>
 
-      {/* ── Contact & billing address ──────────────────────────── */}
-      <div className={`${card} p-5 space-y-4`}>
-        <p className="text-sm font-semibold" style={{ color: '#13294B' }}>Contact &amp; billing address</p>
-        <AddressForm current={addressCurrent} updateProfile={updateProfile} />
-      </div>
-
-      {/* ── Passkeys ───────────────────────────────────────────── */}
-      <div className={`${card} p-5 space-y-4`}>
-        <p className="text-sm font-semibold" style={{ color: '#13294B' }}>Passkeys</p>
-        <PasskeysSection />
-      </div>
+      {/* ── Accordion: Personal details / Contact & billing / Security ── */}
+      <ProfileAccordion
+        initialOpen={initialOpen}
+        personalSummary={personalSummary}
+        addressSummary={addressSummary}
+        personalDetails={
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+              <ReadOnlyField label="First name"   value={firstName} />
+              <ReadOnlyField label="Last name"    value={lastName} />
+              <ReadOnlyField label="SA ID number" value={saIdMasked || ''} />
+              <ReadOnlyField label="Email"        value={profile?.email ?? ''} />
+            </div>
+            <p className="text-xs text-gray-400 border-t border-gray-100 pt-4">
+              Name and ID are locked for security.{' '}
+              <a href="mailto:support@betternow.co.za" className="underline underline-offset-2 hover:text-gray-600 transition-colors">
+                Contact support
+              </a>{' '}
+              if these need to change.
+            </p>
+          </div>
+        }
+        contactAddress={<AddressForm current={addressCurrent} updateProfile={updateProfile} />}
+        passkeys={<PasskeysSection />}
+      />
 
       {/* ── Account ───────────────────────────────────────────── */}
       <div className={`${card} p-2`}>
