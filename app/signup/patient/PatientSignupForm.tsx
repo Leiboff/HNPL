@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { signUpPatient } from './actions';
-import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
+import SalaryDayPicker from '@/components/SalaryDayPicker';
 
 type Invitation = {
   email:        string;
@@ -44,6 +44,12 @@ export default function PatientSignupForm({ invitation, token }: Props) {
 
     if (fields.password !== fields.confirm) {
       setError('Passwords do not match.');
+      return;
+    }
+
+    if (!fields.salaryDay) {
+      // Picker has no native required attribute — block submit on empty.
+      setError('Please choose when your salary is paid.');
       return;
     }
 
@@ -145,16 +151,10 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         </div>
 
         <div>
-          <label className={LABEL_CLS}>Salary day</label>
-          <select required value={fields.salaryDay} onChange={set('salaryDay')} className={INPUT_CLS}>
-            <option value="">Select day…</option>
-            {ALLOWED_SALARY_DAYS.map(d => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-gray-400">
-            The day of the month your salary arrives. We&apos;ll schedule your payments around this.
-          </p>
+          <SalaryDayPicker
+            value={fields.salaryDay === '' ? null : parseInt(fields.salaryDay, 10)}
+            onChange={(d) => setFields(f => ({ ...f, salaryDay: String(d) }))}
+          />
         </div>
 
         <button

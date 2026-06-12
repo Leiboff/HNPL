@@ -6,6 +6,7 @@ import {
   isAllowedSalaryDay,
   lastDayOfMonth,
   clampSalaryDateForMonth,
+  nextCollectionDate,
 } from './salaryDates';
 
 // ─── isAllowedSalaryDay ─────────────────────────────────────────────────────
@@ -107,6 +108,45 @@ describe('clampSalaryDateForMonth', () => {
   });
 });
 
+// ─── nextCollectionDate ──────────────────────────────────────────────────────
+
+describe('nextCollectionDate', () => {
+  it('today is before salary day → returns this month', () => {
+    const now = new Date('2026-06-10T12:00:00Z');
+    expect(nextCollectionDate(25, now).toISOString().slice(0, 10)).toBe('2026-06-25');
+  });
+
+  it('today is salary day → advances to next month', () => {
+    const now = new Date('2026-06-25T12:00:00Z');
+    expect(nextCollectionDate(25, now).toISOString().slice(0, 10)).toBe('2026-07-25');
+  });
+
+  it('today is after salary day → advances to next month', () => {
+    const now = new Date('2026-06-27T12:00:00Z');
+    expect(nextCollectionDate(25, now).toISOString().slice(0, 10)).toBe('2026-07-25');
+  });
+
+  it('day 31 in January advances to clamped Feb (28 in non-leap 2025)', () => {
+    const now = new Date('2025-02-01T12:00:00Z');
+    expect(nextCollectionDate(31, now).toISOString().slice(0, 10)).toBe('2025-02-28');
+  });
+
+  it('day 31 in January advances to clamped Feb 29 (leap 2024)', () => {
+    const now = new Date('2024-02-01T12:00:00Z');
+    expect(nextCollectionDate(31, now).toISOString().slice(0, 10)).toBe('2024-02-29');
+  });
+
+  it('day 31 on Dec 31 wraps year → next is Jan 31', () => {
+    const now = new Date('2026-12-31T12:00:00Z');
+    expect(nextCollectionDate(31, now).toISOString().slice(0, 10)).toBe('2027-01-31');
+  });
+
+  it('day 1 on the 1st advances to next month', () => {
+    const now = new Date('2026-06-01T12:00:00Z');
+    expect(nextCollectionDate(1, now).toISOString().slice(0, 10)).toBe('2026-07-01');
+  });
+});
+
 // ─── Single-source-of-truth check ───────────────────────────────────────────
 //
 // Every surface that handles salary-day input must import from
@@ -121,9 +161,13 @@ describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
     'app/signup/patient/actions.ts',
   ];
 
-  it.each(surfaces)('%s imports from @/lib/salaryDates', (rel) => {
+  it.each(surfaces)('%s depends on the canonical source (lib/salaryDates or the shared picker)', (rel) => {
     const src = readFileSync(resolve(process.cwd(), rel), 'utf8');
-    expect(src).toMatch(/from\s+['"]@\/lib\/salaryDates['"]/);
+    // Acceptable: import directly from lib/salaryDates, OR import the
+    // shared SalaryDayPicker which itself imports from lib/salaryDates.
+    const importsLib    = /from\s+['"]@\/lib\/salaryDates['"]/.test(src);
+    const importsPicker = /from\s+['"]@\/components\/SalaryDayPicker['"]/.test(src);
+    expect(importsLib || importsPicker).toBe(true);
   });
 
   // Reject the canonical tuple as a JS-array literal. Requiring the opening
