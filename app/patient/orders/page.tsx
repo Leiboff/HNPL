@@ -17,6 +17,7 @@ export type PaymentRow = {
   amount: number;
   due_date: string;
   status: string;
+  collected_at: string | null;
 };
 
 export type ProviderRef = { first_name: string; last_name: string };
@@ -52,7 +53,7 @@ export default async function OrdersPage() {
       provider_id, practice_id,
       provider:profiles!plans_provider_id_fkey(first_name, last_name),
       practice:practices(name),
-      payments(id, instalment_number, amount, due_date, status)
+      payments(id, instalment_number, amount, due_date, status, collected_at)
     `)
     .eq('patient_id', user.id)
     .order('created_at', { ascending: false });

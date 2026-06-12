@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import PendingPlanCard from '@/app/patient/PendingPlanCard';
+import StatusChip from '@/components/StatusChip';
 import { computePlanProgress } from '@/lib/planProgress';
+import { planCompletionDate, sortPlansByAnchorDesc, type OrdersTab } from '@/lib/planAnchor';
 import type { PlanRow, PaymentRow } from './page';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -49,23 +51,19 @@ const PAYMENT_STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 // ─── Badge components ─────────────────────────────────────────────────────────
+// Both badges now delegate chip chrome to <StatusChip /> so every status
+// indicator (plan-level + payment-level) is dimensionally identical.
+
+const UNKNOWN_STATUS = { label: '', cls: 'bg-gray-100 text-gray-600' } as const;
 
 function PlanStatusBadge({ status }: { status: string }) {
-  const cfg = PLAN_STATUS[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`}>
-      {cfg.label}
-    </span>
-  );
+  const cfg = PLAN_STATUS[status] ?? { label: status, cls: UNKNOWN_STATUS.cls };
+  return <StatusChip label={cfg.label} cls={cfg.cls} />;
 }
 
 function PaymentStatusBadge({ status }: { status: string }) {
-  const cfg = PAYMENT_STATUS[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cfg.cls}`}>
-      {cfg.label}
-    </span>
-  );
+  const cfg = PAYMENT_STATUS[status] ?? { label: status, cls: UNKNOWN_STATUS.cls };
+  return <StatusChip label={cfg.label} cls={cfg.cls} />;
 }
 
 function CheckIcon() {
@@ -122,15 +120,25 @@ function PlanProgress({ plan }: { plan: PlanRow }) {
 
 // ─── Plan card (non-pending) ──────────────────────────────────────────────────
 
-function PlanCard({ plan }: { plan: PlanRow }) {
+function PlanCard({ plan, tab }: { plan: PlanRow; tab: OrdersTab }) {
   const practiceName = getPracticeName(plan);
 
-  // Reference line: "BN-2026-000027 · inv4848" — join with a middot when
-  // both exist, fall back to whichever is present.
-  const refParts: string[] = [];
-  if (plan.invoice_number)     refParts.push(plan.invoice_number);
-  if (plan.practice_reference) refParts.push(plan.practice_reference);
-  const refLine = refParts.join(' · ');
+  // Header date anchor — "Started …" everywhere except a Historic plan
+  // that has at least one collected payment, where we show
+  // "Completed {latest collected_at}". Both Historic with no completion
+  // date (cancelled / declined) and Pending / Current fall back to
+  // "Started {created_at}".
+  const completion = tab === 'historic' ? planCompletionDate(plan) : null;
+  const anchorIso  = completion ?? plan.created_at;
+  const anchorLabel = `${completion ? 'Completed' : 'Started'} ${formatDate(anchorIso.slice(0, 10))}`;
+
+  // Footer reference line (smallest text). Omit Practice ref when the
+  // practice didn't supply one. If neither field is present the whole
+  // footer is suppressed.
+  const refSegments: string[] = [];
+  if (plan.invoice_number)     refSegments.push(`Ref ${plan.invoice_number}`);
+  if (plan.practice_reference) refSegments.push(`Practice ref ${plan.practice_reference}`);
+  const footerRef = refSegments.join(' · ');
 
   // The "next due" instalment — the earliest non-collected row. Highlights
   // the row the eye should land on; everything before it is muted (paid),
@@ -150,12 +158,10 @@ function PlanCard({ plan }: { plan: PlanRow }) {
           </p>
         </div>
 
-        {/* Line 2: status chip · references — wraps below on narrow screens */}
+        {/* Line 2: status chip · date anchor — wraps below on narrow screens */}
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <PlanStatusBadge status={plan.status} />
-          {refLine && (
-            <p className="text-xs text-gray-400 tabular-nums truncate min-w-0">{refLine}</p>
-          )}
+          <p className="text-xs text-gray-400 truncate min-w-0">{anchorLabel}</p>
         </div>
       </div>
 
@@ -197,6 +203,14 @@ function PlanCard({ plan }: { plan: PlanRow }) {
         </div>
       ) : (
         <p className="px-4 sm:px-6 py-4 mt-3 text-xs text-gray-400">No payment schedule yet.</p>
+      )}
+
+      {/* Footer: muted reference line, smallest text. Hidden when the
+          practice supplied no invoice number AND no practice ref. */}
+      {footerRef && (
+        <p className="px-4 sm:px-6 py-2.5 text-[11px] text-gray-400 border-t border-gray-100 truncate">
+          {footerRef}
+        </p>
       )}
     </div>
   );
@@ -242,10 +256,14 @@ export default function OrdersView({
     pendingPlans.length > 0 ? 'pending' : 'current'
   );
 
-  const plans =
+  const rawPlans =
     tab === 'pending'  ? pendingPlans  :
     tab === 'current'  ? currentPlans  :
                          historicPlans;
+
+  // Newest-first within each tab. Pending / Current sort by created_at;
+  // Historic sorts by latest collected_at, falling back to created_at.
+  const plans = sortPlansByAnchorDesc(rawPlans, tab);
 
   function tabCls(t: 'pending' | 'current' | 'historic') {
     return [
@@ -291,7 +309,7 @@ export default function OrdersView({
                 blocked={patientBlocked}
               />
             ) : (
-              <PlanCard key={plan.id} plan={plan} />
+              <PlanCard key={plan.id} plan={plan} tab={tab} />
             )
           )}
         </div>
