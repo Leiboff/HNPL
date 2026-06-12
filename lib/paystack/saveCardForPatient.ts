@@ -115,17 +115,26 @@ export async function saveCardForPatient(
     }
 
     if (action.action === 'update') {
-      const { error } = await supabase
-        .from('payment_methods')
-        .update({
-          token:        authCode,
-          card_brand:   auth.brand ?? 'Card',
-          last_four:    auth.last4 ?? '0000',
-          expiry_month: Number(auth.exp_month ?? 0),
-          expiry_year:  Number(auth.exp_year  ?? 0),
-          reusable:     true,
-        })
-        .eq('id', action.cardId);
+      // Token refresh — Paystack reissued an authorization_code for a
+      // card whose signature is already on file. Route through the
+      // refresh_card_token RPC (migration 0040), which atomically
+      //   1) UPDATEs the payment_methods row (token + display fields,
+      //      preserving is_default)
+      //   2) if the card is the patient's default, repoints every
+      //      active / pending plan whose stored token isn't already
+      //      the new value (same IS DISTINCT FROM predicate as
+      //      change_default_card), and writes a 'token_refreshed'
+      //      plan_events row per repointed plan.
+      // All inside one function-scoped transaction — drift can never
+      // persist past this point.
+      const { error } = await supabase.rpc('refresh_card_token', {
+        p_card_id:      action.cardId,
+        p_token:        authCode,
+        p_brand:        auth.brand ?? 'Card',
+        p_last_four:    auth.last4 ?? '0000',
+        p_expiry_month: Number(auth.exp_month ?? 0),
+        p_expiry_year:  Number(auth.exp_year  ?? 0),
+      });
       if (error) return { kind: 'error', message: error.message };
       return { kind: 'updated', cardId: action.cardId };
     }

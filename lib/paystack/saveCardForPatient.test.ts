@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   chooseCardSaveAction,
@@ -59,6 +61,8 @@ function buildFakeClient(opts: {
   insertResult2?:  { data: { id: string } | null; error: { code?: string; message: string } | null };
   refetchPm?:      { id: string } | null;
   updateError?:    { message: string } | null;
+  rpcResult?:      { data: unknown; error: { message: string } | null };
+  rpcCalls?:       Array<{ name: string; args: unknown }>;
 }) {
   // Each .from(table) returns a fresh query builder. Different tables
   // and different ops on payment_methods return different canned data.
@@ -110,6 +114,12 @@ function buildFakeClient(opts: {
       }
       return {};
     },
+    rpc: (name: string, args: unknown) => {
+      opts.rpcCalls?.push({ name, args });
+      return Promise.resolve(
+        opts.rpcResult ?? { data: { is_default: true, repointed_plans: 0, plan_refs: [] }, error: null },
+      );
+    },
   } as unknown as SupabaseClient;
 }
 
@@ -141,6 +151,69 @@ describe('saveCardForPatient — IO branches', () => {
     });
     const result = await saveCardForPatient('patient_1', baseAuth, supabase);
     expect(result).toEqual({ kind: 'updated', cardId: 'pm_1' });
+  });
+
+  it('update branch invokes the refresh_card_token RPC (not a direct UPDATE) — closes the drift window', async () => {
+    const rpcCalls: Array<{ name: string; args: unknown }> = [];
+    const supabase = buildFakeClient({
+      profileRow:  { first_name: 'Ada', last_name: 'Lovelace' },
+      countResult: 1,
+      existingPm:  { id: 'pm_1', token: 'AUTH_old' },
+      rpcCalls,
+    });
+
+    await saveCardForPatient('patient_1', baseAuth, supabase);
+
+    // Exactly one rpc call, with the right name and the canonical arg names.
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]).toEqual({
+      name: 'refresh_card_token',
+      args: {
+        p_card_id:      'pm_1',
+        p_token:        'AUTH_new',
+        p_brand:        'Visa',
+        p_last_four:    '4081',
+        p_expiry_month: 12,
+        p_expiry_year:  2030,
+      },
+    });
+  });
+
+  it('re-tokenising the default card leaves zero mismatched plans (round-trip)', async () => {
+    // Simulates the post-condition: the RPC reports the card was the
+    // default and repointed N plans. saveCardForPatient returns
+    // kind: 'updated' AND the test asserts the RPC was the writer (not
+    // a direct UPDATE on payment_methods).
+    const rpcCalls: Array<{ name: string; args: unknown }> = [];
+    const supabase = buildFakeClient({
+      profileRow:  { first_name: 'Ada', last_name: 'Lovelace' },
+      countResult: 1,
+      existingPm:  { id: 'pm_default', token: 'AUTH_old' },
+      rpcCalls,
+      rpcResult: {
+        data:  { is_default: true, repointed_plans: 2, plan_refs: [{ id: 'p1', invoice_number: 'BN-1' }, { id: 'p2', invoice_number: 'BN-2' }] },
+        error: null,
+      },
+    });
+
+    const result = await saveCardForPatient('patient_1', baseAuth, supabase);
+
+    // Wiring: payment_methods.update was NOT called directly (no .from('payment_methods').update()
+    // in this path) — the RPC owns the row write.
+    expect(rpcCalls.find((c) => c.name === 'refresh_card_token')).toBeDefined();
+    // The lib helper still returns kind: 'updated' so its callers stay unchanged.
+    expect(result).toEqual({ kind: 'updated', cardId: 'pm_default' });
+  });
+
+  it('update branch with RPC error → kind: error (propagates the RPC message)', async () => {
+    const supabase = buildFakeClient({
+      profileRow:  { first_name: 'Ada', last_name: 'Lovelace' },
+      countResult: 1,
+      existingPm:  { id: 'pm_1', token: 'AUTH_old' },
+      rpcResult:   { data: null, error: { message: 'card_not_found' } },
+    });
+    const result = await saveCardForPatient('patient_1', baseAuth, supabase);
+    expect(result).toEqual({ kind: 'error', message: 'card_not_found' });
   });
 
   it('no existing signature row → kind: inserted (fresh card OR previously removed)', async () => {
@@ -199,5 +272,32 @@ describe('saveCardForPatient — IO branches', () => {
       supabase,
     );
     expect(result).toEqual({ kind: 'inserted', cardId: 'pm_no_sig' });
+  });
+});
+
+// ─── Source-level regression: update branch must go through the RPC ──────────
+//
+// A future edit could plausibly inline the UPDATE back into the lib (e.g.
+// for "performance" or to avoid the migration) and the in-memory tests
+// above would still pass against the fake client. This source-text check
+// fails if `refresh_card_token` disappears from saveCardForPatient.ts.
+
+describe('regression: saveCardForPatient update branch wires the refresh_card_token RPC', () => {
+  const src = readFileSync(
+    resolve(process.cwd(), 'lib/paystack/saveCardForPatient.ts'),
+    'utf8',
+  );
+
+  it('calls supabase.rpc("refresh_card_token", …) somewhere in the lib', () => {
+    expect(src).toMatch(/rpc\(\s*['"`]refresh_card_token['"`]/);
+  });
+
+  it('does NOT do a direct .from("payment_methods").update({ token: … }) in the update branch', () => {
+    // A direct UPDATE on payment_methods that includes `token:` in the
+    // payload is the regression we want to catch — it bypasses the RPC
+    // and re-opens the drift window. (Other UPDATE calls without
+    // `token:` are fine — e.g. setting is_default in change_default_card
+    // happens via the RPC, not this lib.)
+    expect(src).not.toMatch(/\.from\(\s*['"`]payment_methods['"`]\s*\)\s*\.update\(\s*\{\s*[\s\S]*?\btoken\s*:/);
   });
 });
