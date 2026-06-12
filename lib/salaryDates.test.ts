@@ -6,7 +6,6 @@ import {
   isAllowedSalaryDay,
   lastDayOfMonth,
   clampSalaryDateForMonth,
-  nextCollectionDate,
 } from './salaryDates';
 
 // ─── isAllowedSalaryDay ─────────────────────────────────────────────────────
@@ -105,45 +104,6 @@ describe('clampSalaryDateForMonth', () => {
     expect(d.getUTCMinutes()).toBe(0);
     expect(d.getUTCSeconds()).toBe(0);
     expect(d.getUTCMilliseconds()).toBe(0);
-  });
-});
-
-// ─── nextCollectionDate ──────────────────────────────────────────────────────
-
-describe('nextCollectionDate', () => {
-  it('today is before salary day → returns this month', () => {
-    const now = new Date('2026-06-10T12:00:00Z');
-    expect(nextCollectionDate(25, now).toISOString().slice(0, 10)).toBe('2026-06-25');
-  });
-
-  it('today is salary day → advances to next month', () => {
-    const now = new Date('2026-06-25T12:00:00Z');
-    expect(nextCollectionDate(25, now).toISOString().slice(0, 10)).toBe('2026-07-25');
-  });
-
-  it('today is after salary day → advances to next month', () => {
-    const now = new Date('2026-06-27T12:00:00Z');
-    expect(nextCollectionDate(25, now).toISOString().slice(0, 10)).toBe('2026-07-25');
-  });
-
-  it('day 31 in January advances to clamped Feb (28 in non-leap 2025)', () => {
-    const now = new Date('2025-02-01T12:00:00Z');
-    expect(nextCollectionDate(31, now).toISOString().slice(0, 10)).toBe('2025-02-28');
-  });
-
-  it('day 31 in January advances to clamped Feb 29 (leap 2024)', () => {
-    const now = new Date('2024-02-01T12:00:00Z');
-    expect(nextCollectionDate(31, now).toISOString().slice(0, 10)).toBe('2024-02-29');
-  });
-
-  it('day 31 on Dec 31 wraps year → next is Jan 31', () => {
-    const now = new Date('2026-12-31T12:00:00Z');
-    expect(nextCollectionDate(31, now).toISOString().slice(0, 10)).toBe('2027-01-31');
-  });
-
-  it('day 1 on the 1st advances to next month', () => {
-    const now = new Date('2026-06-01T12:00:00Z');
-    expect(nextCollectionDate(1, now).toISOString().slice(0, 10)).toBe('2026-07-01');
   });
 });
 

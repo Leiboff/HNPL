@@ -8,7 +8,7 @@ import SalaryDayPicker, { pillLabel } from './SalaryDayPicker';
 
 describe('pillLabel', () => {
   it.each([
-    [1,  '1st of the month'],
+    [1,  '1st'],
     [15, '15th'],
     [20, '20th'],
     [25, '25th'],
@@ -41,12 +41,10 @@ describe('pillLabel', () => {
 function Harness({
   initial = null,
   currentDay = null,
-  now,
   onChangeSpy,
 }: {
   initial?: number | null;
   currentDay?: number | null;
-  now?: Date;
   onChangeSpy?: (d: number) => void;
 }) {
   const [value, setValue] = useState<number | null>(initial);
@@ -55,7 +53,6 @@ function Harness({
       value={value}
       onChange={(d) => { setValue(d); onChangeSpy?.(d); }}
       currentDay={currentDay}
-      now={now}
     />
   );
 }
@@ -127,35 +124,12 @@ describe('SalaryDayPicker — grandfathered legacy values', () => {
   });
 });
 
-describe('SalaryDayPicker — next-collection line', () => {
-  it('renders nothing when no value is selected', () => {
-    render(<Harness />);
-    expect(screen.queryByText(/Next collection/)).not.toBeInTheDocument();
-  });
-
-  it('shows next collection in en-ZA format with full month name', () => {
-    // Today is 10 June 2026 → next salary day 25 is 25 June 2026
-    render(<Harness initial={25} now={new Date('2026-06-10T12:00:00Z')} />);
-    expect(screen.getByText(/25 June 2026/)).toBeInTheDocument();
-  });
-
-  it('"Last day" in February non-leap clamps to Feb 28', () => {
-    render(<Harness initial={31} now={new Date('2025-02-01T12:00:00Z')} />);
-    expect(screen.getByText(/28 February 2025/)).toBeInTheDocument();
-  });
-
-  it('"Last day" in February leap year clamps to Feb 29', () => {
-    render(<Harness initial={31} now={new Date('2024-02-01T12:00:00Z')} />);
-    expect(screen.getByText(/29 February 2024/)).toBeInTheDocument();
-  });
-});
-
 describe('SalaryDayPicker — keyboard navigation', () => {
   it('ArrowRight on the selected pill moves to the next pill and fires onChange', () => {
     const onChange = vi.fn();
     render(<Harness initial={1} onChangeSpy={onChange} />);
 
-    const first = screen.getByRole('radio', { name: /1st of the month/ });
+    const first = screen.getByRole('radio', { name: /^1st$/ });
     first.focus();
     fireEvent.keyDown(first, { key: 'ArrowRight' });
 
@@ -167,7 +141,7 @@ describe('SalaryDayPicker — keyboard navigation', () => {
     const onChange = vi.fn();
     render(<Harness initial={1} onChangeSpy={onChange} />);
 
-    const first = screen.getByRole('radio', { name: /1st of the month/ });
+    const first = screen.getByRole('radio', { name: /^1st$/ });
     first.focus();
     fireEvent.keyDown(first, { key: 'ArrowLeft' });
 
@@ -185,9 +159,7 @@ describe('SalaryDayPicker — keyboard navigation', () => {
     fireEvent.keyDown(selected, { key: 'Home' });
     expect(onChange).toHaveBeenLastCalledWith(1);
 
-    // After Home, re-find currently-focused; for the next assert just key off
-    // the document.activeElement (Home/End fire onChange which re-renders).
-    fireEvent.keyDown(screen.getByRole('radio', { name: /1st of the month/ }), { key: 'End' });
+    fireEvent.keyDown(screen.getByRole('radio', { name: /^1st$/ }), { key: 'End' });
     expect(onChange).toHaveBeenLastCalledWith(31);
   });
 
@@ -209,11 +181,9 @@ describe('SalaryDayPicker — ARIA wiring', () => {
     expect(group).toHaveAccessibleName(/when is your salary usually paid/i);
   });
 
-  it('Month-end pills are inside a labelled sub-group', () => {
+  it('does not render a Month-end sub-group (flat single set of options)', () => {
     render(<Harness />);
-    // The "Month-end" label is the accessible name for its group.
-    const monthEndGroup = screen.getByRole('group', { name: /month-end/i });
-    expect(monthEndGroup).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /month-end/i })).not.toBeInTheDocument();
   });
 
   it('only the selected pill has tabIndex=0', () => {

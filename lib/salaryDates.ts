@@ -59,26 +59,3 @@ export function clampSalaryDateForMonth(year: number, month: number, salaryDay: 
   // early.
   return new Date(Date.UTC(year, month, clamped));
 }
-
-/**
- * The next strictly-future occurrence of `salaryDay`, relative to `now`.
- * If today's date in UTC is the same as or past the clamped salary day for
- * the current month, we advance to next month. Used by the live "Next
- * collection: …" line beneath the salary-day picker.
- *
- * Display-only — the scheduler computes the actual instalment dates via
- * `calculatePaymentDates` in finance.ts (which applies a buffer).
- */
-export function nextCollectionDate(salaryDay: number, now: Date = new Date()): Date {
-  const year  = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-  const today = now.getUTCDate();
-
-  const thisMonth = clampSalaryDateForMonth(year, month, salaryDay);
-  if (thisMonth.getUTCDate() <= today) {
-    const nextMonth = month === 11 ? 0       : month + 1;
-    const nextYear  = month === 11 ? year + 1 : year;
-    return clampSalaryDateForMonth(nextYear, nextMonth, salaryDay);
-  }
-  return thisMonth;
-}

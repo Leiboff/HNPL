@@ -1,22 +1,13 @@
 'use client';
 
 import { useId, useMemo, useRef } from 'react';
-import {
-  ALLOWED_SALARY_DAYS,
-  isAllowedSalaryDay,
-  nextCollectionDate,
-} from '@/lib/salaryDates';
-
-// Visual rows. Order matters — also drives keyboard traversal.
-const TOP_ROW       = [1, 15, 20] as const;
-const MONTH_END_ROW = [25, 26, 27, 28, 29, 30, 31] as const;
+import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
 /**
  * Display label for a salary day. `1` and `31` get human-readable copy;
  * everything else gets a standard ordinal suffix.
  */
 export function pillLabel(day: number): string {
-  if (day === 1)  return '1st of the month';
   if (day === 31) return 'Last day';
   const lastTwo = day % 100;
   const last    = day % 10;
@@ -25,20 +16,6 @@ export function pillLabel(day: number): string {
   if (last === 2) return `${day}nd`;
   if (last === 3) return `${day}rd`;
   return `${day}th`;
-}
-
-/**
- * SA-locale date format: "30 June 2026". Use UTC so the formatter doesn't
- * shift the day across the local timezone boundary — the input Date is
- * always UTC-midnight from `nextCollectionDate`.
- */
-function formatCollectionDate(d: Date): string {
-  return new Intl.DateTimeFormat('en-ZA', {
-    day:      'numeric',
-    month:    'long',
-    year:     'numeric',
-    timeZone: 'UTC',
-  }).format(d);
 }
 
 type Props = {
@@ -53,8 +30,6 @@ type Props = {
   currentDay?: number | null;
   /** Optional id prefix for ARIA labelling. Auto-generated if omitted. */
   idPrefix?: string;
-  /** Override "now" for tests so next-collection output is deterministic. */
-  now?: Date;
 };
 
 export default function SalaryDayPicker({
@@ -62,12 +37,10 @@ export default function SalaryDayPicker({
   onChange,
   currentDay = null,
   idPrefix,
-  now,
 }: Props) {
-  const autoId         = useId();
-  const idBase         = idPrefix ?? autoId;
-  const groupLabelId   = `${idBase}-group-label`;
-  const monthEndLabelId = `${idBase}-monthend-label`;
+  const autoId       = useId();
+  const idBase       = idPrefix ?? autoId;
+  const groupLabelId = `${idBase}-group-label`;
 
   const grandfathered = currentDay !== null && !isAllowedSalaryDay(currentDay);
   // The legacy pill is only navigable while still the active selection —
@@ -76,12 +49,14 @@ export default function SalaryDayPicker({
   const grandfatheredActive = grandfathered && value === currentDay;
 
   /**
-   * Ordered list used for keyboard navigation. Stays stable across re-renders
-   * so arrow keys advance predictably; the grandfathered pill is only included
-   * while still selected (after the user picks an allowed day, it falls out).
+   * Ordered list used for keyboard navigation. The grandfathered pill is
+   * only included while still selected; after the user picks an allowed
+   * day it falls out of the navigation order.
    */
   const navOrder = useMemo<number[]>(() => {
-    const days: number[] = [...TOP_ROW, ...MONTH_END_ROW];
+    // Widen the readonly tuple to number[] so we can append a grandfathered
+    // day that isn't a literal member of the allowed-day union.
+    const days: number[] = [...ALLOWED_SALARY_DAYS];
     if (grandfatheredActive && currentDay !== null) days.push(currentDay);
     return days;
   }, [grandfatheredActive, currentDay]);
@@ -119,10 +94,6 @@ export default function SalaryDayPicker({
     requestAnimationFrame(() => focusDay(nextDay));
   }
 
-  const nextDate = value !== null && Number.isInteger(value)
-    ? nextCollectionDate(value, now ?? new Date())
-    : null;
-
   return (
     <div>
       <p
@@ -137,65 +108,31 @@ export default function SalaryDayPicker({
         role="radiogroup"
         aria-labelledby={groupLabelId}
         onKeyDown={handleKeyDown}
-        className="mt-3 space-y-4"
+        className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2"
       >
-        {/* Top row: standalone days */}
-        <div className="flex flex-wrap gap-2">
-          {TOP_ROW.map((d) => (
-            <Pill
-              key={d}
-              day={d}
-              selected={value === d}
-              onSelect={() => onChange(d)}
-              tabIndex={value === d ? 0 : -1}
-            />
-          ))}
-        </div>
-
-        {/* Month-end group */}
-        <div>
-          <p
-            id={monthEndLabelId}
-            className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-2"
-          >
-            Month-end
-          </p>
-          <div
-            role="group"
-            aria-labelledby={monthEndLabelId}
-            className="flex flex-wrap gap-2"
-          >
-            {MONTH_END_ROW.map((d) => (
-              <Pill
-                key={d}
-                day={d}
-                selected={value === d}
-                onSelect={() => onChange(d)}
-                tabIndex={value === d ? 0 : -1}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Grandfathered pill — out-of-set legacy value */}
-        {grandfathered && currentDay !== null && (
-          <div className="pt-1">
-            <Pill
-              day={currentDay}
-              selected={value === currentDay}
-              onSelect={grandfatheredActive ? () => onChange(currentDay) : undefined}
-              tabIndex={value === currentDay ? 0 : -1}
-              currentBadge
-            />
-          </div>
-        )}
+        {ALLOWED_SALARY_DAYS.map((d) => (
+          <Pill
+            key={d}
+            day={d}
+            selected={value === d}
+            onSelect={() => onChange(d)}
+            tabIndex={value === d ? 0 : -1}
+          />
+        ))}
       </div>
 
-      {nextDate && (
-        <p className="mt-5 text-sm text-gray-700" aria-live="polite">
-          <span className="font-medium text-gray-900">Next collection:</span>{' '}
-          {formatCollectionDate(nextDate)}
-        </p>
+      {/* Grandfathered pill — out-of-set legacy value. Sits below the grid
+          so it doesn't break uniformity, and carries a "current" badge. */}
+      {grandfathered && currentDay !== null && (
+        <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+          <Pill
+            day={currentDay}
+            selected={value === currentDay}
+            onSelect={grandfatheredActive ? () => onChange(currentDay) : undefined}
+            tabIndex={value === currentDay ? 0 : -1}
+            currentBadge
+          />
+        </div>
       )}
     </div>
   );
@@ -235,10 +172,10 @@ function Pill({ day, selected, onSelect, tabIndex, currentBadge }: PillProps) {
       data-day={day}
       disabled={disabled}
       onClick={onSelect}
-      className={`inline-flex items-center gap-1.5 min-h-[44px] px-4 py-2.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2 ${stateClass}`}
+      className={`flex w-full items-center justify-center gap-1.5 min-h-11 px-3 py-2.5 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2 ${stateClass}`}
       style={selected ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
     >
-      {pillLabel(day)}
+      <span>{pillLabel(day)}</span>
       {currentBadge && (
         <span className={`text-[10px] font-semibold uppercase tracking-wider rounded px-1.5 py-0.5 ${selected ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-700'}`}>
           current
