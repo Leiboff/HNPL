@@ -2,7 +2,6 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import AddressForm from './AddressForm';
-import SignOutButton from './SignOutButton';
 import PasskeysSection from './PasskeysSection';
 import ProfileAccordion from './ProfileAccordion';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
@@ -151,10 +150,8 @@ export default async function ProfilePage() {
         passkeys={<PasskeysSection />}
       />
 
-      {/* ── Account ───────────────────────────────────────────── */}
-      <div className={`${card} p-2`}>
-        <SignOutButton />
-      </div>
+      {/* Sign-out is reachable from the patient layout's sticky header on
+          every patient page — no profile-level button needed. */}
 
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import PendingPlanCard from '@/app/patient/PendingPlanCard';
+import { computePlanProgress } from '@/lib/planProgress';
 import type { PlanRow, PaymentRow } from './page';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -27,12 +28,6 @@ function getPracticeName(plan: PlanRow): string {
   return (plan.practice as { name: string }).name;
 }
 
-function getProviderName(plan: PlanRow): string | null {
-  const ref = Array.isArray(plan.provider) ? plan.provider[0] : plan.provider;
-  if (!ref) return null;
-  return `${ref.first_name} ${ref.last_name}`;
-}
-
 // ─── Status configs ───────────────────────────────────────────────────────────
 
 const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
@@ -40,8 +35,8 @@ const PLAN_STATUS: Record<string, { label: string; cls: string }> = {
   active:                { label: 'Active',              cls: 'bg-green-100 text-green-700' },
   completed:             { label: 'Completed',           cls: 'bg-gray-100 text-gray-600'  },
   defaulted:             { label: 'Overdue',             cls: 'bg-red-100 text-red-700'    },
-  cancelled:             { label: 'Cancelled',           cls: 'bg-gray-100 text-gray-400'  },
-  declined:              { label: 'Declined',            cls: 'bg-gray-100 text-gray-400'  },
+  cancelled:             { label: 'Cancelled',           cls: 'bg-gray-100 text-gray-500'  },
+  declined:              { label: 'Declined',            cls: 'bg-gray-100 text-gray-500'  },
 };
 
 const PAYMENT_STATUS: Record<string, { label: string; cls: string }> = {
@@ -49,8 +44,8 @@ const PAYMENT_STATUS: Record<string, { label: string; cls: string }> = {
   processing:  { label: 'Processing',  cls: 'bg-blue-100 text-blue-800'     },
   collected:   { label: 'Collected',   cls: 'bg-green-100 text-green-700'   },
   failed:      { label: 'Failed',      cls: 'bg-red-100 text-red-700'       },
-  retried:     { label: 'Retried',     cls: 'bg-orange-100 text-orange-700' },
-  written_off: { label: 'Written off', cls: 'bg-gray-100 text-gray-400'     },
+  retried:     { label: 'Retried',     cls: 'bg-amber-100 text-amber-800'   },
+  written_off: { label: 'Written off', cls: 'bg-gray-100 text-gray-500'     },
 };
 
 // ─── Badge components ─────────────────────────────────────────────────────────
@@ -73,76 +68,135 @@ function PaymentStatusBadge({ status }: { status: string }) {
   );
 }
 
-// ─── Plan card (non-pending) ──────────────────────────────────────────────────
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 20 20"
+      className="w-3.5 h-3.5 shrink-0 text-green-600"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 10.5l3 3 7-7" />
+    </svg>
+  );
+}
 
-function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null }) {
-  const practiceName   = getPracticeName(plan);
-  const providerNameStr = getProviderName(plan);
-  const planTypeLabel =
-    plan.plan_type != null
-      ? `${plan.plan_type} monthly payment${plan.plan_type !== 1 ? 's' : ''}`
-      : 'Not yet split';
+// ─── Progress bar + caption ──────────────────────────────────────────────────
+
+function PlanProgress({ plan }: { plan: PlanRow }) {
+  const { totalPayments, paidCount, remainingAmount, percent, isPaidInFull } =
+    computePlanProgress({
+      status:   plan.status,
+      payments: plan.payments,
+    });
+
+  if (totalPayments === 0) return null;
+
+  const caption = isPaidInFull
+    ? `Paid in full · ${totalPayments} payment${totalPayments === 1 ? '' : 's'}`
+    : `${paidCount} of ${totalPayments} paid · ${formatRand(remainingAmount)} remaining`;
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+    <div className="px-4 sm:px-6 pt-4">
+      <div className="h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+        <div
+          className="h-full rounded-full transition-[width] duration-300"
+          style={{ width: `${percent}%`, background: '#15A89E' }}
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Plan progress"
+        />
+      </div>
+      <p className="mt-2 text-xs text-gray-500 truncate tabular-nums">
+        {caption}
+      </p>
+    </div>
+  );
+}
+
+// ─── Plan card (non-pending) ──────────────────────────────────────────────────
+
+function PlanCard({ plan }: { plan: PlanRow }) {
+  const practiceName = getPracticeName(plan);
+
+  // Reference line: "BN-2026-000027 · inv4848" — join with a middot when
+  // both exist, fall back to whichever is present.
+  const refParts: string[] = [];
+  if (plan.invoice_number)     refParts.push(plan.invoice_number);
+  if (plan.practice_reference) refParts.push(plan.practice_reference);
+  const refLine = refParts.join(' · ');
+
+  // The "next due" instalment — the earliest non-collected row. Highlights
+  // the row the eye should land on; everything before it is muted (paid),
+  // everything after it is also muted (further out).
+  const nextDueNumber = plan.payments.find((p) => p.status !== 'collected')?.instalment_number ?? null;
+
+  return (
+    <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm overflow-hidden">
+
       {/* Header */}
-      <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-100">
+      <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-100 space-y-2">
+        {/* Line 1: practice name · amount */}
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="font-semibold text-gray-900">{practiceName}</p>
-            {plan.invoice_number && (
-              <p className="font-mono text-xs text-gray-500 mt-0.5">{plan.invoice_number}</p>
-            )}
-            {plan.practice_reference && (
-              <p className="text-xs text-gray-400">Practice ref: {plan.practice_reference}</p>
-            )}
-            <p className="text-xs text-gray-400 mt-1">{planTypeLabel}</p>
-            {providerNameStr && (
-              <p className="text-xs text-gray-600 mt-1">Healthcare provider: {providerNameStr}</p>
-            )}
-            {specialty && (
-              <p className="text-xs text-gray-500">Specialty: {specialty}</p>
-            )}
-            {plan.practice && (
-              <p className="text-xs text-gray-500">Practice: {practiceName}</p>
-            )}
-          </div>
-          <div className="text-right shrink-0 space-y-1">
-            <p className="text-base font-semibold tabular-nums" style={{ color: '#13294B' }}>
-              {formatRand(Number(plan.total_amount))}
-            </p>
-            <PlanStatusBadge status={plan.status} />
-          </div>
+          <p className="font-semibold text-gray-900 min-w-0 truncate">{practiceName}</p>
+          <p className="text-base font-semibold tabular-nums shrink-0" style={{ color: '#13294B' }}>
+            {formatRand(Number(plan.total_amount))}
+          </p>
+        </div>
+
+        {/* Line 2: status chip · references — wraps below on narrow screens */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <PlanStatusBadge status={plan.status} />
+          {refLine && (
+            <p className="text-xs text-gray-400 tabular-nums truncate min-w-0">{refLine}</p>
+          )}
         </div>
       </div>
 
+      {/* Progress */}
+      <PlanProgress plan={plan} />
+
       {/* Payment schedule */}
       {plan.payments.length > 0 ? (
-        <div className="divide-y divide-gray-50">
-          {plan.payments.map((payment: PaymentRow) => (
-            <div
-              key={payment.id}
-              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 sm:px-6 py-3"
-            >
-              <div className="flex items-baseline gap-2 sm:gap-3 text-sm min-w-0">
-                <span className="text-gray-600 whitespace-nowrap">
-                  Instalment {payment.instalment_number}
-                </span>
-                <span className="text-xs text-gray-400 whitespace-nowrap">
-                  {formatDate(payment.due_date)}
-                </span>
+        <div className="divide-y divide-gray-50 mt-3">
+          {plan.payments.map((payment: PaymentRow) => {
+            const isCollected = payment.status === 'collected';
+            const isNextDue   = !isCollected && payment.instalment_number === nextDueNumber;
+            // Three weight tiers: collected (muted + check), next-due (normal),
+            // later scheduled (muted) — directs the eye to what's next.
+            const rowMuted = isCollected || !isNextDue;
+            return (
+              <div
+                key={payment.id}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 sm:px-6 py-3"
+              >
+                <div className={`flex items-center gap-2 text-sm min-w-0 ${rowMuted ? 'text-gray-500' : 'text-gray-900'}`}>
+                  {isCollected ? <CheckIcon /> : <span className="w-3.5 shrink-0" aria-hidden />}
+                  <span className="whitespace-nowrap">
+                    Instalment {payment.instalment_number}
+                  </span>
+                  <span className="text-xs text-gray-400 whitespace-nowrap">
+                    {formatDate(payment.due_date)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                  <PaymentStatusBadge status={payment.status} />
+                  <span className={`text-sm tabular-nums ${rowMuted ? 'text-gray-500' : 'font-medium text-gray-900'}`}>
+                    {formatRand(Number(payment.amount))}
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                <span className="text-sm font-medium text-gray-900 tabular-nums">
-                  {formatRand(Number(payment.amount))}
-                </span>
-                <PaymentStatusBadge status={payment.status} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
-        <p className="px-6 py-4 text-xs text-gray-400">No payment schedule yet.</p>
+        <p className="px-4 sm:px-6 py-4 mt-3 text-xs text-gray-400">No payment schedule yet.</p>
       )}
     </div>
   );
@@ -150,18 +204,16 @@ function PlanCard({ plan, specialty }: { plan: PlanRow; specialty: string | null
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-const EMPTY_STATE: Record<'pending' | 'current' | 'historic', { heading: string; sub: string }> = {
-  pending:  { heading: 'No bills awaiting action',  sub: 'Bills to review and processing payments will appear here.' },
-  current:  { heading: 'No active plans',           sub: 'Plans with an active payment schedule will appear here.' },
-  historic: { heading: 'No past plans',             sub: 'Completed and cancelled plans will appear here.' },
+const EMPTY_COPY: Record<'pending' | 'current' | 'historic', string> = {
+  pending:  'No pending orders',
+  current:  'No active orders',
+  historic: 'No past orders',
 };
 
 function EmptyState({ tab }: { tab: 'pending' | 'current' | 'historic' }) {
-  const { heading, sub } = EMPTY_STATE[tab];
   return (
-    <div className="rounded-2xl border-2 border-dashed border-gray-200 py-14 text-center">
-      <p className="font-medium text-gray-500">{heading}</p>
-      <p className="mt-1 text-sm text-gray-400">{sub}</p>
+    <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-5 py-8 text-center">
+      <p className="text-sm text-gray-500">{EMPTY_COPY[tab]}</p>
     </div>
   );
 }
@@ -184,7 +236,6 @@ export default function OrdersView({
   currentPlans,
   historicPlans,
   declinePlan,
-  specialtyMap,
   patientBlocked,
 }: Props) {
   const [tab, setTab] = useState<'pending' | 'current' | 'historic'>(
@@ -240,15 +291,7 @@ export default function OrdersView({
                 blocked={patientBlocked}
               />
             ) : (
-              <PlanCard
-                key={plan.id}
-                plan={plan}
-                specialty={
-                  plan.provider_id && plan.practice_id
-                    ? (specialtyMap[`${plan.provider_id}:${plan.practice_id}`] ?? null)
-                    : null
-                }
-              />
+              <PlanCard key={plan.id} plan={plan} />
             )
           )}
         </div>
