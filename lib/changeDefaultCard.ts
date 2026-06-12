@@ -2,7 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Raw shape returned by the `change_default_card` Postgres function (see
- * supabase/migrations/0038 and 0039).
+ * supabase/migrations/0039_change_default_card_fn.sql and
+ * supabase/migrations/0040_change_default_card_self_heal.sql).
  */
 export type ChangeDefaultRpcResult = {
   changed:         boolean;

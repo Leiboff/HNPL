@@ -1,0 +1,14 @@
+# Supabase local development config. Production values are set in the
+# dashboard — keep this file scoped to localhost only.
+#
+# This file was added with the passkey/WebAuthn rollout. Other auth /
+# database / storage settings are left to Supabase CLI defaults; populate
+# them here if you need to override anything else for local dev.
+
+[auth.passkey]
+enabled = true
+
+[auth.webauthn]
+rp_display_name = "BetterNow"
+rp_id = "localhost"
+rp_origins = ["http://localhost:3000"]

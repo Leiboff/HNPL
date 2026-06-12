@@ -1,0 +1,16 @@
+-- Retain profiles.sa_id_verified for historical records.
+--
+-- FaceTec 3D liveness verification was removed from the signup flow on
+-- 2026-06-11. The proxy.ts gate, /patient/verify-identity page, and the
+-- public/facetec/ SDK assets were all deleted in the same change.
+--
+-- The profiles.sa_id_verified column (added in 0001_initial_schema.sql) is
+-- intentionally NOT dropped. It holds the binary outcome of every liveness
+-- check that ran before this date and is preserved as an audit / historical
+-- record. No code path writes to it after this migration; reads are gone too.
+--
+-- Identity assurance for the BNPL product now rests on email confirmation
+-- plus 3DS at card tokenisation (Paystack).
+--
+-- This migration is a documentation-only no-op so the rationale is captured
+-- alongside the rest of the schema history.

@@ -117,7 +117,7 @@ export async function saveCardForPatient(
     if (action.action === 'update') {
       // Token refresh — Paystack reissued an authorization_code for a
       // card whose signature is already on file. Route through the
-      // refresh_card_token RPC (migration 0040), which atomically
+      // refresh_card_token RPC (migration 0041), which atomically
       //   1) UPDATEs the payment_methods row (token + display fields,
       //      preserving is_default)
       //   2) if the card is the patient's default, repoints every
