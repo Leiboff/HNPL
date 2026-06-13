@@ -2,83 +2,36 @@
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { encryptId } from '@/lib/idEncryption';
-import {
-  isValidEmail,
-  normalizePhoneZA,
-  validateSaId,
-  checkPassword,
-  type SaIdInvalidReason,
-} from '@/lib/validation';
+import { isValidEmail, normalizePhoneZA, checkPassword } from '@/lib/validation';
 
-function saIdErrorMessage(reason: SaIdInvalidReason, who: string): string {
-  switch (reason) {
-    case 'length':      return `${who} SA ID number must be 13 digits.`;
-    case 'format':      return `${who} SA ID number must contain only digits.`;
-    case 'date':        return `${who} SA ID number's date of birth isn't a real calendar date.`;
-    case 'citizenship': return `${who} SA ID number's citizenship digit isn't recognised.`;
-    case 'checksum':    return `${who} SA ID number's check digit doesn't match — please double-check.`;
-  }
-}
-
-export type MemberInput = {
-  memberRole:         'provider' | 'manager';
-  canCreateBills:     boolean;
-  canManagePractice:  boolean;
-  firstName:          string;
-  lastName:           string;
-  email:              string;
-  specialty:          string;
-  hpcsaNumber:        string;
-  saIdNumber:         string;
-  payoutDestination:  'practice' | 'provider';
-  bankName:           string;
-  accountHolder:      string;
-  accountNumber:      string;
-  branchCode:         string;
-  accountType:        'current' | 'savings' | '';
-};
+// ─── Input / result shapes ───────────────────────────────────────────────────
 
 export type CreatePracticeInput = {
-  // Step 1 — admin
-  firstName:   string;
-  lastName:    string;
-  email:       string;
-  password:    string;
-  phone:       string;
-  saIdNumber:  string;
+  // About the practice
+  practiceName:       string;
+  specialty:          string;
+  practiceRegNumber:  string;  // BHF "Practice number (PR)" — optional
+  addressLine1:       string;
+  addressLine2:       string;
+  suburb:             string;
+  city:               string;
+  province:           string;
+  postalCode:         string;
 
-  // Step 2 — practice
-  practiceName:            string;
-  specialty:               string;
-  hpcsaNumber:             string;
-  practiceRegNumber:       string;
-  adminEmail:              string;
-  contactPhone:            string;
-  addressLine1:            string;
-  addressLine2:            string;
-  suburb:                  string;
-  city:                    string;
-  province:                string;
-  postalCode:              string;
+  // Admin (the human signing up)
+  firstName:          string;
+  lastName:           string;
+  email:              string;   // also becomes the login
+  password:           string;
+  phone:              string;   // practice contact — allowLandline
 
-  // Step 3 — banking
-  accountHolder:      string;
-  bankName:           string;
-  bankAccountNumber:  string;
-  branchCode:         string;
-  accountType:        'current' | 'savings';
-
-  // Step 4 — team members
-  adminIsProvider:     boolean;
-  adminSpecialty:      string;
-  adminHpcsaNumber:    string;
-  members:             MemberInput[];
+  // Provider Agreement checkbox
+  agreementAccepted:  boolean;
 };
 
 export type CreatePracticeResult = {
-  error:               string | null;
-  success:             boolean;
+  error:                string | null;
+  success:              boolean;
   requiresManualLogin?: boolean;
 };
 
@@ -89,84 +42,59 @@ function svcClient() {
   );
 }
 
-function validate(input: CreatePracticeInput): string | null {
-  if (!input.firstName.trim()) return 'First name is required.';
-  if (!input.lastName.trim())  return 'Last name is required.';
-  if (!isValidEmail(input.email)) return 'Enter a valid email address.';
+// ─── Server-side validation (authoritative) ──────────────────────────────────
 
-  if (input.password.length < 8) return 'Password must be at least 8 characters.';
-  const pwdCheck = checkPassword(input.password, input.email);
-  if (!pwdCheck.ok) {
-    return pwdCheck.reason === 'contains_email_local_part'
+function validate(input: CreatePracticeInput): string | null {
+  if (!input.practiceName.trim())   return 'Practice name is required.';
+  if (!input.specialty)             return 'Specialty is required.';
+  if (!input.addressLine1.trim())   return 'Street address is required.';
+  if (!input.city.trim())           return 'City is required.';
+  if (!input.province)              return 'Province is required.';
+
+  if (!input.firstName.trim())      return 'First name is required.';
+  if (!input.lastName.trim())       return 'Last name is required.';
+  if (!isValidEmail(input.email))   return 'Enter a valid email address.';
+
+  if (input.password.length < 8)    return 'Password must be at least 8 characters.';
+  const pwd = checkPassword(input.password, input.email);
+  if (!pwd.ok) {
+    return pwd.reason === 'contains_email_local_part'
       ? 'Please choose a password that doesn\'t contain your email address.'
       : 'That password is too common. Please choose a less guessable one.';
   }
 
-  const adminSaId = validateSaId(input.saIdNumber);
-  if (!adminSaId.valid) return saIdErrorMessage(adminSaId.reason, 'Your');
-
-  // Admin's personal phone — cell only (this is the human, not the practice).
-  if (!normalizePhoneZA(input.phone)) {
-    return 'Enter a valid South African cellphone number.';
+  if (!normalizePhoneZA(input.phone, { allowLandline: true })) {
+    return 'Enter a valid South African phone number.';
   }
 
-  if (!input.practiceName.trim()) return 'Practice name is required.';
-  if (!input.specialty) return 'Specialty is required.';
-  if (!isValidEmail(input.adminEmail)) return 'Enter a valid practice email address.';
-
-  // Practice contact phone may be a landline.
-  if (!normalizePhoneZA(input.contactPhone, { allowLandline: true })) {
-    return 'Enter a valid South African phone number for the practice contact.';
+  if (!input.agreementAccepted) {
+    return 'Please accept the Provider Agreement to continue.';
   }
 
-  if (!input.addressLine1.trim()) return 'Address is required.';
-  if (!input.city.trim()) return 'City is required.';
-  if (!input.province) return 'Province is required.';
-  if (!input.accountHolder.trim()) return 'Account holder is required.';
-  if (!input.bankName) return 'Bank is required.';
-  if (!input.bankAccountNumber.trim()) return 'Account number is required.';
-  if (!input.branchCode.trim()) return 'Branch code is required.';
-  if (!input.accountType) return 'Account type is required.';
-
-  for (const m of input.members) {
-    if (!m.firstName.trim() || !m.lastName.trim()) return 'Team member name is required.';
-    if (!isValidEmail(m.email)) return 'Team member email is invalid.';
-    const memberSaId = validateSaId(m.saIdNumber);
-    if (!memberSaId.valid) {
-      return saIdErrorMessage(memberSaId.reason, `${m.firstName || 'Team member'}'s`);
-    }
-    if (m.memberRole === 'provider') {
-      if (!m.specialty) return 'Provider specialty is required.';
-      if (m.payoutDestination === 'provider') {
-        if (!m.bankName || !m.accountHolder.trim() || !m.accountNumber.trim() || !m.branchCode.trim() || !m.accountType)
-          return `Banking details required for ${m.firstName}'s personal payout.`;
-      }
-    }
-  }
   return null;
 }
+
+// ─── createPractice ─────────────────────────────────────────────────────────
+//
+// Phase 2 shape: only the seven things we actually need to create a practice
+// account. Banking, HPCSA, CIPC, admin SA ID, admin_is_provider, and the
+// team-members array are all collected later (Phase 3 in-portal Get-paid +
+// Phase 4 on /practice/members). Practice is created with status='pending';
+// admin approval queue in Phase 3 flips it.
 
 export async function createPractice(input: CreatePracticeInput): Promise<CreatePracticeResult> {
   const validationError = validate(input);
   if (validationError) return { error: validationError, success: false };
 
-  // Normalise phone values once; validate() already proved they parse.
-  const adminPhoneNormalised    = normalizePhoneZA(input.phone)!;
-  const contactPhoneNormalised  = normalizePhoneZA(input.contactPhone, { allowLandline: true })!;
+  // Phase 1 validators already proved the phone parses.
+  const normalizedPhone = normalizePhoneZA(input.phone, { allowLandline: true })!;
 
-  const svc      = svcClient();
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? '';
+  const svc        = svcClient();
   const practiceId = crypto.randomUUID();
   let   adminUserId: string | null = null;
 
   try {
-    // Encrypt admin SA ID before it enters auth metadata; if the key is missing
-    // encryptId throws and the outer catch aborts signup cleanly.
-    const encryptedAdminSaId = input.saIdNumber.trim()
-      ? encryptId(input.saIdNumber.trim())
-      : null;
-
-    // 1. Create admin auth account
+    // 1. Create the admin's auth user.
     const { data: adminAuth, error: authErr } = await svc.auth.admin.createUser({
       email:          input.email.trim().toLowerCase(),
       password:       input.password,
@@ -175,8 +103,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
         role:                 'practice_admin',
         first_name:           input.firstName.trim(),
         last_name:            input.lastName.trim(),
-        phone:                adminPhoneNormalised,
-        sa_id_number:         encryptedAdminSaId,
+        phone:                normalizedPhone,
         must_change_password: false,
       },
     });
@@ -185,125 +112,65 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     }
     adminUserId = adminAuth.user.id;
 
-    // 2. Insert practice
+    // 2. Insert the practice.
+    //
+    //   • status = 'pending' — every new practice waits for admin approval.
+    //     Trading gate (Phase 3) checks status='approved' before allowing
+    //     bill / plan creation.
+    //   • practices.email   = the admin's email (also their login).
+    //   • practices.admin_email is intentionally NOT written here — column
+    //     is being deprecated in Phase 5.
+    //   • fee_percent defaults to 6.00 via the column default.
+    //   • Banking / HPCSA / CIPC / admin SA ID collected later via the
+    //     "Get paid" surface (Phase 3).
     const { error: practiceErr } = await svc.from('practices').insert({
       id:                           practiceId,
       owner_id:                     adminUserId,
       name:                         input.practiceName.trim(),
       specialty:                    input.specialty,
-      hpcsa_number:                 input.hpcsaNumber.trim() || null,
       practice_registration_number: input.practiceRegNumber.trim() || null,
-      email:                        input.adminEmail.trim().toLowerCase(),
-      admin_email:                  input.adminEmail.trim().toLowerCase(),
-      phone:                        contactPhoneNormalised,
+      email:                        input.email.trim().toLowerCase(),
+      phone:                        normalizedPhone,
       address_line1:                input.addressLine1.trim(),
       address_line2:                input.addressLine2.trim() || null,
       suburb:                       input.suburb.trim() || null,
       city:                         input.city.trim(),
       practice_province:            input.province,
       postal_code:                  input.postalCode.trim() || null,
-      account_holder:               input.accountHolder.trim(),
-      bank_name:                    input.bankName,
-      bank_account_number:          input.bankAccountNumber.trim(),
-      branch_code:                  input.branchCode.trim(),
-      account_type:                 input.accountType,
-      status:                       'approved',
-      fee_percent:                  6,
-      admin_is_provider:            input.adminIsProvider,
-      admin_specialty:              input.adminIsProvider ? (input.adminSpecialty || null) : null,
-      admin_hpcsa_number:           input.adminIsProvider ? (input.adminHpcsaNumber.trim() || null) : null,
+      status:                       'pending',
     });
     if (practiceErr) throw new Error(`Practice: ${practiceErr.message}`);
 
-    // 4. Insert admin as practice_member
+    // 3. Insert the admin as a practice_member with full management rights.
     const { error: memberErr } = await svc.from('practice_members').insert({
-      practice_id:       practiceId,
-      user_id:           adminUserId,
-      role:              'admin',
-      active:            true,
+      practice_id:         practiceId,
+      user_id:             adminUserId,
+      role:                'admin',
+      active:              true,
       can_create_bills:    true,
       can_manage_practice: true,
       payout_destination:  'practice',
-      specialty:           input.adminIsProvider ? (input.adminSpecialty || null) : null,
-      hpcsa_number:        input.adminIsProvider ? (input.adminHpcsaNumber.trim() || null) : null,
     });
     if (memberErr) throw new Error(`Member: ${memberErr.message}`);
 
-    // 5. Invite team members (array is empty when none were added)
-    for (const member of input.members) {
-        const encryptedMemberSaId = member.saIdNumber.trim()
-          ? encryptId(member.saIdNumber.trim())
-          : null;
-
-        const authRole = member.memberRole === 'provider' ? 'practice_provider' : 'practice_admin';
-
-        const { data: inviteData, error: inviteErr } = await svc.auth.admin.inviteUserByEmail(
-          member.email.trim().toLowerCase(),
-          {
-            redirectTo: `${appUrl}/provider/setup`,
-            data: {
-              role:                 authRole,
-              first_name:           member.firstName.trim(),
-              last_name:            member.lastName.trim(),
-              sa_id_number:         encryptedMemberSaId,
-              hpcsa_number:         member.memberRole === 'provider' ? (member.hpcsaNumber.trim() || null) : null,
-              must_change_password: true,
-            },
-          },
-        );
-        if (inviteErr || !inviteData.user) {
-          throw new Error(`Invite ${member.email}: ${inviteErr?.message ?? 'Failed'}`);
-        }
-
-        const memberUserId = inviteData.user.id;
-
-        const memberRow: Record<string, unknown> = {
-          practice_id:         practiceId,
-          user_id:             memberUserId,
-          role:                member.memberRole === 'provider' ? 'provider' : 'admin',
-          active:              true,
-          can_create_bills:    member.canCreateBills,
-          can_manage_practice: member.canManagePractice,
-          sa_id_number:        encryptedMemberSaId,
-          specialty:           member.memberRole === 'provider' ? (member.specialty || null) : null,
-          hpcsa_number:        member.memberRole === 'provider' ? (member.hpcsaNumber.trim() || null) : null,
-          payout_destination:  member.memberRole === 'provider' ? member.payoutDestination : 'practice',
-        };
-        if (member.memberRole === 'provider' && member.payoutDestination === 'provider') {
-          memberRow.personal_bank_name       = member.bankName       || null;
-          memberRow.personal_account_holder  = member.accountHolder.trim() || null;
-          memberRow.personal_account_number  = member.accountNumber.trim() || null;
-          memberRow.personal_branch_code     = member.branchCode.trim()   || null;
-          memberRow.personal_account_type    = member.accountType    || null;
-        }
-
-        const { error: memberInsertErr } = await svc.from('practice_members').insert(memberRow);
-        if (memberInsertErr) throw new Error(`Member ${member.email}: ${memberInsertErr.message}`);
-    }
-
-    // 6. Sign in the admin so they land on /practice with a live session
+    // 4. Sign the admin in so they land on /practice with a live session.
     const supabase = await createClient();
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email:    input.email.trim().toLowerCase(),
       password: input.password,
     });
-
     if (signInError) {
-      // Practice was created successfully; sign-in failed (e.g. email not confirmed).
-      // Tell the client to redirect to /login instead of assuming a live session.
+      // Practice was created; the sign-in just didn't take (e.g. email
+      // unconfirmed). The caller redirects to /login.
       return { error: null, success: true, requiresManualLogin: true };
     }
 
     return { error: null, success: true };
-
   } catch (err) {
-    // Cleanup: delete practice and admin user if either was created
-    if (practiceId) {
-      await svc.from('practices').delete().eq('id', practiceId);
-    }
-    if (adminUserId) {
-      await svc.auth.admin.deleteUser(adminUserId);
-    }
+    // Best-effort rollback so a failed insert doesn't leave an orphan auth
+    // user or a broken practice row behind.
+    if (practiceId)  await svc.from('practices').delete().eq('id', practiceId);
+    if (adminUserId) await svc.auth.admin.deleteUser(adminUserId);
     const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
     return { error: msg, success: false };
   }
