@@ -48,8 +48,12 @@ function validate(input: CreatePracticeInput): string | null {
   if (!input.practiceName.trim())   return 'Practice name is required.';
   if (!input.specialty)             return 'Specialty is required.';
   if (!input.addressLine1.trim())   return 'Street address is required.';
+  // Suburb + Postal code are required server-side (mirrors the client form).
+  // Practice number (PR) and Address line 2 remain optional.
+  if (!input.suburb.trim())         return 'Suburb is required.';
   if (!input.city.trim())           return 'City is required.';
   if (!input.province)              return 'Province is required.';
+  if (!input.postalCode.trim())     return 'Postal code is required.';
 
   if (!input.firstName.trim())      return 'First name is required.';
   if (!input.lastName.trim())       return 'Last name is required.';
@@ -133,10 +137,10 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       phone:                        normalizedPhone,
       address_line1:                input.addressLine1.trim(),
       address_line2:                input.addressLine2.trim() || null,
-      suburb:                       input.suburb.trim() || null,
+      suburb:                       input.suburb.trim(),
       city:                         input.city.trim(),
       practice_province:            input.province,
-      postal_code:                  input.postalCode.trim() || null,
+      postal_code:                  input.postalCode.trim(),
       status:                       'pending',
     });
     if (practiceErr) throw new Error(`Practice: ${practiceErr.message}`);

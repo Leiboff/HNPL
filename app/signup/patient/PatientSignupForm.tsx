@@ -1,9 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { signUpPatient } from './actions';
 import SalaryDayPicker from '@/components/SalaryDayPicker';
+import {
+  isValidEmail,
+  normalizePhoneZA,
+  validateSaId,
+  saIdAge,
+  checkPassword,
+  type SaIdInvalidReason,
+} from '@/lib/validation';
+import {
+  useFieldValidation,
+  focusAndScrollTo,
+  type FieldsSchema,
+} from '@/lib/forms/useFieldValidation';
 
 type Invitation = {
   email:        string;
@@ -15,41 +28,141 @@ type Props = {
   token?:      string | null;
 };
 
-const INPUT_CLS = 'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20';
-const LABEL_CLS = 'block text-sm font-medium text-gray-700 mb-1';
+const MIN_AGE = 18;
+const SA_ID_LEN = 13;
+
+const INPUT_BASE = 'w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:ring-2';
+const INPUT_OK   = 'border-gray-300 focus:border-[#15A89E] focus:ring-[#15A89E]/20';
+const INPUT_ERR  = 'border-red-400 focus:border-red-500 focus:ring-red-200';
+const LABEL_CLS  = 'block text-sm font-medium text-gray-700 mb-1';
+
+function inputClass(hasError: boolean) {
+  return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
+}
+
+function saIdErrorMessage(reason: SaIdInvalidReason): string {
+  switch (reason) {
+    case 'length':      return 'SA ID number must be 13 digits.';
+    case 'format':      return 'SA ID number must contain only digits.';
+    case 'date':        return 'That ID number\'s date of birth isn\'t a real calendar date.';
+    case 'citizenship': return 'That ID number\'s citizenship digit isn\'t recognised.';
+    case 'checksum':    return 'That ID number\'s check digit doesn\'t match — please double-check what you typed.';
+  }
+}
+
+// Number of digit characters typed so far. Used by the SA ID `suppressLive`
+// gate so we don't surface a date/citizenship/checksum error until the user
+// has entered all 13 digits.
+function digitsOnly(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 48 && c <= 57) n++;
+  }
+  return n;
+}
+
+// ─── Field helper ────────────────────────────────────────────────────────────
+
+function FieldLabel({ label, required }: { label: string; required?: boolean }) {
+  return (
+    <label className={LABEL_CLS}>
+      {label}
+      {required && <span aria-hidden className="ml-0.5 text-red-500">*</span>}
+    </label>
+  );
+}
+
+// ─── Form ───────────────────────────────────────────────────────────────────
+
+const BLANK = {
+  firstName:  '',
+  lastName:   '',
+  email:      '',
+  password:   '',
+  confirm:    '',
+  phone:      '',
+  saIdNumber: '',
+  salaryDay:  '',   // string-of-int; '' = unselected
+  termsAccepted: false,
+};
+
+type Fields = typeof BLANK;
 
 export default function PatientSignupForm({ invitation, token }: Props) {
-  const [fields, setFields] = useState({
-    firstName:  '',
-    lastName:   '',
-    email:      invitation?.email ?? '',
-    password:   '',
-    confirm:    '',
-    phone:      '',
-    saIdNumber: '',
-    salaryDay:  '',
+  const [fields, setFields] = useState<Fields>({
+    ...BLANK,
+    email: invitation?.email ?? '',
   });
-  const [error,   setError]   = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [done,    setDone]    = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [loading,     setLoading]     = useState(false);
+  const [done,        setDone]        = useState(false);
 
-  function set(key: keyof typeof fields) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+  // Field declaration order = focus-on-submit order.
+  const schema = useMemo<FieldsSchema<Fields>>(() => ({
+    firstName: { validate: (v) => v.firstName.trim() ? null : 'First name is required.' },
+    lastName:  { validate: (v) => v.lastName.trim() ? null : 'Last name is required.' },
+    email:     { validate: (v) => isValidEmail(v.email) ? null : 'Enter a valid email address.' },
+    password:  {
+      validate: (v) => {
+        if (v.password.length < 8) return 'Password must be at least 8 characters.';
+        const pwd = checkPassword(v.password, v.email);
+        if (!pwd.ok) {
+          return pwd.reason === 'contains_email_local_part'
+            ? 'Please choose a password that doesn\'t contain your email address.'
+            : 'That password is too common. Please choose a less guessable one.';
+        }
+        return null;
+      },
+    },
+    confirm:   { validate: (v) => v.password !== v.confirm ? 'Passwords don\'t match.' : null },
+    phone:     {
+      validate: (v) =>
+        normalizePhoneZA(v.phone) ? null : 'Enter a valid South African cellphone number.',
+    },
+    saIdNumber: {
+      validate: (v) => {
+        const r = validateSaId(v.saIdNumber);
+        if (!r.valid) return saIdErrorMessage(r.reason);
+        const age = saIdAge(v.saIdNumber);
+        if (age === null || age < MIN_AGE) {
+          return `You must be ${MIN_AGE} or older to create a BetterNow account.`;
+        }
+        return null;
+      },
+      // While the user is still typing the 13 digits, do NOT show
+      // date/citizenship/checksum errors. The submit pass ignores this and
+      // will surface a "must be 13 digits" error if the field is short or
+      // empty.
+      suppressLive: (v) => digitsOnly(v.saIdNumber) < SA_ID_LEN,
+    },
+    salaryDay: {
+      validate: (v) => v.salaryDay ? null : 'Please choose when your salary is paid.',
+    },
+    termsAccepted: {
+      validate: (v) => v.termsAccepted ? null : 'Please accept the betternow terms to continue.',
+    },
+  }), []);
+
+  const { errors, handleBlur, validateAll } = useFieldValidation(fields, schema);
+
+  function setText(key: Exclude<keyof Fields, 'salaryDay' | 'termsAccepted'>) {
+    return (e: React.ChangeEvent<HTMLInputElement>) =>
       setFields(f => ({ ...f, [key]: e.target.value }));
   }
+  const onBlur = (key: keyof Fields) => () => handleBlur(key);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
+    setSubmitError(null);
 
-    if (fields.password !== fields.confirm) {
-      setError('Passwords do not match.');
-      return;
-    }
-
-    if (!fields.salaryDay) {
-      // Picker has no native required attribute — block submit on empty.
-      setError('Please choose when your salary is paid.');
+    const { ok, firstInvalid } = validateAll();
+    if (!ok) {
+      setSubmitError('Please complete the required fields highlighted below.');
+      if (firstInvalid) {
+        const id = `patient-${String(firstInvalid)}`;
+        requestAnimationFrame(() => focusAndScrollTo(id));
+      }
       return;
     }
 
@@ -66,7 +179,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     });
     setLoading(false);
 
-    if (result.error) setError(result.error);
+    if (result.error) setSubmitError(result.error);
     else setDone(true);
   }
 
@@ -99,63 +212,174 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         </div>
       )}
 
-      {error && (
-        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={LABEL_CLS}>First name</label>
-            <input type="text" required value={fields.firstName} onChange={set('firstName')} placeholder="Jane" className={INPUT_CLS} />
+            <FieldLabel label="First name" required />
+            <input
+              id="patient-firstName"
+              type="text"
+              value={fields.firstName}
+              onChange={setText('firstName')}
+              onBlur={onBlur('firstName')}
+              aria-invalid={!!errors.firstName}
+              placeholder="Jane"
+              className={inputClass(!!errors.firstName)}
+            />
+            {errors.firstName && <p className="mt-1 text-xs text-red-600">{errors.firstName}</p>}
           </div>
           <div>
-            <label className={LABEL_CLS}>Last name</label>
-            <input type="text" required value={fields.lastName} onChange={set('lastName')} placeholder="Smith" className={INPUT_CLS} />
+            <FieldLabel label="Last name" required />
+            <input
+              id="patient-lastName"
+              type="text"
+              value={fields.lastName}
+              onChange={setText('lastName')}
+              onBlur={onBlur('lastName')}
+              aria-invalid={!!errors.lastName}
+              placeholder="Smith"
+              className={inputClass(!!errors.lastName)}
+            />
+            {errors.lastName && <p className="mt-1 text-xs text-red-600">{errors.lastName}</p>}
           </div>
         </div>
 
         <div>
-          <label className={LABEL_CLS}>Email address</label>
+          <FieldLabel label="Email address" required />
           <input
+            id="patient-email"
             type="email"
-            required
             value={fields.email}
-            onChange={invitation ? undefined : set('email')}
+            onChange={invitation ? undefined : setText('email')}
+            onBlur={invitation ? undefined : onBlur('email')}
             readOnly={!!invitation}
+            aria-invalid={!!errors.email}
             placeholder="jane@example.com"
-            className={`${INPUT_CLS} ${invitation ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+            className={`${inputClass(!!errors.email)} ${invitation ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
           />
+          {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email}</p>}
         </div>
 
         <div>
-          <label className={LABEL_CLS}>Password</label>
-          <input type="password" required minLength={8} value={fields.password} onChange={set('password')} placeholder="At least 8 characters" className={INPUT_CLS} />
+          <FieldLabel label="Password" required />
+          <input
+            id="patient-password"
+            type="password"
+            minLength={8}
+            value={fields.password}
+            onChange={setText('password')}
+            onBlur={onBlur('password')}
+            aria-invalid={!!errors.password}
+            placeholder="At least 8 characters"
+            className={inputClass(!!errors.password)}
+          />
+          {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password}</p>}
         </div>
 
         <div>
-          <label className={LABEL_CLS}>Confirm password</label>
-          <input type="password" required minLength={8} value={fields.confirm} onChange={set('confirm')} placeholder="Repeat your password" className={INPUT_CLS} />
+          <FieldLabel label="Confirm password" required />
+          <input
+            id="patient-confirm"
+            type="password"
+            minLength={8}
+            value={fields.confirm}
+            onChange={setText('confirm')}
+            onBlur={onBlur('confirm')}
+            aria-invalid={!!errors.confirm}
+            placeholder="Repeat your password"
+            className={inputClass(!!errors.confirm)}
+          />
+          {errors.confirm && <p className="mt-1 text-xs text-red-600">{errors.confirm}</p>}
         </div>
 
         <div>
-          <label className={LABEL_CLS}>Cell number</label>
-          <input type="tel" required value={fields.phone} onChange={set('phone')} placeholder="082 000 0000" className={INPUT_CLS} />
+          <FieldLabel label="Cell number" required />
+          <input
+            id="patient-phone"
+            type="tel"
+            value={fields.phone}
+            onChange={setText('phone')}
+            onBlur={onBlur('phone')}
+            aria-invalid={!!errors.phone}
+            placeholder="082 000 0000"
+            className={inputClass(!!errors.phone)}
+          />
+          {errors.phone && <p className="mt-1 text-xs text-red-600">{errors.phone}</p>}
         </div>
 
         <div>
-          <label className={LABEL_CLS}>SA ID number</label>
-          <input type="text" required maxLength={13} inputMode="numeric" value={fields.saIdNumber} onChange={set('saIdNumber')} placeholder="13-digit ID number" className={INPUT_CLS} />
+          <FieldLabel label="SA ID number" required />
+          <input
+            id="patient-saIdNumber"
+            type="text"
+            maxLength={SA_ID_LEN}
+            inputMode="numeric"
+            value={fields.saIdNumber}
+            onChange={setText('saIdNumber')}
+            onBlur={onBlur('saIdNumber')}
+            aria-invalid={!!errors.saIdNumber}
+            placeholder="13-digit ID number"
+            className={inputClass(!!errors.saIdNumber)}
+          />
+          {errors.saIdNumber
+            ? <p className="mt-1 text-xs text-red-600">{errors.saIdNumber}</p>
+            : digitsOnly(fields.saIdNumber) > 0 && digitsOnly(fields.saIdNumber) < SA_ID_LEN && (
+                <p className="mt-1 text-xs text-gray-400">
+                  {digitsOnly(fields.saIdNumber)}/{SA_ID_LEN} digits
+                </p>
+              )}
         </div>
 
-        <div>
+        <div id="patient-salaryDay">
           <SalaryDayPicker
             value={fields.salaryDay === '' ? null : parseInt(fields.salaryDay, 10)}
-            onChange={(d) => setFields(f => ({ ...f, salaryDay: String(d) }))}
+            onChange={(d) => {
+              setFields(f => ({ ...f, salaryDay: String(d) }));
+              handleBlur('salaryDay');
+            }}
           />
+          {errors.salaryDay && <p className="mt-2 text-xs text-red-600">{errors.salaryDay}</p>}
         </div>
+
+        {/* ── Terms ───────────────────────────────────────────── */}
+        <div>
+          <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
+            errors.termsAccepted ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-gray-50'
+          }`}>
+            <input
+              id="patient-termsAccepted"
+              type="checkbox"
+              checked={fields.termsAccepted}
+              onChange={(e) => setFields(f => ({ ...f, termsAccepted: e.target.checked }))}
+              onBlur={onBlur('termsAccepted')}
+              aria-invalid={!!errors.termsAccepted}
+              className="mt-0.5 w-4 h-4 rounded border-gray-300"
+            />
+            <label htmlFor="patient-termsAccepted" className="text-sm text-gray-700 leading-relaxed">
+              I agree to the{' '}
+              <Link
+                href="/legal/terms"
+                target="_blank"
+                rel="noopener"
+                className="font-semibold underline underline-offset-2 lowercase"
+                style={{ color: '#13294B' }}
+              >
+                betternow
+              </Link>
+              {' '}terms.
+            </label>
+          </div>
+          {errors.termsAccepted && (
+            <p className="mt-1 text-xs text-red-600">{errors.termsAccepted}</p>
+          )}
+        </div>
+
+        {/* ── Submit-time headline ───────────────────────────── */}
+        {submitError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {submitError}
+          </div>
+        )}
 
         <button
           type="submit"
