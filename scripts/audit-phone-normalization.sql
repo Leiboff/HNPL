@@ -1,7 +1,9 @@
 -- ─── Read-only audit: would migration 0042_normalize_phone_values do? ───────
 --
 -- Reports, per row in profiles.phone and practices.phone:
---   UNPARSEABLE  → migration will skip (and RAISE NOTICE), value left alone
+--   WILL_NULL    → migration will SET phone = NULL (and RAISE NOTICE the
+--                  masked value). Post-migration invariant: every
+--                  non-null phone is +27XXXXXXXXX.
 --   already_ok   → migration will skip silently (already in +27XXXXXXXXX form)
 --   will_update  → migration will rewrite to the +27XXXXXXXXX form
 --
@@ -42,7 +44,7 @@ SELECT
   regexp_replace(original, '\d', '•', 'g') AS masked,
   length(original)                          AS original_len,
   CASE
-    WHEN normalized IS NULL          THEN 'UNPARSEABLE'
+    WHEN normalized IS NULL          THEN 'WILL_NULL'
     WHEN normalized = original       THEN 'already_ok'
     ELSE                                  'will_update'
   END AS status
@@ -77,7 +79,7 @@ normalized AS (
 )
 SELECT
   source,
-  count(*) FILTER (WHERE normalized IS NULL)                              AS unparseable,
+  count(*) FILTER (WHERE normalized IS NULL)                              AS will_null,
   count(*) FILTER (WHERE normalized IS NOT NULL AND normalized = original) AS already_ok,
   count(*) FILTER (WHERE normalized IS NOT NULL AND normalized <> original) AS will_update,
   count(*)                                                                 AS total

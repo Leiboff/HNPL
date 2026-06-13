@@ -1,9 +1,17 @@
 -- ─── Backfill: normalise profiles.phone and practices.phone to E.164 ───────
 --
 -- Rewrites every parseable phone value to "+27XXXXXXXXX" so storage matches
--- what lib/validation/phone.ts produces for new writes from now on. Rows
--- that can't be normalised are logged via RAISE NOTICE and LEFT UNTOUCHED —
--- this migration never blanks a value.
+-- what lib/validation/phone.ts produces for new writes from now on.
+-- Unparseable values are LOGGED via RAISE NOTICE and then SET TO NULL so
+-- the post-migration invariant is clean:
+--
+--     after this migration, every non-null `phone` in profiles and
+--     practices satisfies ^\+27[1-8][0-9]{8}$. NULL means "we don't
+--     have a usable number; ask the user to re-enter it".
+--
+-- The dashboard treats `phone IS NULL` on the current user / practice as
+-- a "please re-enter your phone" signal — no extra column needed (see
+-- CLAUDE.md ▸ Database migrations ▸ phone-needs-reentry signal).
 --
 -- The acceptance criteria are deliberately the looser of the two surfaces:
 -- first digit 1-8 (i.e. allow landlines on profiles too, even though new
@@ -33,12 +41,12 @@ $$;
 
 DO $$
 DECLARE
-  v_row    record;
-  v_norm   text;
-  v_p_unp  int := 0;
-  v_p_upd  int := 0;
-  v_x_unp  int := 0;
-  v_x_upd  int := 0;
+  v_row     record;
+  v_norm    text;
+  v_p_unp   int := 0;   -- profiles unparseable → NULLed
+  v_p_upd   int := 0;   -- profiles parseable   → normalised
+  v_x_unp   int := 0;   -- practices unparseable → NULLed
+  v_x_upd   int := 0;   -- practices parseable   → normalised
 BEGIN
   -- ── profiles.phone ─────────────────────────────────────────────────────
   FOR v_row IN
@@ -46,8 +54,9 @@ BEGIN
   LOOP
     v_norm := __normalize_phone_za_0042(v_row.phone);
     IF v_norm IS NULL THEN
-      RAISE NOTICE 'profiles.phone unparseable id=% masked=%',
+      RAISE NOTICE 'profiles.phone NULLed (unparseable) id=% masked=%',
         v_row.id, regexp_replace(v_row.phone, '\d', '•', 'g');
+      UPDATE profiles SET phone = NULL WHERE id = v_row.id;
       v_p_unp := v_p_unp + 1;
     ELSIF v_norm <> v_row.phone THEN
       UPDATE profiles SET phone = v_norm WHERE id = v_row.id;
@@ -61,8 +70,9 @@ BEGIN
   LOOP
     v_norm := __normalize_phone_za_0042(v_row.phone);
     IF v_norm IS NULL THEN
-      RAISE NOTICE 'practices.phone unparseable id=% masked=%',
+      RAISE NOTICE 'practices.phone NULLed (unparseable) id=% masked=%',
         v_row.id, regexp_replace(v_row.phone, '\d', '•', 'g');
+      UPDATE practices SET phone = NULL WHERE id = v_row.id;
       v_x_unp := v_x_unp + 1;
     ELSIF v_norm <> v_row.phone THEN
       UPDATE practices SET phone = v_norm WHERE id = v_row.id;
@@ -70,7 +80,7 @@ BEGIN
     END IF;
   END LOOP;
 
-  RAISE NOTICE 'Phone backfill summary: profiles updated=% unparseable=%; practices updated=% unparseable=%',
+  RAISE NOTICE 'Phone backfill summary: profiles normalised=% nulled=%; practices normalised=% nulled=%',
     v_p_upd, v_p_unp, v_x_upd, v_x_unp;
 END;
 $$;
