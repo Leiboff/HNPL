@@ -10,7 +10,6 @@ import {
   validateSaId,
   saIdAge,
   checkPassword,
-  type SaIdInvalidReason,
 } from '@/lib/validation';
 import {
   useFieldValidation,
@@ -40,27 +39,12 @@ function inputClass(hasError: boolean) {
   return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
 }
 
-function saIdErrorMessage(reason: SaIdInvalidReason): string {
-  switch (reason) {
-    case 'length':      return 'SA ID number must be 13 digits.';
-    case 'format':      return 'SA ID number must contain only digits.';
-    case 'date':        return 'That ID number\'s date of birth isn\'t a real calendar date.';
-    case 'citizenship': return 'That ID number\'s citizenship digit isn\'t recognised.';
-    case 'checksum':    return 'That ID number\'s check digit doesn\'t match — please double-check what you typed.';
-  }
-}
-
-// Number of digit characters typed so far. Used by the SA ID `suppressLive`
-// gate so we don't surface a date/citizenship/checksum error until the user
-// has entered all 13 digits.
-function digitsOnly(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c >= 48 && c <= 57) n++;
-  }
-  return n;
-}
+// SA ID surface rule: the validator's typed reason codes (length / format /
+// date / citizenship / checksum) stay internal. The user sees a single
+// generic message regardless of which check failed. The age gate uses its
+// own message because "you're too young" is a separate concern from
+// "your ID number is malformed".
+const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
 
 // ─── Field helper ────────────────────────────────────────────────────────────
 
@@ -123,18 +107,17 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     saIdNumber: {
       validate: (v) => {
         const r = validateSaId(v.saIdNumber);
-        if (!r.valid) return saIdErrorMessage(r.reason);
+        if (!r.valid) return SA_ID_GENERIC_ERROR;
         const age = saIdAge(v.saIdNumber);
         if (age === null || age < MIN_AGE) {
           return `You must be ${MIN_AGE} or older to create a BetterNow account.`;
         }
         return null;
       },
-      // While the user is still typing the 13 digits, do NOT show
-      // date/citizenship/checksum errors. The submit pass ignores this and
-      // will surface a "must be 13 digits" error if the field is short or
-      // empty.
-      suppressLive: (v) => digitsOnly(v.saIdNumber) < SA_ID_LEN,
+      // No suppressLive: errors are gated only by "field has been blurred".
+      // The generic single-message rule means we can show on blur regardless
+      // of how many digits are typed — the user never sees length/format/
+      // date/citizenship/checksum specifics anyway.
     },
     salaryDay: {
       validate: (v) => v.salaryDay ? null : 'Please choose when your salary is paid.',
@@ -321,13 +304,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
             placeholder="13-digit ID number"
             className={inputClass(!!errors.saIdNumber)}
           />
-          {errors.saIdNumber
-            ? <p className="mt-1 text-xs text-red-600">{errors.saIdNumber}</p>
-            : digitsOnly(fields.saIdNumber) > 0 && digitsOnly(fields.saIdNumber) < SA_ID_LEN && (
-                <p className="mt-1 text-xs text-gray-400">
-                  {digitsOnly(fields.saIdNumber)}/{SA_ID_LEN} digits
-                </p>
-              )}
+          {errors.saIdNumber && <p className="mt-1 text-xs text-red-600">{errors.saIdNumber}</p>}
         </div>
 
         <div id="patient-salaryDay">
