@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { encryptId } from '@/lib/idEncryption';
+import { isValidEmail, validateSaId } from '@/lib/validation';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -202,8 +203,9 @@ export async function addMember(input: NewMemberInput): Promise<ActionResult> {
   // Validate
   if (!input.firstName.trim())  return { error: 'First name is required.' };
   if (!input.lastName.trim())   return { error: 'Last name is required.' };
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) return { error: 'Enter a valid email address.' };
-  if (!/^\d{13}$/.test(input.saIdNumber))               return { error: 'SA ID number must be 13 digits.' };
+  if (!isValidEmail(input.email)) return { error: 'Enter a valid email address.' };
+  const saIdResult = validateSaId(input.saIdNumber);
+  if (!saIdResult.valid) return { error: 'SA ID number is invalid — please check what was typed.' };
   if (input.memberRole === 'provider' && !input.specialty) return { error: 'Specialty is required for clinicians.' };
 
   const svc = createServiceClient(

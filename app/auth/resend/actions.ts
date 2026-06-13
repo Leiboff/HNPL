@@ -6,15 +6,14 @@
 // now; a Redis/Upstash-backed limiter can be added in a later hardening pass.
 
 import { createClient } from '@supabase/supabase-js';
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { isValidEmail } from '@/lib/validation';
 
 export async function resendConfirmation(_email: string): Promise<{ ok: true }> {
   try {
     const email = _email.trim().toLowerCase();
 
     // Invalid format → neutral response, no DB hit.
-    if (!EMAIL_RE.test(email)) return { ok: true };
+    if (!isValidEmail(email)) return { ok: true };
 
     const svc = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

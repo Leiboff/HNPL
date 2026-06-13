@@ -3,6 +3,23 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { encryptId } from '@/lib/idEncryption';
+import {
+  isValidEmail,
+  normalizePhoneZA,
+  validateSaId,
+  checkPassword,
+  type SaIdInvalidReason,
+} from '@/lib/validation';
+
+function saIdErrorMessage(reason: SaIdInvalidReason, who: string): string {
+  switch (reason) {
+    case 'length':      return `${who} SA ID number must be 13 digits.`;
+    case 'format':      return `${who} SA ID number must contain only digits.`;
+    case 'date':        return `${who} SA ID number's date of birth isn't a real calendar date.`;
+    case 'citizenship': return `${who} SA ID number's citizenship digit isn't recognised.`;
+    case 'checksum':    return `${who} SA ID number's check digit doesn't match — please double-check.`;
+  }
+}
 
 export type MemberInput = {
   memberRole:         'provider' | 'manager';
@@ -75,13 +92,33 @@ function svcClient() {
 function validate(input: CreatePracticeInput): string | null {
   if (!input.firstName.trim()) return 'First name is required.';
   if (!input.lastName.trim())  return 'Last name is required.';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) return 'Enter a valid email address.';
+  if (!isValidEmail(input.email)) return 'Enter a valid email address.';
+
   if (input.password.length < 8) return 'Password must be at least 8 characters.';
-  if (!/^\d{13}$/.test(input.saIdNumber)) return 'SA ID number must be 13 digits.';
+  const pwdCheck = checkPassword(input.password, input.email);
+  if (!pwdCheck.ok) {
+    return pwdCheck.reason === 'contains_email_local_part'
+      ? 'Please choose a password that doesn\'t contain your email address.'
+      : 'That password is too common. Please choose a less guessable one.';
+  }
+
+  const adminSaId = validateSaId(input.saIdNumber);
+  if (!adminSaId.valid) return saIdErrorMessage(adminSaId.reason, 'Your');
+
+  // Admin's personal phone — cell only (this is the human, not the practice).
+  if (!normalizePhoneZA(input.phone)) {
+    return 'Enter a valid South African cellphone number.';
+  }
+
   if (!input.practiceName.trim()) return 'Practice name is required.';
   if (!input.specialty) return 'Specialty is required.';
-  if (!input.adminEmail.trim()) return 'Practice email is required.';
-  if (!input.contactPhone.trim()) return 'Contact phone is required.';
+  if (!isValidEmail(input.adminEmail)) return 'Enter a valid practice email address.';
+
+  // Practice contact phone may be a landline.
+  if (!normalizePhoneZA(input.contactPhone, { allowLandline: true })) {
+    return 'Enter a valid South African phone number for the practice contact.';
+  }
+
   if (!input.addressLine1.trim()) return 'Address is required.';
   if (!input.city.trim()) return 'City is required.';
   if (!input.province) return 'Province is required.';
@@ -93,8 +130,11 @@ function validate(input: CreatePracticeInput): string | null {
 
   for (const m of input.members) {
     if (!m.firstName.trim() || !m.lastName.trim()) return 'Team member name is required.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m.email)) return 'Team member email is invalid.';
-    if (!/^\d{13}$/.test(m.saIdNumber)) return 'Team member SA ID must be 13 digits.';
+    if (!isValidEmail(m.email)) return 'Team member email is invalid.';
+    const memberSaId = validateSaId(m.saIdNumber);
+    if (!memberSaId.valid) {
+      return saIdErrorMessage(memberSaId.reason, `${m.firstName || 'Team member'}'s`);
+    }
     if (m.memberRole === 'provider') {
       if (!m.specialty) return 'Provider specialty is required.';
       if (m.payoutDestination === 'provider') {
@@ -109,6 +149,10 @@ function validate(input: CreatePracticeInput): string | null {
 export async function createPractice(input: CreatePracticeInput): Promise<CreatePracticeResult> {
   const validationError = validate(input);
   if (validationError) return { error: validationError, success: false };
+
+  // Normalise phone values once; validate() already proved they parse.
+  const adminPhoneNormalised    = normalizePhoneZA(input.phone)!;
+  const contactPhoneNormalised  = normalizePhoneZA(input.contactPhone, { allowLandline: true })!;
 
   const svc      = svcClient();
   const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? '';
@@ -131,7 +175,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
         role:                 'practice_admin',
         first_name:           input.firstName.trim(),
         last_name:            input.lastName.trim(),
-        phone:                input.phone.trim(),
+        phone:                adminPhoneNormalised,
         sa_id_number:         encryptedAdminSaId,
         must_change_password: false,
       },
@@ -151,7 +195,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       practice_registration_number: input.practiceRegNumber.trim() || null,
       email:                        input.adminEmail.trim().toLowerCase(),
       admin_email:                  input.adminEmail.trim().toLowerCase(),
-      phone:                        input.contactPhone.trim(),
+      phone:                        contactPhoneNormalised,
       address_line1:                input.addressLine1.trim(),
       address_line2:                input.addressLine2.trim() || null,
       suburb:                       input.suburb.trim() || null,

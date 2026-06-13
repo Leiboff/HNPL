@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { createPractice, type MemberInput } from './actions';
+import { isValidEmail, validateSaId, normalizePhoneZA } from '@/lib/validation';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -436,14 +437,24 @@ export default function PracticeSignupPage() {
       if (!stepBanking.branchCode.trim()) return 'Branch code is required.';
       if (!stepBanking.accountType) return 'Account type is required.';
     }
+    if (step === 1) {
+      // Practice contact phone may be a landline.
+      if (stepPractice.contactPhone && !normalizePhoneZA(stepPractice.contactPhone, { allowLandline: true })) {
+        return 'Enter a valid South African phone number for the practice contact.';
+      }
+      if (stepPractice.adminEmail && !isValidEmail(stepPractice.adminEmail)) {
+        return 'Enter a valid practice email address.';
+      }
+    }
     if (step === 3) {
       if (!stepAdmin.firstName.trim()) return 'First name is required.';
       if (!stepAdmin.lastName.trim())  return 'Last name is required.';
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stepAdmin.email)) return 'Enter a valid email address.';
+      if (!isValidEmail(stepAdmin.email)) return 'Enter a valid email address.';
       if (stepAdmin.password.length < 8) return 'Password must be at least 8 characters.';
       if (stepAdmin.password !== stepAdmin.confirm) return 'Passwords do not match.';
-      if (!/^\d{13}$/.test(stepAdmin.saIdNumber)) return 'SA ID number must be 13 digits.';
-      if (!stepAdmin.phone.trim()) return 'Phone number is required.';
+      const saId = validateSaId(stepAdmin.saIdNumber);
+      if (!saId.valid) return 'SA ID number is invalid — please check what you typed.';
+      if (!normalizePhoneZA(stepAdmin.phone)) return 'Enter a valid South African cellphone number.';
     }
     if (step === 4) {
       const hasClinician = stepProviders.adminIsProvider || stepProviders.members.some(m => m.memberRole === 'provider');
@@ -451,8 +462,9 @@ export default function PracticeSignupPage() {
       if (stepProviders.adminIsProvider && !stepProviders.adminSpecialty) return 'Please select your specialty.';
       for (const m of stepProviders.members) {
         if (!m.firstName.trim() || !m.lastName.trim()) return 'Team member name is required.';
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m.email)) return 'Team member email is invalid.';
-        if (!/^\d{13}$/.test(m.saIdNumber)) return 'Team member SA ID must be 13 digits.';
+        if (!isValidEmail(m.email)) return 'Team member email is invalid.';
+        const memberSaId = validateSaId(m.saIdNumber);
+        if (!memberSaId.valid) return `${m.firstName || 'Team member'}'s SA ID is invalid — please check what was typed.`;
         if (m.memberRole === 'provider') {
           if (!m.specialty) return `Specialty is required for ${m.firstName || 'this provider'}.`;
           if (m.payoutDestination === 'provider') {
