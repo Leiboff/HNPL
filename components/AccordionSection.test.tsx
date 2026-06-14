@@ -6,18 +6,15 @@ import AccordionSection from './AccordionSection';
 
 function Harness({
   initialOpen = false,
-  summary = 'collapsed summary',
   onToggleSpy,
 }: {
   initialOpen?: boolean;
-  summary?: React.ReactNode;
   onToggleSpy?: () => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
   return (
     <AccordionSection
       title="Personal details"
-      summary={summary}
       open={open}
       onToggle={() => { setOpen((o) => !o); onToggleSpy?.(); }}
     >
@@ -85,20 +82,21 @@ describe('AccordionSection — disclosure pattern', () => {
   });
 });
 
-describe('AccordionSection — summary visibility', () => {
-  it('shows the summary on the right when collapsed', () => {
-    render(<Harness initialOpen={false} summary="850101•••••23" />);
-    expect(screen.getByTestId('accordion-summary')).toHaveTextContent('850101•••••23');
-  });
+describe('AccordionSection — collapsed row is heading + chevron only', () => {
+  // Locks the rule from the profile-accordion brief: a collapsed section
+  // must NOT render any preview / summary / count text. Heading + chevron
+  // only. The previous `summary` prop has been removed entirely; this
+  // test guards against any future re-introduction.
 
-  it('hides the summary when open (content reveals itself)', () => {
-    render(<Harness initialOpen={true} summary="850101•••••23" />);
-    expect(screen.queryByTestId('accordion-summary')).not.toBeInTheDocument();
-  });
+  it('renders only the title text and the chevron svg inside the toggle button when collapsed', () => {
+    render(<Harness initialOpen={false} />);
+    const button = screen.getByRole('button', { name: /personal details/i });
 
-  it('renders no summary node at all when summary is empty', () => {
-    render(<Harness initialOpen={false} summary="" />);
-    expect(screen.queryByTestId('accordion-summary')).not.toBeInTheDocument();
+    // Heading + chevron only — no test-id'd summary node anywhere.
+    expect(button.querySelectorAll('p')).toHaveLength(1);
+    expect(button.querySelector('p')!.textContent).toBe('Personal details');
+    expect(button.querySelectorAll('svg')).toHaveLength(1);
+    expect(button.querySelector('[data-testid="accordion-summary"]')).toBeNull();
   });
 });
 

@@ -92,20 +92,6 @@ export default async function ProfilePage() {
     postal_code:   profile?.postal_code   ?? null,
   };
 
-  // ── Collapsed-state summaries ───────────────────────────────────────────
-  // Personal: show the masked SA ID (the most identifying piece visible).
-  const personalSummary = saIdMasked || '—';
-  // Address: "Suburb, City" when both are present; otherwise prompt.
-  const hasAddressBits  = profile?.suburb && profile?.city;
-  const addressSummary  = hasAddressBits ? `${profile.suburb}, ${profile.city}` : 'Add your address';
-
-  // ── Default-open logic ─────────────────────────────────────────────────
-  // Address is the only section with required fields. If the patient hasn't
-  // entered any address yet, open that section on mount; otherwise stay
-  // fully collapsed and let them tap to expand.
-  const addressIncomplete = !profile?.address_line1;
-  const initialOpen       = addressIncomplete ? 'address' as const : null;
-
   const card = 'bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm';
 
   return (
@@ -126,9 +112,6 @@ export default async function ProfilePage() {
 
       {/* ── Accordion: Personal details / Contact & billing / Security ── */}
       <ProfileAccordion
-        initialOpen={initialOpen}
-        personalSummary={personalSummary}
-        addressSummary={addressSummary}
         personalDetails={
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">

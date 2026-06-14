@@ -2,17 +2,10 @@
 
 import { useState } from 'react';
 import AccordionSection from '@/components/AccordionSection';
-import { usePasskeys } from '@/lib/hooks/usePasskeys';
 
 type SectionKey = 'personal' | 'address' | 'security';
 
 type Props = {
-  /** Which section starts expanded — null = all collapsed. */
-  initialOpen: SectionKey | null;
-  /** Collapsed-state summary for the personal-details header. */
-  personalSummary: string;
-  /** Collapsed-state summary for the address header. */
-  addressSummary: string;
   /** Server-rendered Personal-details body (read-only fields + footnote). */
   personalDetails: React.ReactNode;
   /** Client AddressForm with its own Save button. */
@@ -22,27 +15,16 @@ type Props = {
 };
 
 /**
- * Patient profile accordion. Each section toggles independently; default
- * state has all sections collapsed except whichever the server marked as
- * the first incomplete one (currently address, if no address line is
- * stored).
- *
- * `usePasskeys` runs here for the security-section summary count. The same
- * hook also runs inside the existing PasskeysSection — two calls per page
- * load, but that keeps PasskeysSection unmodified (per the task's "don't
- * touch passkey logic" constraint).
+ * Patient profile accordion. All sections start collapsed on page load —
+ * no auto-expand of any kind. Tapping a heading expands that section;
+ * tapping again collapses it. Sections can be open simultaneously.
  */
 export default function ProfileAccordion({
-  initialOpen,
-  personalSummary,
-  addressSummary,
   personalDetails,
   contactAddress,
   passkeys,
 }: Props) {
-  const [open, setOpen] = useState<Set<SectionKey>>(() =>
-    initialOpen ? new Set([initialOpen]) : new Set(),
-  );
+  const [open, setOpen] = useState<Set<SectionKey>>(() => new Set());
 
   function toggle(s: SectionKey) {
     setOpen((current) => {
@@ -53,21 +35,10 @@ export default function ProfileAccordion({
     });
   }
 
-  // Live count for the Security & sign-in collapsed summary.
-  const { passkeys: passkeysList, loading: passkeysLoading, supported: passkeysSupported } = usePasskeys();
-  const securitySummary: string = !passkeysSupported
-    ? 'Unavailable in this browser'
-    : passkeysLoading
-      ? '…'
-      : passkeysList.length === 0
-        ? 'No passkeys yet'
-        : `${passkeysList.length} passkey${passkeysList.length === 1 ? '' : 's'}`;
-
   return (
     <div className="space-y-3">
       <AccordionSection
         title="Personal details"
-        summary={personalSummary}
         open={open.has('personal')}
         onToggle={() => toggle('personal')}
       >
@@ -76,7 +47,6 @@ export default function ProfileAccordion({
 
       <AccordionSection
         title="Contact & billing address"
-        summary={addressSummary}
         open={open.has('address')}
         onToggle={() => toggle('address')}
       >
@@ -85,7 +55,6 @@ export default function ProfileAccordion({
 
       <AccordionSection
         title="Security & sign-in"
-        summary={securitySummary}
         open={open.has('security')}
         onToggle={() => toggle('security')}
       >

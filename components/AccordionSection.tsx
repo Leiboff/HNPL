@@ -5,8 +5,6 @@ import { useId } from 'react';
 type Props = {
   /** Section header text. */
   title: string;
-  /** One-line summary shown on the right when collapsed. Hidden when open. */
-  summary?: React.ReactNode;
   /** Controlled open state. */
   open: boolean;
   /** Called when the user activates the header (click / Enter / Space). */
@@ -17,17 +15,21 @@ type Props = {
 
 /**
  * Disclosure-pattern accordion section. Each instance is a single section:
- * a header row (button + title + summary + chevron) that is always
- * visible, plus a panel that expands/collapses smoothly. Multiple
- * AccordionSection instances can be open simultaneously — open state is
- * controlled by the parent.
+ * a header row (button + title + chevron) that is always visible, plus a
+ * panel that expands/collapses smoothly. Multiple AccordionSection
+ * instances can be open simultaneously — open state is controlled by the
+ * parent.
+ *
+ * The collapsed row deliberately renders heading + chevron only — no
+ * preview, no summary text. If a caller needs to surface state to the
+ * user before they open the section, do it inside the panel body, not in
+ * the header.
  *
  * Smooth height animation uses the grid-rows trick (0fr ↔ 1fr) so it works
  * with arbitrary content heights without measuring.
  */
 export default function AccordionSection({
   title,
-  summary,
   open,
   onToggle,
   children,
@@ -49,15 +51,10 @@ export default function AccordionSection({
         <p className="text-sm font-semibold shrink-0" style={{ color: '#13294B' }}>
           {title}
         </p>
-        {!open && summary != null && summary !== '' && (
-          <p className="text-xs text-gray-500 truncate min-w-0 flex-1 text-right" data-testid="accordion-summary">
-            {summary}
-          </p>
-        )}
         <svg
           aria-hidden
           viewBox="0 0 20 20"
-          className={`w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''} ${!open && summary != null && summary !== '' ? '' : 'ml-auto'}`}
+          className={`w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200 ml-auto ${open ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           strokeWidth={2}
