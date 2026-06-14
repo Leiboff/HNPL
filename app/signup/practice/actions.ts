@@ -142,9 +142,18 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     //      • creates the auth.users row (email_confirmed_at = NULL)
     //      • fires the profile-creation trigger via user_metadata
     //      • sends the signup OTP via the configured email template
-    //      • returns { user, session: null }  — no live session yet
+    //      • returns { error: null } — and a `data` envelope whose shape
+    //        we DELIBERATELY DO NOT depend on.
+    //
+    //    Why we ignore signUpData. The SSR-client signUp response sometimes
+    //    has `data.user = null` even when the auth.users row was created
+    //    successfully (this is observable in dev — the row appears in
+    //    Supabase Studio, the OTP email arrives, the response is null).
+    //    The patient flow works because it never reads data; we follow the
+    //    same pattern here and fetch the just-created user's id via a
+    //    service-role lookup, which is authoritative.
     const supabase = await createClient();
-    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+    const { error: signUpErr } = await supabase.auth.signUp({
       email,
       password: input.password,
       options: {
@@ -168,22 +177,22 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       });
       return { error: signUpErr.message, success: false };
     }
-    if (!signUpData?.user?.id) {
-      // The pre-check above already returned for any email that exists in
-      // auth.users. Reaching this branch means Supabase didn't error AND
-      // didn't return a user — almost certainly a race condition (same
-      // email signed up in parallel between our pre-check and signUp).
-      // Dump the full data shape so we can debug if it ever happens.
-      console.error('[practice signup] signUp returned no user despite pre-check passing', {
+
+    // Authoritative user lookup post-signUp. findExistingAuthUser is the
+    // same helper the pre-check used — service-role read against
+    // auth.users by email. If it can't find the user, the trigger didn't
+    // run or the auth row was not actually committed; either way we bail.
+    const justCreated = await findExistingAuthUser(svc, email);
+    if (!justCreated?.id) {
+      console.error('[practice signup] post-signUp lookup found no auth user', {
         email_masked: email.replace(/(.{2}).*(@.*)/, '$1***$2'),
-        data_full:    signUpData,
       });
       return {
         error: 'Sign up did not complete. Please try again — if it keeps failing, contact support.',
         success: false,
       };
     }
-    adminUserId = signUpData.user.id;
+    adminUserId = justCreated.id;
 
     // 2. Insert the practice (service-role, RLS bypass — see Phase 2 doc).
     const { error: practiceErr } = await svc.from('practices').insert({
