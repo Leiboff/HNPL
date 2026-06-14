@@ -157,16 +157,27 @@ describe('signup actions — OTP-abandon recovery branch', () => {
   it.each([
     'app/signup/patient/actions.ts',
     'app/signup/practice/actions.ts',
-  ])('%s checks email_confirmed_at on an existing-profile branch', (path) => {
+  ])('%s uses findExistingAuthUser (covers AUTH_ONLY orphans, not just profiles)', (path) => {
     const src = readSrc(path);
-    // 1. existing profile detected via service-role.
-    expect(src).toMatch(/getUserById/);
-    // 2. branch on email_confirmed_at.
+    // 1. imports the shared helper that looks at BOTH profiles AND auth.users.
+    expect(src).toMatch(/from\s+['"]@\/lib\/auth\/findExistingAuthUser['"]/);
+    expect(src).toMatch(/findExistingAuthUser\s*\(/);
+    // 2. branches on email_confirmed_at returned by the helper.
     expect(src).toMatch(/email_confirmed_at/);
     // 3. re-fires the signup OTP on the unconfirmed branch.
     expect(src).toMatch(/auth\.resend.*type:\s*['"]signup['"]/s);
     // 4. returns needsVerification true.
     expect(src).toMatch(/needsVerification:\s*true/);
+  });
+
+  it('findExistingAuthUser helper falls back to auth.users (not just profiles)', () => {
+    const src = readSrc('lib/auth/findExistingAuthUser.ts');
+    // Profile-by-email cheap path.
+    expect(src).toMatch(/\.from\(\s*['"]profiles['"]\s*\)/);
+    // Schema-scoped fallback to auth.users — this is the load-bearing piece
+    // that catches AUTH_ONLY orphans.
+    expect(src).toMatch(/schema:\s*['"]auth['"]/);
+    expect(src).toMatch(/\.from\(\s*['"]users['"]\s*\)/);
   });
 
   it.each([

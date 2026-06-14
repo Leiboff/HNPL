@@ -3,6 +3,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isValidEmail, normalizePhoneZA, checkPassword } from '@/lib/validation';
+import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 
 // ─── Input / result shapes ───────────────────────────────────────────────────
 
@@ -118,22 +119,18 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
   let   adminUserId: string | null = null;
 
   try {
-    // 0. OTP-abandon recovery — if a profile already exists for this
-    //    email and the auth user is still unconfirmed, re-fire the OTP
-    //    and route the user back to /verify-email instead of dead-ending
-    //    on a "user already registered" error from signUp().
+    // 0. Pre-check existence — covers normal abandon-at-OTP AND AUTH_ONLY
+    //    orphans (auth user lingering with no profile, left behind by a
+    //    failed rollback). findExistingAuthUser looks at BOTH tables; the
+    //    profile-only lookup used previously missed the orphan case,
+    //    causing every subsequent signup attempt with the same email to
+    //    fall into Supabase's silent existing-email response branch.
     //
-    //    As with the patient flow: we do NOT touch the user's stored
-    //    password or metadata on this branch — that would be a
-    //    password-reset side-channel.
-    const { data: existingProfile } = await svc
-      .from('profiles')
-      .select('id')
-      .eq('email', email)
-      .maybeSingle();
-    if (existingProfile) {
-      const { data: { user: existingUser } } = await svc.auth.admin.getUserById(existingProfile.id);
-      if (existingUser && !existingUser.email_confirmed_at) {
+    //    Password / metadata are NOT touched on the recovery branch — that
+    //    would be a password-reset side-channel.
+    const existing = await findExistingAuthUser(svc, email);
+    if (existing) {
+      if (!existing.email_confirmed_at) {
         await svc.auth.resend({ type: 'signup', email });
         return { error: null, success: true, needsVerification: true, email };
       }
@@ -160,8 +157,31 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
         },
       },
     });
-    if (signUpErr || !signUpData.user) {
-      return { error: signUpErr?.message ?? 'Failed to create admin account.', success: false };
+    if (signUpErr) {
+      console.error('[practice signup] signUp errored', {
+        email_masked: email.replace(/(.{2}).*(@.*)/, '$1***$2'),
+        err_name:     signUpErr.name,
+        err_status:   (signUpErr as { status?: number }).status,
+        err_code:     (signUpErr as { code?: string }).code,
+        err_message:  signUpErr.message,
+        err_full:     signUpErr,
+      });
+      return { error: signUpErr.message, success: false };
+    }
+    if (!signUpData?.user?.id) {
+      // The pre-check above already returned for any email that exists in
+      // auth.users. Reaching this branch means Supabase didn't error AND
+      // didn't return a user — almost certainly a race condition (same
+      // email signed up in parallel between our pre-check and signUp).
+      // Dump the full data shape so we can debug if it ever happens.
+      console.error('[practice signup] signUp returned no user despite pre-check passing', {
+        email_masked: email.replace(/(.{2}).*(@.*)/, '$1***$2'),
+        data_full:    signUpData,
+      });
+      return {
+        error: 'Sign up did not complete. Please try again — if it keeps failing, contact support.',
+        success: false,
+      };
     }
     adminUserId = signUpData.user.id;
 
@@ -203,11 +223,44 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     //    panel until an HNPL admin approves the practice.
     return { error: null, success: true, needsVerification: true, email };
   } catch (err) {
-    // Best-effort rollback so a failed insert doesn't leave an orphan auth
-    // user or a broken practice row behind. We never silently keep
-    // partial state.
-    if (practiceId)  await svc.from('practices').delete().eq('id', practiceId);
-    if (adminUserId) await svc.auth.admin.deleteUser(adminUserId);
+    // ── DIAGNOSTIC (Phase 3.5 — REMOVE after one successful signup) ──
+    // Wrapped Supabase PostgrestErrors carry code / details / hint that
+    // err.message alone doesn't surface.
+    console.error('[practice signup] caught downstream failure', {
+      stage:         (err instanceof Error ? err.message.split(':')[0] : 'unknown'),
+      err_message:   err instanceof Error ? err.message : String(err),
+      err_full:      err,
+      practice_id:   practiceId,
+      admin_user_id: adminUserId,
+    });
+
+    // ── Rollback order (CRITICAL) ───────────────────────────────────────
+    //   1. practices row (may not exist if INSERT failed; harmless delete)
+    //   2. practice_members rows (may not exist if their INSERT failed)
+    //   3. profiles row (MUST go before auth.admin.deleteUser because the
+    //      profiles.id → auth.users(id) FK has no ON DELETE CASCADE;
+    //      attempting to delete the auth user first would fail with FK
+    //      violation, leaving an AUTH_ONLY orphan that breaks subsequent
+    //      retries with the same email)
+    //   4. auth.users row (delete last; will now succeed because no row
+    //      references it)
+    if (practiceId) {
+      const { error: e } = await svc.from('practices').delete().eq('id', practiceId);
+      if (e) console.error('[practice signup] rollback practices.delete failed', e);
+    }
+    if (adminUserId) {
+      const { error: memErr } = await svc.from('practice_members').delete().eq('user_id', adminUserId);
+      if (memErr) console.error('[practice signup] rollback practice_members.delete failed', memErr);
+
+      const { error: profErr } = await svc.from('profiles').delete().eq('id', adminUserId);
+      if (profErr) console.error('[practice signup] rollback profiles.delete failed — auth user delete will likely also fail', profErr);
+
+      const { error: userErr } = await svc.auth.admin.deleteUser(adminUserId);
+      if (userErr) console.error('[practice signup] rollback auth.deleteUser failed — ORPHAN auth user', {
+        admin_user_id: adminUserId,
+        err:           userErr,
+      });
+    }
     const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
     return { error: msg, success: false };
   }

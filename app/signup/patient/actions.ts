@@ -13,6 +13,7 @@ import {
   checkPassword,
   type SaIdInvalidReason,
 } from '@/lib/validation';
+import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 
 export type PatientSignupInput = {
   firstName:   string;
@@ -97,27 +98,12 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
 
   const normalizedEmail = email.trim().toLowerCase();
 
-  const { data: existing } = await svc
-    .from('profiles')
-    .select('id')
-    .eq('email', normalizedEmail)
-    .maybeSingle();
-
+  // OTP-abandon recovery — also covers AUTH_ONLY orphans from prior
+  // failed signups (see lib/auth/findExistingAuthUser.ts). Password and
+  // metadata are deliberately not re-written on the recovery branch.
+  const existing = await findExistingAuthUser(svc, normalizedEmail);
   if (existing) {
-    // OTP-abandon recovery: a profile row exists because handle_new_user()
-    // fires on auth.users insert. But the user may have abandoned at the
-    // OTP step. Check auth.users.email_confirmed_at and either re-fire the
-    // OTP (unconfirmed) or hand back the "sign in instead" message
-    // (confirmed).
-    const { data: { user: existingUser } } = await svc.auth.admin.getUserById(existing.id);
-    if (existingUser && !existingUser.email_confirmed_at) {
-      // Trigger Supabase to email a fresh 6-digit code. We intentionally
-      // do NOT re-write the user's metadata or password — they're already
-      // stored from the initial signUp(); changing them now would be a
-      // password-reset side-channel (you'd be able to reset a stranger's
-      // password by submitting the signup form again with their email).
-      // The form fields the user just re-entered are therefore discarded
-      // on this branch.
+    if (!existing.email_confirmed_at) {
       await svc.auth.resend({ type: 'signup', email: normalizedEmail });
       return { error: null, success: true, needsVerification: true, email: normalizedEmail };
     }
