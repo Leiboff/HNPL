@@ -423,6 +423,7 @@ export default async function AdminDashboardPage() {
   const [
     { count: activePlansCount },
     { count: outstandingRefundCount },
+    { count: pendingPracticeCount },
     { data: scheduledAmt },
     { data: collectedAmt },
     { data: pendingPayoutAmt },
@@ -435,6 +436,7 @@ export default async function AdminDashboardPage() {
   ] = await Promise.all([
     supabase.from('plans').select('*', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('refunds').select('*', { count: 'exact', head: true }).in('status', ['initiated', 'pending']).lt('initiated_at', oneHourAgo),
+    supabase.from('practices').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('payments').select('amount').eq('status', 'scheduled'),
     supabase.from('payments').select('amount').eq('status', 'collected'),
     supabase.from('payouts').select('net_amount').eq('status', 'pending'),
@@ -508,6 +510,19 @@ export default async function AdminDashboardPage() {
             </span>
           </div>
           <div className="flex items-center gap-4">
+            <Link
+              href="/admin/practices?status=pending"
+              className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                (pendingPracticeCount ?? 0) > 0 ? 'text-amber-600 hover:text-amber-700' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Practices
+              {(pendingPracticeCount ?? 0) > 0 && (
+                <span className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 min-w-[1.25rem] tabular-nums">
+                  {pendingPracticeCount}
+                </span>
+              )}
+            </Link>
             <Link
               href="/admin/refunds"
               className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${

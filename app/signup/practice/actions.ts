@@ -4,6 +4,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isValidEmail, normalizePhoneZA, checkPassword } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
+import { notifyAdminOfPracticeSignup } from '@/lib/email/notifyAdminOfPracticeSignup';
 
 // ─── Input / result shapes ───────────────────────────────────────────────────
 
@@ -215,6 +216,18 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       payout_destination:  'practice',
     });
     if (memberErr) throw new Error(`Member: ${memberErr.message}`);
+
+    // 3b. Notify the platform admin so they can review the new practice.
+    //     Best-effort: a failed send (missing env vars, Resend outage)
+    //     must NOT block the signup return — the user finishes signup
+    //     either way, and the admin can also see new pending practices
+    //     in the approval queue on demand.
+    await notifyAdminOfPracticeSignup({
+      id:        practiceId,
+      name:      input.practiceName.trim(),
+      specialty: input.specialty,
+      city:      input.city.trim(),
+    });
 
     // 4. Done. The user is unconfirmed and has no session. The caller will
     //    redirect to /verify-email?email=...&next=/practice. After
