@@ -6,6 +6,7 @@ import {
   updateMember, disableMember, enableMember, addMember,
   type MemberUpdates, type NewMemberInput,
 } from './actions';
+import SelfAsProviderCard from './SelfAsProviderCard';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -794,6 +795,19 @@ export default function MembersView({ members: initialMembers, currentUserId, is
           </button>
         )}
       </div>
+
+      {/* Self-elect-as-provider banner — only when the viewer is the admin
+          whose own row is still role='admin' (i.e. not yet a clinician).
+          Solo practitioners use this to satisfy the trading gate. */}
+      {isManager && (() => {
+        const me = members.find(m => m.user_id === currentUserId);
+        if (!me || me.role !== 'admin') return null;
+        return (
+          <div className="mb-5">
+            <SelfAsProviderCard />
+          </div>
+        );
+      })()}
 
       {/* Flash banners */}
       {flashMsg && (

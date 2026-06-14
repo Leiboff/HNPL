@@ -133,6 +133,19 @@ describe('checkTradingGate', () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it('passes for a solo practice where the admin self-elected as provider', async () => {
+    // The admin's own row now has role='provider' (becomeProvider() flipped
+    // it from 'admin'). It's the ONLY row in practice_members for this
+    // practice. The gate's eq('role','provider') match is satisfied —
+    // solo practitioner can trade once approved.
+    const { client } = makeStub({
+      practice:  { status: 'approved' },
+      providers: [{ user_id: 'admin-self' }],
+    });
+    const result = await checkTradingGate(client, 'practice-1');
+    expect(result).toEqual({ ok: true });
+  });
+
   it('filters the provider query by role="provider" and active=true', async () => {
     const { client, recorded } = makeStub({
       practice:  { status: 'approved' },

@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { encryptId } from '@/lib/idEncryption';
@@ -301,4 +302,89 @@ export async function addMember(input: NewMemberInput): Promise<ActionResult> {
     const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
     return { error: msg };
   }
+}
+
+// ─── Action 5: becomeProvider (self-elect) ───────────────────────────────────
+//
+// Solo-practitioner path: signup creates the admin's practice_members
+// row with role='admin', no clinical fields. When the admin is also the
+// clinician (a single dentist's practice, for example), they self-elect
+// here. We UPDATE their existing row in place — no new row — so:
+//
+//   • UNIQUE (practice_id, user_id) is preserved (no duplicate identity).
+//   • Their capability flags (can_manage_practice, can_create_bills) are
+//     kept unchanged — they continue to manage the practice.
+//   • role flips 'admin' → 'provider' so the trading gate's strict
+//     eq('role','provider') match counts them. is_practice_manager()
+//     ([0034]) reads can_manage_practice not role, so admin powers
+//     survive the role transition. is_practice_admin() ([0002]) IS
+//     defined but unused in policies since [0035] — dead code, no
+//     effect on permissions.
+//
+// SA ID is encrypted via the existing idEncryption.encryptId, same
+// path addMember uses for invited providers.
+
+export type BecomeProviderInput = {
+  specialty:    string;
+  hpcsaNumber:  string;
+  saIdNumber:   string;
+};
+
+export async function becomeProvider(input: BecomeProviderInput): Promise<ActionResult> {
+  const guard = await guardManager();
+  if (!guard.ok) return { error: guard.error };
+  const { userId, practiceId } = guard;
+
+  // Validate inputs server-side (authoritative). Specialty + HPCSA must
+  // be present; SA ID must pass the full validator.
+  const specialty = input.specialty.trim();
+  if (!specialty) return { error: 'Specialty is required.' };
+
+  const hpcsa = input.hpcsaNumber.trim();
+  if (!hpcsa) return { error: 'HPCSA number is required.' };
+
+  const saIdResult = validateSaId(input.saIdNumber);
+  if (!saIdResult.valid) {
+    return { error: 'SA ID number is invalid — please check what was typed.' };
+  }
+
+  const supabase = await createClient();
+
+  // Verify the caller's current row exists and they aren't ALREADY a
+  // provider (idempotency / defensive — the UI hides the form when role
+  // is already 'provider', but a stale tab might re-submit).
+  const { data: ownRow } = await supabase
+    .from('practice_members')
+    .select('id, role')
+    .eq('practice_id', practiceId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!ownRow) return { error: 'Your membership record was not found.' };
+  if (ownRow.role === 'provider') return { error: 'You are already a provider on this practice.' };
+
+  let encryptedSaId: string;
+  try {
+    encryptedSaId = encryptId(input.saIdNumber.trim());
+  } catch {
+    return { error: 'Encryption error — please contact support.' };
+  }
+
+  const { error } = await supabase
+    .from('practice_members')
+    .update({
+      role:             'provider',
+      specialty,
+      hpcsa_number:     hpcsa,
+      sa_id_number:     encryptedSaId,
+      // Capability flags intentionally NOT touched — preserve admin powers.
+    })
+    .eq('id', ownRow.id)
+    .eq('practice_id', practiceId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/practice/members');
+  revalidatePath('/practice');
+  return { error: null };
 }
