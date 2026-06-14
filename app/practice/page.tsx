@@ -1,14 +1,14 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
 import PracticeShell from './PracticeShell';
 import PracticeDashboardClient from './PracticeDashboardClient';
 import { PlanSummary } from './billHelpers';
 
 export default async function PracticeDashboardPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  // Defense-in-depth — bounces to /login or /verify-email before any work.
+  const { user, supabase } = await requireConfirmedUser({ next: '/practice' });
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -51,6 +51,16 @@ export default async function PracticeDashboardPage() {
 
   const plans = (rawPlans ?? []) as PlanSummary[];
 
+  // ── Trading gate ───────────────────────────────────────────────────────
+  // Same check the bill-creation server action enforces. Drives whether the
+  // "+ Create a bill" CTA renders or whether we show a status panel pointing
+  // at the unmet condition. Server-action is still the authoritative reject.
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+  const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
+
   const providerIds = [...new Set(plans.map((p) => p.provider_id).filter((id): id is string => Boolean(id)))];
   const specialtyMap: Record<string, string> = {};
   if (providerIds.length > 0) {
@@ -78,14 +88,52 @@ export default async function PracticeDashboardPage() {
               Welcome back, {profile?.first_name ?? user.email}
             </p>
           </div>
-          <a
-            href="/practice/bills/new"
-            className="shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-          >
-            + Create a bill
-          </a>
+          {gate.ok ? (
+            <a
+              href="/practice/bills/new"
+              className="shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            >
+              + Create a bill
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              title={gate.message}
+              aria-disabled
+              className="shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            >
+              + Create a bill
+            </button>
+          )}
         </div>
+
+        {/* Trading-gate panel — explains why the CTA is disabled when blocked. */}
+        {!gate.ok && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm"
+            data-testid="trading-gate-panel"
+          >
+            <p className="font-semibold text-amber-900">
+              {gate.reason === 'pending_approval'
+                ? 'Awaiting approval'
+                : 'Add a provider to start billing'}
+            </p>
+            <p className="mt-1 text-amber-800">{gate.message}</p>
+            {gate.reason === 'no_providers' && (
+              <a
+                href="/practice/members"
+                className="mt-2 inline-block font-semibold underline underline-offset-2"
+                style={{ color: '#13294B' }}
+              >
+                Go to Team →
+              </a>
+            )}
+          </div>
+        )}
 
         {/* Dashboard: global filters + chart + bills */}
         <PracticeDashboardClient

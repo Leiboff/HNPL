@@ -1,38 +1,11 @@
-import crypto from 'crypto';
 import { redirect } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { createClient } from '@/lib/supabase/server';
-import { calculateFee } from '@/lib/finance';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
+import { createBill } from './actions';
 import BillForm from './BillForm';
 
-type CreateBillInput = {
-  patientEmail:      string;
-  billAmount:        number;
-  practiceReference?: string;
-  providerId:        string;
-};
-
-export type InvitationSummary = {
-  email:     string;
-  token:     string;
-  expiresAt: string;
-  shareUrl:  string;
-};
-
-export type CreateBillSummary = {
-  gross:             number;
-  fee:               number;
-  net:               number;
-  patientName:       string;
-  invoiceNumber:     string;
-  practiceReference?: string;
-  invitation?:       InvitationSummary;
-};
-
-export type CreateBillResult = {
-  error:    string | null;
-  summary?: CreateBillSummary;
-};
+export type { CreateBillSummary, CreateBillResult, InvitationSummary } from './actions';
 
 export type ProviderOption = {
   userId:    string;
@@ -40,164 +13,10 @@ export type ProviderOption = {
   lastName:  string;
 };
 
-async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
-  'use server';
-
-  const { patientEmail, billAmount, practiceReference, providerId } = data;
-
-  if (!patientEmail || typeof patientEmail !== 'string') {
-    return { error: 'Patient email is required.' };
-  }
-  if (!Number.isFinite(billAmount) || billAmount < 500 || billAmount > 50000) {
-    return { error: 'Bill amount must be between R500 and R50 000.' };
-  }
-  if (!providerId) {
-    return { error: 'A healthcare provider must be selected.' };
-  }
-
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Session expired. Please log in again.' };
-
-  const { data: membership } = await supabase
-    .from('practice_members')
-    .select('practice_id')
-    .eq('user_id', user.id)
-    .eq('active', true)
-    .single();
-
-  if (!membership) return { error: 'You are not a member of any active practice.' };
-
-  const practiceId = membership.practice_id as string;
-
-  const { data: practice } = await supabase
-    .from('practices')
-    .select('fee_percent')
-    .eq('id', practiceId)
-    .single();
-
-  if (!practice) return { error: 'Practice not found.' };
-
-  // Verify the selected provider belongs to this practice
-  const { data: providerMember } = await supabase
-    .from('practice_members')
-    .select('user_id')
-    .eq('practice_id', practiceId)
-    .eq('user_id', providerId)
-    .eq('active', true)
-    .maybeSingle();
-
-  if (!providerMember) return { error: 'Selected provider is not a member of this practice.' };
-
-  const feePercent = Number(practice.fee_percent);
-
-  // Use the service-role client for this lookup so RLS can never silently
-  // return null for a registered patient, which would cause patient_id = null
-  // to be written to the plan and make the bill invisible to the patient.
-  const svc = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  );
-  const { data: patient } = await svc
-    .from('profiles')
-    .select('id, first_name, last_name')
-    .eq('email', patientEmail.trim().toLowerCase())
-    .eq('role', 'patient')
-    .maybeSingle();
-
-  const { gross, fee, net } = calculateFee(billAmount, feePercent);
-
-  const { data: invoiceNumber, error: invoiceError } = await supabase.rpc('next_invoice_number');
-  if (invoiceError || !invoiceNumber) {
-    return { error: 'Failed to generate invoice number. Please try again.' };
-  }
-
-  const applicationId = crypto.randomUUID();
-  const { error: appError } = await supabase.from('applications').insert({
-    id:          applicationId,
-    patient_id:  patient?.id ?? null,
-    practice_id: practiceId,
-    bill_amount: billAmount,
-    status:      'pending',
-  });
-  if (appError) return { error: `Failed to create application: ${appError.message}` };
-
-  const planId = crypto.randomUUID();
-  const { error: planError } = await supabase.from('plans').insert({
-    id:                 planId,
-    application_id:     applicationId,
-    patient_id:         patient?.id ?? null,
-    practice_id:        practiceId,
-    provider_id:        providerId,
-    total_amount:       billAmount,
-    status:             'pending_acceptance',
-    invoice_number:     invoiceNumber,
-    practice_reference: practiceReference?.trim() || null,
-  });
-  if (planError) {
-    await supabase.from('applications').delete().eq('id', applicationId);
-    return { error: `Failed to create plan: ${planError.message}` };
-  }
-
-  const trimmedRef = practiceReference?.trim() || undefined;
-
-  // ── Scenario A: existing patient ─────────────────────────────────────────
-  if (patient) {
-    return {
-      error: null,
-      summary: {
-        gross,
-        fee,
-        net,
-        patientName:       `${patient.first_name} ${patient.last_name}`,
-        invoiceNumber,
-        practiceReference: trimmedRef,
-      },
-    };
-  }
-
-  // ── Scenario B: new patient — create invitation ──────────────────────────
-  const token     = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  const { error: inviteError } = await supabase.from('patient_invitations').insert({
-    email:       patientEmail.trim().toLowerCase(),
-    plan_id:     planId,
-    practice_id: practiceId,
-    provider_id: providerId,
-    token,
-    expires_at:  expiresAt,
-  });
-
-  if (inviteError) {
-    console.error('[createBill] Failed to create invitation', inviteError.message);
-  }
-
-  const appUrl   = process.env.NEXT_PUBLIC_APP_URL ?? '';
-  const shareUrl = `${appUrl}/signup/patient?token=${token}`;
-
-  return {
-    error: null,
-    summary: {
-      gross,
-      fee,
-      net,
-      patientName:       patientEmail.trim().toLowerCase(),
-      invoiceNumber,
-      practiceReference: trimmedRef,
-      invitation: { email: patientEmail.trim().toLowerCase(), token, expiresAt, shareUrl },
-    },
-  };
-}
-
 type PracticeInfo = { id: string; name: string; fee_percent: number };
 
 export default async function NewBillPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  const { user, supabase } = await requireConfirmedUser({ next: '/practice/bills/new' });
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -225,7 +44,20 @@ export default async function NewBillPage() {
 
   const practiceId = membership.practice_id as string;
 
-  // Fetch active providers for this practice
+  // ── Trading gate ───────────────────────────────────────────────────────
+  // Mirror the gate the server action enforces. If the gate is closed we
+  // never render the form — we redirect to the dashboard, where the user
+  // sees a single source-of-truth status panel explaining which condition
+  // is unmet. Server-action call is still the authoritative reject path.
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+  const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
+  if (!gate.ok) redirect('/practice');
+
+  // Fetch active providers for this practice. We already know there is at
+  // least one (gate passed); this query produces the actual dropdown list.
   const { data: memberRows } = await supabase
     .from('practice_members')
     .select('user_id, profiles(first_name, last_name)')
@@ -233,12 +65,14 @@ export default async function NewBillPage() {
     .eq('active', true)
     .eq('role', 'provider');
 
-  const providers: ProviderOption[] = (memberRows ?? []).map((m: any) => {
-    const p = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+  const providers: ProviderOption[] = (memberRows ?? []).map((m: { user_id: string; profiles: unknown }) => {
+    const profileRow = Array.isArray(m.profiles)
+      ? (m.profiles[0] as { first_name?: string; last_name?: string } | undefined)
+      : (m.profiles as { first_name?: string; last_name?: string } | null);
     return {
-      userId:    m.user_id as string,
-      firstName: p?.first_name ?? '',
-      lastName:  p?.last_name  ?? '',
+      userId:    m.user_id,
+      firstName: profileRow?.first_name ?? '',
+      lastName:  profileRow?.last_name  ?? '',
     };
   });
 
