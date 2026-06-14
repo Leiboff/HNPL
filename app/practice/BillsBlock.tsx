@@ -12,6 +12,8 @@ import {
   doctorStatus,
   formatLocalDate,
 } from './billHelpers';
+import CreateBillButton from './CreateBillButton';
+import type { TradingGateResult } from '@/lib/practice/tradingGate';
 
 type Props = {
   plans:        PlanSummary[];   // already filtered by parent
@@ -20,6 +22,7 @@ type Props = {
   feePercent:   number;
   specialtyMap: Record<string, string>;
   practiceName: string;
+  gate:         TradingGateResult;
 };
 
 function PlanStatusBadge({ status }: { status: string }) {
@@ -64,6 +67,7 @@ export default function BillsBlock({
   feePercent,
   specialtyMap,
   practiceName,
+  gate,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -174,12 +178,7 @@ export default function BillsBlock({
 
         {totalCount > 0 && (
           <div className="flex items-center gap-3">
-            <a
-              href="/practice/bills/new"
-              className="text-sm font-medium text-[#15A89E] hover:text-[#13294B] transition-colors"
-            >
-              + New bill
-            </a>
+            <CreateBillButton gate={gate} variant="subtle" />
             <div ref={menuRef} className="relative">
               <button
                 onClick={() => setMenuOpen((o) => !o)}
@@ -210,13 +209,7 @@ export default function BillsBlock({
           <div className="py-20 text-center">
             <p className="font-medium text-gray-500">No bills yet</p>
             <p className="mt-1 text-sm text-gray-400">Create your first bill to get started.</p>
-            <a
-              href="/practice/bills/new"
-              className="mt-5 inline-block rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              Create a bill
-            </a>
+            <CreateBillButton gate={gate} variant="cta" label="Create a bill" />
           </div>
         ) : plans.length === 0 ? (
           <div className="py-16 text-center">

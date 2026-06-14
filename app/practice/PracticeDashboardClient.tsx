@@ -6,12 +6,14 @@ import MonthlyRevenueChart from './MonthlyRevenueChart';
 import BillsBlock from './BillsBlock';
 import { providerName } from './billHelpers';
 import type { PlanSummary } from './billHelpers';
+import type { TradingGateResult } from '@/lib/practice/tradingGate';
 
 type Props = {
   plans:        PlanSummary[];
   feePercent:   number;
   specialtyMap: Record<string, string>;
   practiceName: string;
+  gate:         TradingGateResult;
 };
 
 export default function PracticeDashboardClient({
@@ -19,6 +21,7 @@ export default function PracticeDashboardClient({
   feePercent,
   specialtyMap,
   practiceName,
+  gate,
 }: Props) {
   const [fromDate,   setFromDate]   = useState('');
   const [toDate,     setToDate]     = useState('');
@@ -112,6 +115,7 @@ export default function PracticeDashboardClient({
         feePercent={feePercent}
         specialtyMap={specialtyMap}
         practiceName={practiceName}
+        gate={gate}
       />
 
     </div>

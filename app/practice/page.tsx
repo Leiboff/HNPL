@@ -4,9 +4,19 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
 import PracticeShell from './PracticeShell';
 import PracticeDashboardClient from './PracticeDashboardClient';
+import CreateBillButton from './CreateBillButton';
 import { PlanSummary } from './billHelpers';
 
-export default async function PracticeDashboardPage() {
+type SearchParams = { reason?: string };
+
+export default async function PracticeDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const params = await searchParams;
+  const cameFromGatedBillsPage = params.reason === 'trading_gate';
+
   // Defense-in-depth — bounces to /login or /verify-email before any work.
   const { user, supabase } = await requireConfirmedUser({ next: '/practice' });
 
@@ -88,27 +98,22 @@ export default async function PracticeDashboardPage() {
               Welcome back, {profile?.first_name ?? user.email}
             </p>
           </div>
-          {gate.ok ? (
-            <a
-              href="/practice/bills/new"
-              className="shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              + Create a bill
-            </a>
-          ) : (
-            <button
-              type="button"
-              disabled
-              title={gate.message}
-              aria-disabled
-              className="shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              + Create a bill
-            </button>
-          )}
+          <CreateBillButton gate={gate} variant="primary" />
         </div>
+
+        {/* Bounce-back banner — only shown when /practice/bills/new
+            redirected us here because the gate was closed. Disappears on
+            any subsequent navigation that doesn't carry ?reason=. */}
+        {cameFromGatedBillsPage && !gate.ok && (
+          <div
+            role="alert"
+            data-testid="trading-gate-bounce-banner"
+            className="rounded-xl border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900"
+          >
+            <p className="font-semibold">You can&apos;t create bills yet.</p>
+            <p className="mt-1">{gate.message}</p>
+          </div>
+        )}
 
         {/* Trading-gate panel — explains why the CTA is disabled when blocked. */}
         {!gate.ok && (
@@ -141,6 +146,7 @@ export default async function PracticeDashboardPage() {
           feePercent={feePercent}
           specialtyMap={specialtyMap}
           practiceName={practiceName}
+          gate={gate}
         />
 
       </main>

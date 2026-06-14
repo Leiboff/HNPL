@@ -54,7 +54,14 @@ export default async function NewBillPage() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
   const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
-  if (!gate.ok) redirect('/practice');
+  if (!gate.ok) {
+    // A user-token caller can still reach this URL (typed in, stale tab,
+    // dashboard navigation that raced an admin action). Don't silently
+    // bounce to /practice — the dashboard would just look like a refresh.
+    // Append ?reason=trading_gate so the dashboard renders an explanatory
+    // banner above the gate panel.
+    redirect('/practice?reason=trading_gate');
+  }
 
   // Fetch active providers for this practice. We already know there is at
   // least one (gate passed); this query produces the actual dropdown list.
