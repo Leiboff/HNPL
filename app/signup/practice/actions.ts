@@ -167,26 +167,17 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       },
     });
     if (signUpErr) {
-      console.error('[practice signup] signUp errored', {
-        email_masked: email.replace(/(.{2}).*(@.*)/, '$1***$2'),
-        err_name:     signUpErr.name,
-        err_status:   (signUpErr as { status?: number }).status,
-        err_code:     (signUpErr as { code?: string }).code,
-        err_message:  signUpErr.message,
-        err_full:     signUpErr,
-      });
       return { error: signUpErr.message, success: false };
     }
 
     // Authoritative user lookup post-signUp. findExistingAuthUser is the
     // same helper the pre-check used — service-role read against
-    // auth.users by email. If it can't find the user, the trigger didn't
-    // run or the auth row was not actually committed; either way we bail.
+    // auth.users by email. The SSR-client signUp response is unreliable
+    // about whether `data.user` is populated even on success, so we
+    // never read it; this lookup is the source of truth for the new
+    // auth user's id.
     const justCreated = await findExistingAuthUser(svc, email);
     if (!justCreated?.id) {
-      console.error('[practice signup] post-signUp lookup found no auth user', {
-        email_masked: email.replace(/(.{2}).*(@.*)/, '$1***$2'),
-      });
       return {
         error: 'Sign up did not complete. Please try again — if it keeps failing, contact support.',
         success: false,
@@ -232,27 +223,19 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     //    panel until an HNPL admin approves the practice.
     return { error: null, success: true, needsVerification: true, email };
   } catch (err) {
-    // ── DIAGNOSTIC (Phase 3.5 — REMOVE after one successful signup) ──
-    // Wrapped Supabase PostgrestErrors carry code / details / hint that
-    // err.message alone doesn't surface.
-    console.error('[practice signup] caught downstream failure', {
-      stage:         (err instanceof Error ? err.message.split(':')[0] : 'unknown'),
-      err_message:   err instanceof Error ? err.message : String(err),
-      err_full:      err,
-      practice_id:   practiceId,
-      admin_user_id: adminUserId,
-    });
-
-    // ── Rollback order (CRITICAL) ───────────────────────────────────────
-    //   1. practices row (may not exist if INSERT failed; harmless delete)
-    //   2. practice_members rows (may not exist if their INSERT failed)
-    //   3. profiles row (MUST go before auth.admin.deleteUser because the
-    //      profiles.id → auth.users(id) FK has no ON DELETE CASCADE;
-    //      attempting to delete the auth user first would fail with FK
-    //      violation, leaving an AUTH_ONLY orphan that breaks subsequent
-    //      retries with the same email)
-    //   4. auth.users row (delete last; will now succeed because no row
-    //      references it)
+    // ── Rollback order ─────────────────────────────────────────────────
+    //   practices  →  practice_members  →  profiles  →  auth.users
+    //
+    //   Until 0044 + 0045 are applied (ON DELETE CASCADE on profiles.id,
+    //   per-FK policy on downstream tables), this order matters: the
+    //   profiles.id → auth.users(id) FK is NO ACTION, so deleting the
+    //   auth user first would fail with FK violation, leaving an
+    //   AUTH_ONLY orphan that breaks subsequent retries.
+    //
+    //   Once 0044 + 0045 are live, the profiles + practice_members steps
+    //   become redundant (cascade handles them). We keep them as belt-
+    //   and-braces so rollback survives a future regression in those
+    //   migrations and so each step's failure is independently logged.
     if (practiceId) {
       const { error: e } = await svc.from('practices').delete().eq('id', practiceId);
       if (e) console.error('[practice signup] rollback practices.delete failed', e);
@@ -262,7 +245,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       if (memErr) console.error('[practice signup] rollback practice_members.delete failed', memErr);
 
       const { error: profErr } = await svc.from('profiles').delete().eq('id', adminUserId);
-      if (profErr) console.error('[practice signup] rollback profiles.delete failed — auth user delete will likely also fail', profErr);
+      if (profErr) console.error('[practice signup] rollback profiles.delete failed', profErr);
 
       const { error: userErr } = await svc.auth.admin.deleteUser(adminUserId);
       if (userErr) console.error('[practice signup] rollback auth.deleteUser failed — ORPHAN auth user', {
