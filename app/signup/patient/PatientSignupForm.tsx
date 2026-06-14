@@ -80,7 +80,6 @@ export default function PatientSignupForm({ invitation, token }: Props) {
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(false);
-  const [done,        setDone]        = useState(false);
 
   // Field declaration order = focus-on-submit order.
   const schema = useMemo<FieldsSchema<Fields>>(() => ({
@@ -150,10 +149,11 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     }
 
     setLoading(true);
+    const emailTrimmed = fields.email.trim();
     const result = await signUpPatient({
       firstName:  fields.firstName.trim(),
       lastName:   fields.lastName.trim(),
-      email:      fields.email.trim(),
+      email:      emailTrimmed,
       password:   fields.password,
       phone:      fields.phone.trim(),
       saIdNumber: fields.saIdNumber.trim(),
@@ -162,24 +162,17 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     });
     setLoading(false);
 
-    if (result.error) setSubmitError(result.error);
-    else setDone(true);
-  }
+    if (result.error) {
+      setSubmitError(result.error);
+      return;
+    }
 
-  if (done) {
-    return (
-      <div className="rounded-2xl border border-green-200 bg-green-50 p-8 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-          <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <h2 className="text-lg font-semibold text-green-900">Check your email</h2>
-        <p className="mt-2 text-sm text-green-800 max-w-sm mx-auto">
-          We&apos;ve sent you a confirmation link. Click it to activate your account and start using BetterNow.
-        </p>
-      </div>
-    );
+    // Hand off to /verify-email for the 6-digit OTP. After verifyOtp
+    // succeeds, the user lands on /patient — the existing
+    // hnpl_invite_token cookie is read there to associate the invitation.
+    window.location.href = '/verify-email?email='
+      + encodeURIComponent(emailTrimmed)
+      + '&next=' + encodeURIComponent('/patient');
   }
 
   return (

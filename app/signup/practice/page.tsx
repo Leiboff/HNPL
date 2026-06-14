@@ -192,8 +192,13 @@ export default function PracticeSignupPage() {
 
     if (result.error) {
       setSubmitError(result.error);
-    } else if (result.requiresManualLogin) {
-      window.location.href = '/login?message=' + encodeURIComponent('Practice created — please sign in to continue.');
+    } else if (result.needsVerification && result.email) {
+      // Hand off to /verify-email for the 6-digit OTP. After verifyOtp
+      // succeeds, the user lands on /practice — the trading gate will
+      // show the "awaiting approval" panel until an admin approves them.
+      window.location.href = '/verify-email?email='
+        + encodeURIComponent(result.email)
+        + '&next=' + encodeURIComponent('/practice');
     } else {
       window.location.href = '/practice';
     }

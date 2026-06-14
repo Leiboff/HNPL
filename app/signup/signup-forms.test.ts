@@ -98,3 +98,157 @@ describe('signup forms — branded betternow terms link', () => {
     expect(src).toContain('betternow');
   });
 });
+
+// ─── OTP flow — auto-session bypass removed, redirect to /verify-email ───────
+//
+// Two bypasses existed in the practice flow before Phase 2.5:
+//   1. svc.auth.admin.createUser({ email_confirm: true }) — pre-confirmed
+//      the user, so no OTP was ever sent.
+//   2. supabase.auth.signInWithPassword(...) at the tail — minted a live
+//      session before the user proved control of the email.
+// Both must stay gone. These tests lock that in.
+
+describe('signup actions — no auto-confirm / auto-session bypasses', () => {
+  it('practice action does NOT call admin.createUser({email_confirm:true})', () => {
+    const src = readSrc('app/signup/practice/actions.ts');
+    expect(src).not.toMatch(/email_confirm:\s*true/);
+    expect(src).not.toMatch(/admin\.createUser/);
+  });
+
+  it('practice action does NOT call signInWithPassword (no auto-session pre-verify)', () => {
+    const src = readSrc('app/signup/practice/actions.ts');
+    expect(src).not.toMatch(/signInWithPassword/);
+  });
+
+  it('practice action returns needsVerification + email so the form can redirect', () => {
+    const src = readSrc('app/signup/practice/actions.ts');
+    expect(src).toMatch(/needsVerification/);
+  });
+});
+
+describe('signup forms — redirect to /verify-email after signup', () => {
+  it('practice form redirects to /verify-email with email + next=/practice', () => {
+    const src = readSrc('app/signup/practice/page.tsx');
+    expect(src).toContain('/verify-email');
+    expect(src).toMatch(/next=.*\/practice|practice.*next/);
+  });
+
+  it('patient form redirects to /verify-email with email + next=/patient', () => {
+    const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
+    expect(src).toContain('/verify-email');
+    expect(src).toMatch(/next=.*\/patient|patient.*next/);
+  });
+
+  it('patient form no longer renders the legacy "Check your email" magic-link done state', () => {
+    const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
+    expect(src).not.toContain('Check your email');
+  });
+});
+
+// ─── Q2: OTP-abandon recovery ────────────────────────────────────────────────
+//
+// Both signup actions must detect "profile already exists but the auth user
+// is still unconfirmed" and re-route the user to /verify-email instead of
+// dead-ending with the legacy "account already exists" error. Tests below
+// lock the wiring (admin.getUserById + resend({type:'signup'}) +
+// needsVerification:true) into source.
+
+describe('signup actions — OTP-abandon recovery branch', () => {
+  it.each([
+    'app/signup/patient/actions.ts',
+    'app/signup/practice/actions.ts',
+  ])('%s checks email_confirmed_at on an existing-profile branch', (path) => {
+    const src = readSrc(path);
+    // 1. existing profile detected via service-role.
+    expect(src).toMatch(/getUserById/);
+    // 2. branch on email_confirmed_at.
+    expect(src).toMatch(/email_confirmed_at/);
+    // 3. re-fires the signup OTP on the unconfirmed branch.
+    expect(src).toMatch(/auth\.resend.*type:\s*['"]signup['"]/s);
+    // 4. returns needsVerification true.
+    expect(src).toMatch(/needsVerification:\s*true/);
+  });
+
+  it.each([
+    'app/signup/patient/actions.ts',
+    'app/signup/practice/actions.ts',
+  ])('%s keeps the legacy "sign in instead" message ONLY for the confirmed branch', (path) => {
+    const src = readSrc(path);
+    // Still mentions the message — but only as the fallback when the auth
+    // user IS confirmed. We assert presence, not branch placement; the
+    // unit logic is covered by separate integration tests.
+    expect(src).toContain('Please sign in instead.');
+  });
+});
+
+// ─── Q3: requireConfirmedUser rolled out across portal pages ─────────────────
+//
+// Each portal entry point must call requireConfirmedUser (or live under a
+// layout that does). Test the layouts first; then assert the standalone
+// pages in /practice, /admin, /dashboard.
+
+const PORTAL_FILES = [
+  'app/patient/layout.tsx',
+  'app/provider/layout.tsx',
+  'app/practice/page.tsx',
+  'app/practice/bills/new/page.tsx',
+  'app/practice/members/page.tsx',
+  'app/practice/setup/page.tsx',
+  'app/admin/page.tsx',
+  'app/admin/paystack-test/page.tsx',
+  'app/admin/refunds/page.tsx',
+  'app/dashboard/page.tsx',
+];
+
+describe('portal entry points — email-confirmed gate via requireConfirmedUser', () => {
+  it.each(PORTAL_FILES)('%s imports + calls requireConfirmedUser', (path) => {
+    const src = readSrc(path);
+    expect(src).toMatch(/from\s+['"]@\/lib\/auth\/requireConfirmedUser['"]/);
+    expect(src).toMatch(/await\s+requireConfirmedUser\s*\(/);
+  });
+});
+
+// ─── Q1: trading-gate RLS migration + RLS test fixture ──────────────────────
+
+describe('migration 0043 — trading-gate RLS', () => {
+  const src = readSrc('supabase/migrations/0043_trading_gate_rls.sql');
+
+  it('declares the practice_can_trade(uuid) function', () => {
+    expect(src).toMatch(/CREATE OR REPLACE FUNCTION practice_can_trade/);
+    expect(src).toMatch(/SECURITY DEFINER/);
+  });
+
+  it('checks status = approved AND >=1 active provider', () => {
+    expect(src).toMatch(/status\s*=\s*'approved'/);
+    expect(src).toMatch(/role\s*=\s*'provider'/);
+    expect(src).toMatch(/active\s*=\s*true/);
+  });
+
+  it.each([
+    'applications',
+    'plans',
+    'payments',
+  ])('tightens the INSERT policy on %s with is_practice_member AND practice_can_trade', (table) => {
+    // Find the CREATE POLICY ... ON <table> FOR INSERT ... block (ends at
+    // the closing ");"). split() returned overlapping chunks; a direct
+    // regex extraction is unambiguous.
+    const re = new RegExp(
+      `CREATE\\s+POLICY[\\s\\S]*?ON\\s+${table}[\\s\\S]*?FOR\\s+INSERT[\\s\\S]*?\\);`,
+      'i',
+    );
+    const match = src.match(re);
+    expect(match, `INSERT policy block for ${table} not found`).not.toBeNull();
+    const block = match![0];
+    expect(block).toContain('is_practice_member');
+    expect(block).toContain('practice_can_trade');
+  });
+
+  it('RLS test fixture exists and runs inside a transaction', () => {
+    const fixture = readSrc('scripts/test-trading-gate-rls.sql');
+    expect(fixture).toContain('BEGIN');
+    expect(fixture).toContain('ROLLBACK');
+    expect(fixture).toMatch(/scenario 1.*pending/i);
+    expect(fixture).toMatch(/scenario 2.*approved.*no providers/i);
+    expect(fixture).toMatch(/scenario 3.*approved.*provider/i);
+  });
+});

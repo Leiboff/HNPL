@@ -32,7 +32,13 @@ export type CreatePracticeInput = {
 export type CreatePracticeResult = {
   error:                string | null;
   success:              boolean;
-  requiresManualLogin?: boolean;
+  // When true, the caller must send the user to /verify-email to enter the
+  // 6-digit OTP Supabase just emailed them. There is NO session yet — they
+  // are an unconfirmed auth user, and the trading gate (status='pending')
+  // would block them from doing anything useful in the portal until
+  // verifyOtp + admin approval are both done anyway.
+  needsVerification?:   boolean;
+  email?:               string;
 };
 
 function svcClient() {
@@ -80,11 +86,24 @@ function validate(input: CreatePracticeInput): string | null {
 
 // ─── createPractice ─────────────────────────────────────────────────────────
 //
-// Phase 2 shape: only the seven things we actually need to create a practice
-// account. Banking, HPCSA, CIPC, admin SA ID, admin_is_provider, and the
-// team-members array are all collected later (Phase 3 in-portal Get-paid +
-// Phase 4 on /practice/members). Practice is created with status='pending';
-// admin approval queue in Phase 3 flips it.
+// Phase 2 shape: only the things we need to create a practice account.
+// Banking, HPCSA, CIPC, admin SA ID, admin_is_provider, and team members
+// are all collected later. Practice is created with status='pending'.
+//
+// Email OTP gate (added Phase 2.5):
+//   Uses supabase.auth.signUp() to create the admin user — this triggers
+//   Supabase to email the 6-digit verification OTP (template uses
+//   {{ .Token }}). The user is UNCONFIRMED at this point and has NO
+//   session. We then write the practice + member rows via the service-role
+//   client (which doesn't care about the auth user's confirmed_at), and
+//   return needsVerification:true. The caller redirects to /verify-email,
+//   where supabase.auth.verifyOtp({type:'email'}) confirms the account
+//   and creates the session.
+//
+//   Importantly, the previous flow's "pre-confirm-and-auto-login" pair has
+//   been REMOVED — that path auto-confirmed the user and minted a session,
+//   bypassing email verification entirely. The source-text regression
+//   tests in app/signup/signup-forms.test.ts lock that out.
 
 export async function createPractice(input: CreatePracticeInput): Promise<CreatePracticeResult> {
   const validationError = validate(input);
@@ -93,47 +112,67 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
   // Phase 1 validators already proved the phone parses.
   const normalizedPhone = normalizePhoneZA(input.phone, { allowLandline: true })!;
 
+  const email      = input.email.trim().toLowerCase();
   const svc        = svcClient();
   const practiceId = crypto.randomUUID();
   let   adminUserId: string | null = null;
 
   try {
-    // 1. Create the admin's auth user.
-    const { data: adminAuth, error: authErr } = await svc.auth.admin.createUser({
-      email:          input.email.trim().toLowerCase(),
-      password:       input.password,
-      email_confirm:  true,
-      user_metadata: {
-        role:                 'practice_admin',
-        first_name:           input.firstName.trim(),
-        last_name:            input.lastName.trim(),
-        phone:                normalizedPhone,
-        must_change_password: false,
+    // 0. OTP-abandon recovery — if a profile already exists for this
+    //    email and the auth user is still unconfirmed, re-fire the OTP
+    //    and route the user back to /verify-email instead of dead-ending
+    //    on a "user already registered" error from signUp().
+    //
+    //    As with the patient flow: we do NOT touch the user's stored
+    //    password or metadata on this branch — that would be a
+    //    password-reset side-channel.
+    const { data: existingProfile } = await svc
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+    if (existingProfile) {
+      const { data: { user: existingUser } } = await svc.auth.admin.getUserById(existingProfile.id);
+      if (existingUser && !existingUser.email_confirmed_at) {
+        await svc.auth.resend({ type: 'signup', email });
+        return { error: null, success: true, needsVerification: true, email };
+      }
+      return { error: 'An account with this email already exists. Please sign in instead.', success: false };
+    }
+
+    // 1. Sign up the admin via the SSR client. With email-confirmation
+    //    enforced in the Supabase dashboard this:
+    //      • creates the auth.users row (email_confirmed_at = NULL)
+    //      • fires the profile-creation trigger via user_metadata
+    //      • sends the signup OTP via the configured email template
+    //      • returns { user, session: null }  — no live session yet
+    const supabase = await createClient();
+    const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+      email,
+      password: input.password,
+      options: {
+        data: {
+          role:                 'practice_admin',
+          first_name:           input.firstName.trim(),
+          last_name:            input.lastName.trim(),
+          phone:                normalizedPhone,
+          must_change_password: false,
+        },
       },
     });
-    if (authErr || !adminAuth.user) {
-      return { error: authErr?.message ?? 'Failed to create admin account.', success: false };
+    if (signUpErr || !signUpData.user) {
+      return { error: signUpErr?.message ?? 'Failed to create admin account.', success: false };
     }
-    adminUserId = adminAuth.user.id;
+    adminUserId = signUpData.user.id;
 
-    // 2. Insert the practice.
-    //
-    //   • status = 'pending' — every new practice waits for admin approval.
-    //     Trading gate (Phase 3) checks status='approved' before allowing
-    //     bill / plan creation.
-    //   • practices.email   = the admin's email (also their login).
-    //   • practices.admin_email is intentionally NOT written here — column
-    //     is being deprecated in Phase 5.
-    //   • fee_percent defaults to 6.00 via the column default.
-    //   • Banking / HPCSA / CIPC / admin SA ID collected later via the
-    //     "Get paid" surface (Phase 3).
+    // 2. Insert the practice (service-role, RLS bypass — see Phase 2 doc).
     const { error: practiceErr } = await svc.from('practices').insert({
       id:                           practiceId,
       owner_id:                     adminUserId,
       name:                         input.practiceName.trim(),
       specialty:                    input.specialty,
       practice_registration_number: input.practiceRegNumber.trim() || null,
-      email:                        input.email.trim().toLowerCase(),
+      email,
       phone:                        normalizedPhone,
       address_line1:                input.addressLine1.trim(),
       address_line2:                input.addressLine2.trim() || null,
@@ -157,22 +196,16 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     });
     if (memberErr) throw new Error(`Member: ${memberErr.message}`);
 
-    // 4. Sign the admin in so they land on /practice with a live session.
-    const supabase = await createClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email:    input.email.trim().toLowerCase(),
-      password: input.password,
-    });
-    if (signInError) {
-      // Practice was created; the sign-in just didn't take (e.g. email
-      // unconfirmed). The caller redirects to /login.
-      return { error: null, success: true, requiresManualLogin: true };
-    }
-
-    return { error: null, success: true };
+    // 4. Done. The user is unconfirmed and has no session. The caller will
+    //    redirect to /verify-email?email=...&next=/practice. After
+    //    verifyOtp the user lands on the practice dashboard, where the
+    //    trading gate (status='pending') will show the "awaiting approval"
+    //    panel until an HNPL admin approves the practice.
+    return { error: null, success: true, needsVerification: true, email };
   } catch (err) {
     // Best-effort rollback so a failed insert doesn't leave an orphan auth
-    // user or a broken practice row behind.
+    // user or a broken practice row behind. We never silently keep
+    // partial state.
     if (practiceId)  await svc.from('practices').delete().eq('id', practiceId);
     if (adminUserId) await svc.auth.admin.deleteUser(adminUserId);
     const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
