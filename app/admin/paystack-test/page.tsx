@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { paystackRequest } from '@/lib/paystack';
 
 type PaystackListResponse = {
@@ -27,10 +27,7 @@ async function testPaystackConnection(): Promise<TestResult> {
 }
 
 export default async function PaystackTestPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  const { user, supabase } = await requireConfirmedUser({ next: '/admin/paystack-test' });
 
   const { data: profile } = await supabase
     .from('profiles')

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import { ActionButton, CollectionActions, FirstPaymentActions } from './OpsActions';
 import { calculateFee } from '@/lib/finance';
@@ -398,13 +399,7 @@ function TH({ children }: { children: ReactNode }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function AdminDashboardPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
+  const { user, supabase } = await requireConfirmedUser({ next: '/admin' });
 
   const { data: profile } = await supabase
     .from('profiles')

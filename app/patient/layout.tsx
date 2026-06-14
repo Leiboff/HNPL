@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PatientNav from './PatientNav';
 import PatientBottomNav from './PatientBottomNav';
 import LogoutButton from './LogoutButton';
@@ -9,10 +9,9 @@ export default async function PatientLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  // Defense-in-depth: bounce to /login when no session, /verify-email when
+  // session exists but the email is still unconfirmed.
+  const { user, supabase } = await requireConfirmedUser({ next: '/patient' });
 
   const { data: profile } = await supabase
     .from('profiles')

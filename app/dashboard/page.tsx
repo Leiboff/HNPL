@@ -1,14 +1,8 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
+  const { user, supabase } = await requireConfirmedUser({ next: '/dashboard' });
 
   const { data: profile, error } = await supabase
     .from('profiles')

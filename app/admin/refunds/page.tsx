@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { paystackRequest } from '@/lib/paystack';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import { ActionButton } from '@/app/admin/OpsActions';
@@ -249,10 +250,7 @@ function RefundTable({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function AdminRefundsPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  const { user, supabase } = await requireConfirmedUser({ next: '/admin/refunds' });
 
   const { data: profile } = await supabase
     .from('profiles')

@@ -1,13 +1,12 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 
 export default async function ProviderLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  // Defense-in-depth: bounce to /login when no session, /verify-email when
+  // session exists but the email is still unconfirmed.
+  const { user, supabase } = await requireConfirmedUser({ next: '/provider' });
 
   const { data: profile } = await supabase
     .from('profiles')

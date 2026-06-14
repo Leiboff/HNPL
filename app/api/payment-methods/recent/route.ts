@@ -8,6 +8,12 @@ export async function GET(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ card: null }, { status: 401 });
   }
+  // Defense-in-depth: API routes use a 401 instead of the redirect that
+  // requireConfirmedUser would do for a server-component page. An
+  // unconfirmed user can't read their own payment methods either.
+  if (!user.email_confirmed_at) {
+    return NextResponse.json({ card: null, error: 'email_not_confirmed' }, { status: 401 });
+  }
 
   const sinceParam = request.nextUrl.searchParams.get('since');
   let windowStart: string;

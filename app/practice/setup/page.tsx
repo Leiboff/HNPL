@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import SetupForm from './SetupForm';
 
 type PracticeFormData = {
@@ -62,13 +63,7 @@ async function createPractice(data: PracticeFormData): Promise<{ error: string |
 }
 
 export default async function PracticeSetupPage() {
-  const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect('/login');
-  }
+  const { user, supabase } = await requireConfirmedUser({ next: '/practice/setup' });
 
   const { data: profile } = await supabase
     .from('profiles')

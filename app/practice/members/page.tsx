@@ -1,15 +1,12 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PracticeShell from '../PracticeShell';
 import MembersView from './MembersView';
 import type { MemberRow } from './MembersView';
 
 export default async function MembersPage() {
-  const supabase = await createClient();
-
-  // ── Step 1: auth ──────────────────────────────────────────────────────────
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  // ── Step 1: auth + email-confirmed gate ───────────────────────────────────
+  const { user, supabase } = await requireConfirmedUser({ next: '/practice/members' });
 
   // ── Step 2: role ──────────────────────────────────────────────────────────
   const { data: profile } = await supabase
