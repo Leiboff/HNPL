@@ -77,8 +77,17 @@ type PaymentMethod = {
   created_at:     string;
 };
 
-const ACTIVE_PLAN_STATUSES   = new Set(['active', 'pending_first_payment']);
-const HISTORY_PLAN_STATUSES  = new Set(['completed', 'defaulted', 'cancelled', 'declined']);
+// Plan grouping for the detail page:
+//   active   — plans currently being collected
+//   history  — plans that actually RAN (completed or defaulted); these
+//              tell us how the patient has behaved
+//   nonstart — never ran: applied-but-not-accepted, declined, or
+//              cancelled. Zero bearing on standing/reliability; shown
+//              behind a collapsed disclosure so they don't compete
+//              visually with real plans.
+const ACTIVE_PLAN_STATUSES    = new Set(['active', 'pending_first_payment']);
+const HISTORY_PLAN_STATUSES   = new Set(['completed', 'defaulted']);
+const NONSTART_PLAN_STATUSES  = new Set(['pending_acceptance', 'declined', 'cancelled']);
 
 const PLAN_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
   pending_acceptance:    { label: 'Pending acceptance',     cls: 'bg-gray-100  text-gray-700  border-gray-200'  },
@@ -222,9 +231,10 @@ export default async function CustomerDetailPage({
   const r      = computeReliability(plans, payments, today);
   const standing = STANDING_DISPLAY[r.standing];
 
-  // ── 6. Group plans into active vs. history ──────────────────────────────
-  const activePlans  = plans.filter(p => ACTIVE_PLAN_STATUSES.has(p.status));
-  const historyPlans = plans.filter(p => HISTORY_PLAN_STATUSES.has(p.status) || p.status === 'pending_acceptance');
+  // ── 6. Group plans into active / history / non-starts ──────────────────
+  const activePlans   = plans.filter(p => ACTIVE_PLAN_STATUSES.has(p.status));
+  const historyPlans  = plans.filter(p => HISTORY_PLAN_STATUSES.has(p.status));
+  const nonStartPlans = plans.filter(p => NONSTART_PLAN_STATUSES.has(p.status));
 
   // ── 7. Payments grouped by plan_id for plan-level summaries ─────────────
   const paymentsByPlan = new Map<string, Payment[]>();
@@ -282,34 +292,53 @@ export default async function CustomerDetailPage({
           </div>
 
           {/* Reliability tiles */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:max-w-md w-full lg:w-auto">
-            <Tile label="Financed"    value={formatRand(r.total_financed)}   />
-            <Tile label="Collected"   value={formatRand(r.total_collected)}  tone="good" />
-            <Tile label="Outstanding" value={formatRand(r.total_outstanding)} tone={r.total_outstanding > 0 ? 'warn' : 'default'} />
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:max-w-xl w-full lg:w-auto">
+            <Tile label="Financed"  value={formatRand(r.total_financed)} />
+            <Tile label="Collected" value={formatRand(r.total_collected)} tone="good" />
+            <Tile
+              label="Outstanding"
+              value={formatRand(r.total_outstanding)}
+              tone={r.outstanding_at_risk > 0 ? 'alert' : r.total_outstanding > 0 ? 'warn' : 'default'}
+              sub={
+                r.total_outstanding === 0
+                  ? '—'
+                  : r.outstanding_at_risk === 0
+                    ? 'all on track'
+                    : r.outstanding_on_track === 0
+                      ? `${formatRand(r.outstanding_at_risk)} at risk`
+                      : `${formatRand(r.outstanding_at_risk)} at risk · ${formatRand(r.outstanding_on_track)} on track`
+              }
+            />
             <Tile
               label="On-time"
-              value={formatPercent(r.on_time_rate)}
-              sub={r.attempted_count > 0 ? `of ${r.attempted_count} attempted` : 'no attempts'}
+              value={formatPercent(r.reliability_rate)}
+              sub={
+                r.salary_date_due_count === 0
+                  ? 'no salary-date collections yet'
+                  : `${r.salary_date_on_time_count} of ${r.salary_date_due_count} salary-date, first try`
+              }
             />
           </div>
         </div>
 
-        {/* Flags strip */}
-        {(r.has_overdue || r.has_written_off || r.failed_count > 0) && (
+        {/* Salary-date risk count strip — visible whenever there are
+            any issues. Counts exclude instalment 1 (it's charged at
+            acceptance and doesn't reflect on the patient). */}
+        {(r.has_overdue || r.salary_date_failed_count > 0 || r.salary_date_written_off_count > 0) && (
           <div className="mt-4 flex gap-2 flex-wrap text-xs">
             {r.has_overdue && (
               <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 text-amber-900 px-2 py-0.5 font-medium">
                 Has overdue collection
               </span>
             )}
-            {r.failed_count > 0 && (
+            {r.salary_date_failed_count > 0 && (
               <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 text-red-700 px-2 py-0.5 font-medium">
-                {r.failed_count} failed installment{r.failed_count === 1 ? '' : 's'}
+                {r.salary_date_failed_count} failed installment{r.salary_date_failed_count === 1 ? '' : 's'}
               </span>
             )}
-            {r.has_written_off && (
+            {r.salary_date_written_off_count > 0 && (
               <span className="inline-flex items-center rounded-full border border-red-300 bg-red-100 text-red-900 px-2 py-0.5 font-medium">
-                {r.written_off_count} written off
+                {r.salary_date_written_off_count} written off
               </span>
             )}
           </div>
@@ -332,14 +361,48 @@ export default async function CustomerDetailPage({
         )}
       </Section>
 
-      {/* ── Plan history ─────────────────────────────────────────────── */}
+      {/* ── Plan history (plans that actually ran) ──────────────────── */}
       {historyPlans.length > 0 && (
         <Section
           title="Plan history"
-          subtitle={`${historyPlans.length} completed / cancelled / declined plan${historyPlans.length === 1 ? '' : 's'}.`}
+          subtitle={`${historyPlans.length} completed / defaulted plan${historyPlans.length === 1 ? '' : 's'}.`}
         >
           <PlansList plans={historyPlans} paymentsByPlan={paymentsByPlan} today={today} />
         </Section>
+      )}
+
+      {/* ── Non-starts (low-prominence) ──────────────────────────────── */}
+      {nonStartPlans.length > 0 && (
+        <section className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <details>
+            <summary className="text-sm text-gray-500 cursor-pointer select-none hover:text-gray-800">
+              {nonStartPlans.length} declined / cancelled application{nonStartPlans.length === 1 ? '' : 's'}
+              <span className="ml-2 text-xs text-gray-400">— never ran, zero bearing on standing</span>
+            </summary>
+            <ul className="mt-3 space-y-1 text-sm">
+              {nonStartPlans.map((plan) => {
+                const practice = asObject(plan.practices);
+                const cfg      = PLAN_STATUS_LABEL[plan.status] ?? { label: plan.status, cls: 'bg-gray-100 text-gray-600 border-gray-200' };
+                return (
+                  <li key={plan.id} className="flex items-center justify-between gap-3 py-1">
+                    <div className="min-w-0">
+                      <span className="text-gray-700">{formatRand(Number(plan.total_amount))}</span>
+                      {plan.invoice_number && (
+                        <span className="ml-2 font-mono text-xs text-gray-500">{plan.invoice_number}</span>
+                      )}
+                      <span className="ml-2 text-xs text-gray-500">
+                        {practice?.name ?? '—'} · {formatDateStr(plan.created_at.slice(0, 10))}
+                      </span>
+                    </div>
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cfg.cls}`}>
+                      {cfg.label}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        </section>
       )}
 
       {/* ── Payment ledger ───────────────────────────────────────────── */}
@@ -535,9 +598,13 @@ function Tile({ label, value, sub, tone = 'default' }: {
   label: string;
   value: string;
   sub?:  string;
-  tone?: 'default' | 'good' | 'warn';
+  tone?: 'default' | 'good' | 'warn' | 'alert';
 }) {
-  const cls = tone === 'good' ? 'text-green-700' : tone === 'warn' ? 'text-amber-700' : 'text-gray-900';
+  const cls =
+    tone === 'good'  ? 'text-green-700'
+    : tone === 'warn'  ? 'text-amber-700'
+    : tone === 'alert' ? 'text-red-700'
+    :                    'text-gray-900';
   return (
     <div className="rounded-xl bg-white/80 border border-white/60 p-3">
       <p className="text-[10px] uppercase tracking-wide text-gray-500 font-medium">{label}</p>
@@ -598,7 +665,13 @@ function PlansList({ plans, paymentsByPlan, today }: {
               <div>
                 <p className="text-gray-400 uppercase tracking-wide text-[10px]">Progress</p>
                 <p className="text-gray-800">
-                  {collected.length} of {planPayments.length || (plan.plan_type ?? '?')} collected
+                  {/* A plan with no installment rows shows a clean "No installments"
+                      — never a literal "?" placeholder. plan_type is the trusted
+                      total when present (2 or 3); otherwise fall back to the
+                      payment-row count. */}
+                  {planPayments.length === 0
+                    ? 'No installments'
+                    : `${collected.length} of ${plan.plan_type ?? planPayments.length} collected`}
                 </p>
               </div>
               <div>

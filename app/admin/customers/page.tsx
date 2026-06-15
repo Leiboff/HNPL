@@ -126,7 +126,7 @@ export default async function AdminCustomersPage({
         .in('patient_id', patientIds),
       supabase
         .from('payments')
-        .select('id, patient_id, amount, status, due_date, retry_count')
+        .select('id, patient_id, amount, status, due_date, retry_count, instalment_number')
         .in('patient_id', patientIds),
     ]);
 
@@ -145,12 +145,12 @@ export default async function AdminCustomersPage({
 
   // ── 3. Per-row computed shape for the table ─────────────────────────────
   type Display = {
-    profile:        ProfileRow;
-    activePlans:    number;
-    standing:       Standing;
-    outstanding:    number;
-    onTimeRate:     number | null;
-    attempted:      number;
+    profile:           ProfileRow;
+    activePlans:       number;
+    standing:          Standing;
+    outstanding:       number;
+    reliabilityRate:   number | null;
+    salaryDateDue:     number;
   };
 
   const ACTIVE_PLAN_STATUSES = new Set(['active', 'pending_first_payment']);
@@ -161,11 +161,11 @@ export default async function AdminCustomersPage({
     const r    = computeReliability(ps, pays, today);
     return {
       profile,
-      activePlans: ps.filter(pl => ACTIVE_PLAN_STATUSES.has(pl.status)).length,
-      standing:    r.standing,
-      outstanding: r.total_outstanding,
-      onTimeRate:  r.on_time_rate,
-      attempted:   r.attempted_count,
+      activePlans:     ps.filter(pl => ACTIVE_PLAN_STATUSES.has(pl.status)).length,
+      standing:        r.standing,
+      outstanding:     r.total_outstanding,
+      reliabilityRate: r.reliability_rate,
+      salaryDateDue:   r.salary_date_due_count,
     };
   });
 
@@ -274,8 +274,8 @@ export default async function AdminCustomersPage({
                           {r.outstanding > 0 ? formatRand(r.outstanding) : '—'}
                         </td>
                         <td className="px-4 py-3 text-gray-700 tabular-nums whitespace-nowrap">
-                          {formatPercent(r.onTimeRate)}
-                          {r.attempted > 0 && <span className="text-xs text-gray-400 ml-1">({r.attempted})</span>}
+                          {formatPercent(r.reliabilityRate)}
+                          {r.salaryDateDue > 0 && <span className="text-xs text-gray-400 ml-1">({r.salaryDateDue})</span>}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${standing.cls}`}>
@@ -328,7 +328,7 @@ export default async function AdminCustomersPage({
                     </div>
                     <div>
                       <p className="text-gray-400 uppercase tracking-wide text-[10px]">On-time</p>
-                      <p className="text-gray-900 font-semibold tabular-nums">{formatPercent(r.onTimeRate)}</p>
+                      <p className="text-gray-900 font-semibold tabular-nums">{formatPercent(r.reliabilityRate)}</p>
                     </div>
                   </div>
                 </Link>
