@@ -7,11 +7,13 @@ import { usePathname } from 'next/navigation';
 // PatientBottomNav blur/glass treatment for visual consistency.
 
 type Counts = {
-  pendingPractices: number;
-  outstandingRefunds: number;
+  pendingPractices:    number;
+  outstandingRefunds:  number;
+  overdueCollections:  number;
+  pendingPayouts:      number;
 };
 
-function OperationsIcon({ active }: { active: boolean }) {
+function DashboardIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3"  width="7" height="7" rx="1" />
@@ -31,6 +33,25 @@ function PracticesIcon({ active }: { active: boolean }) {
   );
 }
 
+function CollectionsIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
+      <path d="M6 15h4" />
+    </svg>
+  );
+}
+
+function PayoutsIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 1v22" />
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </svg>
+  );
+}
+
 function RefundsIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
@@ -41,9 +62,11 @@ function RefundsIcon({ active }: { active: boolean }) {
 }
 
 const LINKS = [
-  { href: '/admin',                          label: 'Ops',       Icon: OperationsIcon                                },
-  { href: '/admin/practices?status=pending', label: 'Practices', Icon: PracticesIcon, countKey: 'pendingPractices' as const },
-  { href: '/admin/refunds',                  label: 'Refunds',   Icon: RefundsIcon,   countKey: 'outstandingRefunds' as const },
+  { href: '/admin',                          label: 'Home',        Icon: DashboardIcon                                                           },
+  { href: '/admin/practices?status=pending', label: 'Practices',   Icon: PracticesIcon,   countKey: 'pendingPractices'   as const },
+  { href: '/admin/collections?chip=overdue', label: 'Collect',     Icon: CollectionsIcon, countKey: 'overdueCollections' as const },
+  { href: '/admin/payouts',                  label: 'Payouts',     Icon: PayoutsIcon,     countKey: 'pendingPayouts'     as const },
+  { href: '/admin/refunds',                  label: 'Refunds',     Icon: RefundsIcon,     countKey: 'outstandingRefunds' as const },
 ];
 
 export default function AdminBottomNav({ counts }: { counts: Counts }) {

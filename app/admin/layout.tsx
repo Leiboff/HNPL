@@ -30,9 +30,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     else                                                                          redirect('/login');
   }
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   const [
     { count: pendingPractices },
     { count: outstandingRefunds },
+    { count: overdueCollections },
+    { count: pendingPayouts },
   ] = await Promise.all([
     supabase.from('practices').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase
@@ -40,11 +44,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       .select('*', { count: 'exact', head: true })
       .in('status', ['initiated', 'pending'])
       .lt('initiated_at', new Date(Date.now() - 60 * 60 * 1000).toISOString()),
+    // Overdue = scheduled past due_date (cron hasn't picked up yet).
+    supabase.from('payments').select('*', { count: 'exact', head: true })
+      .eq('status', 'scheduled').lt('due_date', todayStr),
+    supabase.from('payouts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
   ]);
 
   const counts = {
-    pendingPractices:   pendingPractices ?? 0,
-    outstandingRefunds: outstandingRefunds ?? 0,
+    pendingPractices:    pendingPractices    ?? 0,
+    outstandingRefunds:  outstandingRefunds  ?? 0,
+    overdueCollections:  overdueCollections  ?? 0,
+    pendingPayouts:      pendingPayouts      ?? 0,
   };
 
   return (

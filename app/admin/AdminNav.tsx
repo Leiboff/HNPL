@@ -11,14 +11,18 @@ import { usePathname } from 'next/navigation';
 // re-querying.
 
 type Counts = {
-  pendingPractices: number;
-  outstandingRefunds: number;
+  pendingPractices:    number;
+  outstandingRefunds:  number;
+  overdueCollections:  number;
+  pendingPayouts:      number;
 };
 
 const NAV_LINKS = [
-  { href: '/admin',                            label: 'Operations' },
-  { href: '/admin/practices?status=pending',   label: 'Practices', countKey: 'pendingPractices' as const },
-  { href: '/admin/refunds',                    label: 'Refunds',   countKey: 'outstandingRefunds' as const },
+  { href: '/admin',                            label: 'Dashboard'                                                            },
+  { href: '/admin/practices?status=pending',   label: 'Practices',   countKey: 'pendingPractices'    as const                },
+  { href: '/admin/collections?chip=overdue',   label: 'Collections', countKey: 'overdueCollections'  as const                },
+  { href: '/admin/payouts',                    label: 'Payouts',     countKey: 'pendingPayouts'      as const                },
+  { href: '/admin/refunds',                    label: 'Refunds',     countKey: 'outstandingRefunds'  as const                },
 ];
 
 export default function AdminNav({ counts }: { counts: Counts }) {
