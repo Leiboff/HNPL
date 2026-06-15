@@ -20,6 +20,7 @@ type Counts = {
 const NAV_LINKS = [
   { href: '/admin',                            label: 'Dashboard'                                                            },
   { href: '/admin/practices?status=pending',   label: 'Practices',   countKey: 'pendingPractices'    as const                },
+  { href: '/admin/customers',                  label: 'Customers'                                                            },
   { href: '/admin/collections?chip=overdue',   label: 'Collections', countKey: 'overdueCollections'  as const                },
   { href: '/admin/payouts',                    label: 'Payouts',     countKey: 'pendingPayouts'      as const                },
   { href: '/admin/refunds',                    label: 'Refunds',     countKey: 'outstandingRefunds'  as const                },

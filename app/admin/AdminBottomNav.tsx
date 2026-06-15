@@ -33,6 +33,17 @@ function PracticesIcon({ active }: { active: boolean }) {
   );
 }
 
+function CustomersIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
 function CollectionsIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
@@ -61,9 +72,13 @@ function RefundsIcon({ active }: { active: boolean }) {
   );
 }
 
+// 6 items at 375px — each item is ~62px wide, still comfortable. We
+// drop a couple of labels to keep the row scan-friendly:
+//   "Practices" → "Practice"   "Collections" → "Collect"
 const LINKS = [
   { href: '/admin',                          label: 'Home',        Icon: DashboardIcon                                                           },
-  { href: '/admin/practices?status=pending', label: 'Practices',   Icon: PracticesIcon,   countKey: 'pendingPractices'   as const },
+  { href: '/admin/practices?status=pending', label: 'Practice',    Icon: PracticesIcon,   countKey: 'pendingPractices'   as const },
+  { href: '/admin/customers',                label: 'Customers',   Icon: CustomersIcon                                                            },
   { href: '/admin/collections?chip=overdue', label: 'Collect',     Icon: CollectionsIcon, countKey: 'overdueCollections' as const },
   { href: '/admin/payouts',                  label: 'Payouts',     Icon: PayoutsIcon,     countKey: 'pendingPayouts'     as const },
   { href: '/admin/refunds',                  label: 'Refunds',     Icon: RefundsIcon,     countKey: 'outstandingRefunds' as const },

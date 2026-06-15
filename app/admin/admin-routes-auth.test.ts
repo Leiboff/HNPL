@@ -24,6 +24,8 @@ const ADMIN_PAGES = [
   'app/admin/collections/page.tsx',
   'app/admin/collections/[paymentId]/page.tsx',
   'app/admin/collections/cron/page.tsx',
+  'app/admin/customers/page.tsx',
+  'app/admin/customers/[patientId]/page.tsx',
   'app/admin/payouts/page.tsx',
   'app/admin/practices/page.tsx',
   'app/admin/practices/[id]/page.tsx',
