@@ -31,19 +31,51 @@ type Phase = 'idle' | 'verifying' | 'error' | 'success';
 
 const COOLDOWN_SECONDS = 45;
 
-// Supabase error messages we recognise. Matched on substring because the
-// upstream wording occasionally shifts.
-function classifyVerifyError(message: string): 'expired' | 'rate_limited' | 'wrong_code' {
-  const m = message.toLowerCase();
-  if (m.includes('expired'))                                  return 'expired';
-  if (m.includes('too many') || m.includes('rate'))           return 'rate_limited';
+// Classify Supabase's verifyOtp error.
+//
+// IMPORTANT — message-based heuristics are unsafe here. GoTrue returns
+// the message "Token has expired or is invalid" for BOTH:
+//   • A genuinely expired OTP (past the 600s window)
+//   • A wrong-but-current code the user typo'd
+// We previously substring-matched 'expired' in the message, which
+// classified every wrong code as expired. The structured error.code
+// field is the authoritative signal:
+//   • 'otp_expired'  — truly expired
+//   • 'over_*_rate_limit', 'over_request_rate_limit', etc. — rate limit
+//   • anything else (including the misleading message) — wrong code
+type SupabaseAuthError = {
+  code?:    string;
+  message?: string;
+  status?:  number;
+};
+
+function classifyVerifyError(error: SupabaseAuthError): 'expired' | 'rate_limited' | 'wrong_code' {
+  const code = (error.code ?? '').toLowerCase();
+
+  // Authoritative signal of true expiry.
+  if (code === 'otp_expired') return 'expired';
+
+  // Supabase rate-limit codes all carry 'rate_limit' in the slug.
+  if (code.includes('rate_limit') || code === 'too_many_requests') return 'rate_limited';
+
+  // Fallback to HTTP status / message ONLY when no code field was set
+  // (older Supabase auth versions, transport-level failures).
+  if (!code) {
+    if (error.status === 429) return 'rate_limited';
+    const m = (error.message ?? '').toLowerCase();
+    if (m.includes('too many requests') || m.includes('rate limit')) return 'rate_limited';
+    // We deliberately do NOT match 'expired' in the message here — see
+    // the comment block above. The default for any verifyOtp failure
+    // without a structured code is "wrong code".
+  }
+
   return 'wrong_code';
 }
 
 const ERROR_TEXT: Record<'expired' | 'rate_limited' | 'wrong_code', string> = {
   expired:      'That code has expired. Tap "Resend code" to get a new one.',
   rate_limited: 'Too many attempts. Please wait a minute and try again.',
-  wrong_code:   'That code doesn\'t match. Please check the digits and try again.',
+  wrong_code:   'That code is incorrect. Please check and try again.',
 };
 
 export default function VerifyEmailForm({ email, next }: Props) {
@@ -78,7 +110,10 @@ export default function VerifyEmailForm({ email, next }: Props) {
 
     if (error) {
       setPhase('error');
-      setErrorKey(classifyVerifyError(error.message ?? ''));
+      // Pass the full error object — classifyVerifyError reads error.code
+      // (authoritative) first, then falls back to status / message only
+      // when no structured code is set. See the comment on the function.
+      setErrorKey(classifyVerifyError(error as SupabaseAuthError));
       return;
     }
 
