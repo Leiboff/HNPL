@@ -10,6 +10,8 @@ import {
   type DateRollup,
   type ChipKey,
 } from './_lib/dateRollup';
+import { parseRangeParams, formatPeriodLabel } from './_lib/dateRange';
+import CollectionsDateRangePicker from './CollectionsDateRangePicker';
 
 // ─── /admin/collections ─────────────────────────────────────────────────────
 //
@@ -28,7 +30,7 @@ import {
 //   payments.status='collected'                           → collected
 //   payments.status='written_off'                         → written_off
 
-type SearchParams = { chip?: string };
+type SearchParams = { chip?: string; from?: string; to?: string };
 
 const CHIP_DEFINITIONS: Array<{
   key:         ChipKey;
@@ -115,6 +117,23 @@ export default async function AdminCollectionsPage({
   const chip   = parseChip(params.chip);
   const today  = new Date().toISOString().slice(0, 10);
 
+  // Resolve the active range. Absent from/to params → chip default;
+  // explicit empty strings → user-cleared (all-time). See
+  // [[dateRange-test]] for the contract.
+  const { from, to } = parseRangeParams({ from: params.from, to: params.to }, chip, today);
+  const hasRange = Boolean(from || to);
+
+  // Apply the range filter to a query builder. due_date is the lens
+  // — operational basis. (The dashboard's "Collected this month" sums
+  // by collected_at, which is a different lens. See report.)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function applyRange<Q extends { gte: any; lte: any }>(q: Q): Q {
+    let out = q;
+    if (from) out = out.gte('due_date', from);
+    if (to)   out = out.lte('due_date', to);
+    return out;
+  }
+
   // Fetch the payments in the chip's bucket (or all). Each chip maps
   // to a deterministic query — we keep the mapping in one place
   // rather than letting the chip key sprawl across the query builder.
@@ -151,6 +170,8 @@ export default async function AdminCollectionsPage({
       break;
   }
 
+  query = applyRange(query);
+
   // Row order doesn't matter to the rollup — we sort the rollups
   // themselves below. We still cap the rows so a misconfigured
   // chip can't blow up on a huge table.
@@ -163,13 +184,12 @@ export default async function AdminCollectionsPage({
   const rows = (rawRows ?? []) as unknown as PaymentRow[];
 
   // ── Counts per chip ──────────────────────────────────────────────────
-  // The chip bar shows live counts so the admin can scan "what
-  // needs my attention right now". One small query for status +
-  // due_date; bucketed locally with the same classifier the page uses.
-  const { data: rawAll } = await supabase
-    .from('payments')
-    .select('id, status, due_date')
-    .limit(50000);   // safety cap; collections volume is modest
+  // Range-scoped — switching chips keeps the user's range, and the
+  // chip counts reflect "how many in THIS range, per chip". Without
+  // a range applied the counts go global (all-time).
+  let countsQuery = supabase.from('payments').select('id, status, due_date').limit(50000);
+  countsQuery = applyRange(countsQuery);
+  const { data: rawAll } = await countsQuery;
 
   const counts: Record<ChipKey, number> = {
     overdue: 0, upcoming: 0, processing: 0, failed: 0, collected: 0, written_off: 0, all: 0,
@@ -184,11 +204,29 @@ export default async function AdminCollectionsPage({
   const rollups = rollupByDate(rows, today, sortModeForChip(chip));
 
   const visibleTotal = rows.reduce((s, r) => s + Number(r.amount), 0);
+  const periodLabel  = formatPeriodLabel(chip, from, to, today);
 
   // Only show the per-date status mix on the "all" chip — single-status
   // chips already have a uniform mix (overdue chip = all overdue, etc.)
   // and the breakdown is noise there.
   const showMix = chip === 'all';
+
+  // Switching chips preserves the user's range — but when navigating
+  // away from a chip that had a sensible default range to one whose
+  // default differs, we want the URL to be honest. Strategy: if the
+  // current range is the user's explicit choice (params present),
+  // preserve it on chip links; if it's a chip default (params absent),
+  // omit from/to from chip links so the next chip picks its own default.
+  const userExplicit = params.from !== undefined || params.to !== undefined;
+  function chipHref(key: ChipKey): string {
+    const sp = new URLSearchParams();
+    sp.set('chip', key);
+    if (userExplicit) {
+      sp.set('from', from);
+      sp.set('to',   to);
+    }
+    return `/admin/collections?${sp.toString()}`;
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
@@ -204,11 +242,22 @@ export default async function AdminCollectionsPage({
             </Link>
           </p>
         </div>
-        <div className="text-right text-sm text-gray-500 tabular-nums">
-          <span>{rows.length} row{rows.length === 1 ? '' : 's'}</span>
-          <span className="mx-2">·</span>
-          <span>{formatRand(visibleTotal)}</span>
+        <div className="text-right text-sm text-gray-700">
+          <p className="font-medium text-gray-900">{periodLabel}</p>
+          <p className="text-xs text-gray-500 tabular-nums mt-0.5">
+            {rows.length} {rows.length === 1 ? 'row' : 'rows'} · {formatRand(visibleTotal)}
+          </p>
         </div>
+      </div>
+
+      {/* Range picker */}
+      <div className="flex items-center gap-2">
+        <CollectionsDateRangePicker from={from} to={to} />
+        {hasRange && chip === 'overdue' && (
+          <span className="text-xs text-gray-500">
+            Range scopes overdue items by their <code>due_date</code> — clear to see all overdue regardless of when due.
+          </span>
+        )}
       </div>
 
       {/* Chips */}
@@ -219,7 +268,7 @@ export default async function AdminCollectionsPage({
           return (
             <Link
               key={def.key}
-              href={`/admin/collections?chip=${def.key}`}
+              href={chipHref(def.key)}
               title={def.description}
               className={
                 'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium border transition-colors '
@@ -241,7 +290,7 @@ export default async function AdminCollectionsPage({
       {rollups.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
           <p className="text-gray-500">
-            No collections in <strong>{CHIP_DEFINITIONS.find(c => c.key === chip)?.label}</strong>.
+            No rows for <strong>{periodLabel}</strong>.
           </p>
         </div>
       ) : (
