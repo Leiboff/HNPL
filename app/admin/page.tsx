@@ -1,10 +1,8 @@
 import type { ReactNode } from 'react';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import LogoutButton from '@/app/dashboard/LogoutButton';
 import { ActionButton, CollectionActions, FirstPaymentActions } from './OpsActions';
 import { calculateFee } from '@/lib/finance';
 import { paystackRequest } from '@/lib/paystack';
@@ -422,8 +420,6 @@ export default async function AdminDashboardPage() {
 
   const [
     { count: activePlansCount },
-    { count: outstandingRefundCount },
-    { count: pendingPracticeCount },
     { data: scheduledAmt },
     { data: collectedAmt },
     { data: pendingPayoutAmt },
@@ -435,8 +431,6 @@ export default async function AdminDashboardPage() {
     { data: rawFirstPayment },
   ] = await Promise.all([
     supabase.from('plans').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-    supabase.from('refunds').select('*', { count: 'exact', head: true }).in('status', ['initiated', 'pending']).lt('initiated_at', oneHourAgo),
-    supabase.from('practices').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('payments').select('amount').eq('status', 'scheduled'),
     supabase.from('payments').select('amount').eq('status', 'collected'),
     supabase.from('payouts').select('net_amount').eq('status', 'pending'),
@@ -500,55 +494,14 @@ export default async function AdminDashboardPage() {
   const payouts = (rawPayouts ?? []) as unknown as PayoutRow[];
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-base font-semibold text-gray-900">BetterNow</span>
-            <span className="text-xs font-medium text-gray-400 uppercase tracking-wide border border-gray-200 rounded px-1.5 py-0.5">
-              Ops
-            </span>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link
-              href="/admin/practices?status=pending"
-              className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
-                (pendingPracticeCount ?? 0) > 0 ? 'text-amber-600 hover:text-amber-700' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Practices
-              {(pendingPracticeCount ?? 0) > 0 && (
-                <span className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 min-w-[1.25rem] tabular-nums">
-                  {pendingPracticeCount}
-                </span>
-              )}
-            </Link>
-            <Link
-              href="/admin/refunds"
-              className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
-                (outstandingRefundCount ?? 0) > 0 ? 'text-amber-600 hover:text-amber-700' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Refunds
-              {(outstandingRefundCount ?? 0) > 0 && (
-                <span className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold px-1.5 py-0.5 min-w-[1.25rem] tabular-nums">
-                  {outstandingRefundCount}
-                </span>
-              )}
-            </Link>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
 
-      <main className="mx-auto max-w-7xl px-6 py-8 space-y-8 pb-16">
-
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Operations Dashboard</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            Welcome, {profile?.first_name ?? user.email}
-          </p>
-        </div>
+      <div>
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Operations</h1>
+        <p className="mt-0.5 text-sm text-gray-500">
+          Welcome, {profile?.first_name ?? user.email}
+        </p>
+      </div>
 
         {/* ── Stat cards ── */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -842,7 +795,6 @@ export default async function AdminDashboardPage() {
           )}
         </div>
 
-      </main>
     </div>
   );
 }

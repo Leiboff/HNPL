@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import LogoutButton from '@/app/dashboard/LogoutButton';
 import PracticeApprovalRow, { type PracticeRow } from './PracticeApprovalRow';
 import { approvePractice, suspendPractice } from './actions';
 
@@ -90,32 +89,14 @@ export default async function AdminPracticesPage({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <div>
-            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-              <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-            </span>
-            <span className="ml-2 text-sm text-gray-400">— Admin</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link href="/admin" className="text-sm text-[#15A89E] hover:text-[#13294B]">
-              ← Operations
-            </Link>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-6xl px-6 py-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Practice approvals</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Review and approve practice signups. Approval flips practices.status to <code>approved</code> and
-            opens the trading gate as soon as the practice also has at least one active provider.
-          </p>
-        </div>
+    <div className="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Practice approvals</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Review and approve practice signups. Approval flips <code>practices.status</code> to <code>approved</code>;
+          the trading gate opens once the practice also has at least one active provider.
+        </p>
+      </div>
 
         {/* Filter chips */}
         <div className="flex gap-2 flex-wrap">
@@ -157,7 +138,6 @@ export default async function AdminPracticesPage({
             ))}
           </div>
         )}
-      </main>
     </div>
   );
 }

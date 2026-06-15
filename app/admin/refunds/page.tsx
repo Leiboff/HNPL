@@ -5,7 +5,6 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { paystackRequest } from '@/lib/paystack';
-import LogoutButton from '@/app/dashboard/LogoutButton';
 import { ActionButton } from '@/app/admin/OpsActions';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -296,24 +295,7 @@ export default async function AdminRefundsPage() {
   const failed      = (rawFailed      ?? []) as unknown as RefundRow[];
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="mx-auto max-w-7xl px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/admin" className="text-base font-semibold text-gray-900 hover:text-gray-700 transition-colors">
-              BetterNow
-            </Link>
-            <span className="text-xs font-medium text-gray-400 uppercase tracking-wide border border-gray-200 rounded px-1.5 py-0.5">
-              Ops
-            </span>
-            <span className="text-gray-300">/</span>
-            <span className="text-sm font-medium text-gray-600">Refunds</span>
-          </div>
-          <LogoutButton />
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-6 py-8 space-y-8 pb-16">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
 
         <div className="flex items-center justify-between">
           <div>
@@ -348,7 +330,6 @@ export default async function AdminRefundsPage() {
           <RefundTable refunds={processed} />
         </div>
 
-      </main>
     </div>
   );
 }
