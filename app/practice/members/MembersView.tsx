@@ -105,7 +105,7 @@ const SELECT_CLS = INPUT_CLS;
 
 function RolePill({ role }: { role: 'admin' | 'provider' }) {
   return role === 'provider'
-    ? <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#13294B] text-white">Doctor / Clinician</span>
+    ? <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#13294B] text-white">Doctor / Practitioner</span>
     : <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">Admin staff</span>;
 }
 
@@ -637,7 +637,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
           <SectionLabel>Role</SectionLabel>
           <div className="grid grid-cols-2 gap-3">
             {([
-              { value: 'provider' as const, label: 'Doctor / Clinician', sub: 'Sees patients, has clinical details' },
+              { value: 'provider' as const, label: 'Doctor / Practitioner', sub: 'Sees patients, has clinical details' },
               { value: 'manager' as const,  label: 'Admin staff',        sub: 'Manages billing and/or the practice' },
             ]).map(opt => (
               <button

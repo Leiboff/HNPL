@@ -116,7 +116,7 @@ export default function SelfAsProviderCard() {
       >
         <div>
           <p className="text-sm font-semibold text-amber-900">
-            Are you also the clinician?
+            Are you also a practitioner here?
           </p>
           <p className="mt-1 text-sm text-amber-800">
             Solo practitioners — add yourself as a provider so this practice can start billing.
@@ -142,7 +142,7 @@ export default function SelfAsProviderCard() {
         <div>
           <h2 className="text-base font-semibold text-gray-900">Add yourself as a provider</h2>
           <p className="mt-1 text-xs text-gray-500">
-            These details are required for clinicians. You keep all your admin capabilities.
+            These details are required for practitioners. You keep all your admin capabilities.
           </p>
         </div>
         <button

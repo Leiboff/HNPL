@@ -207,7 +207,7 @@ export async function addMember(input: NewMemberInput): Promise<ActionResult> {
   if (!isValidEmail(input.email)) return { error: 'Enter a valid email address.' };
   const saIdResult = validateSaId(input.saIdNumber);
   if (!saIdResult.valid) return { error: 'SA ID number is invalid — please check what was typed.' };
-  if (input.memberRole === 'provider' && !input.specialty) return { error: 'Specialty is required for clinicians.' };
+  if (input.memberRole === 'provider' && !input.specialty) return { error: 'Specialty is required for practitioners.' };
 
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
