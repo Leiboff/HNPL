@@ -3,6 +3,20 @@ import { redirect, notFound } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { approvePractice, suspendPractice } from '../actions';
 import PracticeStatusActions from './PracticeStatusActions';
+import { formatRand, formatDateStr } from '../../_lib/format';
+import CollectionStatusBadge, { classifyCollection } from '../../_components/CollectionStatusBadge';
+import {
+  computeReliability,
+  formatPercent,
+  type PlanRow as ReliPlan,
+  type PaymentRow as ReliPayment,
+} from '../../customers/_lib/reliability';
+import {
+  classifyBookHealth,
+  sumPayouts,
+  BOOK_HEALTH_DISPLAY,
+  type PayoutRow as PayoutAggRow,
+} from '../_lib/practiceBook';
 
 // ─── Practice detail view ────────────────────────────────────────────────────
 //
@@ -168,6 +182,109 @@ export default async function PracticeDetailPage({
     .filter((h): h is string => !!h);
   const bankingComplete = !!(practice.bank_name && practice.bank_account_number);
 
+  // ── Book: plans + payments + payouts ──────────────────────────────────
+  // All three queries are scoped to this practice. Plans + payments
+  // drive the reliability/book-health calc (reusing the Customer 360
+  // lib so the metric definitions don't drift). Payouts drive the
+  // BetterNow MDR revenue and pending-out / paid-out totals.
+  type PlanWithPatient = ReliPlan & {
+    id: string;
+    plan_type: number | null;
+    created_at: string;
+    completed_at: string | null;
+    invoice_number: string | null;
+    patient_id: string | null;
+    profiles: { id: string; first_name: string; last_name: string; email: string }
+            | { id: string; first_name: string; last_name: string; email: string }[]
+            | null;
+  };
+  type PaymentWithPlan = ReliPayment & {
+    id:           string;
+    plan_id:      string;
+    patient_id:   string | null;
+    collected_at: string | null;
+  };
+
+  const { data: rawPlans } = await supabase
+    .from('plans')
+    .select(`
+      id, total_amount, plan_type, status, created_at, completed_at,
+      invoice_number, patient_id,
+      profiles!plans_patient_id_fkey(id, first_name, last_name, email)
+    `)
+    .eq('practice_id', id)
+    .order('created_at', { ascending: false });
+
+  const plans = (rawPlans ?? []) as unknown as PlanWithPatient[];
+
+  // Payments live on plans, not directly on practices — fetch by
+  // plan_id IN (...). For zero plans we skip the query entirely.
+  let payments: PaymentWithPlan[] = [];
+  if (plans.length > 0) {
+    const planIds = plans.map(p => p.id);
+    const { data: rawPayments } = await supabase
+      .from('payments')
+      .select('id, plan_id, patient_id, instalment_number, amount, due_date, status, retry_count, collected_at')
+      .in('plan_id', planIds);
+    payments = (rawPayments ?? []) as unknown as PaymentWithPlan[];
+  }
+
+  const { data: rawPayouts } = await supabase
+    .from('payouts')
+    .select('gross_amount, fee_amount, net_amount, status')
+    .eq('practice_id', id);
+  const payouts = (rawPayouts ?? []) as PayoutAggRow[];
+
+  // ── Aggregates ────────────────────────────────────────────────────────
+  const today       = new Date().toISOString().slice(0, 10);
+  const reliability = computeReliability(plans, payments, today);
+  const bookHealth  = classifyBookHealth(reliability);
+  const health      = BOOK_HEALTH_DISPLAY[bookHealth];
+  const payoutTot   = sumPayouts(payouts);
+
+  // Per-patient aggregation across THIS practice's plans
+  type PatientAgg = {
+    id:            string;
+    name:          string;
+    email:         string;
+    planCount:     number;
+    outstanding:   number;
+  };
+  const patientMap = new Map<string, PatientAgg>();
+  for (const plan of plans) {
+    if (!plan.patient_id) continue;
+    const profile = Array.isArray(plan.profiles) ? plan.profiles[0] : plan.profiles;
+    if (!profile) continue;
+    const existing = patientMap.get(plan.patient_id);
+    if (existing) existing.planCount++;
+    else {
+      patientMap.set(plan.patient_id, {
+        id:          plan.patient_id,
+        name:        `${profile.first_name} ${profile.last_name}`,
+        email:       profile.email,
+        planCount:   1,
+        outstanding: 0,
+      });
+    }
+  }
+  const OUTSTANDING = new Set(['scheduled', 'processing', 'failed', 'retried']);
+  for (const p of payments) {
+    if (!p.patient_id) continue;
+    if (!OUTSTANDING.has(p.status)) continue;
+    const agg = patientMap.get(p.patient_id);
+    if (!agg) continue;
+    agg.outstanding += Number(p.amount);
+  }
+  const patients = [...patientMap.values()].sort((a, b) => b.outstanding - a.outstanding);
+
+  // Plan-level helpers for the "Plans originated" list
+  const paymentsByPlan = new Map<string, PaymentWithPlan[]>();
+  for (const p of payments) {
+    const list = paymentsByPlan.get(p.plan_id) ?? [];
+    list.push(p);
+    paymentsByPlan.set(p.plan_id, list);
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
 
@@ -207,6 +324,94 @@ export default async function PracticeDetailPage({
         <Chip label="HPCSA" ok={allHpcsas.length > 0} />
       </div>
 
+      {/* ── Book performance / standing header ─────────────────────────── */}
+      <section className="rounded-2xl border-2 border-gray-200 bg-white p-5">
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-semibold text-gray-900">Book performance</h2>
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${health.cls}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${health.dot}`} aria-hidden />
+                {health.label}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              How this practice&apos;s patients pay their plans.
+              Salary-date reliability is the share of instalments 2+ that
+              collected first-try — see Customer 360 for the same metric per patient.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 w-full lg:w-auto">
+            <Tile label="Financed" value={formatRand(reliability.total_financed)} />
+            <Tile
+              label="Collected"
+              value={formatRand(reliability.total_collected)}
+              tone={reliability.total_collected > 0 ? 'good' : 'default'}
+            />
+            <Tile
+              label="Outstanding"
+              value={formatRand(reliability.total_outstanding)}
+              tone={reliability.outstanding_at_risk > 0 ? 'alert' : reliability.total_outstanding > 0 ? 'warn' : 'default'}
+              sub={
+                reliability.total_outstanding === 0
+                  ? '—'
+                  : reliability.outstanding_at_risk === 0
+                    ? 'all on track'
+                    : reliability.outstanding_on_track === 0
+                      ? `${formatRand(reliability.outstanding_at_risk)} at risk`
+                      : `${formatRand(reliability.outstanding_at_risk)} at risk · ${formatRand(reliability.outstanding_on_track)} on track`
+              }
+            />
+            <Tile
+              label="On-time"
+              value={formatPercent(reliability.reliability_rate)}
+              tone={
+                bookHealth === 'focus-area' ? 'alert'
+                : bookHealth === 'watch'     ? 'warn'
+                : bookHealth === 'healthy'   ? 'good'
+                :                              'default'
+              }
+              sub={
+                reliability.salary_date_due_count === 0
+                  ? 'no salary-date collections yet'
+                  : `${reliability.salary_date_on_time_count} of ${reliability.salary_date_due_count} salary-date, first try`
+              }
+            />
+            <Tile
+              label="Fees earned"
+              value={formatRand(payoutTot.fees_earned)}
+              tone="good"
+              sub={`BetterNow MDR · ${practice.fee_percent}%`}
+            />
+          </div>
+        </div>
+
+        {/* Risk-count + activity strip */}
+        <div className="mt-4 flex gap-2 flex-wrap text-xs">
+          {reliability.has_overdue && (
+            <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 text-amber-900 px-2 py-0.5 font-medium">
+              Has overdue collection
+            </span>
+          )}
+          {reliability.salary_date_failed_count > 0 && (
+            <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 text-red-700 px-2 py-0.5 font-medium">
+              {reliability.salary_date_failed_count} failed installment{reliability.salary_date_failed_count === 1 ? '' : 's'}
+            </span>
+          )}
+          {reliability.salary_date_written_off_count > 0 && (
+            <span className="inline-flex items-center rounded-full border border-red-300 bg-red-100 text-red-900 px-2 py-0.5 font-medium">
+              {reliability.salary_date_written_off_count} written off
+            </span>
+          )}
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 px-2 py-0.5 font-medium">
+            {plans.length} {plans.length === 1 ? 'plan' : 'plans'}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 px-2 py-0.5 font-medium">
+            {patients.length} {patients.length === 1 ? 'patient' : 'patients'}
+          </span>
+        </div>
+      </section>
+
       {/* Identity */}
       <Section title="Identity">
         <Grid>
@@ -238,6 +443,24 @@ export default async function PracticeDetailPage({
           <Field label="Email" value={ownerProfile?.email ?? '—'} />
           <Field label="User ID" value={practice.owner_id} mono />
         </Grid>
+      </Section>
+
+      {/* ── Plans originated by this practice ─────────────────────────── */}
+      <Section title={`Plans originated (${plans.length})`}>
+        {plans.length === 0 ? (
+          <p className="text-sm text-gray-500">No plans yet.</p>
+        ) : (
+          <PlansList plans={plans} paymentsByPlan={paymentsByPlan} today={today} />
+        )}
+      </Section>
+
+      {/* ── Patients of this practice ──────────────────────────────────── */}
+      <Section title={`Patients (${patients.length})`}>
+        {patients.length === 0 ? (
+          <p className="text-sm text-gray-500">No patients yet.</p>
+        ) : (
+          <PatientsList patients={patients} />
+        )}
       </Section>
 
       {/* Team */}
@@ -305,6 +528,31 @@ export default async function PracticeDetailPage({
             Banking is incomplete — the practice has not yet been paid out for any plan.
           </p>
         )}
+
+        {/* Payout summary tiles */}
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Tile
+            label="Currently owed"
+            value={formatRand(payoutTot.pending_out)}
+            tone={payoutTot.pending_out > 0 ? 'warn' : 'default'}
+            sub={`${payoutTot.pending_count} pending payout${payoutTot.pending_count === 1 ? '' : 's'}`}
+          />
+          <Tile
+            label="Paid out"
+            value={formatRand(payoutTot.paid_out)}
+            tone="good"
+            sub={`${payoutTot.paid_count} settled payout${payoutTot.paid_count === 1 ? '' : 's'}`}
+          />
+          <Tile
+            label="Fees retained"
+            value={formatRand(payoutTot.fees_earned)}
+            sub={`MDR @ ${practice.fee_percent}% (BetterNow revenue)`}
+          />
+        </div>
+        <p className="mt-2 text-xs text-gray-500">
+          See <Link href="/admin/payouts" className="text-[#15A89E] hover:text-[#13294B]">all payouts</Link> for
+          the full ledger; this summary is scoped to this practice only.
+        </p>
       </Section>
 
       {/* Audit */}
@@ -364,4 +612,225 @@ function CapList({ bills, manage }: { bills: boolean; manage: boolean }) {
   if (bills)  flags.push('bills');
   if (manage) flags.push('manage');
   return <span className="text-gray-600">{flags.length ? flags.join(', ') : '—'}</span>;
+}
+
+function Tile({ label, value, sub, tone = 'default' }: {
+  label: string;
+  value: string;
+  sub?:  string;
+  tone?: 'default' | 'good' | 'warn' | 'alert';
+}) {
+  const cls =
+    tone === 'good'  ? 'text-green-700'
+    : tone === 'warn'  ? 'text-amber-700'
+    : tone === 'alert' ? 'text-red-700'
+    :                    'text-gray-900';
+  return (
+    <div className="rounded-xl bg-white border border-gray-200 p-3">
+      <p className="text-[10px] uppercase tracking-wide text-gray-500 font-medium">{label}</p>
+      <p className={`mt-1 text-base font-semibold tabular-nums ${cls}`}>{value}</p>
+      {sub && <p className="text-[10px] text-gray-500 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+
+// ─── Plans list (book of this practice) ─────────────────────────────────────
+
+type PlanLite = {
+  id: string;
+  total_amount: number | string;
+  plan_type: number | null;
+  status: string;
+  created_at: string;
+  invoice_number: string | null;
+  patient_id: string | null;
+  profiles: { id: string; first_name: string; last_name: string; email: string }
+          | { id: string; first_name: string; last_name: string; email: string }[]
+          | null;
+};
+
+type PaymentLite = {
+  id: string;
+  plan_id: string;
+  instalment_number: number;
+  amount: number | string;
+  due_date: string;
+  status: string;
+  retry_count: number | null;
+  collected_at: string | null;
+};
+
+const PLAN_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
+  pending_acceptance:    { label: 'Pending acceptance',     cls: 'bg-gray-100  text-gray-700  border-gray-200'  },
+  pending_first_payment: { label: 'Pending first payment',  cls: 'bg-amber-50  text-amber-800 border-amber-200' },
+  active:                { label: 'Active',                 cls: 'bg-green-50  text-green-700 border-green-200' },
+  completed:             { label: 'Completed',              cls: 'bg-blue-50   text-blue-700  border-blue-200'  },
+  defaulted:             { label: 'Defaulted',              cls: 'bg-red-50    text-red-700   border-red-200'   },
+  cancelled:             { label: 'Cancelled',              cls: 'bg-gray-100  text-gray-600  border-gray-200'  },
+  declined:              { label: 'Declined',               cls: 'bg-gray-100  text-gray-600  border-gray-200'  },
+};
+
+function pickCurrentPayment(payments: PaymentLite[]): PaymentLite | null {
+  if (payments.length === 0) return null;
+  const sorted = [...payments].sort((a, b) => a.instalment_number - b.instalment_number);
+  const next   = sorted.find(p =>
+    p.status === 'processing' ||
+    p.status === 'failed'     ||
+    p.status === 'retried'    ||
+    p.status === 'scheduled'
+  );
+  return next ?? sorted[sorted.length - 1];
+}
+
+function PlansList({ plans, paymentsByPlan, today }: {
+  plans: PlanLite[];
+  paymentsByPlan: Map<string, PaymentLite[]>;
+  today: string;
+}) {
+  return (
+    <div className="space-y-2">
+      {plans.map((plan) => {
+        const profile = Array.isArray(plan.profiles) ? plan.profiles[0] : plan.profiles;
+        const cfg     = PLAN_STATUS_LABEL[plan.status] ?? { label: plan.status, cls: 'bg-gray-100 text-gray-600 border-gray-200' };
+        const planPayments = paymentsByPlan.get(plan.id) ?? [];
+        const collected    = planPayments.filter(p => p.status === 'collected').length;
+        const totalSlots   = plan.plan_type ?? (planPayments.length || null);
+        const current      = pickCurrentPayment(planPayments);
+
+        return (
+          <div key={plan.id} className="rounded-xl border border-gray-200 p-3 sm:p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                    {formatRand(Number(plan.total_amount))}
+                  </p>
+                  {plan.plan_type && (
+                    <span className="text-xs text-gray-500">· {plan.plan_type}-instalment</span>
+                  )}
+                  <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cfg.cls}`}>
+                    {cfg.label}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {profile ? (
+                    <Link href={`/admin/customers/${profile.id}`} className="text-[#15A89E] hover:text-[#13294B]">
+                      {profile.first_name} {profile.last_name}
+                    </Link>
+                  ) : '—'}
+                  {plan.invoice_number && <span className="font-mono ml-2">{plan.invoice_number}</span>}
+                  <span className="ml-2">· started {formatDateStr(plan.created_at.slice(0, 10))}</span>
+                  <span className="ml-2">
+                    · {planPayments.length === 0 ? 'no installments' : `${collected} of ${totalSlots ?? planPayments.length} collected`}
+                  </span>
+                </p>
+              </div>
+              {current && (
+                <Link
+                  href={`/admin/collections/${current.id}`}
+                  className="text-xs font-medium text-[#15A89E] hover:text-[#13294B] whitespace-nowrap"
+                >
+                  Open current installment →
+                </Link>
+              )}
+            </div>
+
+            {planPayments.length > 0 && (
+              <details className="mt-2">
+                <summary className="text-xs text-[#15A89E] hover:text-[#13294B] cursor-pointer select-none">
+                  Show {planPayments.length} installment{planPayments.length === 1 ? '' : 's'}
+                </summary>
+                <div className="mt-2 space-y-1">
+                  {[...planPayments].sort((a, b) => a.instalment_number - b.instalment_number).map((p) => {
+                    const bucket = classifyCollection({ status: p.status, due_date: p.due_date }, today);
+                    return (
+                      <div key={p.id} className="flex items-center justify-between gap-3 text-xs py-1">
+                        <Link
+                          href={`/admin/collections/${p.id}`}
+                          className="text-gray-700 hover:text-[#15A89E]"
+                        >
+                          #{p.instalment_number} · {formatDateStr(p.due_date)} · {formatRand(Number(p.amount))}
+                        </Link>
+                        <CollectionStatusBadge bucket={bucket} />
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Patients list (interlink to Customer 360) ──────────────────────────────
+
+type PatientLite = {
+  id:          string;
+  name:        string;
+  email:       string;
+  planCount:   number;
+  outstanding: number;
+};
+
+function PatientsList({ patients }: { patients: PatientLite[] }) {
+  return (
+    <>
+      {/* Desktop table */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
+            <tr>
+              <th className="py-2 pr-4">Patient</th>
+              <th className="py-2 pr-4">Email</th>
+              <th className="py-2 pr-4 text-right"># Plans</th>
+              <th className="py-2 pr-4 text-right">Outstanding here</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {patients.map((p) => (
+              <tr key={p.id} className="hover:bg-gray-50">
+                <td className="py-3 pr-4 whitespace-nowrap">
+                  <Link href={`/admin/customers/${p.id}`} className="text-gray-900 font-medium hover:underline">
+                    {p.name}
+                  </Link>
+                </td>
+                <td className="py-3 pr-4 text-gray-600 text-xs truncate max-w-[260px]">{p.email}</td>
+                <td className="py-3 pr-4 text-right tabular-nums text-gray-700">{p.planCount}</td>
+                <td className="py-3 pr-4 text-right tabular-nums font-semibold text-gray-900">
+                  {p.outstanding > 0 ? formatRand(p.outstanding) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="md:hidden divide-y divide-gray-100">
+        {patients.map((p) => (
+          <Link
+            key={p.id}
+            href={`/admin/customers/${p.id}`}
+            className="block py-3 hover:bg-gray-50 -mx-1 px-1"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
+                <p className="text-xs text-gray-500 truncate mt-0.5">{p.email}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-semibold text-gray-900 tabular-nums">
+                  {p.outstanding > 0 ? formatRand(p.outstanding) : '—'}
+                </p>
+                <p className="text-xs text-gray-500">{p.planCount} plan{p.planCount === 1 ? '' : 's'}</p>
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </>
+  );
 }
