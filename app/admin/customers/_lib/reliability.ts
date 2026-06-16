@@ -68,12 +68,10 @@
 //   Both restrict to instalment_number > 1 — instalment 1 noise has
 //   no place in the salary-date risk picture.
 //
-// standing
-//   Coarse three-state summary used on the list + header chip:
-//     has-write-offs (worst) > has-overdue > good-standing
-//   "has-overdue" now also fires when outstanding_at_risk > 0 — a
-//   patient with failed/retried installments is in trouble even if
-//   nothing is currently sitting in scheduled-past-due.
+// Standing classification is intentionally NOT a field on this
+// shape — it's a separate concern shared between Customer 360 and
+// Practice 360 via app/admin/_lib/standing.ts. This file produces
+// the raw numbers; the standing lib turns them into a band + verdict.
 
 export type PlanRow = {
   total_amount: number | string;
@@ -87,8 +85,6 @@ export type PaymentRow = {
   retry_count:       number | null;
   instalment_number: number;
 };
-
-export type Standing = 'good-standing' | 'has-overdue' | 'has-write-offs';
 
 export type Reliability = {
   // Financial totals
@@ -109,10 +105,9 @@ export type Reliability = {
   salary_date_failed_count:        number;
   salary_date_written_off_count:   number;
 
-  // Flags / standing
+  // Raw flags — callers pass these into the shared standing classifier.
   has_overdue:       boolean;
   has_written_off:   boolean;
-  standing:          Standing;
 };
 
 // Plans that NEVER ran. Excluded from total_financed because they never
@@ -192,17 +187,6 @@ export function computeReliability(
     ? null
     : salary_date_on_time_count / salary_date_due_count;
 
-  // "has-overdue" fires for scheduled-past-due OR for any at-risk amount.
-  // Both are "you have unresolved trouble right now"; merging them keeps
-  // the three-state standing model while making sure failed/retried
-  // patients aren't labelled "good standing".
-  const at_risk_flag = outstanding_at_risk > 0;
-
-  const standing: Standing =
-    has_written_off               ? 'has-write-offs'
-    : (has_overdue || at_risk_flag) ? 'has-overdue'
-    :                                 'good-standing';
-
   return {
     total_financed,
     total_collected,
@@ -220,17 +204,8 @@ export function computeReliability(
 
     has_overdue,
     has_written_off,
-    standing,
   };
 }
-
-// ─── Standing display helpers ───────────────────────────────────────────────
-
-export const STANDING_DISPLAY: Record<Standing, { label: string; cls: string; dot: string }> = {
-  'good-standing':  { label: 'Good standing',  cls: 'bg-green-50 text-green-800 border-green-200', dot: 'bg-green-500' },
-  'has-overdue':    { label: 'Has overdue',    cls: 'bg-amber-50 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
-  'has-write-offs': { label: 'Has write-offs', cls: 'bg-red-50   text-red-800   border-red-200',   dot: 'bg-red-500'   },
-};
 
 export function formatPercent(rate: number | null): string {
   if (rate == null) return 'N/A';

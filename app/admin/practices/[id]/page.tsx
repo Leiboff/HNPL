@@ -12,11 +12,17 @@ import {
   type PaymentRow as ReliPayment,
 } from '../../customers/_lib/reliability';
 import {
-  classifyBookHealth,
+  computeStanding,
+  verdictFor,
+  STANDING_DISPLAY,
+} from '../../_lib/standing';
+import {
   sumPayouts,
-  BOOK_HEALTH_DISPLAY,
   type PayoutRow as PayoutAggRow,
 } from '../_lib/practiceBook';
+import AdminNotes from '../../_components/AdminNotes';
+import { changePracticeFeePercent } from '../../_lib/auditActions';
+import FeeEditButton from './FeeEditButton';
 
 // ─── Practice detail view ────────────────────────────────────────────────────
 //
@@ -238,9 +244,18 @@ export default async function PracticeDetailPage({
   // ── Aggregates ────────────────────────────────────────────────────────
   const today       = new Date().toISOString().slice(0, 10);
   const reliability = computeReliability(plans, payments, today);
-  const bookHealth  = classifyBookHealth(reliability);
-  const health      = BOOK_HEALTH_DISPLAY[bookHealth];
+  const standingId  = computeStanding(reliability);
+  const standing    = STANDING_DISPLAY[standingId];
+  const verdict     = verdictFor(standingId, reliability, {
+    plansCount:     plans.length,
+    practiceStatus: practice.status,
+  });
   const payoutTot   = sumPayouts(payouts);
+
+  // Dormant view: an approved practice with zero plans should not be
+  // visually dominated by a wall of R0.00 tiles. We swap the tile row
+  // for a clean inline summary in that case.
+  const isDormant = plans.length === 0;
 
   // Per-patient aggregation across THIS practice's plans
   type PatientAgg = {
@@ -324,92 +339,103 @@ export default async function PracticeDetailPage({
         <Chip label="HPCSA" ok={allHpcsas.length > 0} />
       </div>
 
-      {/* ── Book performance / standing header ─────────────────────────── */}
-      <section className="rounded-2xl border-2 border-gray-200 bg-white p-5">
-        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-sm font-semibold text-gray-900">Book performance</h2>
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${health.cls}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${health.dot}`} aria-hidden />
-                {health.label}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-gray-500">
-              How this practice&apos;s patients pay their plans.
-              Salary-date reliability is the share of instalments 2+ that
-              collected first-try — see Customer 360 for the same metric per patient.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 w-full lg:w-auto">
-            <Tile label="Financed" value={formatRand(reliability.total_financed)} />
-            <Tile
-              label="Collected"
-              value={formatRand(reliability.total_collected)}
-              tone={reliability.total_collected > 0 ? 'good' : 'default'}
-            />
-            <Tile
-              label="Outstanding"
-              value={formatRand(reliability.total_outstanding)}
-              tone={reliability.outstanding_at_risk > 0 ? 'alert' : reliability.total_outstanding > 0 ? 'warn' : 'default'}
-              sub={
-                reliability.total_outstanding === 0
-                  ? '—'
-                  : reliability.outstanding_at_risk === 0
-                    ? 'all on track'
-                    : reliability.outstanding_on_track === 0
-                      ? `${formatRand(reliability.outstanding_at_risk)} at risk`
-                      : `${formatRand(reliability.outstanding_at_risk)} at risk · ${formatRand(reliability.outstanding_on_track)} on track`
-              }
-            />
-            <Tile
-              label="On-time"
-              value={formatPercent(reliability.reliability_rate)}
-              tone={
-                bookHealth === 'focus-area' ? 'alert'
-                : bookHealth === 'watch'     ? 'warn'
-                : bookHealth === 'healthy'   ? 'good'
-                :                              'default'
-              }
-              sub={
-                reliability.salary_date_due_count === 0
-                  ? 'no salary-date collections yet'
-                  : `${reliability.salary_date_on_time_count} of ${reliability.salary_date_due_count} salary-date, first try`
-              }
-            />
-            <Tile
-              label="Fees earned"
-              value={formatRand(payoutTot.fees_earned)}
-              tone="good"
-              sub={`BetterNow MDR · ${practice.fee_percent}%`}
-            />
-          </div>
+      {/* ── Verdict header — lead with band + plain-language line ─────── */}
+      <section className="rounded-2xl border-2 border-gray-200 bg-white p-5 space-y-4">
+        {/* Heading row: label + standing chip + info tooltip */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="text-sm font-semibold text-gray-900">Book performance</h2>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${standing.cls}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${standing.dot}`} aria-hidden />
+            {standing.label}
+          </span>
+          <span
+            title="Salary-date reliability is the share of instalments 2+ that collected first try. Bands: <70% at risk, 70–85% watch, ≥85% healthy. Any write-off or active failure forces 'At risk'."
+            className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-100 text-gray-500 text-[10px] font-bold cursor-help"
+            aria-label="About this metric"
+          >
+            ?
+          </span>
         </div>
 
-        {/* Risk-count + activity strip */}
-        <div className="mt-4 flex gap-2 flex-wrap text-xs">
-          {reliability.has_overdue && (
-            <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 text-amber-900 px-2 py-0.5 font-medium">
-              Has overdue collection
-            </span>
+        {/* Verdict */}
+        <div>
+          <p className={`text-base font-semibold ${
+            standing.tone === 'alert' ? 'text-red-800'
+            : standing.tone === 'warn'  ? 'text-amber-800'
+            : standing.tone === 'good'  ? 'text-green-800'
+            :                             'text-gray-800'
+          }`}>
+            {verdict.headline}
+          </p>
+          {verdict.subline && (
+            <p className="mt-0.5 text-sm text-gray-600">{verdict.subline}</p>
           )}
-          {reliability.salary_date_failed_count > 0 && (
-            <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 text-red-700 px-2 py-0.5 font-medium">
-              {reliability.salary_date_failed_count} failed installment{reliability.salary_date_failed_count === 1 ? '' : 's'}
-            </span>
-          )}
-          {reliability.salary_date_written_off_count > 0 && (
-            <span className="inline-flex items-center rounded-full border border-red-300 bg-red-100 text-red-900 px-2 py-0.5 font-medium">
-              {reliability.salary_date_written_off_count} written off
-            </span>
-          )}
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 px-2 py-0.5 font-medium">
-            {plans.length} {plans.length === 1 ? 'plan' : 'plans'}
-          </span>
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 px-2 py-0.5 font-medium">
-            {patients.length} {patients.length === 1 ? 'patient' : 'patients'}
-          </span>
         </div>
+
+        {/* Supporting tiles — only when there's actual activity. Dormant
+            practices get the verdict alone instead of a wall of R0.00s. */}
+        {!isDormant && (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Tile label="Financed" value={formatRand(reliability.total_financed)} />
+              <Tile
+                label="Collected"
+                value={formatRand(reliability.total_collected)}
+                tone={reliability.total_collected > 0 ? 'good' : 'default'}
+              />
+              <Tile
+                label="Outstanding"
+                value={formatRand(reliability.total_outstanding)}
+                tone={reliability.outstanding_at_risk > 0 ? 'alert' : reliability.total_outstanding > 0 ? 'warn' : 'default'}
+                sub={
+                  reliability.total_outstanding === 0
+                    ? '—'
+                    : reliability.outstanding_at_risk === 0
+                      ? 'all on track'
+                      : reliability.outstanding_on_track === 0
+                        ? `${formatRand(reliability.outstanding_at_risk)} at risk`
+                        : `${formatRand(reliability.outstanding_at_risk)} at risk · ${formatRand(reliability.outstanding_on_track)} on track`
+                }
+              />
+              <Tile
+                label="On-time"
+                value={formatPercent(reliability.reliability_rate)}
+                tone={standing.tone === 'good' ? 'good' : standing.tone === 'alert' ? 'alert' : standing.tone === 'warn' ? 'warn' : 'default'}
+                sub={
+                  reliability.salary_date_due_count === 0
+                    ? 'no salary-date collections yet'
+                    : `${reliability.salary_date_on_time_count} of ${reliability.salary_date_due_count} salary-date, first try`
+                }
+              />
+            </div>
+
+            {/* Risk-count + activity strip — only when there are issues
+                or non-trivial activity worth surfacing. */}
+            <div className="flex gap-2 flex-wrap text-xs">
+              {reliability.has_overdue && (
+                <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 text-amber-900 px-2 py-0.5 font-medium">
+                  Has overdue collection
+                </span>
+              )}
+              {reliability.salary_date_failed_count > 0 && (
+                <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 text-red-700 px-2 py-0.5 font-medium">
+                  {reliability.salary_date_failed_count} failed installment{reliability.salary_date_failed_count === 1 ? '' : 's'}
+                </span>
+              )}
+              {reliability.salary_date_written_off_count > 0 && (
+                <span className="inline-flex items-center rounded-full border border-red-300 bg-red-100 text-red-900 px-2 py-0.5 font-medium">
+                  {reliability.salary_date_written_off_count} written off
+                </span>
+              )}
+              <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 px-2 py-0.5 font-medium">
+                {plans.length} {plans.length === 1 ? 'plan' : 'plans'}
+              </span>
+              <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 text-gray-700 px-2 py-0.5 font-medium">
+                {patients.length} {patients.length === 1 ? 'patient' : 'patients'}
+              </span>
+            </div>
+          </>
+        )}
       </section>
 
       {/* Identity */}
@@ -419,7 +445,19 @@ export default async function PracticeDetailPage({
           <Field label="Specialty"      value={practice.specialty} />
           <Field label="PR (BHF)"       value={practice.practice_registration_number || '—'} mono />
           <Field label="HPCSA (practice)" value={practice.hpcsa_number || '—'} mono />
-          <Field label="Fee %"          value={`${practice.fee_percent ?? '—'}%`} />
+          <Field
+            label="Fee %"
+            value={
+              <span className="inline-flex items-center gap-2">
+                <span className="tabular-nums">{practice.fee_percent}%</span>
+                <FeeEditButton
+                  practiceId={practice.id}
+                  currentFee={Number(practice.fee_percent)}
+                  changeFee={changePracticeFeePercent}
+                />
+              </span>
+            }
+          />
           <Field label="Status"         value={<StatusPill status={practice.status} />} />
         </Grid>
       </Section>
@@ -573,6 +611,9 @@ export default async function PracticeDetailPage({
           />
         </Grid>
       </Section>
+
+      {/* ── Admin notes + activity timeline ─────────────────────────── */}
+      <AdminNotes entityType="practice" entityId={practice.id} />
 
     </div>
   );

@@ -300,50 +300,9 @@ describe('computeReliability — overdue & write-off flags', () => {
   });
 });
 
-describe('computeReliability — standing', () => {
-  it("'good-standing' when no overdue, no at-risk, no write-offs", () => {
-    const r = computeReliability(
-      [plan(1000)],
-      [payment({ status: 'collected', instalment_number: 2 })],
-      TODAY,
-    );
-    expect(r.standing).toBe('good-standing');
-  });
-
-  it("'has-overdue' when there is a scheduled-past-due payment", () => {
-    const r = computeReliability(
-      [],
-      [payment({ status: 'scheduled', due_date: '2026-06-01', instalment_number: 2 })],
-      TODAY,
-    );
-    expect(r.standing).toBe('has-overdue');
-  });
-
-  it("'has-overdue' when there is at-risk (failed/retried) outstanding — even without overdue scheduled", () => {
-    // Previously this patient would be tagged 'good-standing' which
-    // was misleading. With at_risk > 0 they're in unresolved trouble.
-    const r = computeReliability(
-      [],
-      [payment({ status: 'failed', amount: 100, instalment_number: 2, due_date: '2026-06-10' })],
-      TODAY,
-    );
-    expect(r.outstanding_at_risk).toBe(100);
-    expect(r.has_overdue).toBe(false);
-    expect(r.standing).toBe('has-overdue');
-  });
-
-  it("'has-write-offs' beats has-overdue — write-offs are a confirmed loss", () => {
-    const r = computeReliability(
-      [],
-      [
-        payment({ status: 'scheduled',   due_date: '2026-06-01', instalment_number: 2 }),
-        payment({ status: 'written_off',                          instalment_number: 3 }),
-      ],
-      TODAY,
-    );
-    expect(r.standing).toBe('has-write-offs');
-  });
-});
+// Standing classification has moved to app/admin/_lib/standing.ts —
+// the band logic lives in a shared lib so customer + practice both
+// consume the same vocabulary. See standing.test.ts for those bands.
 
 describe('formatPercent', () => {
   it('formats a rate to a whole-percent string', () => {

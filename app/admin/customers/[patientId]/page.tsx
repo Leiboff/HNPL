@@ -5,9 +5,14 @@ import { formatRand, formatDateStr, formatDateTime } from '../../_lib/format';
 import CollectionStatusBadge, { classifyCollection } from '../../_components/CollectionStatusBadge';
 import {
   computeReliability,
-  STANDING_DISPLAY,
   formatPercent,
 } from '../_lib/reliability';
+import {
+  computeStanding,
+  verdictFor,
+  STANDING_DISPLAY,
+} from '../../_lib/standing';
+import AdminNotes from '../../_components/AdminNotes';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
 
@@ -226,10 +231,12 @@ export default async function CustomerDetailPage({
 
   const cards = (rawMethods ?? []) as PaymentMethod[];
 
-  // ── 5. Reliability summary ──────────────────────────────────────────────
-  const today  = new Date().toISOString().slice(0, 10);
-  const r      = computeReliability(plans, payments, today);
-  const standing = STANDING_DISPLAY[r.standing];
+  // ── 5. Reliability summary + standing ──────────────────────────────────
+  const today      = new Date().toISOString().slice(0, 10);
+  const r          = computeReliability(plans, payments, today);
+  const standingId = computeStanding(r);
+  const standing   = STANDING_DISPLAY[standingId];
+  const verdict    = verdictFor(standingId, r, { plansCount: plans.length });
 
   // ── 6. Group plans into active / history / non-starts ──────────────────
   const activePlans   = plans.filter(p => ACTIVE_PLAN_STATUSES.has(p.status));
@@ -270,29 +277,45 @@ export default async function CustomerDetailPage({
         </Link>
       </div>
 
-      {/* ── Reliability header ─────────────────────────────────────────── */}
-      <section
-        className={`rounded-2xl border-2 p-5 ${standing.cls.replace(/text-\w+-800?/, '')}`}
-      >
-        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">{fullName}</h1>
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${standing.cls}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${standing.dot}`} aria-hidden />
-                {standing.label}
-              </span>
-            </div>
-            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm text-gray-700">
-              <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">Email</span>{patient.email}</p>
-              <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">Phone</span>{patient.phone ?? '—'}</p>
-              <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">SA ID</span><span className="font-mono">{saIdShown || '—'}</span></p>
-              <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">Signed up</span>{formatDateStr(patient.created_at.slice(0, 10))}</p>
-            </div>
+      {/* ── Verdict header — lead with the band + plain-language line ──── */}
+      <section className="rounded-2xl border-2 border-gray-200 bg-white p-5">
+        <div className="flex flex-col gap-3">
+          {/* Name + standing chip */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">{fullName}</h1>
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${standing.cls}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${standing.dot}`} aria-hidden />
+              {standing.label}
+            </span>
           </div>
 
-          {/* Reliability tiles */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 lg:max-w-xl w-full lg:w-auto">
+          {/* Verdict — the operator reads this first */}
+          <div>
+            <p className={`text-base font-semibold ${
+              standing.tone === 'alert' ? 'text-red-800'
+              : standing.tone === 'warn'  ? 'text-amber-800'
+              : standing.tone === 'good'  ? 'text-green-800'
+              :                             'text-gray-800'
+            }`}>
+              {verdict.headline}
+            </p>
+            {verdict.subline && (
+              <p className="mt-0.5 text-sm text-gray-600">{verdict.subline}</p>
+            )}
+          </div>
+
+          {/* Contact strip */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm text-gray-700 border-t border-gray-100 pt-3">
+            <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">Email</span>{patient.email}</p>
+            <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">Phone</span>{patient.phone ?? '—'}</p>
+            <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">SA ID</span><span className="font-mono">{saIdShown || '—'}</span></p>
+            <p><span className="text-gray-400 text-xs uppercase tracking-wide mr-2">Signed up</span>{formatDateStr(patient.created_at.slice(0, 10))}</p>
+          </div>
+        </div>
+
+        {/* Supporting tiles — below the verdict, not as the lead */}
+        {plans.length > 0 && (
+          <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Tile label="Financed"  value={formatRand(r.total_financed)} />
             <Tile label="Collected" value={formatRand(r.total_collected)} tone="good" />
             <Tile
@@ -312,35 +335,13 @@ export default async function CustomerDetailPage({
             <Tile
               label="On-time"
               value={formatPercent(r.reliability_rate)}
+              tone={standing.tone === 'good' ? 'good' : standing.tone === 'alert' ? 'alert' : standing.tone === 'warn' ? 'warn' : 'default'}
               sub={
                 r.salary_date_due_count === 0
                   ? 'no salary-date collections yet'
                   : `${r.salary_date_on_time_count} of ${r.salary_date_due_count} salary-date, first try`
               }
             />
-          </div>
-        </div>
-
-        {/* Salary-date risk count strip — visible whenever there are
-            any issues. Counts exclude instalment 1 (it's charged at
-            acceptance and doesn't reflect on the patient). */}
-        {(r.has_overdue || r.salary_date_failed_count > 0 || r.salary_date_written_off_count > 0) && (
-          <div className="mt-4 flex gap-2 flex-wrap text-xs">
-            {r.has_overdue && (
-              <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 text-amber-900 px-2 py-0.5 font-medium">
-                Has overdue collection
-              </span>
-            )}
-            {r.salary_date_failed_count > 0 && (
-              <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 text-red-700 px-2 py-0.5 font-medium">
-                {r.salary_date_failed_count} failed installment{r.salary_date_failed_count === 1 ? '' : 's'}
-              </span>
-            )}
-            {r.salary_date_written_off_count > 0 && (
-              <span className="inline-flex items-center rounded-full border border-red-300 bg-red-100 text-red-900 px-2 py-0.5 font-medium">
-                {r.salary_date_written_off_count} written off
-              </span>
-            )}
           </div>
         )}
       </section>
@@ -587,6 +588,9 @@ export default async function CustomerDetailPage({
           <Field label="Postal code"    value={patient.postal_code   ?? '—'} />
         </div>
       </Section>
+
+      {/* ── Admin notes + activity timeline ─────────────────────────── */}
+      <AdminNotes entityType="customer" entityId={patient.id} />
 
     </div>
   );

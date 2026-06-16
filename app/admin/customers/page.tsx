@@ -4,12 +4,15 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { formatRand, formatDateStr } from '../_lib/format';
 import {
   computeReliability,
-  STANDING_DISPLAY,
   formatPercent,
-  type Standing,
   type PlanRow as ReliPlan,
   type PaymentRow as ReliPayment,
 } from './_lib/reliability';
+import {
+  computeStanding,
+  STANDING_DISPLAY,
+  type Standing,
+} from '../_lib/standing';
 import CustomersSearchForm from './CustomersSearchForm';
 
 // ─── /admin/customers ───────────────────────────────────────────────────────
@@ -162,7 +165,7 @@ export default async function AdminCustomersPage({
     return {
       profile,
       activePlans:     ps.filter(pl => ACTIVE_PLAN_STATUSES.has(pl.status)).length,
-      standing:        r.standing,
+      standing:        computeStanding(r),
       outstanding:     r.total_outstanding,
       reliabilityRate: r.reliability_rate,
       salaryDateDue:   r.salary_date_due_count,
