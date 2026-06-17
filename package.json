@@ -4,13 +4,18 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "pnpm run typecheck && next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts",
-    "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts"
+    "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts",
+    "prepare": "simple-git-hooks || true"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm run typecheck"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
@@ -33,6 +38,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "happy-dom": "^20.10.2",
+    "simple-git-hooks": "^2.13.1",
     "tailwindcss": "^4",
     "tsx": "^4.20.6",
     "typescript": "^5",
