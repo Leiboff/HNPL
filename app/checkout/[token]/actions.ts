@@ -18,6 +18,7 @@ import {
   type SaIdInvalidReason,
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
+import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { discriminateExistingUser } from './_lib/discriminate';
 import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 
@@ -51,6 +52,12 @@ import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 
 const MIN_AGE = 18;
 
+// generateTempPassword now lives in lib/auth/tempPassword.ts — the
+// helper has to guarantee a string that satisfies Supabase's project
+// password policy (lowercase, uppercase, digit, symbol) because the
+// admin auth API runs the policy check on this internal-plumbing
+// password too. See that file for the full reasoning.
+
 function saIdErrorMessage(reason: SaIdInvalidReason): string {
   switch (reason) {
     case 'length':      return 'SA ID number must be 13 digits.';
@@ -79,14 +86,6 @@ export type InitiateCheckoutResult =
   // the patient to /login?next=… so they land on this bill's
   // confirm page after authenticating.
   | { ok: false; error: string; requireLogin: true; loginUrl: string };
-
-const TEMP_PASSWORD_BYTES = 24;
-
-function generateTempPassword(): string {
-  // Long random — never seen by the patient. Replaced when they set
-  // their real password on the /done step.
-  return crypto.randomBytes(TEMP_PASSWORD_BYTES).toString('base64url');
-}
 
 export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
   const { token, firstName, lastName, saIdNumber, phone, planType, salaryDay } = input;

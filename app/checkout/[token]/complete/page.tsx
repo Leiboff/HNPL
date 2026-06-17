@@ -1,10 +1,10 @@
-import crypto from 'crypto';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { paystackRequest } from '@/lib/paystack';
 import { saveCardForPatient, type PaystackAuthorization } from '@/lib/paystack/saveCardForPatient';
+import { generateTempPassword } from '@/lib/auth/tempPassword';
 
 // ─── /checkout/[token]/complete ────────────────────────────────────────────
 //
@@ -191,7 +191,10 @@ export default async function CheckoutCompletePage({
       .eq('id', metaPid)
       .single();
     if (profile?.email) {
-      const tempPwd = crypto.randomBytes(24).toString('base64url');
+      // Policy-safe temp password — Supabase's admin password-policy
+      // check runs against this string too, even though it's plumbing
+      // the patient never sees. See lib/auth/tempPassword.ts.
+      const tempPwd = generateTempPassword();
       const { error: updErr } = await svc.auth.admin.updateUserById(metaPid, { password: tempPwd });
       if (!updErr) {
         await supabase.auth.signInWithPassword({ email: profile.email, password: tempPwd });
