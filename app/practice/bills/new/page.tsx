@@ -5,7 +5,7 @@ import { checkTradingGate, type TradingGateResult } from '@/lib/practice/trading
 import { createBill } from './actions';
 import BillForm from './BillForm';
 
-export type { CreateBillSummary, CreateBillResult, InvitationSummary } from './actions';
+export type { CreateBillSummary, CreateBillResult } from './actions';
 
 export type ProviderOption = {
   userId:    string;

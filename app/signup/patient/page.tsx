@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import PatientSignupForm from './PatientSignupForm';
 
@@ -6,29 +6,24 @@ type Props = {
   searchParams: Promise<{ token?: string }>;
 };
 
+// Organic patient signup (someone signing up for BetterNow on their
+// own, no bill, no provider). Path is UNCHANGED — same form, same SA
+// ID, same password, same OTP email verification.
+//
+// The old "/signup/patient?token=" path used to handle provider-sent
+// invitations too. That's now retired — provider invitations go
+// through the dedicated /checkout/[token] flow. Anyone hitting this
+// route with a ?token= (e.g. a stale email) is forwarded there so
+// there is exactly ONE invite-acceptance path in the system.
+
 export default async function PatientSignupPage({ searchParams }: Props) {
   const { token } = await searchParams;
 
-  let invitation: { email: string; practiceName: string | null } | null = null;
-
   if (token) {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from('patient_invitations')
-      .select('email, practices(name)')
-      .eq('token', token)
-      .gt('expires_at', new Date().toISOString())
-      .is('accepted_at', null)
-      .maybeSingle();
-
-    if (data) {
-      const practiceRow = data.practices as unknown as { name: string } | null;
-      invitation = {
-        email:        data.email,
-        practiceName: practiceRow?.name ?? null,
-      };
-    }
+    redirect(`/checkout/${encodeURIComponent(token)}`);
   }
+
+  const invitation: { email: string; practiceName: string | null } | null = null;
 
   return (
     <div

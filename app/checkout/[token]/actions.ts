@@ -1,0 +1,395 @@
+'use server';
+
+import crypto from 'crypto';
+import { cookies } from 'next/headers';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/server';
+import { paystackRequest } from '@/lib/paystack';
+import { encryptId } from '@/lib/idEncryption';
+import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
+import {
+  isAllowedSalaryDay,
+  ALLOWED_SALARY_DAYS,
+} from '@/lib/salaryDates';
+import {
+  normalizePhoneZA,
+  validateSaId,
+  saIdAge,
+  type SaIdInvalidReason,
+} from '@/lib/validation';
+import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
+import { discriminateExistingUser } from './_lib/discriminate';
+
+// ─── Anonymous checkout — server actions ───────────────────────────────────
+//
+// initiateCheckout
+//   The pivotal "commit" step. Up until this point the visitor is
+//   anonymous. Here we:
+//     1) Find or create the auth user (no OTP — email is verified by
+//        the fact that they clicked the emailed link).
+//     2) Write the profile with their details (SA ID encrypted).
+//     3) Move the plan to pending_first_payment + record their salary
+//        day + plan_type + first instalment amount.
+//     4) Create the payments schedule (#1 processing, 2..N scheduled).
+//     5) Sign them in via a temp password we just set on the auth user
+//        — so they're authenticated when they return from Paystack.
+//     6) Initialize a Paystack transaction with our callback URL and
+//        return the authorization_url for the client to redirect to.
+//
+//   The "temp password" approach lets us establish a real session
+//   without OTP or magic-link side effects. The patient sets their own
+//   password on the /checkout/[token]/done step, which overwrites it.
+//
+//   Idempotency / retry: every step is safe to re-run. If the same
+//   patient hits Pay again after a decline, we reuse the same account,
+//   update the profile (in case they corrected something), regenerate
+//   the temp password + Paystack reference, and re-initiate.
+//
+//   The invitation `accepted_at` is NOT set here — that's the Paystack
+//   callback's job, after the charge actually succeeds.
+
+const MIN_AGE = 18;
+
+function saIdErrorMessage(reason: SaIdInvalidReason): string {
+  switch (reason) {
+    case 'length':      return 'SA ID number must be 13 digits.';
+    case 'format':      return 'SA ID number must contain only digits.';
+    case 'date':        return 'That ID number\'s date of birth isn\'t a real calendar date.';
+    case 'citizenship': return 'That ID number\'s citizenship digit isn\'t recognised.';
+    case 'checksum':    return 'That ID number\'s check digit doesn\'t match — please double-check what you typed.';
+  }
+}
+
+export type InitiateCheckoutInput = {
+  token:       string;
+  firstName:   string;
+  lastName:    string;
+  saIdNumber:  string;
+  phone:       string;
+  planType:    2 | 3;
+  salaryDay:   number;
+};
+
+export type InitiateCheckoutResult =
+  | { ok: true;  authorizationUrl: string }
+  | { ok: false; error: string }
+  // requireLogin fires for the organic-account email collision case
+  // (#6 in the verification audit). The form uses `loginUrl` to send
+  // the patient to /login?next=… so they land on this bill's
+  // confirm page after authenticating.
+  | { ok: false; error: string; requireLogin: true; loginUrl: string };
+
+const TEMP_PASSWORD_BYTES = 24;
+
+function generateTempPassword(): string {
+  // Long random — never seen by the patient. Replaced when they set
+  // their real password on the /done step.
+  return crypto.randomBytes(TEMP_PASSWORD_BYTES).toString('base64url');
+}
+
+export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
+  const { token, firstName, lastName, saIdNumber, phone, planType, salaryDay } = input;
+
+  if (!token)                  return { ok: false, error: 'Missing token.' };
+  if (!firstName.trim())       return { ok: false, error: 'First name is required.' };
+  if (!lastName.trim())        return { ok: false, error: 'Last name is required.' };
+
+  const saIdResult = validateSaId(saIdNumber);
+  if (!saIdResult.valid) return { ok: false, error: saIdErrorMessage(saIdResult.reason) };
+
+  const age = saIdAge(saIdNumber);
+  if (age === null || age < MIN_AGE) {
+    return { ok: false, error: `You must be ${MIN_AGE} or older to accept a payment plan.` };
+  }
+
+  const normalizedPhone = normalizePhoneZA(phone);
+  if (!normalizedPhone) return { ok: false, error: 'Enter a valid South African cellphone number.' };
+
+  if (planType !== 2 && planType !== 3) return { ok: false, error: 'Pick 2 or 3 instalments.' };
+  if (!isAllowedSalaryDay(salaryDay)) {
+    return { ok: false, error: `Salary day must be one of: ${ALLOWED_SALARY_DAYS.join(', ')}.` };
+  }
+
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  // ── 1. Validate the invitation (existence, expiry, not-accepted) ──────
+  const { data: invitation } = await svc
+    .from('patient_invitations')
+    .select('id, email, plan_id, practice_id')
+    .eq('token', token)
+    .gt('expires_at', new Date().toISOString())
+    .is('accepted_at', null)
+    .maybeSingle();
+
+  if (!invitation) return { ok: false, error: 'This invitation link is no longer valid.' };
+
+  const normalizedEmail = (invitation.email as string).trim().toLowerCase();
+
+  // ── 2. Fetch the plan (need plan.patient_id BEFORE the user decision) ─
+  // Why early: the discriminator below uses plan.patient_id to tell
+  // "returning checkout patient" (reuse) apart from "organic-account
+  // email collision" (reject with login guidance). The previous order
+  // (auth lookup first, decide on email_confirmed_at alone) broke
+  // decline-retry — see app/checkout/[token]/_lib/discriminate.ts.
+  const { data: plan } = await svc
+    .from('plans')
+    .select('id, total_amount, status, application_id, practice_id, patient_id')
+    .eq('id', invitation.plan_id)
+    .maybeSingle();
+
+  if (!plan) return { ok: false, error: 'This bill no longer exists.' };
+  if (plan.status === 'completed' || plan.status === 'cancelled' || plan.status === 'declined') {
+    return { ok: false, error: 'This bill has already been settled or cancelled.' };
+  }
+
+  // ── 3. Find existing user, then route via the plan-ownership rule ────
+  let userId:      string;
+  let isNewUser:   boolean = false;
+
+  const existing = await findExistingAuthUser(svc, normalizedEmail);
+  const decision = discriminateExistingUser(
+    existing,
+    (plan.patient_id as string | null) ?? null,
+  );
+
+  if (decision.action === 'reject-organic-collision') {
+    // #6 race / email collision with an organic BetterNow account.
+    // The plan was bound to a different (or null) patient on the
+    // new-patient fork; this confirmed user owns a separate organic
+    // account. Send them to /login with a next= back to their bill's
+    // acceptance page so the standard patient-portal path takes over
+    // once they authenticate.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
+    const next   = `/patient/orders/${plan.id}/confirm`;
+    return {
+      ok:           false,
+      error:        'An account with this email already exists. Please log in to see this bill on your dashboard.',
+      requireLogin: true,
+      loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
+    };
+  }
+
+  if (decision.action === 'reuse') {
+    userId = decision.userId;
+  } else {
+    // 'create-new' — fresh creation. email_confirm: true skips
+    // Supabase's signup OTP entirely; the emailed-link click IS our
+    // verification.
+    const tempPwd = generateTempPassword();
+    const { data: created, error: createErr } = await svc.auth.admin.createUser({
+      email:          normalizedEmail,
+      password:       tempPwd,
+      email_confirm:  true,
+      user_metadata:  {
+        role:                   'patient',
+        invited_by_practice_id: invitation.practice_id,
+      },
+    });
+    if (createErr || !created.user) {
+      return { ok: false, error: createErr?.message ?? 'Failed to create account.' };
+    }
+    userId    = created.user.id;
+    isNewUser = true;
+  }
+
+  // ── 4. Upsert the profile row with the patient's details ──────────────
+  // The on_auth_user_created trigger writes a minimal profile when the
+  // auth user is created (migration 0033). We update it with the form
+  // fields here. For returning patients we always overwrite — they
+  // may have corrected a typo.
+  let encryptedSaId: string;
+  try {
+    encryptedSaId = encryptId(saIdNumber.trim());
+  } catch {
+    return { ok: false, error: 'Encryption error — please contact support.' };
+  }
+
+  const profileFields = {
+    id:           userId,
+    role:         'patient',
+    email:        normalizedEmail,
+    first_name:   firstName.trim(),
+    last_name:    lastName.trim(),
+    phone:        normalizedPhone,
+    sa_id_number: encryptedSaId,
+    salary_day:   salaryDay,
+  };
+
+  // Use upsert so the path works whether the trigger has populated a row
+  // or not — for AUTH_ONLY orphans the profile may not exist.
+  const { error: profileErr } = await svc
+    .from('profiles')
+    .upsert(profileFields, { onConflict: 'id' });
+  if (profileErr) {
+    if (isNewUser) {
+      // No-orphans: tear the auth user back down if we can't get a
+      // profile in. Cascade is now in place (migration 0044) so this
+      // succeeds even if a minimal trigger row was written.
+      await svc.auth.admin.deleteUser(userId).catch(() => {});
+    }
+    return { ok: false, error: `Failed to save your details: ${profileErr.message}` };
+  }
+
+  // ── 5. Bind the plan + application to this patient (idempotent) ──────
+  // The plan was already fetched in step 2. Bind only if currently
+  // unbound — on a returning-patient retry the binding is already in
+  // place from the first pass, and the `.is('patient_id', null)`
+  // guard makes this a no-op.
+  const planUpdateOk = await svc
+    .from('plans')
+    .update({ patient_id: userId })
+    .eq('id', plan.id)
+    .is('patient_id', null);
+  if (planUpdateOk.error) {
+    return { ok: false, error: `Failed to bind plan: ${planUpdateOk.error.message}` };
+  }
+  if (plan.application_id) {
+    await svc
+      .from('applications')
+      .update({ patient_id: userId })
+      .eq('id', plan.application_id as string)
+      .is('patient_id', null);
+  }
+
+  // ── 5. Compute schedule + update plan with chosen terms ───────────────
+  const totalAmount = Number(plan.total_amount);
+  const instalments = splitInstalments(totalAmount, planType);
+  const dates       = calculatePaymentDates(new Date(), salaryDay, planType);
+
+  const { error: planTermsErr } = await svc
+    .from('plans')
+    .update({
+      status:            'pending_first_payment',
+      plan_type:         planType,
+      instalment_amount: instalments[0],
+    })
+    .eq('id', plan.id);
+  if (planTermsErr) return { ok: false, error: `Failed to set plan terms: ${planTermsErr.message}` };
+
+  // ── 6. Create / refresh payments rows ─────────────────────────────────
+  // Idempotent: if rows already exist (returning abandoner retrying),
+  // wipe and re-create with a fresh schedule. Total instalment count
+  // could have changed (2↔3) on the retry.
+  await svc.from('payments').delete().eq('plan_id', plan.id);
+
+  const instalment1Id = crypto.randomUUID();
+  const paymentRows   = instalments.map((amount, i) => ({
+    id:                i === 0 ? instalment1Id : crypto.randomUUID(),
+    plan_id:           plan.id,
+    patient_id:        userId,
+    instalment_number: i + 1,
+    amount,
+    due_date:          dates[i].toISOString().split('T')[0],
+    status:            i === 0 ? 'processing' : 'scheduled',
+  }));
+
+  const { error: paymentsErr } = await svc.from('payments').insert(paymentRows);
+  if (paymentsErr) return { ok: false, error: `Failed to create schedule: ${paymentsErr.message}` };
+
+  // ── 7. Stamp the Paystack reference on the instalment-1 row ───────────
+  const reference = `hnpl_co_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
+  await svc.from('payments').update({ peach_payment_id: reference }).eq('id', instalment1Id);
+
+  // ── 8. Sign the user in via fresh temp password ───────────────────────
+  // We need an authenticated session before redirecting to Paystack so
+  // the callback returns into the right cookie context. updateUserById
+  // sets a known password; signInWithPassword establishes the session.
+  const sessionTempPwd = generateTempPassword();
+  const { error: pwdErr } = await svc.auth.admin.updateUserById(userId, {
+    password: sessionTempPwd,
+  });
+  if (pwdErr) return { ok: false, error: `Failed to establish session: ${pwdErr.message}` };
+
+  const supabaseAuth = await createClient();
+  const { error: signInErr } = await supabaseAuth.auth.signInWithPassword({
+    email:    normalizedEmail,
+    password: sessionTempPwd,
+  });
+  if (signInErr) return { ok: false, error: `Failed to sign in: ${signInErr.message}` };
+
+  // ── 9. Initialize the Paystack transaction ────────────────────────────
+  const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? '';
+  const callbackUrl = `${appUrl}/checkout/${token}/complete`;
+  const amountCents = Math.round(instalments[0] * 100);
+
+  type PaystackInitResponse = {
+    status: boolean;
+    message?: string;
+    data?: { authorization_url?: string; reference?: string };
+  };
+
+  let initResult: PaystackInitResponse;
+  try {
+    initResult = await paystackRequest<PaystackInitResponse>('/transaction/initialize', {
+      method: 'POST',
+      body: JSON.stringify({
+        email:        normalizedEmail,
+        amount:       amountCents,
+        currency:     'ZAR',
+        reference,
+        callback_url: callbackUrl,
+        metadata: {
+          purpose:           'checkout_first_payment',
+          token,
+          patientId:         userId,
+          planId:            plan.id,
+          paymentId:         instalment1Id,
+          instalment_number: 1,
+        },
+      }),
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
+  }
+
+  if (!initResult.status || !initResult.data?.authorization_url) {
+    return { ok: false, error: initResult.message ?? 'Payment initialization failed.' };
+  }
+
+  // Stash the token in a cookie so the callback / done pages can read
+  // it without depending on URL params alone.
+  const cookieStore = await cookies();
+  cookieStore.set('hnpl_checkout_token', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge:   60 * 60,
+    path:     '/',
+  });
+
+  return { ok: true, authorizationUrl: initResult.data.authorization_url };
+}
+
+// ─── finalizePassword — set the patient's real password ────────────────────
+//
+// Called from /checkout/[token]/done after the patient picks a
+// password. Replaces the temp password that initiateCheckout set,
+// giving them real return-access credentials. After this they're
+// redirected into the patient portal.
+
+export type FinalizePasswordResult = { ok: true } | { ok: false; error: string };
+
+export async function finalizePassword(password: string): Promise<FinalizePasswordResult> {
+  if (typeof password !== 'string' || password.length < 8) {
+    return { ok: false, error: 'Password must be at least 8 characters.' };
+  }
+  if (password.length > 200) {
+    return { ok: false, error: 'Password is too long.' };
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Session expired — please use the emailed link again.' };
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) return { ok: false, error: error.message };
+
+  // Clear the checkout token cookie — the flow is done.
+  const cookieStore = await cookies();
+  cookieStore.delete('hnpl_checkout_token');
+
+  return { ok: true };
+}

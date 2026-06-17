@@ -25,6 +25,18 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-ZA', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// ─── Success panel ─────────────────────────────────────────────────────────
+//
+// Three states, driven by the createBill response shape:
+//
+//   1. Existing patient — bill is on their dashboard; we sent a
+//      "log in to view" email. No checkout link is involved.
+//   2. New patient + email sent — invitation row created, checkout
+//      link sent to their email. The link is NEVER shown here.
+//   3. New patient + email FAILED — the invitation row exists but
+//      the patient has no way to reach it. We surface the failure
+//      so the provider can correct the email and resend.
+
 function SuccessPanel({
   summary,
   feePercent,
@@ -34,65 +46,107 @@ function SuccessPanel({
   feePercent: number;
   onReset: () => void;
 }) {
-  const isInvite = !!summary.invitation;
+  const isInvite       = !!summary.invitation;
+  const isExisting     = !!summary.existingAccount;
+  const inviteDelivery   = summary.invitation?.emailDelivery;
+  const existingDelivery = summary.existingAccount?.emailDelivery;
+  const emailFailed = (isInvite   && inviteDelivery   && !inviteDelivery.sent)
+                    || (isExisting && existingDelivery && !existingDelivery.sent);
+
+  const tone = emailFailed ? 'red' : isInvite ? 'blue' : 'green';
+  const wrap = tone === 'red'   ? 'bg-red-50 border-red-200'
+            : tone === 'blue'   ? 'bg-blue-50 border-blue-200'
+            :                     'bg-green-50 border-green-200';
+  const headingCls = tone === 'red'   ? 'text-red-900'
+                   : tone === 'blue'   ? 'text-blue-900'
+                   :                     'text-green-900';
+  const iconCls    = tone === 'red'   ? 'text-red-600'
+                   : tone === 'blue'   ? 'text-blue-600'
+                   :                     'text-green-600';
+  const chipCls    = tone === 'red'   ? 'bg-red-100 text-red-700'
+                   : tone === 'blue'   ? 'bg-blue-100 text-blue-700'
+                   :                     'bg-green-100 text-green-700';
+  const innerCls   = tone === 'red'   ? 'bg-white border-red-200'
+                   : tone === 'blue'   ? 'bg-white border-blue-200'
+                   :                     'bg-white border-green-200';
+
+  const heading =
+    emailFailed         ? 'Bill created, but the email failed'
+    : isInvite          ? 'Invitation emailed to patient'
+    :                     'Bill sent to patient';
 
   return (
-    <div className={`border rounded-2xl p-6 space-y-5 ${isInvite ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
+    <div className={`border rounded-2xl p-6 space-y-5 ${wrap}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <svg
-            className={`w-5 h-5 shrink-0 ${isInvite ? 'text-blue-600' : 'text-green-600'}`}
+            className={`w-5 h-5 shrink-0 ${iconCls}`}
             fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
           >
             <path strokeLinecap="round" strokeLinejoin="round"
-              d={isInvite
-                ? 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75'
-                : 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z'}
+              d={emailFailed
+                ? 'M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z'
+                : isInvite
+                  ? 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75'
+                  : 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z'}
             />
           </svg>
-          <h2 className={`text-base font-semibold ${isInvite ? 'text-blue-900' : 'text-green-900'}`}>
-            {isInvite ? 'Bill created — invitation sent' : 'Bill sent successfully'}
+          <h2 className={`text-base font-semibold ${headingCls}`}>
+            {heading}
           </h2>
         </div>
-        <span className={`font-mono text-xs rounded px-2 py-0.5 shrink-0 ${isInvite ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+        <span className={`font-mono text-xs rounded px-2 py-0.5 shrink-0 ${chipCls}`}>
           {summary.invoiceNumber}
         </span>
       </div>
 
-      {isInvite && summary.invitation && (
-        <div className={`rounded-xl border p-4 space-y-2 ${isInvite ? 'bg-white border-blue-200' : 'bg-white border-green-200'}`}>
+      {/* Body — driven by the three states */}
+      {emailFailed && (isInvite ? inviteDelivery : existingDelivery) && (
+        <div className={`rounded-xl border p-4 space-y-2 ${innerCls}`}>
           <p className="text-sm font-medium text-gray-900">
-            Invitation created for <span className="font-semibold">{summary.invitation.email}</span>
+            We couldn&apos;t email {' '}
+            <span className="font-semibold">
+              {(isInvite ? inviteDelivery : existingDelivery)!.to}
+            </span>
           </p>
-          <p className="text-xs text-gray-500">
-            They have 7 days to register (expires {formatDate(summary.invitation.expiresAt)}).
-            Share this link with them:
+          <p className="text-xs text-red-700">
+            {(isInvite ? inviteDelivery : existingDelivery)!.error ?? 'Email service error.'}
           </p>
-          <div className="flex items-center gap-2 mt-1">
-            <input
-              readOnly
-              value={summary.invitation.shareUrl}
-              className="flex-1 rounded border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs font-mono text-gray-700 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => navigator.clipboard.writeText(summary.invitation!.shareUrl)}
-              className="text-xs text-[#15A89E] hover:text-[#13294B] font-medium shrink-0"
-            >
-              Copy
-            </button>
-          </div>
+          <p className="text-xs text-gray-600 mt-2">
+            {isInvite
+              ? 'The patient cannot reach checkout until this email is delivered. Double-check the address and create the bill again.'
+              : 'The bill is on the patient\'s dashboard, but they may not realise it\'s there. Reach out to them directly, or correct the email and re-send.'}
+          </p>
         </div>
       )}
 
-      {!isInvite && (
-        <p className={`text-sm ${isInvite ? 'text-blue-800' : 'text-green-800'}`}>
-          <span className="font-medium">{summary.patientName}</span> will receive this bill and
-          choose their instalment plan when they log in.
-        </p>
+      {!emailFailed && isInvite && summary.invitation && (
+        <div className={`rounded-xl border p-4 space-y-1 ${innerCls}`}>
+          <p className="text-sm text-gray-900">
+            We&apos;ve emailed the checkout link to{' '}
+            <span className="font-semibold">{summary.invitation.email}</span>.
+          </p>
+          <p className="text-xs text-gray-500">
+            Link is valid for 7 days (expires {formatDate(summary.invitation.expiresAt)}).
+            The patient reviews the bill, picks 2 or 3 instalments, and pays — all on one screen.
+          </p>
+        </div>
       )}
 
-      <div className={`rounded-xl border px-4 py-3 space-y-1.5 text-sm bg-white ${isInvite ? 'border-blue-200' : 'border-green-200'}`}>
+      {!emailFailed && isExisting && summary.existingAccount && (
+        <div className={`rounded-xl border p-4 space-y-1 ${innerCls}`}>
+          <p className="text-sm text-gray-900">
+            <span className="font-semibold">{summary.patientName}</span> already has a BetterNow account.
+            The bill is on their dashboard.
+          </p>
+          <p className="text-xs text-gray-500">
+            We&apos;ve emailed{' '}
+            <span className="font-mono">{summary.existingAccount.email}</span> a nudge to log in and review.
+          </p>
+        </div>
+      )}
+
+      <div className={`rounded-xl border px-4 py-3 space-y-1.5 text-sm bg-white ${innerCls.replace('bg-white ', '')}`}>
         <div className="flex justify-between text-gray-500">
           <span>Gross</span>
           <span>{formatRand(summary.gross)}</span>
@@ -109,7 +163,11 @@ function SuccessPanel({
 
       <button
         onClick={onReset}
-        className={`text-sm font-medium underline underline-offset-2 ${isInvite ? 'text-blue-700 hover:text-blue-800' : 'text-green-700 hover:text-green-800'}`}
+        className={`text-sm font-medium underline underline-offset-2 ${
+          tone === 'red'   ? 'text-red-700 hover:text-red-800'
+          : tone === 'blue'  ? 'text-blue-700 hover:text-blue-800'
+          :                    'text-green-700 hover:text-green-800'
+        }`}
       >
         Create another bill
       </button>
