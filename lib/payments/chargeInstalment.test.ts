@@ -39,12 +39,19 @@ type PlanRow = {
 };
 type ProfileRow = { id: string; email: string };
 
-function makeStub(state: {
+// Extracted so each `const state: StubState = { ... }` literal in the test cases
+// below can be annotated with this type. Without the annotation TS
+// infers a narrower shape from the inline literal (e.g. PaymentRow
+// loses the optional `peach_payment_id` field), which then breaks
+// later assertions like `state.payments[0].peach_payment_id`.
+type StubState = {
   payments:  PaymentRow[];
   plans:     PlanRow[];
   profiles:  ProfileRow[];
   today?:    string;
-}) {
+};
+
+function makeStub(state: StubState) {
   const today = state.today ?? '2026-06-15';
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,12 +66,16 @@ function makeStub(state: {
             return builder;
           },
           maybeSingle: async () => {
-            const rows = (state as Record<string, Record<string, unknown>[]>)[table] ?? [];
+            // Double-cast through unknown: the state container also
+            // holds a non-table `today?: string` field, so a direct
+            // `as Record<string, ...>` no longer satisfies TS. We do
+            // not iterate the container — we only index by table name.
+            const rows = (state as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
             const found = rows.find((r) => filters.every((f) => f(r)));
             return { data: found ?? null, error: null };
           },
           single: async () => {
-            const rows = (state as Record<string, Record<string, unknown>[]>)[table] ?? [];
+            const rows = (state as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
             const found = rows.find((r) => filters.every((f) => f(r)));
             return { data: found ?? null, error: null };
           },
@@ -90,7 +101,7 @@ function makeStub(state: {
             return builder;
           },
           async select(_cols?: string) {
-            const rows = (state as Record<string, Record<string, unknown>[]>)[table] ?? [];
+            const rows = (state as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
             const matching = rows.filter((r) => {
               for (const [c, v] of eqs)  if (r[c] !== v) return false;
               for (const [c, vs] of ins) if (!vs.includes(r[c])) return false;
@@ -171,7 +182,7 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
   });
 
   it('claim is atomic — a second concurrent call to the same row sees status=processing and bails', async () => {
-    const state = {
+    const state: StubState = {
       payments: [{
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
@@ -194,7 +205,7 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
 
 describe('attemptChargeInstalment — successful charge', () => {
   it('writes a fresh reference, increments retry_count, marks processing, calls Paystack with the correct payload', async () => {
-    const state = {
+    const state: StubState = {
       payments: [{
         id: 'aaaa1111-bbbb-2222-cccc-333344445555',
         status: 'scheduled' as string, retry_count: 0, amount: 250.75,
@@ -231,7 +242,7 @@ describe('attemptChargeInstalment — successful charge', () => {
   });
 
   it('on retry of a previously failed row, attemptNumber increments and reference reflects it', async () => {
-    const state = {
+    const state: StubState = {
       payments: [{
         id: 'p1', status: 'failed' as string, retry_count: 2, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
@@ -252,7 +263,7 @@ describe('attemptChargeInstalment — successful charge', () => {
 
 describe('attemptChargeInstalment — Paystack transport error', () => {
   it('does NOT revert the row when Paystack throws — claim stays in processing for manual reconcile', async () => {
-    const state = {
+    const state: StubState = {
       payments: [{
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
@@ -275,7 +286,7 @@ describe('attemptChargeInstalment — Paystack transport error', () => {
 
 describe('attemptChargeInstalment — revert on post-claim ineligibility', () => {
   it('reverts the claim when the plan turns out not to be active', async () => {
-    const state = {
+    const state: StubState = {
       payments: [{
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
@@ -295,7 +306,7 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
   });
 
   it('reverts the claim when the plan has no stored authorization code', async () => {
-    const state = {
+    const state: StubState = {
       payments: [{
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
@@ -317,7 +328,7 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
 
 describe('writeOffExceededAttempts', () => {
   it('flips status=failed AND retry_count>=MAX_ATTEMPTS rows to written_off', async () => {
-    const state = {
+    const state: StubState = {
       payments: [
         { id: 'a', status: 'failed' as string,    retry_count: MAX_ATTEMPTS,     amount: 1, plan_id: 'p', patient_id: 'u', due_date: '2026-06-14' },
         { id: 'b', status: 'failed' as string,    retry_count: MAX_ATTEMPTS - 1, amount: 1, plan_id: 'p', patient_id: 'u', due_date: '2026-06-14' },

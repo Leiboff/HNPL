@@ -104,12 +104,15 @@ describe('AccordionSection — chevron rotation', () => {
   it('chevron has no rotate class when collapsed', () => {
     const { container } = render(<Harness initialOpen={false} />);
     const svg = container.querySelector('svg[aria-hidden]');
-    expect(svg?.className.baseVal ?? svg?.getAttribute('class') ?? '').not.toMatch(/\brotate-180\b/);
+    // happy-dom / lib.dom both type SVGElement.className as a plain
+    // string now (it used to be SVGAnimatedString with .baseVal). Read
+    // the attribute directly — that's what was actually running anyway.
+    expect(svg?.getAttribute('class') ?? '').not.toMatch(/\brotate-180\b/);
   });
 
   it('chevron has rotate-180 class when open', () => {
     const { container } = render(<Harness initialOpen={true} />);
     const svg = container.querySelector('svg[aria-hidden]');
-    expect(svg?.className.baseVal ?? svg?.getAttribute('class') ?? '').toMatch(/\brotate-180\b/);
+    expect(svg?.getAttribute('class') ?? '').toMatch(/\brotate-180\b/);
   });
 });

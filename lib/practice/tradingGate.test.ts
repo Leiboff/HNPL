@@ -33,8 +33,19 @@ function makeStub(opts: StubOptions): { client: TradingGateSupabase; recorded: {
       const call: { table: string; eqs: Array<[string, unknown]> } = { table, eqs: [] };
       recorded.push(call);
 
+      // Recursive return type: eqStep returns either a terminal
+      // `single()` branch (the practices row lookup) or another chain
+      // step exposing `eq` + `limit`. Explicit annotation avoids the
+      // TS7023 implicit-any that fires on self-referential mocks.
+      // The recursion lives in the *type* layer (EqStep -> EqStepReturn
+      // -> EqStep) so the function below can be annotated cleanly.
+      type EqStep = (col: string, val: unknown) => EqStepReturn;
+      type EqStepReturn =
+        | { single: () => Promise<{ data: unknown; error: unknown }> }
+        | { eq: EqStep; limit: (n: number) => Promise<{ data: unknown; error: unknown }> };
+
       function select(_cols: string) {
-        function eqStep(col: string, val: unknown) {
+        const eqStep: EqStep = (col, val) => {
           call.eqs.push([col, val]);
           if (table === 'practices' && call.eqs.length === 1) {
             return {
@@ -50,8 +61,8 @@ function makeStub(opts: StubOptions): { client: TradingGateSupabase; recorded: {
               data:  opts.providers ?? [],
               error: opts.providerError ?? null,
             }),
-          } as ReturnType<typeof eqStep>;
-        }
+          };
+        };
         return { eq: eqStep };
       }
 

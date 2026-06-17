@@ -165,7 +165,9 @@ describe('signup actions — OTP-abandon recovery branch', () => {
     // 2. branches on email_confirmed_at returned by the helper.
     expect(src).toMatch(/email_confirmed_at/);
     // 3. re-fires the signup OTP on the unconfirmed branch.
-    expect(src).toMatch(/auth\.resend.*type:\s*['"]signup['"]/s);
+    // [\s\S]*? rather than the /s (dotAll) flag — that flag is ES2018+,
+    // and the tsconfig target stays at ES2017 for now.
+    expect(src).toMatch(/auth\.resend[\s\S]*?type:\s*['"]signup['"]/);
     // 4. returns needsVerification true.
     expect(src).toMatch(/needsVerification:\s*true/);
   });

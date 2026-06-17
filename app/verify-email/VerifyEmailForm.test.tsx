@@ -4,7 +4,13 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
 const verifyOtp = vi.fn();
-const resendConfirmation = vi.fn(async () => ({ ok: true as const }));
+// Explicit signature: the real resendConfirmation takes one email arg
+// (see app/auth/resend/actions.ts). Without the type parameter, TS
+// infers a 0-arity mock from the inline async () => {...}, which trips
+// TS2554 when the mock factory below calls it with `email`.
+const resendConfirmation = vi.fn<(email: string) => Promise<{ ok: true }>>(
+  async () => ({ ok: true as const }),
+);
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => ({
@@ -26,8 +32,11 @@ beforeEach(() => {
   Object.defineProperty(window, 'location', {
     configurable: true,
     value: {
-      href: '',
       get assign() { return navTo; },
+      // Only the setter is required — code under test assigns to
+      // window.location.href to navigate. A `href: ''` value property
+      // would collide with the setter at the TS level and is silently
+      // overridden at runtime anyway, so drop it.
       set href(v: string) { navTo(v); },
     },
   });
