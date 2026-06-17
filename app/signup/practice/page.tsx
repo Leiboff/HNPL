@@ -409,6 +409,7 @@ export default function PracticeSignupPage() {
                 id="practice-password"
                 className={inputClass(!!errors.password)}
                 type="password"
+                autoComplete="new-password"
                 minLength={8}
                 value={fields.password}
                 onChange={setText('password')}
@@ -422,6 +423,7 @@ export default function PracticeSignupPage() {
                 id="practice-confirm"
                 className={inputClass(!!errors.confirm)}
                 type="password"
+                autoComplete="new-password"
                 minLength={8}
                 value={fields.confirm}
                 onChange={setText('confirm')}

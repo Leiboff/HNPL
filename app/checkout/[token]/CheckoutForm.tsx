@@ -2,22 +2,44 @@
 
 import { useState, useTransition, useMemo } from 'react';
 import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
+import {
+  normalizePhoneZA,
+  validateSaId,
+  saIdAge,
+} from '@/lib/validation';
+import {
+  useFieldValidation,
+  focusAndScrollTo,
+  type FieldsSchema,
+} from '@/lib/forms/useFieldValidation';
 
 // ─── Multi-step anonymous checkout ─────────────────────────────────────────
 //
 // Three visible steps + a final Pay submit:
 //   1. Bill review (informational; reads the bill back to the patient)
 //   2. Plan selection (2 vs 3 instalments + salary day → schedule preview)
-//   3. Patient details (name, SA ID, phone)
+//   3. Patient details (name, SA ID, phone) — validated on BLUR via the
+//      shared `useFieldValidation` hook so the patient learns "this SA
+//      ID is wrong" the moment they leave the field, not at Pay click.
 //   4. Pay — single button that calls initiateCheckout and redirects
 //      to Paystack's authorization_url.
+//
+// Validation rules + per-field UX (blur-then-keystroke timing, single
+// generic SA ID error, normalised phone validator) are SHARED with
+// PatientSignupForm via `lib/forms/useFieldValidation` + `lib/validation`.
+// No parallel validation logic lives here — the schema below just wires
+// the existing validators into the existing hook.
+//
+// Email is not in the schema: it's passed in from the invitation
+// (server-side), displayed read-only at the top, never user-editable.
+// The emailed link click is the email-verification signal.
 //
 // State is purely client-side until the Pay submit. The server action
 // is the single commit point — it creates the auth user, profile,
 // payments schedule, and Paystack transaction in one trip.
 //
-// Mobile-first single-column layout. The bill summary is sticky at
-// the top so the patient never loses sight of what they're paying for.
+// Mobile-first single-column layout. The bill summary sits at the top
+// of every step so the patient never loses sight of what they're paying for.
 
 type Props = {
   token:              string;
@@ -42,6 +64,22 @@ type Props = {
 };
 
 type Step = 1 | 2 | 3 | 4;
+
+const MIN_AGE   = 18;
+const SA_ID_LEN = 13;
+
+// Same single-message rule as PatientSignupForm — the validator's
+// internal reasons (length/format/date/citizenship/checksum) stay
+// hidden from the user.
+const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
+
+const INPUT_BASE = 'w-full rounded-lg border px-3 py-2.5 text-base text-gray-900 placeholder-gray-400 outline-none transition-all focus:ring-2';
+const INPUT_OK   = 'border-gray-300 focus:border-[#15A89E] focus:ring-[#15A89E]/20';
+const INPUT_ERR  = 'border-red-400 focus:border-red-500 focus:ring-red-200';
+
+function inputClass(hasError: boolean) {
+  return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
+}
 
 function formatRand(n: number): string {
   const [integer, decimal] = n.toFixed(2).split('.');
@@ -164,6 +202,24 @@ function BillSummary({
   );
 }
 
+// ─── Step-3 details — schema fed into the shared hook ─────────────────────
+
+type DetailsFields = {
+  firstName:     string;
+  lastName:      string;
+  saIdNumber:    string;
+  phone:         string;
+  termsAccepted: boolean;
+};
+
+const BLANK_DETAILS: DetailsFields = {
+  firstName:     '',
+  lastName:      '',
+  saIdNumber:    '',
+  phone:         '',
+  termsAccepted: false,
+};
+
 // ─── The form ─────────────────────────────────────────────────────────────
 
 export default function CheckoutForm({
@@ -171,16 +227,53 @@ export default function CheckoutForm({
 }: Props) {
   const [step, setStep] = useState<Step>(1);
 
-  // Step 2 state
+  // Step 2 state — defaults are always valid; no schema entries needed.
   const [planType,  setPlanType]  = useState<2 | 3>(2);
   const [salaryDay, setSalaryDay] = useState<number>(25);
 
-  // Step 3 state
-  const [firstName,   setFirstName]   = useState('');
-  const [lastName,    setLastName]    = useState('');
-  const [saIdNumber,  setSaIdNumber]  = useState('');
-  const [phone,       setPhone]       = useState('');
-  const [termsAccepted, setTermsAccepted] = useState(false);
+  // Step 3 state — passed as a single object into useFieldValidation so
+  // the blur/keystroke-after-error semantics behave identically to the
+  // signup forms.
+  const [details, setDetails] = useState<DetailsFields>(BLANK_DETAILS);
+
+  const schema = useMemo<FieldsSchema<DetailsFields>>(() => ({
+    firstName:  { validate: (v) => v.firstName.trim() ? null : 'First name is required.' },
+    lastName:   { validate: (v) => v.lastName.trim()  ? null : 'Last name is required.' },
+    saIdNumber: {
+      validate: (v) => {
+        const r = validateSaId(v.saIdNumber);
+        if (!r.valid) return SA_ID_GENERIC_ERROR;
+        const age = saIdAge(v.saIdNumber);
+        if (age === null || age < MIN_AGE) {
+          return `You must be ${MIN_AGE} or older to accept a payment plan.`;
+        }
+        return null;
+      },
+      // No suppressLive — same rule as PatientSignupForm: errors are
+      // gated by "field has been blurred at least once". The single
+      // generic message means we can show on blur regardless of digit
+      // count without leaking the validator's internal reason codes.
+    },
+    phone: {
+      validate: (v) =>
+        normalizePhoneZA(v.phone) ? null : 'Enter a valid South African cellphone number.',
+    },
+    termsAccepted: {
+      validate: (v) => v.termsAccepted ? null : 'Please accept the payment-plan terms to continue.',
+    },
+  }), []);
+
+  const { errors, handleBlur, validateAll } = useFieldValidation(details, schema);
+
+  function setText(key: Exclude<keyof DetailsFields, 'termsAccepted'>) {
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = key === 'saIdNumber'
+        ? e.target.value.replace(/\D/g, '')  // strip non-digits as the user types
+        : e.target.value;
+      setDetails(d => ({ ...d, [key]: val }));
+    };
+  }
+  const onBlur = (key: keyof DetailsFields) => () => handleBlur(key);
 
   const [error,     setError]     = useState<string | null>(null);
   // When the server says "this email collides with an organic account",
@@ -191,29 +284,54 @@ export default function CheckoutForm({
   const instalments = useMemo(() => previewInstalments(totalAmount, planType), [totalAmount, planType]);
   const dates       = useMemo(() => previewDates(salaryDay, planType),         [salaryDay, planType]);
 
+  // Gate the step-3 → step-4 transition on a full validateAll pass.
+  // Without this, the patient could move to the Pay step with invalid
+  // SA ID / phone / etc. and only see the errors after clicking Pay
+  // (which is on step 4, away from the inputs).
+  function handleContinueFromDetails() {
+    const { ok, firstInvalid } = validateAll();
+    if (!ok) {
+      if (firstInvalid) {
+        const id = `checkout-${String(firstInvalid)}`;
+        requestAnimationFrame(() => focusAndScrollTo(id));
+      }
+      return;
+    }
+    setStep(4);
+  }
+
   function submitPay() {
     setError(null);
     setLoginUrl(null);
-    if (!firstName.trim())              { setError('Enter your first name.'); return; }
-    if (!lastName.trim())               { setError('Enter your last name.');  return; }
-    if (!saIdNumber.trim())             { setError('Enter your SA ID number.'); return; }
-    if (!phone.trim())                  { setError('Enter your cellphone number.'); return; }
-    if (!termsAccepted)                 { setError('Please confirm you accept the payment-plan terms.'); return; }
+
+    // Submit-time backstop. validateAll() also marks all fields
+    // touched and finds the first invalid for focusing.
+    const { ok, firstInvalid } = validateAll();
+    if (!ok) {
+      setError('Please complete the required fields highlighted above.');
+      if (firstInvalid) {
+        // The invalid field lives on step 3 — bounce back so the
+        // patient sees the inline errors next to the inputs.
+        setStep(3);
+        requestAnimationFrame(() => focusAndScrollTo(`checkout-${String(firstInvalid)}`));
+      }
+      return;
+    }
 
     startTransition(async () => {
-      // The try/catch is load-bearing for the same reason as BillForm:
-      // if initiateCheckout throws (function timeout reaching Paystack,
-      // network drop), the rejection would surface as an uncaught
-      // promise inside the transition — isPending eventually resets
-      // but the patient sees a re-enabled button with NO error. They
-      // tap again and re-run the whole commit step. Catch + surface
-      // a clear error so they see what happened.
+      // The try/catch is load-bearing: if initiateCheckout throws
+      // (function timeout reaching Paystack, network drop), the
+      // rejection would surface as an uncaught promise inside the
+      // transition — isPending eventually resets but the patient
+      // sees a re-enabled button with NO error. Catch + surface a
+      // clear error so they see what happened.
       try {
         const result = await initiateCheckout({
           token,
-          firstName, lastName,
-          saIdNumber: saIdNumber.trim(),
-          phone:      phone.trim(),
+          firstName:  details.firstName,
+          lastName:   details.lastName,
+          saIdNumber: details.saIdNumber.trim(),
+          phone:      details.phone.trim(),
           planType,
           salaryDay,
         });
@@ -363,7 +481,7 @@ export default function CheckoutForm({
         </div>
       )}
 
-      {/* ── Step 3: details ──────────────────────────────────────────── */}
+      {/* ── Step 3: details (blur-validated via shared hook) ─────────── */}
       {step === 3 && (
         <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4">
           <h1 className="text-lg font-semibold text-gray-900">Your details</h1>
@@ -373,76 +491,100 @@ export default function CheckoutForm({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="checkout-firstName" className="block text-sm font-medium text-gray-700 mb-1">
                 First name
               </label>
               <input
-                id="firstName"
+                id="checkout-firstName"
                 type="text"
                 autoComplete="given-name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base"
+                value={details.firstName}
+                onChange={setText('firstName')}
+                onBlur={onBlur('firstName')}
+                aria-invalid={!!errors.firstName}
+                className={inputClass(!!errors.firstName)}
               />
+              {errors.firstName && <p className="mt-1 text-xs text-red-600">{errors.firstName}</p>}
             </div>
             <div>
-              <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="checkout-lastName" className="block text-sm font-medium text-gray-700 mb-1">
                 Last name
               </label>
               <input
-                id="lastName"
+                id="checkout-lastName"
                 type="text"
                 autoComplete="family-name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base"
+                value={details.lastName}
+                onChange={setText('lastName')}
+                onBlur={onBlur('lastName')}
+                aria-invalid={!!errors.lastName}
+                className={inputClass(!!errors.lastName)}
               />
+              {errors.lastName && <p className="mt-1 text-xs text-red-600">{errors.lastName}</p>}
             </div>
           </div>
 
           <div>
-            <label htmlFor="saIdNumber" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="checkout-saIdNumber" className="block text-sm font-medium text-gray-700 mb-1">
               SA ID number
             </label>
             <input
-              id="saIdNumber"
+              id="checkout-saIdNumber"
               type="text"
               inputMode="numeric"
-              maxLength={13}
-              value={saIdNumber}
-              onChange={(e) => setSaIdNumber(e.target.value.replace(/\D/g, ''))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base font-mono tabular-nums"
+              maxLength={SA_ID_LEN}
+              value={details.saIdNumber}
+              onChange={setText('saIdNumber')}
+              onBlur={onBlur('saIdNumber')}
+              aria-invalid={!!errors.saIdNumber}
+              placeholder="13-digit ID number"
+              className={`${inputClass(!!errors.saIdNumber)} font-mono tabular-nums`}
             />
+            {errors.saIdNumber && <p className="mt-1 text-xs text-red-600">{errors.saIdNumber}</p>}
           </div>
 
           <div>
-            <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="checkout-phone" className="block text-sm font-medium text-gray-700 mb-1">
               Cellphone
             </label>
             <input
-              id="phone"
+              id="checkout-phone"
               type="tel"
               autoComplete="tel"
               inputMode="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              value={details.phone}
+              onChange={setText('phone')}
+              onBlur={onBlur('phone')}
+              aria-invalid={!!errors.phone}
               placeholder="0821234567"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base"
+              className={inputClass(!!errors.phone)}
             />
+            {errors.phone && <p className="mt-1 text-xs text-red-600">{errors.phone}</p>}
           </div>
 
-          <label className="flex items-start gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={termsAccepted}
-              onChange={(e) => setTermsAccepted(e.target.checked)}
-              className="mt-1 h-4 w-4"
-            />
-            <span>
-              I agree to BetterNow&apos;s payment-plan terms and authorise the scheduled
-              instalment debits on the dates above.
-            </span>
-          </label>
+          <div>
+            <label
+              htmlFor="checkout-termsAccepted"
+              className={`flex items-start gap-2 text-sm text-gray-700 rounded-lg border px-3 py-2 ${
+                errors.termsAccepted ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-gray-50'
+              }`}
+            >
+              <input
+                id="checkout-termsAccepted"
+                type="checkbox"
+                checked={details.termsAccepted}
+                onChange={(e) => setDetails(d => ({ ...d, termsAccepted: e.target.checked }))}
+                onBlur={onBlur('termsAccepted')}
+                aria-invalid={!!errors.termsAccepted}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                I agree to BetterNow&apos;s payment-plan terms and authorise the scheduled
+                instalment debits on the dates above.
+              </span>
+            </label>
+            {errors.termsAccepted && <p className="mt-1 text-xs text-red-600">{errors.termsAccepted}</p>}
+          </div>
 
           <div className="flex gap-2">
             <button
@@ -454,7 +596,7 @@ export default function CheckoutForm({
             </button>
             <button
               type="button"
-              onClick={() => setStep(4)}
+              onClick={handleContinueFromDetails}
               className="flex-1 rounded-lg px-4 py-3 text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
               style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >

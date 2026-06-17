@@ -241,6 +241,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           <input
             id="patient-password"
             type="password"
+            autoComplete="new-password"
             minLength={8}
             value={fields.password}
             onChange={setText('password')}
@@ -257,6 +258,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           <input
             id="patient-confirm"
             type="password"
+            autoComplete="new-password"
             minLength={8}
             value={fields.confirm}
             onChange={setText('confirm')}

@@ -129,11 +129,11 @@ export default function ProviderSetupPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">New password</label>
-            <input type="password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters" className={INPUT} />
+            <input type="password" autoComplete="new-password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters" className={INPUT} />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Confirm password</label>
-            <input type="password" required minLength={8} value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="Repeat password" className={INPUT} />
+            <input type="password" autoComplete="new-password" required minLength={8} value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="Repeat password" className={INPUT} />
           </div>
           <button
             type="submit"
