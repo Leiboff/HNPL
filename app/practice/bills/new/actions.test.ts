@@ -37,16 +37,22 @@ function makeSsrClient() {
       // .delete().eq() chain used in the rollback path.
       builder.delete = () => ({ eq: () => Promise.resolve({ data: null, error: null }) });
       // .select(...).eq(...).maybeSingle()/.single()/.eq(...).eq(...).maybeSingle()
+      //
+      // The idempotency-window dup-check on createBill chains
+      // .eq().eq().gte() to look up recent invitations / plans. The
+      // mock returns an empty array for that path so no duplicate
+      // ever fires in the trading-gate tests.
       builder.select = (_cols: string) => {
         function eqStep(_col: string, _val: unknown): unknown {
           return {
             eq: eqStep,
+            gte: async () => ({ data: [], error: null }),
             single: async () => {
               if (table === 'practice_members') {
                 return { data: { practice_id: 'practice-1' }, error: null };
               }
               if (table === 'practices') {
-                return { data: { fee_percent: 6 }, error: null };
+                return { data: { name: 'Mock Practice', fee_percent: 6 }, error: null };
               }
               return { data: null, error: null };
             },

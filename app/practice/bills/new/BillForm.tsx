@@ -197,19 +197,42 @@ export default function BillForm({ feePercent, providers, createBill }: Props) {
     setSummary(null);
     setLoading(true);
 
-    const result = await createBill({
-      patientEmail:     patientEmail.trim(),
-      billAmount,
-      practiceReference: practiceReference.trim() || undefined,
-      providerId,
-    });
+    // The try/catch/finally is load-bearing: if the server action
+    // ever throws (function timeout, network drop, malformed
+    // response) the catch surfaces the error AND the finally ensures
+    // the button comes back out of its loading state. Without this,
+    // a thrown rejection from `await createBill(...)` would skip
+    // setLoading(false) entirely and the button would hang forever
+    // even though the server-side work has completed.
+    try {
+      const result = await createBill({
+        patientEmail:     patientEmail.trim(),
+        billAmount,
+        practiceReference: practiceReference.trim() || undefined,
+        providerId,
+      });
 
-    if (result.error) {
-      setError(result.error);
-    } else if (result.summary) {
-      setSummary(result.summary);
+      if (result.error) {
+        setError(result.error);
+      } else if (result.summary) {
+        setSummary(result.summary);
+      } else {
+        // Defensive: the action returned, but neither error nor
+        // summary is set. Treat as unknown — tell the provider not
+        // to resubmit blindly; the work may have completed.
+        setError(
+          'The server responded but didn\'t confirm the bill. Refresh this page and check whether the bill was created before submitting again.',
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `Couldn't reach the server (${err.message}). Refresh this page and check whether the bill was created — do NOT resubmit immediately.`
+          : 'Couldn\'t reach the server. Refresh this page and check whether the bill was created — do NOT resubmit immediately.',
+      );
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   if (summary) {

@@ -7,6 +7,7 @@ import { calculateFee } from '@/lib/finance';
 import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { sendPatientInvitationEmail } from '@/lib/email/templates/patientInvitation';
 import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPatientBill';
+import { isDuplicateBill, RECENT_BILL_WINDOW_MS } from './_lib/idempotency';
 
 // ─── Public surface ──────────────────────────────────────────────────────────
 //
@@ -157,6 +158,57 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     .maybeSingle();
 
   const { gross, fee, net } = calculateFee(billAmount, feePercent);
+
+  // ── Idempotency: short-window dup-create guard ──────────────────────────
+  // Catches the hang-then-resubmit pattern (slow outbound call stalled
+  // the action, provider refreshes, server work nevertheless succeeded,
+  // second submit would create a duplicate bill+invitation). Window is
+  // RECENT_BILL_WINDOW_MS (8s, matches the outbound-fetch timeout) — too
+  // short to block a legitimate "bill the same patient the same amount
+  // a second time" (repeat procedure, correction).
+  //
+  // Scope: same practice + same patient identity (patient_id for an
+  // existing-account match; invitation.email for a new patient) +
+  // same total_amount.
+  const now = Date.now();
+  const windowStart = new Date(now - RECENT_BILL_WINDOW_MS).toISOString();
+
+  let dupCandidates: Array<{ created_at: string; total_amount: number | string }> = [];
+  if (patient) {
+    const { data } = await svc
+      .from('plans')
+      .select('created_at, total_amount')
+      .eq('patient_id', patient.id)
+      .eq('practice_id', practiceId)
+      .gte('created_at', windowStart);
+    dupCandidates = (data ?? []) as typeof dupCandidates;
+  } else {
+    // New-patient case: plans don't have patient_id yet. Match via
+    // any recent invitation row for this email + practice and pull
+    // its plan's amount.
+    const { data: recentInvites } = await svc
+      .from('patient_invitations')
+      .select('plan_id, plans!inner(created_at, total_amount)')
+      .eq('email', normalizedEmail)
+      .eq('practice_id', practiceId)
+      .gte('invited_at', windowStart);
+    dupCandidates = (recentInvites ?? []).flatMap((r: { plans: unknown }) => {
+      const planRow = Array.isArray(r.plans)
+        ? r.plans[0] as { created_at?: string; total_amount?: number | string } | undefined
+        : r.plans as { created_at?: string; total_amount?: number | string } | null;
+      if (!planRow?.created_at) return [];
+      return [{
+        created_at:   planRow.created_at,
+        total_amount: planRow.total_amount ?? 0,
+      }];
+    });
+  }
+
+  if (isDuplicateBill(dupCandidates, billAmount, now)) {
+    return {
+      error: 'This bill was just created. Refresh this page to see the confirmation — do not submit again.',
+    };
+  }
 
   const { data: invoiceNumber, error: invoiceError } = await supabase.rpc('next_invoice_number');
   if (invoiceError || !invoiceNumber) {

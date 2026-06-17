@@ -201,24 +201,43 @@ export default function CheckoutForm({
     if (!termsAccepted)                 { setError('Please confirm you accept the payment-plan terms.'); return; }
 
     startTransition(async () => {
-      const result = await initiateCheckout({
-        token,
-        firstName, lastName,
-        saIdNumber: saIdNumber.trim(),
-        phone:      phone.trim(),
-        planType,
-        salaryDay,
-      });
-      if (!result.ok) {
-        setError(result.error);
-        if ('requireLogin' in result && result.requireLogin) {
-          setLoginUrl(result.loginUrl);
+      // The try/catch is load-bearing for the same reason as BillForm:
+      // if initiateCheckout throws (function timeout reaching Paystack,
+      // network drop), the rejection would surface as an uncaught
+      // promise inside the transition — isPending eventually resets
+      // but the patient sees a re-enabled button with NO error. They
+      // tap again and re-run the whole commit step. Catch + surface
+      // a clear error so they see what happened.
+      try {
+        const result = await initiateCheckout({
+          token,
+          firstName, lastName,
+          saIdNumber: saIdNumber.trim(),
+          phone:      phone.trim(),
+          planType,
+          salaryDay,
+        });
+        if (!result.ok) {
+          setError(result.error);
+          if ('requireLogin' in result && result.requireLogin) {
+            setLoginUrl(result.loginUrl);
+          }
+          return;
         }
-        return;
+        if (!result.authorizationUrl) {
+          setError('The payment service didn\'t return a URL. Please try again in a moment.');
+          return;
+        }
+        // Hard navigate so Paystack's redirect-back lands on a clean server
+        // request that reads our auth cookie.
+        window.location.href = result.authorizationUrl;
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? `Couldn't reach the payment service (${err.message}). Please try again in a moment.`
+            : 'Couldn\'t reach the payment service. Please try again in a moment.',
+        );
       }
-      // Hard navigate so Paystack's redirect-back lands on a clean server
-      // request that reads our auth cookie.
-      window.location.href = result.authorizationUrl;
     });
   }
 

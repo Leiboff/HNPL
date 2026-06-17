@@ -19,6 +19,7 @@ import {
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { discriminateExistingUser } from './_lib/discriminate';
+import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 
 // ─── Anonymous checkout — server actions ───────────────────────────────────
 //
@@ -144,6 +145,31 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   if (!plan) return { ok: false, error: 'This bill no longer exists.' };
   if (plan.status === 'completed' || plan.status === 'cancelled' || plan.status === 'declined') {
     return { ok: false, error: 'This bill has already been settled or cancelled.' };
+  }
+
+  // ── 2b. Idempotency: short-window pay-step throttle ──────────────────
+  // If a previous Pay submit stamped a Paystack reference on this
+  // plan's instalment 1 in the last 5s, we're in a rapid retry (e.g.
+  // slow Paystack roundtrip → user refreshed → second submit). The
+  // discriminator below would handle this correctly — same user, same
+  // plan, wipe-and-recreate payments — but doing that work twice in
+  // 5s thrashes the DB and risks ordering surprises (the first call's
+  // payments row is in the middle of being read by Paystack as we
+  // delete it). Throttle instead; the user just waits a beat.
+  const { data: recentInstalmentOne } = await svc
+    .from('payments')
+    .select('created_at, peach_payment_id')
+    .eq('plan_id', plan.id)
+    .eq('instalment_number', 1)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (isRapidRepeatPayAttempt(recentInstalmentOne, Date.now())) {
+    return {
+      ok:    false,
+      error: 'Just a moment — your last attempt is still being processed. Please wait a few seconds before trying again.',
+    };
   }
 
   // ── 3. Find existing user, then route via the plan-ownership rule ────

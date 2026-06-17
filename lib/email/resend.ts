@@ -23,12 +23,22 @@
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
+// Hard ceiling on how long a single send may take. Resend normally
+// responds in well under a second; anything past ~8 s is a stall and
+// will exceed Vercel's Hobby function timeout if we wait it out.
+// Bounded here so a slow Resend can never hang the surrounding server
+// action — the AbortError gets caught and returned as ok:false, so
+// callers can treat it the same as any other email-send failure.
+const DEFAULT_TIMEOUT_MS = 8_000;
+
 export type SendEmailInput = {
   to:      string | string[];
   subject: string;
   html:    string;
   /** Override RESEND_FROM if needed for a specific call. */
   from?:   string;
+  /** Override the 8s default. Useful for tests. */
+  timeoutMs?: number;
 };
 
 export type SendEmailResult =
@@ -46,9 +56,13 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     return { ok: false, error: 'RESEND_FROM not set — email send skipped.' };
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
   try {
     const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type':  'application/json',
@@ -69,9 +83,18 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     const data = (await res.json().catch(() => ({}))) as { id?: string };
     return { ok: true, id: data.id ?? '' };
   } catch (err) {
+    // AbortError from the timeout, network error, JSON parse — all
+    // funneled into the same ok:false shape so callers don't have to
+    // distinguish "Resend slow" from "Resend down".
+    const isAbort = err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
+    if (isAbort) {
+      return { ok: false, error: `Resend timed out after ${input.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms` };
+    }
     return {
       ok:    false,
       error: err instanceof Error ? err.message : 'Unknown network error',
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
