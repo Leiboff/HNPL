@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { calculateFee } from '@/lib/finance';
 import type { CreateBillResult, CreateBillSummary, ProviderOption } from './page';
+import BillWaitingPanel from './BillWaitingPanel';
 
 type Props = {
   feePercent: number;
@@ -144,6 +145,25 @@ function SuccessPanel({
             <span className="font-mono">{summary.existingAccount.email}</span> a nudge to log in and review.
           </p>
         </div>
+      )}
+
+      {/* Live "card-machine beep" panel — drives the at-the-till case.
+          Renders only when we have a planId to subscribe to AND the
+          outbound email actually went out (otherwise the patient has
+          no way to reach checkout, so "waiting" would be misleading). */}
+      {!emailFailed && summary.planId && (
+        <BillWaitingPanel
+          planId={summary.planId}
+          invitationId={summary.invitation?.invitationId}
+          patientLabel={summary.patientName}
+          amount={summary.gross}
+          initial={{
+            planStatus:           'pending_acceptance',
+            invitationViewedAt:   null,
+            invitationAcceptedAt: null,
+            invitationExpiresAt:  summary.invitation?.expiresAt ?? null,
+          }}
+        />
       )}
 
       <div className={`rounded-xl border px-4 py-3 space-y-1.5 text-sm bg-white ${innerCls.replace('bg-white ', '')}`}>

@@ -2,6 +2,17 @@ export type PatientRef  = { first_name: string; last_name: string };
 export type ProviderRef = { first_name: string; last_name: string };
 export type PayoutRef   = { net_amount: number; status: string };
 
+// Embedded invitation row joined into the plans query. Plans that were
+// created against an existing patient (Scenario A) have no invitation —
+// the field is null. Plans created for a new patient email (Scenario B)
+// carry these timestamps so the lifecycle chip can render "Sent" vs
+// "Viewed" vs "Expired" correctly.
+export type InvitationRef = {
+  viewed_at:   string | null;
+  accepted_at: string | null;
+  expires_at:  string | null;
+};
+
 export type PlanSummary = {
   id: string;
   total_amount: number;
@@ -13,6 +24,7 @@ export type PlanSummary = {
   patient:  PatientRef  | PatientRef[]  | null;
   provider: ProviderRef | ProviderRef[] | null;
   payouts:  PayoutRef   | PayoutRef[]   | null;
+  invitations?: InvitationRef | InvitationRef[] | null;
 };
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -48,6 +60,11 @@ export function providerName(plan: PlanSummary): string {
 export function getPayout(plan: PlanSummary): PayoutRef | null {
   if (!plan.payouts) return null;
   return Array.isArray(plan.payouts) ? (plan.payouts[0] ?? null) : plan.payouts;
+}
+
+export function getInvitation(plan: PlanSummary): InvitationRef | null {
+  if (!plan.invitations) return null;
+  return Array.isArray(plan.invitations) ? (plan.invitations[0] ?? null) : plan.invitations;
 }
 
 export function doctorStatus(status: string): { label: string; cls: string } {

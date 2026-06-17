@@ -9,9 +9,13 @@ import {
   patientDisplay,
   providerName,
   getPayout,
-  doctorStatus,
-  formatLocalDate,
+  getInvitation,
 } from './billHelpers';
+import {
+  deriveBillLifecycleStatus,
+  billLifecycleChip,
+  type BillLifecycleStatus,
+} from '@/lib/bills/lifecycle';
 import CreateBillButton from './CreateBillButton';
 import type { TradingGateResult } from '@/lib/practice/tradingGate';
 
@@ -25,10 +29,14 @@ type Props = {
   gate:         TradingGateResult;
 };
 
-function PlanStatusBadge({ status }: { status: string }) {
-  const cfg = doctorStatus(status);
+function LifecycleBadge({ status }: { status: BillLifecycleStatus }) {
+  const cfg = billLifecycleChip(status);
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`}>
+    <span
+      title={cfg.hint}
+      aria-label={cfg.hint}
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`}
+    >
       {cfg.label}
     </span>
   );
@@ -90,6 +98,13 @@ export default function BillsBlock({
       const payoutLabel = plan.status === 'pending_acceptance'
         ? 'Not yet accepted'
         : payout?.status === 'paid' ? 'Paid' : payout ? 'Pending' : '';
+      const inv = getInvitation(plan);
+      const lifecycle = deriveBillLifecycleStatus({
+        planStatus:           plan.status,
+        invitationViewedAt:   inv?.viewed_at   ?? null,
+        invitationAcceptedAt: inv?.accepted_at ?? null,
+        invitationExpiresAt:  inv?.expires_at  ?? null,
+      });
       return [
         plan.invoice_number ?? '',
         plan.practice_reference ?? '',
@@ -99,7 +114,7 @@ export default function BillsBlock({
         Number(plan.total_amount).toFixed(2),
         fee.toFixed(2),
         net.toFixed(2),
-        doctorStatus(plan.status).label,
+        billLifecycleChip(lifecycle).label,
         payoutLabel,
         formatDate(plan.created_at),
       ].map(esc);
@@ -121,6 +136,13 @@ export default function BillsBlock({
       const payoutLabel = plan.status === 'pending_acceptance'
         ? 'Not yet accepted'
         : payout?.status === 'paid' ? 'Paid' : payout ? 'Pending' : '—';
+      const inv = getInvitation(plan);
+      const lifecycle = deriveBillLifecycleStatus({
+        planStatus:           plan.status,
+        invitationViewedAt:   inv?.viewed_at   ?? null,
+        invitationAcceptedAt: inv?.accepted_at ?? null,
+        invitationExpiresAt:  inv?.expires_at  ?? null,
+      });
       return `<tr>
         <td>${plan.invoice_number ?? '—'}${plan.practice_reference ? `<br><small>${plan.practice_reference}</small>` : ''}</td>
         <td>${patientDisplay(plan)}</td>
@@ -129,7 +151,7 @@ export default function BillsBlock({
         <td>R${Number(plan.total_amount).toFixed(2)}</td>
         <td>-R${fee.toFixed(2)}</td>
         <td>R${net.toFixed(2)}</td>
-        <td>${doctorStatus(plan.status).label}</td>
+        <td>${billLifecycleChip(lifecycle).label}</td>
         <td>${payoutLabel}</td>
         <td>${formatDate(plan.created_at)}</td>
       </tr>`;
@@ -223,12 +245,19 @@ export default function BillsBlock({
               {plans.map((plan) => {
                 const payout    = getPayout(plan);
                 const isPending = plan.status === 'pending_acceptance';
+                const inv       = getInvitation(plan);
+                const lifecycle = deriveBillLifecycleStatus({
+                  planStatus:           plan.status,
+                  invitationViewedAt:   inv?.viewed_at   ?? null,
+                  invitationAcceptedAt: inv?.accepted_at ?? null,
+                  invitationExpiresAt:  inv?.expires_at  ?? null,
+                });
                 return (
                   <div key={plan.id} className="px-5 py-4 flex items-center justify-between gap-4">
                     <div className="min-w-0">
                       <p className="font-semibold text-gray-900 truncate">{patientDisplay(plan)}</p>
                       <div className="flex items-center gap-2 mt-1.5">
-                        <PlanStatusBadge status={plan.status} />
+                        <LifecycleBadge status={lifecycle} />
                         {!isPending && payout && (
                           <span className={`text-xs font-medium ${payout.status === 'paid' ? 'text-green-700' : 'text-amber-700'}`}>
                             {payout.status === 'paid' ? 'Paid out' : 'Payout pending'}
@@ -260,6 +289,13 @@ export default function BillsBlock({
                     const payout    = getPayout(plan);
                     const isPending = plan.status === 'pending_acceptance';
                     const { fee, net } = calculateFee(Number(plan.total_amount), feePercent);
+                    const inv = getInvitation(plan);
+                    const lifecycle = deriveBillLifecycleStatus({
+                      planStatus:           plan.status,
+                      invitationViewedAt:   inv?.viewed_at   ?? null,
+                      invitationAcceptedAt: inv?.accepted_at ?? null,
+                      invitationExpiresAt:  inv?.expires_at  ?? null,
+                    });
                     return (
                       <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
@@ -280,7 +316,7 @@ export default function BillsBlock({
                         <td className="px-6 py-4 whitespace-nowrap tabular-nums">
                           <span className={`font-medium ${isPending ? 'text-gray-400' : 'text-gray-900'}`}>{formatRand(net)}</span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap"><PlanStatusBadge status={plan.status} /></td>
+                        <td className="px-6 py-4 whitespace-nowrap"><LifecycleBadge status={lifecycle} /></td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           {isPending ? (
                             <span className="text-xs text-gray-400">Not yet accepted</span>

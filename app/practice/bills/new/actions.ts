@@ -57,13 +57,22 @@ export type CreateBillSummary = {
   invoiceNumber:      string;
   practiceReference?: string;
   /**
+   * The plan we just created. The client uses this to subscribe to
+   * realtime updates on the plan row (status → active = "Paid" signal).
+   * Returned for BOTH scenarios.
+   */
+  planId:             string;
+  /**
    * Set ONLY when the patient was new (no existing confirmed account).
    * Does NOT carry the checkout URL — the link is in the email and
    * nowhere else. The provider sees the email-delivery outcome.
+   * `invitationId` is exposed so the practice's "waiting" panel can
+   * subscribe to viewed_at on the row (it is NOT the secret token).
    */
   invitation?:        {
     email:           string;
     expiresAt:       string;
+    invitationId:    string;
     emailDelivery:   InvitationEmailResult;
   };
   /** Set when the patient was an existing confirmed account. */
@@ -265,6 +274,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
         patientName:       `${patient.first_name} ${patient.last_name}`,
         invoiceNumber,
         practiceReference: trimmedRef,
+        planId,
         existingAccount: {
           email:         normalizedEmail,
           emailDelivery: {
@@ -278,10 +288,12 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   }
 
   // ── Scenario B: new patient — invitation + checkout email ──────────────
-  const token     = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const token        = crypto.randomBytes(32).toString('hex');
+  const expiresAt    = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const invitationId = crypto.randomUUID();
 
   const { error: inviteError } = await supabase.from('patient_invitations').insert({
+    id:          invitationId,
     email:       normalizedEmail,
     plan_id:     planId,
     practice_id: practiceId,
@@ -313,9 +325,11 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
       patientName:       normalizedEmail,
       invoiceNumber,
       practiceReference: trimmedRef,
+      planId,
       invitation: {
         email:         normalizedEmail,
         expiresAt,
+        invitationId,
         emailDelivery: {
           sent:  emailResult.ok,
           error: emailResult.ok ? undefined : emailResult.error,

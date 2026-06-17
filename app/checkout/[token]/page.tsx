@@ -99,6 +99,28 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
   const row          = rows[0];
   const practiceName = row.practice_name ?? 'your practice';
 
+  // ── viewed_at stamp ────────────────────────────────────────────────────
+  // Drives the practice-side "Viewed" lifecycle signal (the receptionist
+  // wants to know the patient at least opened the link). The RPC is
+  // idempotent — it only writes on the first call per invitation — so
+  // re-loading the page does not overwrite the original timestamp.
+  //
+  // CRITICAL: this MUST NOT block the patient. A transient RPC failure
+  // (DB hiccup, the migration not yet applied) is non-fatal — we render
+  // the form regardless. The promise is awaited so the request lifecycle
+  // captures it, but any error is swallowed.
+  try {
+    const { error: stampErr } = await supabase.rpc('stamp_invitation_viewed', { p_token: token });
+    if (stampErr) {
+      console.warn('[checkout] stamp_invitation_viewed failed (non-fatal)', stampErr.message);
+    }
+  } catch (err) {
+    console.warn(
+      '[checkout] stamp_invitation_viewed threw (non-fatal)',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">

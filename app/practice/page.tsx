@@ -53,7 +53,8 @@ export default async function PracticeDashboardPage({
       provider_id,
       patient:profiles!plans_patient_id_fkey(first_name, last_name),
       provider:profiles!plans_provider_id_fkey(first_name, last_name),
-      payouts(net_amount, status)
+      payouts(net_amount, status),
+      invitations:patient_invitations(viewed_at, accepted_at, expires_at)
     `)
     .eq('practice_id', practiceId)
     .order('created_at', { ascending: false })
