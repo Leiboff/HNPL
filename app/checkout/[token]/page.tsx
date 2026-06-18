@@ -41,16 +41,19 @@ type InvitationRpcRow = {
 
 function InvalidLinkCard({ reason }: { reason: string }) {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gray-50">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-200 p-8 text-center space-y-4">
-        <div className="w-12 h-12 mx-auto rounded-full bg-amber-100 flex items-center justify-center">
-          <svg className="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+    <div className="min-h-screen flex items-center justify-center px-5 py-12 bg-[#FAFBFD]">
+      <div className="w-full max-w-md rounded-[20px] bg-white border border-[#E5E9F0] p-8 text-center space-y-4 shadow-[0_1px_2px_rgba(15,31,58,0.04)]">
+        <div className="w-14 h-14 mx-auto rounded-full bg-[#FBF1DD] ring-1 ring-[#C8841C]/20 flex items-center justify-center text-[#8A5A11]">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+            <circle cx="12" cy="12" r="9" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v5M12 16.25h.008" />
           </svg>
         </div>
-        <h1 className="text-xl font-semibold text-gray-900">This link is no longer valid</h1>
-        <p className="text-sm text-gray-600">{reason}</p>
-        <p className="text-sm text-gray-500">
+        <h1 className="text-2xl font-semibold text-[#0F1F3A] tracking-[-0.01em]">
+          This link is no longer valid
+        </h1>
+        <p className="text-[15px] leading-relaxed text-[#3A4B66]">{reason}</p>
+        <p className="text-sm text-[#7A8AA0]">
           If you think this is a mistake, please ask your practice to send you a new bill.
         </p>
       </div>
@@ -122,9 +125,9 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="mx-auto max-w-md px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-[#FAFBFD]">
+      <header className="bg-white border-b border-[#E5E9F0] sticky top-0 z-10">
+        <div className="mx-auto max-w-md px-5 py-4 flex items-center justify-between">
           <span
             className="text-lg font-bold tracking-tight"
             style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
@@ -132,11 +135,13 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
             <span style={{ color: '#13294B' }}>better</span>
             <span style={{ color: '#15A89E' }}>now</span>
           </span>
-          <span className="text-xs text-gray-400">Secure checkout</span>
+          <span className="text-[11px] uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
+            Secure checkout
+          </span>
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 py-6">
+      <main className="mx-auto max-w-md px-5 py-8 sm:py-10">
         <CheckoutForm
           token={token}
           email={row.email}

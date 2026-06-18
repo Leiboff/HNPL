@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import PasswordSetForm from './PasswordSetForm';
+import StepMedallion from '../_components/StepMedallion';
 import { finalizePassword } from '../actions';
 
 // ─── /checkout/[token]/done ────────────────────────────────────────────────
@@ -32,9 +33,9 @@ export default async function CheckoutDonePage({ params }: { params: Promise<Par
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="mx-auto max-w-md px-4 py-3">
+    <div className="min-h-screen bg-[#FAFBFD]">
+      <header className="bg-white border-b border-[#E5E9F0]">
+        <div className="mx-auto max-w-md px-5 py-4">
           <span
             className="text-lg font-bold tracking-tight"
             style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
@@ -45,25 +46,23 @@ export default async function CheckoutDonePage({ params }: { params: Promise<Par
         </div>
       </header>
 
-      <main className="mx-auto max-w-md px-4 py-8">
-        <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm text-center space-y-4 mb-4">
-          <div className="w-14 h-14 mx-auto rounded-full bg-green-100 flex items-center justify-center">
-            <svg className="w-7 h-7 text-green-600" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-            </svg>
+      <main className="mx-auto max-w-md px-5 py-8 sm:py-12 space-y-5">
+        {/* Calm success header — the moment of relief. No confetti,
+            just a clear green medallion and a warm one-line confirm. */}
+        <div className="rounded-[20px] border border-[#E5E9F0] bg-white p-6 sm:p-7 shadow-[0_1px_2px_rgba(15,31,58,0.04)] flex items-center gap-4">
+          <StepMedallion icon="check" tone="green" />
+          <div>
+            <h2 className="text-xl font-semibold text-[#0F1F3A]">You&apos;re all set</h2>
+            <p className="mt-0.5 text-sm text-[#3A4B66]">
+              Your plan is active. We&apos;ll handle the rest.
+            </p>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900">Payment received</h1>
-          <p className="text-sm text-gray-600">
-            Your plan is active. One last step — set a password so you can manage it later.
-          </p>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <PasswordSetForm
-            email={user.email ?? ''}
-            finalizePassword={finalizePassword}
-          />
-        </div>
+        <PasswordSetForm
+          email={user.email ?? ''}
+          finalizePassword={finalizePassword}
+        />
       </main>
     </div>
   );

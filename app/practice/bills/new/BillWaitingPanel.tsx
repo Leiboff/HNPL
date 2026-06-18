@@ -8,6 +8,7 @@ import {
   billLifecycleChip,
   type BillLifecycleStatus,
 } from '@/lib/bills/lifecycle';
+import StepMedallion from '@/app/checkout/[token]/_components/StepMedallion';
 
 // ─── BillWaitingPanel ────────────────────────────────────────────────────
 //
@@ -35,14 +36,10 @@ import {
 //      Don't leak realtime channels: each one is a websocket frame
 //      consumer on the Supabase side.
 //
-// What this panel does NOT do:
-//   • It does NOT change the lifecycle state on the server — it is a
-//     read-only observer. The webhook (plans→active) and the
-//     /checkout/[token] page (invitations.viewed_at) are the only
-//     writers.
-//   • It does NOT poll forever. Once the lifecycle reaches "paid" or
-//     "expired" the panel stops polling and unsubscribes — there's
-//     nothing more to watch.
+// Visual rhythm: one confident message per state, anchored by a
+// state-coded medallion. The Paid state is the moment that matters —
+// big hero amount, calm green halo, single concise confirmation.
+// Redundant chip + amount + check have been consolidated.
 
 // Slow safety poll while waiting. Realtime is the primary signal; this
 // is the belt-and-braces net for dropped events.
@@ -73,21 +70,18 @@ type LiveState = {
   invitationExpiresAt:  string | null;
 };
 
-function statusToneClasses(status: BillLifecycleStatus): {
-  card:  string;
-  icon:  string;
-  pulse: boolean;
+// State-coded card tones. Subtle backgrounds, not loud — this is
+// peripheral vision for a busy receptionist; we use the medallion to
+// carry the colour signal.
+function stateClasses(status: BillLifecycleStatus): {
+  card: string;
 } {
   switch (status) {
-    case 'paid':
-      return { card: 'bg-green-50 border-green-200', icon: 'text-green-600', pulse: false };
-    case 'viewed':
-      return { card: 'bg-blue-50 border-blue-200', icon: 'text-blue-600', pulse: true };
-    case 'expired':
-      return { card: 'bg-gray-50 border-gray-200', icon: 'text-gray-400', pulse: false };
+    case 'paid':    return { card: 'bg-[#E7F6EC] border-[#1E9E55]/25' };
+    case 'viewed':  return { card: 'bg-[#15A89E]/8 border-[#15A89E]/25' };
+    case 'expired': return { card: 'bg-[#EEF1F6] border-[#D8DEE8]' };
     case 'sent':
-    default:
-      return { card: 'bg-amber-50 border-amber-200', icon: 'text-amber-600', pulse: true };
+    default:        return { card: 'bg-[#FAFBFD] border-[#E5E9F0]' };
   }
 }
 
@@ -223,62 +217,99 @@ export default function BillWaitingPanel({
     };
   }, [planId, invitationId, isTerminal]);
 
-  const chip       = billLifecycleChip(lifecycle);
-  const tone       = statusToneClasses(lifecycle);
-  const headline   =
-    lifecycle === 'paid'    ? '✓ Paid'
-    : lifecycle === 'viewed'  ? 'Patient is paying…'
-    : lifecycle === 'expired' ? 'Link expired'
-    :                           'Waiting for payment…';
-  const sub        =
-    lifecycle === 'paid'    ? `${formatRand(amount)} collected from ${patientLabel}`
-    : lifecycle === 'viewed'  ? `${patientLabel} has opened the link.`
-    : lifecycle === 'expired' ? `The bill to ${patientLabel} was not paid.`
-    :                           `Watching for ${patientLabel}'s payment…`;
+  const tone = stateClasses(lifecycle);
+
+  // ── Paid: the moment that matters ──────────────────────────────────
+  // Big confident amount, single green medallion, calm one-line confirm.
+  // No redundant chip + tick + amount triple — the medallion + amount
+  // together are the confirmation.
+  if (lifecycle === 'paid') {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className={`rounded-[20px] border p-7 sm:p-8 text-center transition-colors duration-300 ${tone.card}`}
+      >
+        <div className="flex justify-center mb-4">
+          <StepMedallion icon="tick" tone="green" />
+        </div>
+        <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#1E7A45]">Collected</p>
+        <p className="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-[#0F1F3A]">
+          {formatRand(amount)}
+        </p>
+        <p className="mt-3 text-sm text-[#3A4B66]">
+          from <span className="font-medium text-[#0F1F3A]">{patientLabel}</span>
+        </p>
+      </div>
+    );
+  }
+
+  // ── Expired ────────────────────────────────────────────────────────
+  if (lifecycle === 'expired') {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className={`rounded-[20px] border p-6 sm:p-7 text-center transition-colors duration-300 ${tone.card}`}
+      >
+        <div className="flex justify-center mb-4">
+          <StepMedallion icon="clock" tone="muted" />
+        </div>
+        <p className="text-lg font-semibold text-[#0F1F3A]">Link expired</p>
+        <p className="mt-1 text-sm text-[#3A4B66]">
+          {patientLabel} didn&apos;t pay before the link expired.
+        </p>
+      </div>
+    );
+  }
+
+  // ── Waiting / Viewed ───────────────────────────────────────────────
+  // Same structure for both — a single soft state-coded medallion, a
+  // big-but-not-screaming amount, a calm status line. The medallion's
+  // tone carries the difference: amber halo for "Sent / Waiting",
+  // teal halo for "Viewed / Paying". Live updates on viewed_at flip
+  // the tone without rebuilding the layout (less visual flicker).
+  const isViewed = lifecycle === 'viewed';
+  const headline = isViewed
+    ? 'Patient is paying'
+    : 'Waiting for payment';
+  const sub = isViewed
+    ? `${patientLabel} has opened the link.`
+    : `Watching for ${patientLabel}'s payment…`;
+  const chip = billLifecycleChip(lifecycle);
 
   return (
     <div
       role="status"
       aria-live="polite"
-      className={`rounded-2xl border p-6 sm:p-8 text-center transition-colors ${tone.card}`}
+      className={`rounded-[20px] border p-6 sm:p-7 text-center transition-colors duration-300 ${tone.card}`}
     >
-      <div className={`mx-auto w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center ${tone.icon} bg-white border ${
-        lifecycle === 'paid'    ? 'border-green-200' :
-        lifecycle === 'viewed'  ? 'border-blue-200'  :
-        lifecycle === 'expired' ? 'border-gray-200'  :
-                                  'border-amber-200'
-      }`}>
-        {lifecycle === 'paid' ? (
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-        ) : lifecycle === 'expired' ? (
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-          </svg>
-        ) : (
-          <svg
-            width="28" height="28" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth={2}
+      <div className="flex justify-center mb-4">
+        <span className="relative inline-flex">
+          <StepMedallion icon="clock" tone={isViewed ? 'teal' : 'amber'} />
+          {/* A single soft pulse ring — calm, not flashy. Removed for
+              reduced-motion users via the system preference. */}
+          <span
             aria-hidden
-            className={tone.pulse ? 'animate-pulse' : ''}
-          >
-            <circle cx="12" cy="12" r="9" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 2" />
-          </svg>
-        )}
+            className={`absolute inset-0 rounded-full motion-safe:animate-ping ${
+              isViewed ? 'bg-[#15A89E]/25' : 'bg-[#C8841C]/25'
+            }`}
+            style={{ animationDuration: '2.4s' }}
+          />
+        </span>
       </div>
-      <h3 className="mt-4 text-xl sm:text-2xl font-semibold text-gray-900">{headline}</h3>
-      <p className="mt-1 text-sm text-gray-600">{sub}</p>
-      <div className="mt-4 flex items-center justify-center gap-2">
+      <p className="text-lg font-semibold text-[#0F1F3A]">{headline}</p>
+      <p className="mt-1 text-sm text-[#3A4B66]">{sub}</p>
+      <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-white border border-[#E5E9F0] px-3 py-1">
         <span
-          title={chip.hint}
-          aria-label={chip.hint}
-          className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${chip.cls}`}
-        >
+          aria-hidden
+          className={`h-1.5 w-1.5 rounded-full ${isViewed ? 'bg-[#15A89E]' : 'bg-[#C8841C]'}`}
+        />
+        <span className="text-xs font-medium text-[#3A4B66]" title={chip.hint}>
           {chip.label}
         </span>
-        <span className="text-xs text-gray-400 tabular-nums">{formatRand(amount)}</span>
+        <span className="text-xs text-[#7A8AA0]">·</span>
+        <span className="text-xs tabular-nums font-medium text-[#0F1F3A]">{formatRand(amount)}</span>
       </div>
     </div>
   );

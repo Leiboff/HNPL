@@ -47,110 +47,68 @@ function SuccessPanel({
   feePercent: number;
   onReset: () => void;
 }) {
-  const isInvite       = !!summary.invitation;
-  const isExisting     = !!summary.existingAccount;
+  const isInvite         = !!summary.invitation;
+  const isExisting       = !!summary.existingAccount;
   const inviteDelivery   = summary.invitation?.emailDelivery;
   const existingDelivery = summary.existingAccount?.emailDelivery;
   const emailFailed = (isInvite   && inviteDelivery   && !inviteDelivery.sent)
                     || (isExisting && existingDelivery && !existingDelivery.sent);
 
-  const tone = emailFailed ? 'red' : isInvite ? 'blue' : 'green';
-  const wrap = tone === 'red'   ? 'bg-red-50 border-red-200'
-            : tone === 'blue'   ? 'bg-blue-50 border-blue-200'
-            :                     'bg-green-50 border-green-200';
-  const headingCls = tone === 'red'   ? 'text-red-900'
-                   : tone === 'blue'   ? 'text-blue-900'
-                   :                     'text-green-900';
-  const iconCls    = tone === 'red'   ? 'text-red-600'
-                   : tone === 'blue'   ? 'text-blue-600'
-                   :                     'text-green-600';
-  const chipCls    = tone === 'red'   ? 'bg-red-100 text-red-700'
-                   : tone === 'blue'   ? 'bg-blue-100 text-blue-700'
-                   :                     'bg-green-100 text-green-700';
-  const innerCls   = tone === 'red'   ? 'bg-white border-red-200'
-                   : tone === 'blue'   ? 'bg-white border-blue-200'
-                   :                     'bg-white border-green-200';
-
   const heading =
     emailFailed         ? 'Bill created, but the email failed'
-    : isInvite          ? 'Invitation emailed to patient'
-    :                     'Bill sent to patient';
+    : isInvite          ? 'Invitation emailed'
+    :                     'Bill sent';
 
   return (
-    <div className={`border rounded-2xl p-6 space-y-5 ${wrap}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <svg
-            className={`w-5 h-5 shrink-0 ${iconCls}`}
-            fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round"
-              d={emailFailed
-                ? 'M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z'
-                : isInvite
-                  ? 'M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75'
-                  : 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z'}
-            />
-          </svg>
-          <h2 className={`text-base font-semibold ${headingCls}`}>
-            {heading}
-          </h2>
-        </div>
-        <span className={`font-mono text-xs rounded px-2 py-0.5 shrink-0 ${chipCls}`}>
+    <div className="space-y-4">
+      {/* ── Heading row ───────────────────────────────────────────── */}
+      <div className="flex items-start justify-between gap-3 px-1">
+        <h2 className="text-2xl font-semibold tracking-[-0.01em] text-[#0F1F3A]">
+          {heading}
+        </h2>
+        <span className="font-mono text-[11px] rounded-full bg-[#FAFBFD] border border-[#E5E9F0] px-2.5 py-1 text-[#3A4B66] shrink-0">
           {summary.invoiceNumber}
         </span>
       </div>
 
-      {/* Body — driven by the three states */}
+      {/* ── Email failure callout (only when applicable) ─────────── */}
       {emailFailed && (isInvite ? inviteDelivery : existingDelivery) && (
-        <div className={`rounded-xl border p-4 space-y-2 ${innerCls}`}>
-          <p className="text-sm font-medium text-gray-900">
-            We couldn&apos;t email {' '}
+        <div className="rounded-[20px] border border-[#E07A7A] bg-[#FCEAEA] p-5 space-y-1.5">
+          <p className="text-sm font-medium text-[#0F1F3A]">
+            We couldn&apos;t email{' '}
             <span className="font-semibold">
               {(isInvite ? inviteDelivery : existingDelivery)!.to}
             </span>
           </p>
-          <p className="text-xs text-red-700">
+          <p className="text-xs text-[#8A1F1F]">
             {(isInvite ? inviteDelivery : existingDelivery)!.error ?? 'Email service error.'}
           </p>
-          <p className="text-xs text-gray-600 mt-2">
+          <p className="text-xs text-[#3A4B66] pt-1">
             {isInvite
-              ? 'The patient cannot reach checkout until this email is delivered. Double-check the address and create the bill again.'
-              : 'The bill is on the patient\'s dashboard, but they may not realise it\'s there. Reach out to them directly, or correct the email and re-send.'}
+              ? 'The patient cannot reach checkout until this email is delivered. Check the address and re-send.'
+              : 'The bill is on the patient\'s dashboard. Reach out directly, or correct the email and re-send.'}
           </p>
         </div>
       )}
 
+      {/* ── Delivery confirmation (sent OK) ──────────────────────── */}
       {!emailFailed && isInvite && summary.invitation && (
-        <div className={`rounded-xl border p-4 space-y-1 ${innerCls}`}>
-          <p className="text-sm text-gray-900">
-            We&apos;ve emailed the checkout link to{' '}
-            <span className="font-semibold">{summary.invitation.email}</span>.
-          </p>
-          <p className="text-xs text-gray-500">
-            Link is valid for 7 days (expires {formatDate(summary.invitation.expiresAt)}).
-            The patient reviews the bill, picks 2 or 3 instalments, and pays — all on one screen.
-          </p>
-        </div>
+        <p className="text-sm text-[#3A4B66] px-1">
+          Checkout link sent to{' '}
+          <span className="font-medium text-[#0F1F3A]">{summary.invitation.email}</span>.{' '}
+          <span className="text-[#7A8AA0]">Valid until {formatDate(summary.invitation.expiresAt)}.</span>
+        </p>
       )}
-
       {!emailFailed && isExisting && summary.existingAccount && (
-        <div className={`rounded-xl border p-4 space-y-1 ${innerCls}`}>
-          <p className="text-sm text-gray-900">
-            <span className="font-semibold">{summary.patientName}</span> already has a BetterNow account.
-            The bill is on their dashboard.
-          </p>
-          <p className="text-xs text-gray-500">
-            We&apos;ve emailed{' '}
-            <span className="font-mono">{summary.existingAccount.email}</span> a nudge to log in and review.
-          </p>
-        </div>
+        <p className="text-sm text-[#3A4B66] px-1">
+          <span className="font-medium text-[#0F1F3A]">{summary.patientName}</span> already has an account — the bill is on their dashboard, and we&apos;ve nudged them by email.
+        </p>
       )}
 
-      {/* Live "card-machine beep" panel — drives the at-the-till case.
-          Renders only when we have a planId to subscribe to AND the
-          outbound email actually went out (otherwise the patient has
-          no way to reach checkout, so "waiting" would be misleading). */}
+      {/* ── The moment that matters — live waiting panel ─────────── */}
+      {/* Renders only when we have a planId to subscribe to AND the
+          outbound email went out (otherwise the patient has no way
+          to reach checkout, so "waiting" would be misleading). */}
       {!emailFailed && summary.planId && (
         <BillWaitingPanel
           planId={summary.planId}
@@ -166,30 +124,36 @@ function SuccessPanel({
         />
       )}
 
-      <div className={`rounded-xl border px-4 py-3 space-y-1.5 text-sm bg-white ${innerCls.replace('bg-white ', '')}`}>
-        <div className="flex justify-between text-gray-500">
-          <span>Gross</span>
-          <span>{formatRand(summary.gross)}</span>
-        </div>
-        <div className="flex justify-between text-gray-500">
-          <span>BetterNow fee ({feePercent}%)</span>
-          <span>−{formatRand(summary.fee)}</span>
-        </div>
-        <div className="flex justify-between font-semibold text-gray-900 border-t border-gray-100 pt-1.5">
-          <span>Net payout to practice</span>
-          <span>{formatRand(summary.net)}</span>
-        </div>
+      {/* ── Payout breakdown ─────────────────────────────────────────
+          Three lines: Gross / Fee / Net. Net is the line that
+          matters to the practice; we let it carry visual weight
+          via type size + a divider above. Smaller text + softer
+          colours than the headline numbers above. */}
+      <div className="rounded-[20px] border border-[#E5E9F0] bg-white p-5 sm:p-6">
+        <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0] mb-3">
+          Payout
+        </p>
+        <dl className="space-y-2 text-sm">
+          <div className="flex items-baseline justify-between">
+            <dt className="text-[#3A4B66]">Gross</dt>
+            <dd className="tabular-nums text-[#3A4B66]">{formatRand(summary.gross)}</dd>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <dt className="text-[#3A4B66]">BetterNow fee · {feePercent}%</dt>
+            <dd className="tabular-nums text-[#3A4B66]">−{formatRand(summary.fee)}</dd>
+          </div>
+          <div className="pt-3 mt-1 border-t border-[#E5E9F0] flex items-baseline justify-between">
+            <dt className="text-[15px] font-medium text-[#0F1F3A]">Net to practice</dt>
+            <dd className="text-xl font-semibold tabular-nums text-[#0F1F3A]">{formatRand(summary.net)}</dd>
+          </div>
+        </dl>
       </div>
 
       <button
         onClick={onReset}
-        className={`text-sm font-medium underline underline-offset-2 ${
-          tone === 'red'   ? 'text-red-700 hover:text-red-800'
-          : tone === 'blue'  ? 'text-blue-700 hover:text-blue-800'
-          :                    'text-green-700 hover:text-green-800'
-        }`}
+        className="text-sm font-medium text-[#13294B] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline transition-colors"
       >
-        Create another bill
+        Create another bill →
       </button>
     </div>
   );

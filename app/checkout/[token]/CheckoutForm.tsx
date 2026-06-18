@@ -12,17 +12,21 @@ import {
   focusAndScrollTo,
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
+import {
+  BillChip,
+  ScheduleStrip,
+  StepShell,
+  PrimaryButton,
+  SecondaryButton,
+} from './_components/CheckoutChrome';
 
 // ─── Multi-step anonymous checkout ─────────────────────────────────────────
 //
 // Three visible steps + a final Pay submit:
-//   1. Bill review (informational; reads the bill back to the patient)
-//   2. Plan selection (2 vs 3 instalments + salary day → schedule preview)
-//   3. Patient details (name, SA ID, phone) — validated on BLUR via the
-//      shared `useFieldValidation` hook so the patient learns "this SA
-//      ID is wrong" the moment they leave the field, not at Pay click.
-//   4. Pay — single button that calls initiateCheckout and redirects
-//      to Paystack's authorization_url.
+//   1. Bill review — reads the bill back, confirms the deal.
+//   2. Plan — 2 vs 3 instalments + salary day → schedule preview.
+//   3. Details — name, SA ID, phone (blur-validated via shared hook).
+//   4. Pay — single button → Paystack.
 //
 // Validation rules + per-field UX (blur-then-keystroke timing, single
 // generic SA ID error, normalised phone validator) are SHARED with
@@ -30,16 +34,14 @@ import {
 // No parallel validation logic lives here — the schema below just wires
 // the existing validators into the existing hook.
 //
-// Email is not in the schema: it's passed in from the invitation
-// (server-side), displayed read-only at the top, never user-editable.
-// The emailed link click is the email-verification signal.
-//
 // State is purely client-side until the Pay submit. The server action
 // is the single commit point — it creates the auth user, profile,
 // payments schedule, and Paystack transaction in one trip.
 //
-// Mobile-first single-column layout. The bill summary sits at the top
-// of every step so the patient never loses sight of what they're paying for.
+// Mobile-first. Visual rhythm: one heading per step, an anchoring
+// medallion icon, generous whitespace, a single primary button. The
+// condensed BillChip keeps the deal visible without re-printing the
+// full summary on every screen.
 
 type Props = {
   token:              string;
@@ -73,9 +75,14 @@ const SA_ID_LEN = 13;
 // hidden from the user.
 const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
 
-const INPUT_BASE = 'w-full rounded-lg border px-3 py-2.5 text-base text-gray-900 placeholder-gray-400 outline-none transition-all focus:ring-2';
-const INPUT_OK   = 'border-gray-300 focus:border-[#15A89E] focus:ring-[#15A89E]/20';
-const INPUT_ERR  = 'border-red-400 focus:border-red-500 focus:ring-red-200';
+// ─── Softer input styling ──────────────────────────────────────────────
+// Larger min height (py-3 → ~46px), lighter border, teal focus glow
+// (ring-4 with low alpha). Reads airy without sacrificing tap target.
+
+const INPUT_BASE =
+  'w-full rounded-xl border bg-white px-3.5 py-3 text-base text-[#0F1F3A] placeholder:text-[#A3AEC2] outline-none transition-colors focus:ring-4';
+const INPUT_OK   = 'border-[#D8DEE8] focus:border-[#15A89E] focus:ring-[#15A89E]/15';
+const INPUT_ERR  = 'border-[#E07A7A] focus:border-[#D14141] focus:ring-[#D14141]/15';
 
 function inputClass(hasError: boolean) {
   return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
@@ -86,8 +93,8 @@ function formatRand(n: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
-function formatDate(d: Date): string {
-  return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+function formatDateLong(d: Date): string {
+  return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' });
 }
 
 // ─── Tiny client-side schedule preview ─────────────────────────────────────
@@ -143,61 +150,26 @@ function previewDates(salaryDay: number, planType: 2 | 3, today: Date = new Date
   return dates;
 }
 
-// ─── Step indicator ────────────────────────────────────────────────────────
+// ─── Quiet step indicator ──────────────────────────────────────────────
+//
+// Four dots, current step expanded. No labels, no chrome. The
+// medallion in StepShell handles the "what step is this" load; this
+// just confirms position in the flow.
 
-function StepIndicator({ step }: { step: Step }) {
-  const steps = ['Bill', 'Plan', 'Details', 'Pay'];
+function StepDots({ step }: { step: Step }) {
   return (
-    <div className="flex items-center gap-1 mb-4">
-      {steps.map((label, i) => {
-        const idx     = (i + 1) as Step;
-        const active  = idx === step;
-        const done    = idx < step;
-        return (
-          <div key={label} className="flex items-center flex-1">
-            <div className={`flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-semibold ${
-              done   ? 'bg-[#15A89E] text-white'
-              : active ? 'bg-[#13294B] text-white'
-              :         'bg-gray-200 text-gray-500'
-            }`}>
-              {done ? '✓' : idx}
-            </div>
-            <div className="ml-1.5 text-[11px] uppercase tracking-wide font-medium text-gray-600 truncate">
-              {label}
-            </div>
-            {i < steps.length - 1 && (
-              <div className={`flex-1 h-0.5 mx-1.5 ${done ? 'bg-[#15A89E]' : 'bg-gray-200'}`} aria-hidden />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Bill summary card (sticky-ish at top) ─────────────────────────────────
-
-function BillSummary({
-  practiceName, totalAmount, invoiceNumber, practiceReference, email,
-}: Pick<Props, 'practiceName' | 'totalAmount' | 'invoiceNumber' | 'practiceReference' | 'email'>) {
-  return (
-    <div className="bg-white rounded-2xl border-2 border-[#13294B]/10 p-4 mb-4 shadow-sm">
-      <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">From</p>
-      <p className="text-base font-semibold text-gray-900">{practiceName}</p>
-      <div className="mt-3 flex items-baseline justify-between gap-3">
-        <p className="text-3xl font-bold text-[#13294B] tabular-nums">{formatRand(totalAmount)}</p>
-        <p className="text-xs text-gray-500">to {email}</p>
-      </div>
-      {(invoiceNumber || practiceReference) && (
-        <div className="mt-3 flex gap-2 flex-wrap text-xs text-gray-500">
-          {invoiceNumber && (
-            <span className="font-mono bg-gray-100 rounded px-2 py-0.5">{invoiceNumber}</span>
-          )}
-          {practiceReference && (
-            <span className="font-mono bg-gray-100 rounded px-2 py-0.5">{practiceReference}</span>
-          )}
-        </div>
-      )}
+    <div className="flex items-center justify-center gap-1.5 mb-5" aria-label={`Step ${step} of 4`}>
+      {([1, 2, 3, 4] as Step[]).map((n) => (
+        <span
+          key={n}
+          aria-hidden
+          className={`h-1.5 rounded-full transition-all ${
+            n === step ? 'w-6 bg-[#13294B]'
+            : n  <  step ? 'w-1.5 bg-[#15A89E]'
+            :              'w-1.5 bg-[#D8DEE8]'
+          }`}
+        />
+      ))}
     </div>
   );
 }
@@ -361,48 +333,64 @@ export default function CheckoutForm({
 
   return (
     <>
-      <StepIndicator step={step} />
-      <BillSummary
-        practiceName={practiceName}
-        totalAmount={totalAmount}
-        invoiceNumber={invoiceNumber}
-        practiceReference={practiceReference}
-        email={email}
-      />
+      <StepDots step={step} />
+
+      <div className="mb-5">
+        <BillChip practiceName={practiceName} totalAmount={totalAmount} />
+      </div>
 
       {/* ── Step 1: bill review ──────────────────────────────────────── */}
       {step === 1 && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4">
-          <h1 className="text-lg font-semibold text-gray-900">Review your bill</h1>
-          <p className="text-sm text-gray-700">
-            <span className="font-semibold">{practiceName}</span> sent you a bill for{' '}
-            <span className="font-semibold tabular-nums">{formatRand(totalAmount)}</span>.
-            Pay it over 2 or 3 months interest-free — no extra fees, no surprises.
-          </p>
-          <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
-            <li>First payment today, the rest collected automatically on your salary date.</li>
-            <li>Your card details are stored securely with Paystack, never on our servers.</li>
-            <li>You can manage the plan from your account at any time.</li>
-          </ul>
-          <button
-            type="button"
-            onClick={() => setStep(2)}
-            className="w-full rounded-lg px-4 py-3 text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-          >
-            Continue →
-          </button>
-        </div>
+        <StepShell
+          icon="bill"
+          heading="You have a bill to settle"
+          subhead={`From ${practiceName}. Pay it in 2 or 3 instalments — interest-free.`}
+          actions={<PrimaryButton onClick={() => setStep(2)}>Review my plan</PrimaryButton>}
+        >
+          <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6 text-center">
+            <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
+              Amount due
+            </p>
+            <p className="mt-2 text-4xl font-semibold tabular-nums text-[#13294B]">
+              {formatRand(totalAmount)}
+            </p>
+            {(invoiceNumber || practiceReference) && (
+              <div className="mt-3 flex gap-2 flex-wrap justify-center">
+                {invoiceNumber && (
+                  <span className="font-mono text-xs text-[#3A4B66] bg-white border border-[#E5E9F0] rounded-full px-2.5 py-0.5">
+                    {invoiceNumber}
+                  </span>
+                )}
+                {practiceReference && (
+                  <span className="font-mono text-xs text-[#3A4B66] bg-white border border-[#E5E9F0] rounded-full px-2.5 py-0.5">
+                    {practiceReference}
+                  </span>
+                )}
+              </div>
+            )}
+            <p className="mt-3 text-xs text-[#7A8AA0]">to {email}</p>
+          </div>
+        </StepShell>
       )}
 
       {/* ── Step 2: plan + salary day ─────────────────────────────────── */}
       {step === 2 && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4">
-          <h1 className="text-lg font-semibold text-gray-900">Choose your plan</h1>
-
+        <StepShell
+          icon="calendar"
+          heading="Split it how it suits you"
+          actions={
+            <div className="flex items-center justify-between gap-4">
+              <SecondaryButton onClick={() => setStep(1)}>← Back</SecondaryButton>
+              <div className="flex-1 max-w-xs ml-auto">
+                <PrimaryButton onClick={() => setStep(3)}>Looks good</PrimaryButton>
+              </div>
+            </div>
+          }
+        >
           <div role="radiogroup" aria-label="Number of instalments" className="grid grid-cols-2 gap-3">
             {[2, 3].map((n) => {
               const active = planType === n;
+              const each   = previewInstalments(totalAmount, n as 2 | 3)[0];
               return (
                 <button
                   key={n}
@@ -410,28 +398,40 @@ export default function CheckoutForm({
                   role="radio"
                   aria-checked={active}
                   onClick={() => setPlanType(n as 2 | 3)}
-                  className={`rounded-xl border-2 p-3 text-left transition-colors ${
-                    active ? 'border-[#15A89E] bg-[#15A89E]/5' : 'border-gray-200 bg-white hover:border-gray-300'
+                  className={`relative rounded-2xl border-2 p-4 text-left transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#15A89E]/20 ${
+                    active
+                      ? 'border-[#15A89E] bg-[#15A89E]/6'
+                      : 'border-[#E5E9F0] bg-white hover:border-[#D8DEE8]'
                   }`}
                 >
-                  <p className="text-base font-semibold text-gray-900">{n} instalments</p>
-                  <p className="text-xs text-gray-500 mt-0.5 tabular-nums">
-                    {formatRand(previewInstalments(totalAmount, n as 2 | 3)[0])} each
+                  <p className="text-lg font-semibold text-[#0F1F3A]">{n} payments</p>
+                  <p className="text-sm tabular-nums mt-0.5 text-[#3A4B66]">
+                    {formatRand(each)} each
                   </p>
+                  {active && (
+                    <span
+                      aria-hidden
+                      className="absolute top-3 right-3 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#15A89E] text-white"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
+                        <path d="m5 12.5 4.5 4.5L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
 
           <div>
-            <label htmlFor="salaryDay" className="block text-sm font-medium text-gray-700 mb-1">
-              Your salary date
+            <label htmlFor="salaryDay" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
+              When do you get paid?
             </label>
             <select
               id="salaryDay"
               value={salaryDay}
               onChange={(e) => setSalaryDay(parseInt(e.target.value, 10))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base bg-white"
+              className="w-full rounded-xl border border-[#D8DEE8] bg-white px-3.5 py-3 text-base text-[#0F1F3A] focus:border-[#15A89E] focus:ring-4 focus:ring-[#15A89E]/15 outline-none"
             >
               {ALLOWED_SALARY_DAYS.map((d) => (
                 <option key={d} value={d}>
@@ -439,59 +439,29 @@ export default function CheckoutForm({
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-gray-500">
-              We&apos;ll collect each future instalment on (or just after) your salary date.
-            </p>
           </div>
 
-          {/* Schedule preview */}
-          <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium mb-2">Your schedule</p>
-            <ul className="space-y-1.5">
-              {dates.map((d, i) => (
-                <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-700">
-                    {i === 0 ? 'Today' : formatDate(d)}
-                  </span>
-                  <span className="font-semibold text-gray-900 tabular-nums">
-                    {formatRand(instalments[i])}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setStep(1)}
-              className="rounded-lg border border-gray-300 px-4 py-3 text-sm font-medium text-gray-700"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => setStep(3)}
-              className="flex-1 rounded-lg px-4 py-3 text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              Continue →
-            </button>
-          </div>
-        </div>
+          <ScheduleStrip instalments={instalments} dates={dates} />
+        </StepShell>
       )}
 
       {/* ── Step 3: details (blur-validated via shared hook) ─────────── */}
       {step === 3 && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4">
-          <h1 className="text-lg font-semibold text-gray-900">Your details</h1>
-          <p className="text-sm text-gray-500">
-            We need these to set up the payment plan. Your ID is encrypted at rest and never shown back in full.
-          </p>
-
+        <StepShell
+          icon="idcard"
+          heading="Just your details"
+          actions={
+            <div className="flex items-center justify-between gap-4">
+              <SecondaryButton onClick={() => setStep(2)}>← Back</SecondaryButton>
+              <div className="flex-1 max-w-xs ml-auto">
+                <PrimaryButton onClick={handleContinueFromDetails}>Continue to pay</PrimaryButton>
+              </div>
+            </div>
+          }
+        >
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="checkout-firstName" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="checkout-firstName" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
                 First name
               </label>
               <input
@@ -504,10 +474,10 @@ export default function CheckoutForm({
                 aria-invalid={!!errors.firstName}
                 className={inputClass(!!errors.firstName)}
               />
-              {errors.firstName && <p className="mt-1 text-xs text-red-600">{errors.firstName}</p>}
+              {errors.firstName && <p className="mt-1.5 text-xs text-[#D14141]">{errors.firstName}</p>}
             </div>
             <div>
-              <label htmlFor="checkout-lastName" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="checkout-lastName" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
                 Last name
               </label>
               <input
@@ -520,12 +490,12 @@ export default function CheckoutForm({
                 aria-invalid={!!errors.lastName}
                 className={inputClass(!!errors.lastName)}
               />
-              {errors.lastName && <p className="mt-1 text-xs text-red-600">{errors.lastName}</p>}
+              {errors.lastName && <p className="mt-1.5 text-xs text-[#D14141]">{errors.lastName}</p>}
             </div>
           </div>
 
           <div>
-            <label htmlFor="checkout-saIdNumber" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="checkout-saIdNumber" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
               SA ID number
             </label>
             <input
@@ -537,14 +507,14 @@ export default function CheckoutForm({
               onChange={setText('saIdNumber')}
               onBlur={onBlur('saIdNumber')}
               aria-invalid={!!errors.saIdNumber}
-              placeholder="13-digit ID number"
-              className={`${inputClass(!!errors.saIdNumber)} font-mono tabular-nums`}
+              placeholder="13 digits"
+              className={`${inputClass(!!errors.saIdNumber)} font-mono tabular-nums tracking-wide`}
             />
-            {errors.saIdNumber && <p className="mt-1 text-xs text-red-600">{errors.saIdNumber}</p>}
+            {errors.saIdNumber && <p className="mt-1.5 text-xs text-[#D14141]">{errors.saIdNumber}</p>}
           </div>
 
           <div>
-            <label htmlFor="checkout-phone" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="checkout-phone" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
               Cellphone
             </label>
             <input
@@ -556,17 +526,19 @@ export default function CheckoutForm({
               onChange={setText('phone')}
               onBlur={onBlur('phone')}
               aria-invalid={!!errors.phone}
-              placeholder="0821234567"
+              placeholder="082 123 4567"
               className={inputClass(!!errors.phone)}
             />
-            {errors.phone && <p className="mt-1 text-xs text-red-600">{errors.phone}</p>}
+            {errors.phone && <p className="mt-1.5 text-xs text-[#D14141]">{errors.phone}</p>}
           </div>
 
           <div>
             <label
               htmlFor="checkout-termsAccepted"
-              className={`flex items-start gap-2 text-sm text-gray-700 rounded-lg border px-3 py-2 ${
-                errors.termsAccepted ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-gray-50'
+              className={`flex items-start gap-3 text-sm rounded-xl border px-4 py-3 transition-colors cursor-pointer ${
+                errors.termsAccepted
+                  ? 'border-[#E07A7A] bg-[#FCEAEA] text-[#0F1F3A]'
+                  : 'border-[#E5E9F0] bg-[#FAFBFD] text-[#3A4B66] hover:border-[#D8DEE8]'
               }`}
             >
               <input
@@ -576,94 +548,93 @@ export default function CheckoutForm({
                 onChange={(e) => setDetails(d => ({ ...d, termsAccepted: e.target.checked }))}
                 onBlur={onBlur('termsAccepted')}
                 aria-invalid={!!errors.termsAccepted}
-                className="mt-1 h-4 w-4"
+                className="mt-0.5 h-4 w-4 accent-[#15A89E]"
               />
-              <span>
-                I agree to BetterNow&apos;s payment-plan terms and authorise the scheduled
-                instalment debits on the dates above.
+              <span className="leading-relaxed">
+                I agree to the payment-plan terms and authorise the scheduled
+                instalment debits on the dates shown.
               </span>
             </label>
-            {errors.termsAccepted && <p className="mt-1 text-xs text-red-600">{errors.termsAccepted}</p>}
+            {errors.termsAccepted && <p className="mt-1.5 text-xs text-[#D14141]">{errors.termsAccepted}</p>}
           </div>
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setStep(2)}
-              className="rounded-lg border border-gray-300 px-4 py-3 text-sm font-medium text-gray-700"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={handleContinueFromDetails}
-              className="flex-1 rounded-lg px-4 py-3 text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              Continue →
-            </button>
-          </div>
-        </div>
+          <p className="flex items-center gap-1.5 text-xs text-[#7A8AA0]">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+              <rect x="5" y="11" width="14" height="9" rx="1.5" />
+              <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+            </svg>
+            Your ID is encrypted at rest — only ever shown back masked.
+          </p>
+        </StepShell>
       )}
 
       {/* ── Step 4: pay ──────────────────────────────────────────────── */}
       {step === 4 && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm space-y-4">
-          <h1 className="text-lg font-semibold text-gray-900">Pay your first instalment</h1>
-          <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">Charging now</p>
-            <p className="text-2xl font-bold text-[#13294B] tabular-nums mt-1">
+        <StepShell
+          icon="card"
+          heading="Confirm and pay"
+          actions={
+            <div className="space-y-3">
+              <PrimaryButton onClick={submitPay} disabled={isPending}>
+                {isPending ? 'Setting up payment…' : `Pay ${formatRand(instalments[0])} today`}
+              </PrimaryButton>
+              <div className="flex justify-center">
+                <SecondaryButton onClick={() => setStep(3)} disabled={isPending}>← Back</SecondaryButton>
+              </div>
+            </div>
+          }
+        >
+          <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6">
+            <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
+              Charging your card now
+            </p>
+            <p className="mt-2 text-4xl font-semibold tabular-nums text-[#13294B]">
               {formatRand(instalments[0])}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
-              Next: {formatRand(instalments[1] ?? 0)} on {dates[1] ? formatDate(dates[1]) : '—'}
-              {dates[2] && `, then ${formatRand(instalments[2])} on ${formatDate(dates[2])}`}
-            </p>
+            {dates[1] && (
+              <p className="mt-3 text-sm text-[#3A4B66]">
+                Next:{' '}
+                <span className="font-medium text-[#0F1F3A] tabular-nums">{formatRand(instalments[1])}</span>
+                {' '}on{' '}
+                <span className="font-medium text-[#0F1F3A]">{formatDateLong(dates[1])}</span>
+                {dates[2] && (
+                  <>
+                    , then{' '}
+                    <span className="font-medium text-[#0F1F3A] tabular-nums">{formatRand(instalments[2])}</span>
+                    {' '}on{' '}
+                    <span className="font-medium text-[#0F1F3A]">{formatDateLong(dates[2])}</span>
+                  </>
+                )}
+                .
+              </p>
+            )}
           </div>
 
-          <p className="text-sm text-gray-600">
-            We&apos;ll take you to Paystack to enter your card. Your account is created the
-            moment your card is charged — no separate signup step.
-          </p>
-
           {error && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 space-y-2">
-              <p className="text-sm text-red-700">{error}</p>
+            <div
+              role="alert"
+              className="rounded-xl bg-[#FCEAEA] border border-[#E07A7A] px-4 py-3 space-y-3"
+            >
+              <p className="text-sm text-[#8A1F1F]">{error}</p>
               {loginUrl && (
                 <a
                   href={loginUrl}
-                  className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-4 py-2 text-sm font-semibold text-white hover:shadow-md transition-all"
+                  className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_140%)] px-4 py-2 text-sm font-semibold text-white hover:shadow-md transition-shadow"
                 >
-                  Log in →
+                  Log in
                 </a>
               )}
             </div>
           )}
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setStep(3)}
-              disabled={isPending}
-              className="rounded-lg border border-gray-300 px-4 py-3 text-sm font-medium text-gray-700 disabled:opacity-60"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={submitPay}
-              disabled={isPending}
-              className="flex-1 rounded-lg px-4 py-3 text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg disabled:opacity-60"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              {isPending ? 'Setting up payment…' : `Pay ${formatRand(instalments[0])} →`}
-            </button>
-          </div>
-        </div>
+        </StepShell>
       )}
 
-      <p className="text-center text-[11px] text-gray-400 mt-6">
-        Secured by Paystack · Card details never touch BetterNow servers
+      <p className="text-center text-xs text-[#7A8AA0] mt-6 flex items-center justify-center gap-1.5">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+          <rect x="5" y="11" width="14" height="9" rx="1.5" />
+          <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+        </svg>
+        Secured by Paystack · Card details never touch BetterNow
       </p>
     </>
   );
