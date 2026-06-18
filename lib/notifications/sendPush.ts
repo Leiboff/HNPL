@@ -3,12 +3,16 @@
 // Server-side fan-out: given a user_id and a notification payload, look
 // up every active push_subscriptions row for that user and deliver via
 // the Web Push protocol. Used by the Paystack webhook and any future
-// cron job that wants to notify the patient about a payment event.
+// cron job / server action that wants to notify the patient about
+// something — payment events today, plan + account + general events
+// once the relevant triggers are wired.
 //
 // The patient's "notifications on / off" preference is encoded by the
 // presence of an active (deleted_at IS NULL) row — turn off in the
 // settings toggle = the row is soft-deleted = this function returns
-// without sending. That's the sole gate. No second column to drift.
+// without sending. That's the sole gate. The single preference is a
+// MASTER SWITCH across all notification types — per-category opt-outs
+// are a future extension; for now opting out blocks every type.
 //
 // Failure handling:
 //   • 410 Gone / 404 Not Found → the subscription is dead (patient
@@ -25,7 +29,37 @@
 import webpush from 'web-push';
 import { createClient } from '@supabase/supabase-js';
 
+// ─── Notification type taxonomy ──────────────────────────────────────────
+//
+// Every push carries one of these category labels in its payload. Used
+// today for:
+//   • observability (logs + future ops metrics partitioned by type);
+//   • client-side: the SW receives `type` in the JSON payload and could
+//     choose differentiated styling / sound per category. Today the SW
+//     ignores it — tomorrow it can read it without a protocol change;
+//   • setting up per-category preference toggles later without
+//     reshaping the sender.
+//
+// Keep this list small and meaningful — every value should map cleanly
+// to something the patient cares about, not implementation detail.
+//
+//   'payment' — Money events: collected, failed, reminder before
+//               salary date, refund processed.
+//   'plan'    — Plan lifecycle: activated, completed, cancelled.
+//   'account' — Identity / security: email confirmed, password
+//               changed, new device, suspicious sign-in.
+//   'general' — Catch-all for product / service announcements.
+//               Use sparingly.
+
+export type NotificationType = 'payment' | 'plan' | 'account' | 'general';
+
 export type PushPayload = {
+  /**
+   * Category label. Required — every push declares what kind of
+   * notification it is so future per-type preferences + logging have
+   * something stable to switch on.
+   */
+  type:  NotificationType;
   /** Required — appears as the bold first line on the OS toast. */
   title: string;
   /** Required — the body line. Keep < ~100 chars for iOS / Android. */

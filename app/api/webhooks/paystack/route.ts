@@ -104,12 +104,22 @@ function formatRandCents(rands: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
+// Webhook-local helper. Defaults `type` so each call site only has to
+// specify the category when it differs from the default — keeps the
+// per-event call sites short while still ensuring `type` is always
+// present in the payload (the sender now requires it).
 async function safePush(
   userId: string,
-  payload: { title: string; body: string; url?: string; tag?: string },
+  payload: {
+    type?:  'payment' | 'plan' | 'account' | 'general';
+    title:  string;
+    body:   string;
+    url?:   string;
+    tag?:   string;
+  },
 ): Promise<void> {
   try {
-    await sendPushToUser(userId, payload);
+    await sendPushToUser(userId, { type: payload.type ?? 'payment', ...payload });
   } catch (err) {
     console.warn('[paystack-webhook] push send failed (non-fatal)', {
       userId,
@@ -260,8 +270,11 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
       const activated = await activateFirstPayment(supabase, payment, plan, now);
       if (activated) {
         console.log('[paystack-webhook] charge.success (silent): plan activated', { planId: plan.id, reference });
-        // Plan activated push — wraps the existing logging line above.
+        // Plan-lifecycle push, not a payment one — categorised so the
+        // patient could one day choose to mute payment-only updates
+        // without missing plan activations.
         await safePush(plan.patient_id, {
+          type:  'plan',
           title: 'Plan activated',
           body:  `Your ${formatRandCents(Number(plan.total_amount))} plan is live. We'll handle the rest.`,
           url:   `/patient/orders/${plan.id}`,
@@ -305,6 +318,7 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
     if (activated) {
       console.log('[paystack-webhook] charge.success: plan activated', { planId: plan.id, reference });
       await safePush(plan.patient_id, {
+        type:  'plan',
         title: 'Plan activated',
         body:  `Your ${formatRandCents(Number(plan.total_amount))} plan is live. We'll handle the rest.`,
         url:   `/patient/orders/${plan.id}`,
@@ -345,8 +359,11 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
       .eq('id', plan.id);
     console.log('[paystack-webhook] charge.success: plan completed', { planId: plan.id });
     // Final-instalment push — collected + plan finished in one breath.
+    // Classified as 'plan' (lifecycle), not 'payment', so it sits in
+    // the same category as activation + future plan-state events.
     if (plan.patient_id) {
       await safePush(plan.patient_id, {
+        type:  'plan',
         title: 'All paid up',
         body:  `Final payment collected. Your ${formatRandCents(Number(plan.total_amount))} plan is complete.`,
         url:   `/patient/orders/${plan.id}`,

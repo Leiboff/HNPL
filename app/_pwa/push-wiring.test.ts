@@ -106,3 +106,52 @@ describe('NotificationsToggle — honest reflection of OS state', () => {
     expect(TOGGLE).toMatch(/aria-checked=\{isOn\}/);
   });
 });
+
+describe('Soft-ask + settings toggle copy — general, not payment-only', () => {
+  // The framing pivot: a future plan / account / general notification
+  // shouldn't surprise a patient who only opted in for "payment
+  // reminders". Copy on both surfaces now references all three.
+  it('soft-ask heading is general ("Turn on notifications", not "payment reminders")', () => {
+    expect(SOFT_ASK).toMatch(/Turn on notifications/);
+    expect(SOFT_ASK).not.toMatch(/Turn on payment reminders/);
+  });
+
+  it('soft-ask body mentions plan + payments + account in one breath', () => {
+    expect(SOFT_ASK).toMatch(/plan[\s\S]{0,40}payments[\s\S]{0,40}account/);
+  });
+
+  it('settings toggle label is "Notifications" (not "Push notifications")', () => {
+    expect(TOGGLE).toMatch(/>\s*Notifications\s*</);
+  });
+
+  it('settings toggle sub-line frames the master-switch semantics', () => {
+    expect(TOGGLE).toMatch(/One switch for all/);
+  });
+});
+
+describe('Install affordances — no fake app-store badges', () => {
+  // BetterNow is a PWA: there's no App Store / Play Store entry. A
+  // misleading "Download on the App Store" / "Get it on Google Play"
+  // badge would be brand-wrong AND would imply we live in a store
+  // we don't live in. Pin source-text so a designer can't slip one
+  // in by mistake.
+  const PROMPT  = read('app/_pwa/InstallPrompt.tsx');
+  const CALLOUT = read('app/_pwa/InstallCallout.tsx');
+
+  for (const banned of [
+    /Download on the App Store/i,
+    /Get it on Google Play/i,
+    /Available on the App Store/i,
+    /app-store-badge/i,
+    /play-store-badge/i,
+    /apple\.com\/app-store/i,
+    /play\.google\.com/i,
+  ]) {
+    it(`InstallPrompt does not include ${banned}`, () => {
+      expect(PROMPT).not.toMatch(banned);
+    });
+    it(`InstallCallout does not include ${banned}`, () => {
+      expect(CALLOUT).not.toMatch(banned);
+    });
+  }
+});

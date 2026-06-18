@@ -93,7 +93,7 @@ export default function PushSoftAsk({ enabled }: Props) {
   return (
     <div
       role="region"
-      aria-label="Turn on payment reminders"
+      aria-label="Turn on notifications"
       className="rounded-2xl border border-[#E5E9F0] bg-white p-5 sm:p-6 shadow-[0_1px_2px_rgba(15,31,58,0.04)]"
     >
       <div className="flex items-start gap-4">
@@ -105,11 +105,11 @@ export default function PushSoftAsk({ enabled }: Props) {
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-base font-semibold text-[#0F1F3A]">
-            Turn on payment reminders
+            Turn on notifications
           </h3>
           <p className="mt-1 text-sm text-[#3A4B66]">
-            We&apos;ll let you know the day before each instalment, when a payment lands,
-            and if something needs your attention. That&apos;s it — no marketing.
+            Get notified about your plan, payments, and account.
+            That&apos;s it — no marketing.
           </p>
 
           {err && (

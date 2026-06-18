@@ -91,9 +91,9 @@ export default function NotificationsToggle() {
   return (
     <div className="flex items-start justify-between gap-4 py-3">
       <div className="min-w-0">
-        <p className="text-sm font-medium text-[#0F1F3A]">Push notifications</p>
+        <p className="text-sm font-medium text-[#0F1F3A]">Notifications</p>
         <p className="mt-0.5 text-xs text-[#7A8AA0]">
-          Payment reminders, confirmations, and anything that needs your attention.
+          Get notified about your plan, payments, and account. One switch for all — per-category preferences may come later.
         </p>
         {isBlocked && (
           <p className="mt-2 text-xs text-[#8A5A11]">

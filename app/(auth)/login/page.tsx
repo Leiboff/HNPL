@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { resendConfirmation } from '@/app/auth/resend/actions';
 import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
 import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
+import InstallCallout from '@/app/_pwa/InstallCallout';
 
 export default function LoginPage() {
   const [email,    setEmail]    = useState('');
@@ -212,6 +213,14 @@ export default function LoginPage() {
           <Link href="/signup/practice" className="hover:text-gray-600 transition-colors">Practice sign-up</Link>
           <span>·</span>
           <Link href="/signup/patient" className="hover:text-gray-600 transition-colors">Patient sign-up</Link>
+        </div>
+
+        {/* PWA install callout — placed, persistent, secondary visual
+            weight so it doesn't compete with Sign in. Hidden when the
+            page is already running in the installed app (display-mode
+            standalone) or when the runtime can't install at all. */}
+        <div className="mt-6">
+          <InstallCallout />
         </div>
       </div>
     </div>

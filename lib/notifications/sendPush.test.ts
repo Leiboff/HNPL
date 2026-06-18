@@ -99,14 +99,14 @@ beforeEach(() => {
   stubSubs = [];
 });
 
-describe('sendPushToUser — preference respect', () => {
+describe('sendPushToUser — preference respect (master switch governs ALL types)', () => {
   it('does NOT send when ALL subs are soft-deleted (toggle off)', async () => {
     stubSubs = [
       { id: 's1', user_id: 'user-1', endpoint: 'https://fcm/x', p256dh: 'p1', auth: 'a1', deleted_at: '2026-06-18T00:00:00Z' },
       { id: 's2', user_id: 'user-1', endpoint: 'https://fcm/y', p256dh: 'p2', auth: 'a2', deleted_at: '2026-06-18T00:00:00Z' },
     ];
 
-    const result = await sendPushToUser('user-1', { title: 't', body: 'b' });
+    const result = await sendPushToUser('user-1', { type: 'payment', title: 't', body: 'b' });
 
     expect(sendNotificationMock).not.toHaveBeenCalled();
     expect(result.total).toBe(0);  // The query filtered them out — they don't even count.
@@ -119,11 +119,45 @@ describe('sendPushToUser — preference respect', () => {
     ];
     sendNotificationMock.mockResolvedValue({});
 
-    const result = await sendPushToUser('user-1', { title: 't', body: 'b' });
+    const result = await sendPushToUser('user-1', { type: 'plan', title: 't', body: 'b' });
 
     expect(sendNotificationMock).toHaveBeenCalledTimes(1);
     expect(result.total).toBe(1);
     expect(result.sent).toBe(1);
+  });
+
+  it('the master switch off blocks EVERY notification type — payment, plan, account, general', async () => {
+    // The single preference governs all categories. A patient who
+    // turned off notifications must receive nothing of any kind, not
+    // just no payment messages — that's the whole point of the
+    // generalisation.
+    stubSubs = [
+      { id: 'off', user_id: 'user-1', endpoint: 'https://fcm/x', p256dh: 'p', auth: 'a', deleted_at: '2026-06-18T00:00:00Z' },
+    ];
+
+    const r1 = await sendPushToUser('user-1', { type: 'payment', title: 'p', body: 'p' });
+    const r2 = await sendPushToUser('user-1', { type: 'plan',    title: 'p', body: 'p' });
+    const r3 = await sendPushToUser('user-1', { type: 'account', title: 'p', body: 'p' });
+    const r4 = await sendPushToUser('user-1', { type: 'general', title: 'p', body: 'p' });
+
+    expect(sendNotificationMock).not.toHaveBeenCalled();
+    expect(r1.sent + r2.sent + r3.sent + r4.sent).toBe(0);
+  });
+
+  it('payload bytes sent to the push service include the type field', async () => {
+    // The SW can read `type` from the JSON payload — important for
+    // future per-category styling without a protocol change.
+    stubSubs = [
+      { id: 'live', user_id: 'user-1', endpoint: 'https://fcm/a', p256dh: 'p', auth: 'a', deleted_at: null },
+    ];
+    sendNotificationMock.mockResolvedValue({});
+
+    await sendPushToUser('user-1', { type: 'account', title: 'Email confirmed', body: 'You\'re all set.' });
+
+    const [, body] = sendNotificationMock.mock.calls[0] as [unknown, string];
+    const decoded = JSON.parse(body);
+    expect(decoded.type).toBe('account');
+    expect(decoded.title).toBe('Email confirmed');
   });
 });
 
@@ -134,7 +168,7 @@ describe('sendPushToUser — retire on 410 Gone', () => {
     ];
     sendNotificationMock.mockRejectedValueOnce({ statusCode: 410, message: 'Gone' });
 
-    const result = await sendPushToUser('user-1', { title: 't', body: 'b' });
+    const result = await sendPushToUser('user-1', { type: 'payment', title: 't', body: 'b' });
 
     expect(result.retired).toBe(1);
     expect(result.sent).toBe(0);
@@ -148,7 +182,7 @@ describe('sendPushToUser — retire on 410 Gone', () => {
     ];
     sendNotificationMock.mockRejectedValueOnce({ statusCode: 502, message: 'Bad Gateway' });
 
-    const result = await sendPushToUser('user-1', { title: 't', body: 'b' });
+    const result = await sendPushToUser('user-1', { type: 'payment', title: 't', body: 'b' });
 
     expect(result.failed).toBe(1);
     expect(stubSubs[0].deleted_at).toBeNull();

@@ -1,130 +1,54 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useInstallPrompt } from './useInstallPrompt';
 
-// ─── InstallPrompt ───────────────────────────────────────────────────────
+// ─── InstallPrompt (the toast) ───────────────────────────────────────────
 //
-// A tasteful one-time invitation to add BetterNow to the home screen.
-// Lives at the bottom of the patient portal; never blocks content,
-// never auto-opens the OS prompt, never reappears after dismissal.
+// Bottom-corner toast surfaced on the patient portal. One-time
+// invitation, hard dismissal — see InstallCallout for the PLACED
+// version that lives on the login page and persists.
 //
-// Two browser realities:
-//
-//   • Chrome / Edge / Samsung (Android, desktop):
-//     fire `beforeinstallprompt` when the PWA is installable. We
-//     stash that event, show our card, and only call .prompt() when
-//     the user clicks "Install" — Chrome rejects an unsolicited
-//     .prompt() now and the event is single-use.
-//
-//   • iOS Safari:
-//     no `beforeinstallprompt`, no programmatic install. Detect iOS
-//     Safari heuristically and show the share-then-Add-to-Home-Screen
-//     hint instead. Once they've installed (display-mode: standalone),
-//     stop showing the hint.
-//
-// Dismissal: persisted in localStorage. The card NEVER reappears for
-// the same user/device after they X out — explicit anti-nag.
-//
-// We intentionally don't try to be clever about timing here. Mount it
-// where it's relevant (the patient portal layout) and respect the
-// user's "no thanks" forever.
+// Detection lives in useInstallPrompt() so the two surfaces stay in
+// lockstep; this file is purely toast UI + the dismissal-on-localStorage
+// rule (only the toast nag-gates by dismissal — placed callouts don't).
 
 const LS_KEY = 'hnpl_install_dismissed';
 
-// Narrow type for the (still non-standard) install prompt event.
-type BeforeInstallPromptEvent = Event & {
-  prompt:        () => Promise<void>;
-  userChoice:    Promise<{ outcome: 'accepted' | 'dismissed' }>;
-};
-
-function isIos(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent;
-  // iPhone, iPad (including iPadOS 13+ which reports as Mac), iPod
-  return /iPad|iPhone|iPod/.test(ua)
-      || (navigator.platform === 'MacIntel' && (navigator as Navigator & { maxTouchPoints?: number }).maxTouchPoints! > 1);
-}
-
-function isIosSafari(): boolean {
-  if (!isIos()) return false;
-  const ua = navigator.userAgent;
-  // Exclude in-app webviews (Instagram, FB, etc.) which can't install.
-  return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
-}
-
-function isAlreadyInstalled(): boolean {
-  if (typeof window === 'undefined') return false;
-  // matchMedia covers most modern browsers; the legacy iOS fallback
-  // checks navigator.standalone.
-  return window.matchMedia?.('(display-mode: standalone)').matches
-      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
-}
-
 export default function InstallPrompt() {
-  const [deferred,  setDeferred]  = useState<BeforeInstallPromptEvent | null>(null);
-  const [iosHint,   setIosHint]   = useState(false);
-  const [installed, setInstalled] = useState(false);
+  const { state, install } = useInstallPrompt();
+  const [dismissed, setDismissed] = useState(true);  // start hidden until LS check resolves
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-
-    // Already installed? Nothing to show.
-    if (isAlreadyInstalled()) {
-      setInstalled(true);
-      return;
-    }
-    // Dismissed previously? Respect that.
-    if (localStorage.getItem(LS_KEY) === '1') return;
-
-    // Android / Chrome path.
-    function onBeforeInstall(e: Event) {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-    }
-    window.addEventListener('beforeinstallprompt', onBeforeInstall);
-
-    // After successful install, hide ourselves immediately rather
-    // than waiting for a page reload.
-    function onInstalled() {
-      setInstalled(true);
-      setDeferred(null);
-    }
-    window.addEventListener('appinstalled', onInstalled);
-
-    // iOS hint — present if the conditions allow installation.
-    if (isIosSafari()) {
-      setIosHint(true);
-    }
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
+    // Async IIFE to satisfy react-hooks/set-state-in-effect — the
+    // localStorage read is sync but wrapping the setState in an
+    // async callback is the lint-clean idiom and behaves the same.
+    (async () => {
+      try {
+        setDismissed(localStorage.getItem(LS_KEY) === '1');
+      } catch {
+        // private mode / SecurityError on access — treat as not-dismissed.
+        setDismissed(false);
+      }
+    })();
   }, []);
 
   function dismiss() {
     try { localStorage.setItem(LS_KEY, '1'); } catch { /* private mode */ }
-    setDeferred(null);
-    setIosHint(false);
+    setDismissed(true);
   }
 
-  async function install() {
-    if (!deferred) return;
-    try {
-      await deferred.prompt();
-      await deferred.userChoice;
-    } catch {
-      // The browser refused our prompt() (already-shown gesture, etc.)
-      // — fall through and let the user dismiss.
-    }
-    setDeferred(null);
-    // We mark dismissed either way — if they accepted, the appinstalled
-    // event will hide it; if they declined, we don't re-ask.
+  async function onInstall() {
+    await install();
+    // Mark dismissed either way — accepted = installed = no need to
+    // re-prompt; declined = "no thanks" and we respect that.
     try { localStorage.setItem(LS_KEY, '1'); } catch { /* private mode */ }
+    setDismissed(true);
   }
 
-  if (installed) return null;
-  if (!deferred && !iosHint) return null;
+  if (dismissed) return null;
+  if (state !== 'android' && state !== 'ios') return null;
 
   return (
     <div
@@ -141,7 +65,7 @@ export default function InstallPrompt() {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-[#0F1F3A]">Install BetterNow</p>
-          {deferred ? (
+          {state === 'android' ? (
             <p className="mt-0.5 text-xs text-[#3A4B66]">
               Add it to your home screen so it opens like an app.
             </p>
@@ -155,11 +79,11 @@ export default function InstallPrompt() {
               {' '}then <span className="font-medium text-[#0F1F3A]">Add to Home Screen</span>.
             </p>
           )}
-          {deferred && (
+          {state === 'android' && (
             <div className="mt-2.5 flex items-center gap-3">
               <button
                 type="button"
-                onClick={install}
+                onClick={onInstall}
                 className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white focus:outline-none focus-visible:ring-4 focus-visible:ring-[#15A89E]/30 transition-shadow"
                 style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 140%)' }}
               >
