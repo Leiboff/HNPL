@@ -87,6 +87,11 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Excludes static assets + the PWA surfaces (manifest + SW +
+    // generated icons). The SW route in particular must never have
+    // auth cookies attached to the response — the browser scopes
+    // SW registrations to origin, and a Set-Cookie on the SW body
+    // bytes could nudge a confused cache state.
+    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.webmanifest|sw\\.js|icon-\\d+\\.png|icon-maskable\\.png|apple-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

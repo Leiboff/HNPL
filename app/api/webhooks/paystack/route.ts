@@ -11,6 +11,7 @@ import {
   saveCardForPatient as saveCardForPatientShared,
   type PaystackAuthorization,
 } from '@/lib/paystack/saveCardForPatient';
+import { sendPushToUser } from '@/lib/notifications/sendPush';
 
 // Note: the middleware (proxy.ts / updateSession) only refreshes Supabase session
 // cookies and never redirects — so this unauthenticated route is unaffected by it.
@@ -85,6 +86,35 @@ async function saveCardForPatient(
   const result = await saveCardForPatientShared(patientId, auth as PaystackAuthorization, supabase);
   if (result.kind === 'error') {
     throw new Error(result.message);
+  }
+}
+
+// ─── Push notification helpers (best-effort, never block the webhook) ────────
+//
+// Wrappers around lib/notifications/sendPush that:
+//   • format a payload appropriate to the payment event;
+//   • dedupe via `tag` so a redelivered webhook doesn't pile up
+//     duplicate toasts in the patient's tray;
+//   • swallow ALL errors — a push failure must not fail the webhook,
+//     which would cause Paystack to retry the entire charge.success
+//     handler and risk double-activating the plan.
+
+function formatRandCents(rands: number): string {
+  const [integer, decimal] = rands.toFixed(2).split('.');
+  return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
+}
+
+async function safePush(
+  userId: string,
+  payload: { title: string; body: string; url?: string; tag?: string },
+): Promise<void> {
+  try {
+    await sendPushToUser(userId, payload);
+  } catch (err) {
+    console.warn('[paystack-webhook] push send failed (non-fatal)', {
+      userId,
+      message: (err as Error).message,
+    });
   }
 }
 
@@ -230,6 +260,13 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
       const activated = await activateFirstPayment(supabase, payment, plan, now);
       if (activated) {
         console.log('[paystack-webhook] charge.success (silent): plan activated', { planId: plan.id, reference });
+        // Plan activated push — wraps the existing logging line above.
+        await safePush(plan.patient_id, {
+          title: 'Plan activated',
+          body:  `Your ${formatRandCents(Number(plan.total_amount))} plan is live. We'll handle the rest.`,
+          url:   `/patient/orders/${plan.id}`,
+          tag:   `plan:${plan.id}:activated`,
+        });
       }
       return;
     }
@@ -267,6 +304,12 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
     const activated = await activateFirstPayment(supabase, payment, plan, now);
     if (activated) {
       console.log('[paystack-webhook] charge.success: plan activated', { planId: plan.id, reference });
+      await safePush(plan.patient_id, {
+        title: 'Plan activated',
+        body:  `Your ${formatRandCents(Number(plan.total_amount))} plan is live. We'll handle the rest.`,
+        url:   `/patient/orders/${plan.id}`,
+        tag:   `plan:${plan.id}:activated`,
+      });
     }
     return;
   }
@@ -301,12 +344,35 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
       .update({ status: 'completed', completed_at: now })
       .eq('id', plan.id);
     console.log('[paystack-webhook] charge.success: plan completed', { planId: plan.id });
+    // Final-instalment push — collected + plan finished in one breath.
+    if (plan.patient_id) {
+      await safePush(plan.patient_id, {
+        title: 'All paid up',
+        body:  `Final payment collected. Your ${formatRandCents(Number(plan.total_amount))} plan is complete.`,
+        url:   `/patient/orders/${plan.id}`,
+        tag:   `plan:${plan.id}:completed`,
+      });
+    }
   } else {
     console.log('[paystack-webhook] charge.success: instalment collected', {
       paymentId:        payment.id,
       instalmentNumber: payment.instalment_number,
       planId:           plan.id,
     });
+    // Mid-plan instalment collected push.
+    if (plan.patient_id) {
+      const amt = Number((await supabase
+        .from('payments')
+        .select('amount')
+        .eq('id', payment.id)
+        .single()).data?.amount ?? 0);
+      await safePush(plan.patient_id, {
+        title: 'Payment collected',
+        body:  `We collected ${formatRandCents(amt)}. Thanks!`,
+        url:   `/patient/orders/${plan.id}`,
+        tag:   `payment:${payment.id}:collected`,
+      });
+    }
   }
 }
 
@@ -318,7 +384,7 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
 
   const { data: payment } = await supabase
     .from('payments')
-    .select('id, plan_id, instalment_number, status')
+    .select('id, plan_id, instalment_number, status, amount')
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
@@ -329,7 +395,7 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status')
+    .select('id, status, patient_id')
     .eq('id', payment.plan_id)
     .maybeSingle();
 
@@ -397,6 +463,17 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
     planId:           plan.id,
     failureReason,
   });
+
+  // Action-needed push — the cron will retry, but the patient should
+  // hear about it now so they can fund the card / update details.
+  if (plan.patient_id) {
+    await safePush(plan.patient_id, {
+      title: 'Payment didn\'t go through',
+      body:  `We couldn't collect ${formatRandCents(Number(payment.amount))}. We'll try again — please make sure your card has funds.`,
+      url:   `/patient/orders/${plan.id}`,
+      tag:   `payment:${payment.id}:failed`,
+    });
+  }
 }
 
 // ─── card_registration handlers ──────────────────────────────────────────────

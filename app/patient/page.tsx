@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import SalaryDayForm from './SalaryDayForm';
 import InstalmentHero, { type InstalmentRow } from './InstalmentHero';
 import PasskeySetupCard from './PasskeySetupCard';
+import PushSoftAsk from '@/app/_pwa/PushSoftAsk';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -283,6 +284,12 @@ export default async function PatientDashboardPage() {
         </p>
 
         {showPasskeyPrompt && <PasskeySetupCard />}
+
+        {/* PWA push notifications — soft-ask shown only when the patient
+            has an active plan and hasn't already been prompted. Dismisses
+            permanently. Settings toggle in /profile remains the canonical
+            on/off control after dismissal. */}
+        <PushSoftAsk enabled={currentCount > 0} />
 
         {/* ── HERO CARD ─────────────────────────────────────────────────────────
             Priority A: pending bill(s) to review (amber border, action CTA)

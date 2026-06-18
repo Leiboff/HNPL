@@ -3,13 +3,15 @@
 import { useState } from 'react';
 import AccordionSection from '@/components/AccordionSection';
 
-type SectionKey = 'personal' | 'address' | 'security';
+type SectionKey = 'personal' | 'address' | 'notifications' | 'security';
 
 type Props = {
   /** Server-rendered Personal-details body (read-only fields + footnote). */
   personalDetails: React.ReactNode;
   /** Client AddressForm with its own Save button. */
   contactAddress: React.ReactNode;
+  /** Client NotificationsToggle (push on/off). */
+  notifications: React.ReactNode;
   /** Client PasskeysSection (untouched). */
   passkeys: React.ReactNode;
 };
@@ -22,6 +24,7 @@ type Props = {
 export default function ProfileAccordion({
   personalDetails,
   contactAddress,
+  notifications,
   passkeys,
 }: Props) {
   const [open, setOpen] = useState<Set<SectionKey>>(() => new Set());
@@ -51,6 +54,14 @@ export default function ProfileAccordion({
         onToggle={() => toggle('address')}
       >
         {contactAddress}
+      </AccordionSection>
+
+      <AccordionSection
+        title="Notifications"
+        open={open.has('notifications')}
+        onToggle={() => toggle('notifications')}
+      >
+        {notifications}
       </AccordionSection>
 
       <AccordionSection

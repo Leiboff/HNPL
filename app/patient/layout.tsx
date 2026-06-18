@@ -3,6 +3,7 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PatientNav from './PatientNav';
 import PatientBottomNav from './PatientBottomNav';
 import LogoutButton from './LogoutButton';
+import InstallPrompt from '@/app/_pwa/InstallPrompt';
 
 export default async function PatientLayout({
   children,
@@ -56,6 +57,11 @@ export default async function PatientLayout({
 
       {/* Floating bottom nav — mobile only */}
       <PatientBottomNav />
+
+      {/* PWA install affordance — shows once, respects dismissal. iOS
+          Safari gets the share-then-Add-to-Home-Screen hint; Android
+          Chrome gets a real Install button driven by beforeinstallprompt. */}
+      <InstallPrompt />
     </div>
   );
 }

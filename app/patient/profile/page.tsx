@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import AddressForm from './AddressForm';
 import PasskeysSection from './PasskeysSection';
 import ProfileAccordion from './ProfileAccordion';
+import NotificationsToggle from './NotificationsToggle';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
 
@@ -130,6 +131,7 @@ export default async function ProfilePage() {
           </div>
         }
         contactAddress={<AddressForm current={addressCurrent} updateProfile={updateProfile} />}
+        notifications={<NotificationsToggle />}
         passkeys={<PasskeysSection />}
       />
 
