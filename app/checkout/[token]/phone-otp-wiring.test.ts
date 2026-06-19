@@ -179,25 +179,43 @@ describe('requestPhoneOtp / verifyPhoneOtp server actions', () => {
   });
 });
 
-describe('CheckoutForm — Verify step UI contract', () => {
+describe('CheckoutForm — Verify step UI contract (shared PhoneOtpStep)', () => {
+  // The OTP UI was refactored into app/_otp/PhoneOtpStep so the same
+  // implementation backs both the checkout Verify step AND the new
+  // /verify-phone organic-signup gate (migration 0053). These
+  // assertions now check the SHARED component for the UI properties
+  // that matter for autofill + auto-submit, and check CheckoutForm
+  // only for the wiring (mount, key-bump on change-number / verify_
+  // phone_required, 5-step flow).
+  const SHARED = read('app/_otp/PhoneOtpStep.tsx');
+
   it('is a 5-step flow now (Bill → Plan → Details → Verify → Pay)', () => {
     expect(FORM).toMatch(/type Step = 1 \| 2 \| 3 \| 4 \| 5/);
   });
 
-  it('OTP input declares one-time-code autocomplete (mobile autofill from SMS)', () => {
-    expect(FORM).toMatch(/autoComplete=["']one-time-code["']/);
-    expect(FORM).toMatch(/inputMode=["']numeric["']/);
-    expect(FORM).toMatch(/maxLength=\{6\}/);
+  it('shared PhoneOtpStep uses components/OtpInput (which declares one-time-code autocomplete)', () => {
+    expect(SHARED).toMatch(/from\s+'@\/components\/OtpInput'/);
+    // The underlying OtpInput already pins autoComplete / inputMode /
+    // maxLength — see its own internal source. Confirm the shared
+    // step actually renders it.
+    expect(SHARED).toMatch(/<OtpInput\b/);
   });
 
-  it('auto-submits the verify call on the 6th digit (no Verify button needed for autofill)', () => {
-    expect(FORM).toMatch(/next\.length === 6/);
-    expect(FORM).toMatch(/void handleVerifyOtp\(next\)/);
+  it('shared PhoneOtpStep auto-submits the verify call on the 6th digit (autofill ready)', () => {
+    // OtpInput's onComplete fires when the value reaches 6 digits.
+    // PhoneOtpStep wires that to handleVerify, which calls verifyCode.
+    expect(SHARED).toMatch(/onComplete=\{\(full\)\s*=>\s*void handleVerify\(full\)\}/);
+    expect(SHARED).toMatch(/if\s*\(!\/\^\\d\{6\}\$\/\.test\(submitted\)\)\s*return/);
   });
 
-  it('Change-number clears the sent marker so the new phone re-fires an OTP', () => {
-    expect(FORM).toMatch(/handleChangeNumber/);
-    expect(FORM).toMatch(/setOtpSentForPhone\(null\)/);
+  it('CheckoutForm wires Change-number to remount the embedded PhoneOtpStep (re-fires auto-send)', () => {
+    // The new pattern: bump otpStepKey to force remount of the shared
+    // component, which re-fires its auto-send-on-mount. Replaces the
+    // old setOtpSentForPhone(null) marker the pre-shared code used.
+    expect(FORM).toMatch(/function handleChangeNumber/);
+    expect(FORM).toMatch(/resetOtpStep\(\)/);
+    expect(FORM).toMatch(/setOtpStepKey\(k\s*=>\s*k\s*\+\s*1\)/);
+    expect(FORM).toMatch(/<PhoneOtpStep[\s\S]{0,200}key=\{otpStepKey\}/);
   });
 
   it('bounces back to Verify step (4) when initiateCheckout returns verify_phone_required', () => {
@@ -205,8 +223,8 @@ describe('CheckoutForm — Verify step UI contract', () => {
     expect(FORM).toMatch(/setStep\(4\)/);
   });
 
-  it('30-second resend cooldown matches the server-side rate limit', () => {
-    expect(FORM).toMatch(/OTP_RESEND_COOLDOWN_MS\s*=\s*30 \* 1000/);
+  it('shared PhoneOtpStep enforces a 30-second resend cooldown', () => {
+    expect(SHARED).toMatch(/OTP_RESEND_COOLDOWN_MS\s*=\s*30 \* 1000/);
   });
 });
 

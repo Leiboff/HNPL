@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition, useMemo } from 'react';
+import { useState, useTransition, useMemo } from 'react';
 import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import {
   normalizePhoneZA,
   validateSaId,
   saIdAge,
 } from '@/lib/validation';
+import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
 import {
   useFieldValidation,
   focusAndScrollTo,
@@ -89,10 +90,9 @@ type Props = {
 // OTP gate per migration 0052. Pay was previously 4.
 type Step = 1 | 2 | 3 | 4 | 5;
 
-// 30s resend cooldown — mirrors the server-side rate limit in
-// prepare_phone_verification. UI honours it for nice UX; the RPC
-// enforces it for cost protection.
-const OTP_RESEND_COOLDOWN_MS = 30 * 1000;
+// 30s resend cooldown lives inside the shared PhoneOtpStep now; the
+// server-side prepare_phone_verification RPC is the authoritative
+// rate-limit, so the UI just needs *some* cooldown for nice UX.
 
 const MIN_AGE   = 18;
 const SA_ID_LEN = 13;
@@ -201,65 +201,6 @@ function StepDots({ step }: { step: Step }) {
   );
 }
 
-// ─── Step-4 OTP-resend button ────────────────────────────────────────────
-//
-// 30s countdown after each send, then becomes a tappable "Resend"
-// button. The display is rAF-driven (1s tick) to avoid layout thrash
-// from a 60-fps re-render — the countdown is informational, not
-// timing-critical.
-
-function OtpResendButton({
-  unlockAt,
-  onResend,
-  disabled,
-}: {
-  unlockAt: number;       // epoch ms; before this we show a countdown
-  onResend: () => void;
-  disabled: boolean;
-}) {
-  // remaining seconds — driven by an interval, NEVER computed in the
-  // render body (react-hooks/purity flags Date.now() during render
-  // and is right to: re-renders triggered by unrelated state would
-  // see stale countdown values otherwise).
-  const [remaining, setRemaining] = useState(0);
-
-  useEffect(() => {
-    const compute = () => Math.max(0, Math.ceil((unlockAt - Date.now()) / 1000));
-    // Async IIFE for the initial setRemaining — keeps the lint rule
-    // happy (no synchronous setState in the effect body). The 1s
-    // interval below also calls setRemaining; that's "subscribe to
-    // external state" which the rule explicitly allows.
-    (async () => { setRemaining(compute()); })();
-    if (compute() <= 0) return;
-    const id = window.setInterval(() => {
-      const next = compute();
-      setRemaining(next);
-      if (next <= 0) window.clearInterval(id);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [unlockAt]);
-
-  const locked = remaining > 0;
-
-  if (locked) {
-    return (
-      <span className="text-[#7A8AA0]">
-        Didn’t arrive? Resend in <span className="font-medium tabular-nums text-[#3A4B66]">{remaining}s</span>
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      onClick={onResend}
-      disabled={disabled}
-      className="text-sm font-medium text-[#13294B] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors"
-    >
-      Didn’t arrive? Resend code
-    </button>
-  );
-}
-
 // ─── Step-3 details — schema fed into the shared hook ─────────────────────
 
 type DetailsFields = {
@@ -340,20 +281,11 @@ export default function CheckoutForm({
   const [loginUrl,  setLoginUrl]  = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // ── Phone-OTP step state ──────────────────────────────────────────────
-  // otpSentForPhone tracks which (normalized) phone we last asked the
-  // server to send an OTP for. Re-entering step 4 with the same phone
-  // is a no-op (we don't re-fire on every micro-re-render); changing
-  // the phone at step 3 nullifies this, so the next Verify entry
-  // re-fires for the new number. Server-side, the prepare RPC also
-  // throttles (too_soon), so even a buggy double-fire is bounded.
-  const [otpCode,         setOtpCode]         = useState('');
-  const [otpError,        setOtpError]        = useState<string | null>(null);
-  const [otpSending,      setOtpSending]      = useState(false);
-  const [otpVerifying,    setOtpVerifying]    = useState(false);
-  const [otpResendUnlock, setOtpResendUnlock] = useState<number>(0);  // epoch ms
-  const [otpSentForPhone, setOtpSentForPhone] = useState<string | null>(null);
-  const otpInputRef = useRef<HTMLInputElement | null>(null);
+  // Phone-OTP state lives entirely inside the shared <PhoneOtpStep />.
+  // CheckoutForm only needs a remount-key — bumping it on
+  // change-number / verify_phone_required forces the embedded step
+  // to re-mount and re-fire its auto-send for the new (token, phone).
+  const [otpStepKey, setOtpStepKey] = useState(0);
 
   const instalments = useMemo(() => previewInstalments(totalAmount, planType), [totalAmount, planType]);
   const dates       = useMemo(() => previewDates(salaryDay, planType),         [salaryDay, planType]);
@@ -373,131 +305,15 @@ export default function CheckoutForm({
     setStep(4);
   }
 
-  // Map a server coded error to user-facing copy. UI owns the wording;
-  // the action only carries stable string codes. Typed as `string` so
-  // both PhoneOtpStartResult and PhoneOtpVerifyResult codes flow in
-  // without a TypeScript ballet.
-  function otpErrorCopy(code: string): string {
-    switch (code) {
-      case 'too_soon':            return 'Please wait a moment before requesting another code.';
-      case 'daily_limit':         return 'Too many code requests today. Try again tomorrow or contact your practice.';
-      case 'invalid_token':       return 'This invitation link is no longer valid.';
-      case 'invalid_phone':       return 'That phone number looks wrong. Go back and check it.';
-      case 'invalid_code_format': return 'Please enter the 6-digit code.';
-      case 'wrong_code':          return 'That code didn’t match — try again.';
-      case 'expired':             return 'That code expired. Tap Resend to get a fresh one.';
-      case 'too_many_attempts':   return 'Too many wrong codes. Tap Resend to start over.';
-      case 'not_found':           return 'We couldn’t find your verification — tap Resend.';
-      case 'sms_failed':          return 'We couldn’t send the SMS just now. Tap Resend to retry.';
-      case 'sms_not_configured':  return 'SMS isn’t set up in this environment. Contact your practice.';
-      default:                    return 'Something went wrong. Tap Resend to try again.';
-    }
-  }
-
-  // Fire the initial OTP send for the entered phone whenever step 4
-  // becomes active AND we haven't sent for this exact normalized phone
-  // yet. We intentionally do NOT re-fire on every render in step 4
-  // (the user can re-trigger by hitting Resend) — the otpSentForPhone
-  // marker guards against double-send on transitions.
-  useEffect(() => {
-    if (step !== 4) return;
-    const normalized = normalizePhoneZA(details.phone);
-    if (!normalized) return;
-    if (otpSentForPhone === normalized) return;
-
-    // All setStates live inside the async IIFE — the lint rule allows
-    // setState in async callbacks within effects (and rightly flags
-    // synchronous setState in the effect body as a cascading-render
-    // smell). Same pattern we use in InstallPrompt / NotificationsToggle.
-    (async () => {
-      setOtpError(null);
-      setOtpSending(true);
-      try {
-        const r = await requestPhoneOtp(token, normalized);
-        if (r.ok) {
-          setOtpSentForPhone(normalized);
-          setOtpResendUnlock(Date.now() + OTP_RESEND_COOLDOWN_MS);
-        } else {
-          setOtpError(otpErrorCopy(r.code));
-          // Don't mark "sent for this phone" if it failed — the
-          // patient hitting Resend should re-try.
-        }
-      } catch {
-        setOtpError(otpErrorCopy('unknown'));
-      } finally {
-        setOtpSending(false);
-      }
-    })();
-  // We intentionally exclude requestPhoneOtp from deps — it's a
-  // server-action reference that's stable across renders, and React
-  // 19's lint correctly allows omitting stable function refs from
-  // useEffect deps. Including details.phone would re-fire if the user
-  // types in step 3 then returns to 4 — that's the right behaviour.
-  }, [step, details.phone, otpSentForPhone, token]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleResendOtp() {
-    if (Date.now() < otpResendUnlock) return;
-    const normalized = normalizePhoneZA(details.phone);
-    if (!normalized) { setOtpError(otpErrorCopy('invalid_phone')); return; }
-    setOtpError(null);
-    setOtpSending(true);
-    try {
-      const r = await requestPhoneOtp(token, normalized);
-      if (r.ok) {
-        setOtpCode('');
-        setOtpSentForPhone(normalized);
-        setOtpResendUnlock(Date.now() + OTP_RESEND_COOLDOWN_MS);
-      } else {
-        setOtpError(otpErrorCopy(r.code));
-      }
-    } finally {
-      setOtpSending(false);
-    }
-  }
-
-  async function handleVerifyOtp(codeToVerify: string) {
-    const normalized = normalizePhoneZA(details.phone);
-    if (!normalized) { setOtpError(otpErrorCopy('invalid_phone')); return; }
-    if (!/^\d{6}$/.test(codeToVerify)) return;  // wait for 6 digits
-
-    setOtpError(null);
-    setOtpVerifying(true);
-    try {
-      const r = await verifyPhoneOtp(token, normalized, codeToVerify);
-      if (r.ok) {
-        // Verified — advance to Pay.
-        setStep(5);
-      } else {
-        setOtpError(otpErrorCopy(r.code));
-        // On too-many-attempts the next action is Resend (which resets
-        // the attempt cap server-side). Clear the input to discourage
-        // re-submitting the same wrong code.
-        if (r.code === 'too_many_attempts' || r.code === 'expired') {
-          setOtpCode('');
-        }
-      }
-    } finally {
-      setOtpVerifying(false);
-    }
-  }
-
-  // 6-digit input handler: strip non-digits, auto-submit on the 6th.
-  function handleOtpInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const next = e.target.value.replace(/\D/g, '').slice(0, 6);
-    setOtpCode(next);
-    setOtpError(null);
-    if (next.length === 6 && !otpVerifying) {
-      void handleVerifyOtp(next);
-    }
+  // Bump the key so the embedded PhoneOtpStep remounts and re-fires
+  // its auto-send for the new phone. Called from Change-number and
+  // from the verify_phone_required bounce-back below.
+  function resetOtpStep() {
+    setOtpStepKey(k => k + 1);
   }
 
   function handleChangeNumber() {
-    // Drop the "we already sent" marker so a return to step 4 re-fires
-    // for the new phone. Also clear any half-typed code + the
-    // server-coded error.
-    setOtpSentForPhone(null);
-    setOtpCode('');
-    setOtpError(null);
+    resetOtpStep();
     setStep(3);
   }
 
@@ -543,7 +359,10 @@ export default function CheckoutForm({
           // requestPhoneOtp (the otpSentForPhoneRef is reset on
           // change-number / fresh entry).
           if (result.error === 'verify_phone_required') {
-            setOtpSentForPhone(null);
+            // Verification row is missing or stale (>30 min).
+            // resetOtpStep remounts the PhoneOtpStep so its auto-send
+            // re-fires.
+            resetOtpStep();
             setStep(4);
             setError(null);
             return;
@@ -808,71 +627,33 @@ export default function CheckoutForm({
         </StepShell>
       )}
 
-      {/* ── Step 4: phone OTP verification ───────────────────────────── */}
+      {/* ── Step 4: phone OTP verification (shared component) ───────────
+          Visual identity = checkout's StepShell chrome. The shared
+          PhoneOtpStep owns the input + auto-send + resend + verify
+          + error-mapping; we pass it the checkout-keyed server actions
+          and a shell render-prop that wraps the body in StepShell.
+          The key={otpStepKey} forces a remount on Change-number /
+          verify_phone_required so auto-send re-fires for the new
+          (token, phone) pair. */}
       {step === 4 && (
-        <StepShell
-          icon="shield"
-          heading="Verify your phone"
-          subhead={`We sent a 6-digit code to ${details.phone || 'your number'}.`}
-          actions={
-            <div className="space-y-3">
-              <PrimaryButton
-                onClick={() => void handleVerifyOtp(otpCode)}
-                disabled={otpCode.length !== 6 || otpVerifying}
-              >
-                {otpVerifying ? 'Verifying…' : 'Verify code'}
-              </PrimaryButton>
-              <div className="flex justify-center">
-                <SecondaryButton onClick={handleChangeNumber} disabled={otpVerifying}>
-                  ← Change number
-                </SecondaryButton>
-              </div>
-            </div>
-          }
-        >
-          {/* The OTP input. autoComplete="one-time-code" + inputMode=
-              "numeric" lets iOS Messages + Android Messages autofill
-              the SMS body the moment it arrives. The "code is N"
-              phrasing in lib/sms/smsportal.ts buildOtpSmsBody is the
-              autofill heuristic — don't reword it without testing. */}
-          <div>
-            <label htmlFor="checkout-otp" className="sr-only">
-              6-digit verification code
-            </label>
-            <input
-              id="checkout-otp"
-              ref={otpInputRef}
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              pattern="\d{6}"
-              value={otpCode}
-              onChange={handleOtpInputChange}
-              aria-invalid={!!otpError}
-              placeholder="••••••"
-              autoFocus
-              className={`${inputClass(!!otpError)} text-center text-2xl tracking-[0.6em] font-mono tabular-nums`}
-            />
-            {otpError && <p className="mt-1.5 text-xs text-[#D14141]">{otpError}</p>}
-          </div>
-
-          <div className="flex items-center justify-center text-sm text-[#3A4B66]">
-            {otpSending ? (
-              <span className="text-[#7A8AA0]">Sending code…</span>
-            ) : (
-              <OtpResendButton
-                unlockAt={otpResendUnlock}
-                onResend={handleResendOtp}
-                disabled={otpVerifying}
-              />
-            )}
-          </div>
-
-          <p className="text-xs text-[#7A8AA0] text-center">
-            The code expires in 10 minutes. We never share your number.
-          </p>
-        </StepShell>
+        <PhoneOtpStep
+          key={otpStepKey}
+          phoneDisplay={details.phone}
+          requestCode={() => requestPhoneOtp(token, details.phone)}
+          verifyCode={(c) => verifyPhoneOtp(token, details.phone, c)}
+          onVerified={() => setStep(5)}
+          onChangeNumber={handleChangeNumber}
+          shell={(body, actions) => (
+            <StepShell
+              icon="shield"
+              heading="Verify your phone"
+              subhead={`Code sent to ${details.phone || 'your number'}.`}
+              actions={actions ?? <div />}
+            >
+              {body}
+            </StepShell>
+          )}
+        />
       )}
 
       {/* ── Step 5: pay ──────────────────────────────────────────────── */}

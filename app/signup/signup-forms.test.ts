@@ -139,6 +139,21 @@ describe('signup forms — redirect to /verify-email after signup', () => {
     expect(src).toMatch(/next=.*\/patient|patient.*next/);
   });
 
+  it('patient form routes the post-email-OTP next= through /verify-phone (the new phone gate)', () => {
+    // Added with migration 0053. The chain is /verify-email → /verify-
+    // phone → /patient: email OTP succeeds, lands on /verify-phone,
+    // phone OTP succeeds, lands on /patient. Practice signup is
+    // intentionally NOT routed through /verify-phone (phone gate is
+    // a patient-only feature today).
+    const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
+    expect(src).toContain('/verify-phone');
+  });
+
+  it('practice form is NOT routed through /verify-phone (regression — patient-only feature)', () => {
+    const src = readSrc('app/signup/practice/page.tsx');
+    expect(src).not.toContain('/verify-phone');
+  });
+
   it('patient form no longer renders the legacy "Check your email" magic-link done state', () => {
     const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
     expect(src).not.toContain('Check your email');

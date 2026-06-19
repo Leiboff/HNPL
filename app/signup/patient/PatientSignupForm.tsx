@@ -168,11 +168,12 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     }
 
     // Hand off to /verify-email for the 6-digit OTP. After verifyOtp
-    // succeeds, the user lands on /patient — the existing
-    // hnpl_invite_token cookie is read there to associate the invitation.
-    window.location.href = '/verify-email?email='
-      + encodeURIComponent(emailTrimmed)
-      + '&next=' + encodeURIComponent('/patient');
+    // succeeds, the user lands on /verify-phone (the new phone-OTP
+    // gate added in 0053), and on phone-verify success there hard-
+    // navigates to /patient (which reads the existing
+    // hnpl_invite_token cookie to associate the invitation).
+    const phoneStep = '/verify-phone?next=' + encodeURIComponent('/patient');
+    window.location.href = '/verify-email?email=' + encodeURIComponent(emailTrimmed) + '&next=' + encodeURIComponent(phoneStep);
   }
 
   return (
