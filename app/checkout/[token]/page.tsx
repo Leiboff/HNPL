@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import CheckoutForm from './CheckoutForm';
-import { initiateCheckout } from './actions';
+import { initiateCheckout, requestPhoneOtp, verifyPhoneOtp } from './actions';
 
 // ─── /checkout/[token] ─────────────────────────────────────────────────────
 //
@@ -150,6 +150,8 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
           invoiceNumber={row.invoice_number}
           practiceReference={row.practice_reference}
           initiateCheckout={initiateCheckout}
+          requestPhoneOtp={requestPhoneOtp}
+          verifyPhoneOtp={verifyPhoneOtp}
         />
       </main>
     </div>

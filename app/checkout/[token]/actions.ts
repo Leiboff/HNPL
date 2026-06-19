@@ -19,6 +19,8 @@ import {
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
+import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
+import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
 import { discriminateExistingUser } from './_lib/discriminate';
 import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 
@@ -171,6 +173,35 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     };
   }
 
+  // ── 2c. Phone-verification precondition ───────────────────────────────
+  // The patient must have verified the entered phone within the last
+  // 30 minutes. We never create an account / charge a card / claim an
+  // invitation for a number we haven't proven control of. The 30-min
+  // freshness defends against a "verified yesterday, walked away,
+  // came back" replay — re-verifying takes one SMS and is fast.
+  //
+  // Service-role bypasses RLS on phone_verifications (which has no
+  // anon policies — see migration 0052). The verified_at value we
+  // read here gets re-applied to profiles inside the atomic commit
+  // below, so the verification fact lands together with everything
+  // else this action writes.
+  const PHONE_VERIFY_FRESHNESS_MS = 30 * 60 * 1000;
+  const freshnessCutoff = new Date(Date.now() - PHONE_VERIFY_FRESHNESS_MS).toISOString();
+  const { data: verification } = await svc
+    .from('phone_verifications')
+    .select('verified_at')
+    .eq('invitation_token', token)
+    .eq('phone_e164',       normalizedPhone)
+    .not('verified_at', 'is', null)
+    .gt ('verified_at', freshnessCutoff)
+    .maybeSingle();
+
+  if (!verification?.verified_at) {
+    // Client maps this code to "bounce back to the Verify step".
+    return { ok: false, error: 'verify_phone_required' };
+  }
+  const phoneVerifiedAt = verification.verified_at as string;
+
   // ── 3. Find existing user, then route via the plan-ownership rule ────
   let userId:      string;
   let isNewUser:   boolean = false;
@@ -234,14 +265,19 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   }
 
   const profileFields = {
-    id:           userId,
-    role:         'patient',
-    email:        normalizedEmail,
-    first_name:   firstName.trim(),
-    last_name:    lastName.trim(),
-    phone:        normalizedPhone,
-    sa_id_number: encryptedSaId,
-    salary_day:   salaryDay,
+    id:                 userId,
+    role:               'patient',
+    email:              normalizedEmail,
+    first_name:         firstName.trim(),
+    last_name:          lastName.trim(),
+    phone:              normalizedPhone,
+    sa_id_number:       encryptedSaId,
+    salary_day:         salaryDay,
+    // Phone-verification fact lands together with everything else this
+    // action writes. Idempotent on retry — upsert re-applies the same
+    // verified_at (or a refreshed one if the row was re-verified between
+    // retries; we don't ratchet backward).
+    phone_verified_at:  phoneVerifiedAt,
   };
 
   // Use upsert so the path works whether the trigger has populated a row
@@ -417,4 +453,154 @@ export async function finalizePassword(password: string): Promise<FinalizePasswo
   cookieStore.delete('hnpl_checkout_token');
 
   return { ok: true };
+}
+
+// ─── Phone-verification server actions ──────────────────────────────────
+//
+// Two-call shape:
+//
+//   • requestPhoneOtp(token, phone) → server hashes a freshly-generated
+//     6-digit code, asks the prepare RPC to store the hash + bump the
+//     row, then sends the plaintext via SMSPortal. The plaintext code
+//     never leaves this function locally; it's not returned to the
+//     client, not stored at rest, not logged.
+//   • verifyPhoneOtp(token, phone, code) → server hashes the entered
+//     code, hands the hash to the verify RPC, returns the coded result.
+//
+// Both actions return a `{ ok: true } | { ok: false, code: ... }` shape
+// where `code` is a stable string the client maps to a user-facing
+// message. We resist embedding English in the action's return — the
+// UI owns the copy.
+
+export type PhoneOtpStartResult =
+  | { ok: true }
+  | { ok: false; code:
+        | 'invalid_phone'        // normalisation failed
+        | 'invalid_token'        // token doesn't match a live invitation
+        | 'too_soon'             // <30s since last send
+        | 'daily_limit'          // 5 sends in 24h cap hit
+        | 'sms_failed'           // SMSPortal returned non-2xx / timeout
+        | 'sms_not_configured'   // creds missing (dev safety)
+        | 'unknown';
+    };
+
+export async function requestPhoneOtp(
+  token: string,
+  phone: string,
+): Promise<PhoneOtpStartResult> {
+  if (!token) return { ok: false, code: 'invalid_token' };
+
+  const normalizedPhone = normalizePhoneZA(phone);
+  if (!normalizedPhone) return { ok: false, code: 'invalid_phone' };
+
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  // Generate + hash entirely server-side. The plaintext code is held
+  // in a local variable for at most one fetch round-trip before it
+  // goes to SMSPortal — never logged, never returned to the client.
+  let code: string;
+  let codeHash: string;
+  try {
+    code     = generateOtpCode();
+    codeHash = hashOtpCode(code);
+  } catch (err) {
+    // hashOtpCode throws if PHONE_OTP_PEPPER is missing. We surface a
+    // generic "couldn't send" to the client (no info disclosure) while
+    // the operator sees the real error in logs.
+    console.error('[checkout] requestPhoneOtp hash failure', err instanceof Error ? err.message : err);
+    return { ok: false, code: 'unknown' };
+  }
+
+  const { data: prepResult, error: prepErr } = await svc.rpc('prepare_phone_verification', {
+    p_token:     token,
+    p_phone:     normalizedPhone,
+    p_code_hash: codeHash,
+  });
+  if (prepErr) {
+    console.warn('[checkout] prepare_phone_verification RPC error', prepErr.message);
+    return { ok: false, code: 'unknown' };
+  }
+  const prepCode = prepResult as string;
+  if (prepCode !== 'ok') {
+    if (prepCode === 'too_soon' || prepCode === 'daily_limit' || prepCode === 'invalid_token') {
+      return { ok: false, code: prepCode };
+    }
+    return { ok: false, code: 'unknown' };
+  }
+
+  // RPC succeeded — the hash is now stored. Send the plaintext SMS.
+  // sendSms is bounded (8s timeout + try/catch) so a slow / hanging
+  // provider never hangs this action; the patient sees "couldn't
+  // send" instead of a spinner that never returns.
+  const smsResult = await sendSms(normalizedPhone, buildOtpSmsBody(code));
+  if (!smsResult.ok) {
+    if (smsResult.error === 'sms_not_configured') {
+      return { ok: false, code: 'sms_not_configured' };
+    }
+    return { ok: false, code: 'sms_failed' };
+  }
+  return { ok: true };
+}
+
+export type PhoneOtpVerifyResult =
+  | { ok: true }
+  | { ok: false; code:
+        | 'invalid_phone'
+        | 'invalid_code_format'
+        | 'wrong_code'
+        | 'expired'
+        | 'too_many_attempts'
+        | 'not_found'
+        | 'unknown';
+    };
+
+export async function verifyPhoneOtp(
+  token: string,
+  phone: string,
+  enteredCode: string,
+): Promise<PhoneOtpVerifyResult> {
+  if (!token) return { ok: false, code: 'not_found' };
+
+  const normalizedPhone = normalizePhoneZA(phone);
+  if (!normalizedPhone) return { ok: false, code: 'invalid_phone' };
+
+  const trimmed = (enteredCode ?? '').trim();
+  // Cheap shape check before hashing — saves a wasted RPC call for an
+  // obviously-malformed code (the user typed letters, pasted random
+  // text). The RPC's hash compare would never match anyway.
+  if (!/^\d{6}$/.test(trimmed)) return { ok: false, code: 'invalid_code_format' };
+
+  let codeHash: string;
+  try {
+    codeHash = hashOtpCode(trimmed);
+  } catch (err) {
+    console.error('[checkout] verifyPhoneOtp hash failure', err instanceof Error ? err.message : err);
+    return { ok: false, code: 'unknown' };
+  }
+
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  const { data: result, error: rpcErr } = await svc.rpc('verify_phone_otp', {
+    p_token:     token,
+    p_phone:     normalizedPhone,
+    p_code_hash: codeHash,
+  });
+  if (rpcErr) {
+    console.warn('[checkout] verify_phone_otp RPC error', rpcErr.message);
+    return { ok: false, code: 'unknown' };
+  }
+  const code = result as string;
+  if (code === 'ok') return { ok: true };
+  if (code === 'wrong_code' || code === 'expired' || code === 'too_many_attempts' || code === 'not_found') {
+    return { ok: false, code };
+  }
+  return { ok: false, code: 'unknown' };
 }
