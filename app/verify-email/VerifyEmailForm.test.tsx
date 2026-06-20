@@ -46,10 +46,12 @@ beforeEach(() => {
 import VerifyEmailForm from './VerifyEmailForm';
 
 function fillCode(code: string) {
-  for (let i = 0; i < code.length; i++) {
-    const cell = document.getElementById(`otp-${i}`) as HTMLInputElement;
-    fireEvent.change(cell, { target: { value: code[i] } });
-  }
+  // OtpInput is a single field now (rewritten 2026-06-20 — see that
+  // file's header for why). The previous per-cell loop targeted
+  // otp-0…otp-5 by id; the new design exposes one input at otp-input.
+  // Fire a single change event with the whole code.
+  const input = document.getElementById('otp-input') as HTMLInputElement;
+  fireEvent.change(input, { target: { value: code } });
 }
 
 // ─── verifyOtp call shape ────────────────────────────────────────────────────

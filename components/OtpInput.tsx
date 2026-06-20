@@ -2,19 +2,36 @@
 
 import { useEffect, useRef } from 'react';
 
-// ─── OtpInput ────────────────────────────────────────────────────────────────
+// ─── OtpInput ────────────────────────────────────────────────────────────
 //
-// Six-cell numeric code entry. One <input> per digit so keyboard /
-// screen-reader behaviour stays predictable and so each cell can hold focus
-// for its own digit.
+// SINGLE-FIELD numeric OTP entry (rewritten from the previous 6-cell
+// implementation, 2026-06-20). The six-cell design fought against:
 //
-// Behaviour:
-//   • Typing a digit advances focus to the next cell.
-//   • Backspace on an empty cell moves focus back and clears the previous.
-//   • Arrow Left / Right move focus without changing the value.
-//   • Pasting a 6-digit string fills all six cells in one go.
-//   • Non-digits are filtered out.
-//   • When the value reaches LENGTH digits, `onComplete` fires once.
+//   • OS-level SMS autofill on iOS Safari + Android Chrome, which sets
+//     `input.value` programmatically. A multi-cell field with
+//     maxLength=1 truncates the autofilled code to the first digit;
+//     this is the documented failure mode (Apple HIG + Google's auth
+//     guidance both call out single-field as the correct pattern).
+//   • Paste anywhere except the first cell — `onPaste` was attached
+//     only to cell 0, so a paste into any other cell hit
+//     maxLength=1 and lost five digits.
+//
+// A single text field with `autoComplete="one-time-code"`,
+// `inputMode="numeric"`, and a generous letter-spacing visual:
+//
+//   • Receives the full SMS autofill payload in one onChange event
+//     (no truncation race).
+//   • Receives the full clipboard text on paste (browser default
+//     behaviour fills the field); our handler strips non-digit chars
+//     and truncates to LENGTH so "Your code is 482165" pastes as
+//     "482165" cleanly from an email body.
+//   • Reads visually as a deliberate OTP field via center-aligned
+//     monospaced font with letter-spacing — does NOT look like a
+//     fallback.
+//
+// Used by both /verify-email (email OTP, paste-driven) and the phone
+// OTP step (SMS autofill-driven). Same component, same behaviour app-
+// wide. API kept stable so existing call sites are unchanged.
 
 const LENGTH = 6;
 
@@ -37,121 +54,86 @@ export default function OtpInput({
   autoFocus = false,
   idPrefix  = 'otp',
 }: Props) {
-  const refs = useRef<Array<HTMLInputElement | null>>([]);
+  const ref = useRef<HTMLInputElement | null>(null);
 
-  // Auto-focus the first empty cell on mount when requested.
   useEffect(() => {
     if (!autoFocus) return;
-    const firstEmpty = Math.min(value.length, LENGTH - 1);
-    refs.current[firstEmpty]?.focus();
-    // Run once on mount only — re-focusing on every value change steals
-    // focus during keystrokes.
+    ref.current?.focus();
+    // Run once on mount. Re-focusing on value change would steal focus
+    // from the OS autofill suggestion bar, which is the opposite of
+    // what we want.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function setDigit(index: number, digit: string) {
-    // Build the next string with one digit at `index`, padding with '' for
-    // missing cells. Then trim trailing '' so onComplete fires only when
-    // we have a contiguous N-digit value.
-    const chars = Array.from({ length: LENGTH }, (_, i) => value[i] ?? '');
-    chars[index] = digit;
-    const next = chars.join('');
-    const trimmed = next.replace(/\s/g, '');
-    onChange(trimmed);
-    if (trimmed.length === LENGTH && /^\d{6}$/.test(trimmed)) onComplete?.(trimmed);
+  // ── Single-path digit handler ──────────────────────────────────────
+  // Every input source — typing, paste, OS SMS autofill — arrives
+  // here as one ChangeEvent. Strip non-digits + truncate to LENGTH,
+  // emit. No per-source branching needed; the design is the fix.
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const digits = e.target.value.replace(/\D/g, '').slice(0, LENGTH);
+    onChange(digits);
+    if (digits.length === LENGTH) onComplete?.(digits);
   }
 
-  function handleChange(index: number, e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value;
-    // Strip non-digits and take only the last digit typed (covers the case
-    // where IME / mobile autofill drops multiple characters at once).
-    const digits = raw.replace(/\D/g, '');
-    if (digits.length === 0) {
-      setDigit(index, '');
-      return;
-    }
-    if (digits.length === 1) {
-      setDigit(index, digits);
-      // Advance focus.
-      if (index < LENGTH - 1) refs.current[index + 1]?.focus();
-      return;
-    }
-    // Multi-digit input — treat as a paste-into-cell. Distribute across cells.
-    distribute(digits, index);
-  }
-
-  function distribute(digits: string, startIndex: number) {
-    const chars = Array.from({ length: LENGTH }, (_, i) => value[i] ?? '');
-    let i = startIndex;
-    for (const d of digits) {
-      if (i >= LENGTH) break;
-      chars[i++] = d;
-    }
-    const next = chars.join('').replace(/\s/g, '');
-    onChange(next);
-    const lastFilled = Math.min(startIndex + digits.length, LENGTH) - 1;
-    refs.current[Math.max(lastFilled, 0)]?.focus();
-    if (next.length === LENGTH && /^\d{6}$/.test(next)) onComplete?.(next);
-  }
-
-  function handleKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Backspace') {
-      if (!(value[index] ?? '')) {
-        // Empty cell → move back and clear the previous cell.
-        if (index > 0) {
-          e.preventDefault();
-          setDigit(index - 1, '');
-          refs.current[index - 1]?.focus();
-        }
-      }
-      return;
-    }
-    if (e.key === 'ArrowLeft' && index > 0) {
-      e.preventDefault();
-      refs.current[index - 1]?.focus();
-      return;
-    }
-    if (e.key === 'ArrowRight' && index < LENGTH - 1) {
-      e.preventDefault();
-      refs.current[index + 1]?.focus();
-      return;
-    }
-  }
-
+  // ── Paste handler (explicit replace, not append) ───────────────────
+  // The default browser paste INSERTS the clipboard text at the
+  // cursor position. If `value` is already "12" and the user pastes
+  // "482165", the post-default value would be "12482165" — our
+  // change-handler would strip + truncate to "124821", which is
+  // wrong (lost two digits of the actual code).
+  //
+  // Explicit handler: prevent default, take the clipboard digits, and
+  // REPLACE the field's value entirely. Matches user intent — pasting
+  // a code means "use this code", not "append this to what I typed".
   function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
     const text = e.clipboardData.getData('text');
     const digits = text.replace(/\D/g, '').slice(0, LENGTH);
     if (digits.length === 0) return;
     e.preventDefault();
-    distribute(digits, 0);
+    onChange(digits);
+    if (digits.length === LENGTH) onComplete?.(digits);
   }
 
   return (
-    <div className="flex gap-2 justify-center" role="group" aria-label="6-digit verification code">
-      {Array.from({ length: LENGTH }).map((_, i) => (
-        <input
-          key={i}
-          id={`${idPrefix}-${i}`}
-          ref={(el) => { refs.current[i] = el; }}
-          type="text"
-          inputMode="numeric"
-          autoComplete={i === 0 ? 'one-time-code' : 'off'}
-          maxLength={1}
-          value={value[i] ?? ''}
-          disabled={disabled}
-          aria-invalid={hasError}
-          onChange={(e) => handleChange(i, e)}
-          onKeyDown={(e) => handleKeyDown(i, e)}
-          onPaste={i === 0 ? handlePaste : undefined}
-          className={
-            'h-14 w-12 sm:h-16 sm:w-14 text-center text-xl font-semibold rounded-lg border-2 outline-none transition-all '
-            + (hasError
-              ? 'border-red-400 bg-red-50 text-red-700 focus:ring-2 focus:ring-red-200'
-              : 'border-gray-300 bg-white text-gray-900 focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20')
-            + (disabled ? ' opacity-60 cursor-not-allowed' : '')
-          }
-        />
-      ))}
+    <div className="flex justify-center" role="group" aria-label="6-digit verification code">
+      <input
+        id={`${idPrefix}-input`}
+        ref={ref}
+        // type="text" not "number" — number inputs strip leading zeros
+        // and on iOS render a non-OTP-friendly keypad. inputMode handles
+        // the numeric keyboard cleanly without those side-effects.
+        type="text"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        // maxLength generous — NOT set to 6. iOS Safari has been
+        // observed to refuse SMS autofill writes when the underlying
+        // input is maxLength=6, because the autofill payload technically
+        // arrives via an input event that wants to set the full string
+        // before any truncation. We do the LENGTH cap in handleChange
+        // after the value has reached us.
+        maxLength={32}
+        pattern="\d{6}"
+        // Names that nudge browsers + password managers to recognise
+        // this as an OTP field. "name=otp" + autocomplete="one-time-code"
+        // is the combination Mozilla + Apple docs cite.
+        name="otp"
+        value={value}
+        disabled={disabled}
+        aria-invalid={hasError}
+        aria-label="6-digit verification code"
+        onChange={handleChange}
+        onPaste={handlePaste}
+        placeholder="• • • • • •"
+        className={
+          'h-14 sm:h-16 w-full max-w-[18ch] text-center font-mono '
+          + 'text-2xl sm:text-3xl tabular-nums tracking-[0.6em] indent-[0.6em] '
+          + 'rounded-xl border-2 outline-none transition-all '
+          + (hasError
+            ? 'border-red-400 bg-red-50 text-red-700 focus:ring-2 focus:ring-red-200 placeholder:text-red-300'
+            : 'border-gray-300 bg-white text-gray-900 focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20 placeholder:text-gray-300')
+          + (disabled ? ' opacity-60 cursor-not-allowed' : '')
+        }
+      />
     </div>
   );
 }
