@@ -141,10 +141,26 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   }
 
   if (token) {
+    // Cookie posture (hardened 2026-06-21):
+    //   • httpOnly: JS in the browser cannot read it.
+    //   • sameSite: 'lax' — the patient may click the invite link from
+    //     an email (top-level navigation); lax allows the cookie on
+    //     that hop, 'strict' would drop it.
+    //   • secure: production only — Vercel terminates TLS so the cookie
+    //     is only ever set over HTTPS in prod. Locally on `next dev`
+    //     we leave it off so the loopback http flow works.
+    //   • path: '/' — the middleware (proxy.ts) reads this cookie on
+    //     EVERY authenticated request to claim the invitation; needs
+    //     to be sent everywhere until claimed.
+    //   • maxAge: 7 days — the upper bound for "patient clicks invite,
+    //     drifts through signup + email OTP, comes back later to
+    //     finish". The middleware self-clears the cookie the moment
+    //     the claim succeeds (or the token is found to be invalid).
     const cookieStore = await cookies();
     cookieStore.set('hnpl_invite_token', token, {
       httpOnly: true,
       sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production',
       maxAge:   60 * 60 * 24 * 7,
       path:     '/',
     });

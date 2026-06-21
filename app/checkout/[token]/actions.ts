@@ -413,12 +413,29 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
 
   // Stash the token in a cookie so the callback / done pages can read
   // it without depending on URL params alone.
+  //
+  // Cookie posture (hardened 2026-06-21):
+  //   • httpOnly: JS in the browser cannot read it (no XSS exfiltration).
+  //   • sameSite: 'lax' — required because the Paystack callback is a
+  //     top-level navigation from paystack.com back to /checkout/*; lax
+  //     allows the cookie to ride that hop. 'strict' would drop it.
+  //   • secure: production only — Vercel terminates TLS so the cookie
+  //     is only ever set over HTTPS in prod. Locally on `next dev` the
+  //     loopback is http; setting secure there would prevent the cookie
+  //     from being stored at all, breaking local checkout testing.
+  //   • path: '/checkout' — the only routes that READ this cookie are
+  //     under /checkout (complete + done pages). Narrower path = the
+  //     browser sends it on fewer requests.
+  //   • maxAge: 60 minutes — the checkout flow's outer envelope. Long
+  //     enough to cover slow Paystack hops + a brief abandon-resume,
+  //     short enough that an idle session doesn't dangle the token.
   const cookieStore = await cookies();
   cookieStore.set('hnpl_checkout_token', token, {
     httpOnly: true,
     sameSite: 'lax',
+    secure:   process.env.NODE_ENV === 'production',
     maxAge:   60 * 60,
-    path:     '/',
+    path:     '/checkout',
   });
 
   return { ok: true, authorizationUrl: initResult.data.authorization_url };
@@ -449,8 +466,11 @@ export async function finalizePassword(password: string): Promise<FinalizePasswo
   if (error) return { ok: false, error: error.message };
 
   // Clear the checkout token cookie — the flow is done.
+  // Match the path the cookie was set with (/checkout). Without an
+  // explicit path here the delete writes a "phantom" cookie at /
+  // and leaves the real /checkout-scoped one intact.
   const cookieStore = await cookies();
-  cookieStore.delete('hnpl_checkout_token');
+  cookieStore.delete({ name: 'hnpl_checkout_token', path: '/checkout' });
 
   return { ok: true };
 }
