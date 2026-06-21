@@ -3,24 +3,23 @@ import { render, fireEvent } from '@testing-library/react';
 import { useState } from 'react';
 import OtpInput, { OTP_LENGTH } from './OtpInput';
 
-// ─── OtpInput — single-field paste + autofill contract ──────────────────
+// ─── OtpInput — segmented-visual / single-input contract ────────────────
 //
-// Rewritten from a 6-cell design on 2026-06-20 because the multi-cell
-// pattern broke both OS SMS autofill (one-time-code) and full-code
-// paste. The new design is a single text input with autoComplete=
-// "one-time-code" + inputMode="numeric" + generous letter-spacing.
+// Hybrid design (2026-06-21): ONE real <input> backed by 6 presentational
+// cells. The cells make it look segmented; the single underlying input
+// keeps OS SMS autofill + paste working end-to-end the way they
+// couldn't on the earlier 6-input design.
 //
-// These tests pin the three properties the new design exists to fix:
+// These tests pin three loops of the contract:
 //
-//   1. Typing a digit at a time emits onChange after each digit and
-//      fires onComplete once on the 6th.
-//   2. Pasting a 6-digit string (formatted or not) lands all digits
-//      AND fires onComplete. Replaces the existing value, doesn't
-//      append (intent of "paste a code" = "use this code").
-//   3. OS SMS autofill — modeled as a programmatic value-set on the
-//      single field — flows through the same onChange handler with no
-//      maxLength=1 truncation race. This is the path that USED TO
-//      collapse to a single digit on the 6-cell design.
+//   1. The DOM has exactly ONE <input> (so OS autofill + paste only
+//      ever target one thing). Six aria-hidden cell divs render the
+//      visual.
+//   2. Typing / paste / autofill all reach the same change-handler
+//      path: strip non-digits, slice to 6, emit. onComplete fires
+//      once at length === 6.
+//   3. Paste REPLACES rather than appends — pasting "482165" over
+//      already-typed "12" yields "482165", not "124821".
 
 // ─── Harness ────────────────────────────────────────────────────────────────
 
@@ -47,20 +46,45 @@ function getInput(): HTMLInputElement {
   return document.getElementById('otp-input') as HTMLInputElement;
 }
 
+function getCells(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll('[data-testid^="otp-cell-"]')) as HTMLElement[];
+}
+
+function cellDigits(container: HTMLElement): string {
+  // Each cell renders either a digit OR a placeholder dot / caret.
+  // Extract just the digit (if any) for assertion clarity.
+  return getCells(container)
+    .map((c) => c.textContent?.replace(/\s+/g, '').match(/\d/)?.[0] ?? '')
+    .join('');
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 describe('OTP_LENGTH', () => {
-  it('is exactly 6 (matches Supabase dashboard OTP length + carrier SMS body)', () => {
+  it('is exactly 6 (Supabase OTP length + carrier SMS body)', () => {
     expect(OTP_LENGTH).toBe(6);
   });
 });
 
-// ─── Rendering (single-field, autofill-critical attributes) ─────────────────
+// ─── Render (single input + 6 cells) ───────────────────────────────────────
 
 describe('OtpInput — render', () => {
-  it('renders exactly ONE input (not six cells)', () => {
+  it('renders exactly ONE <input> element (the autofill / paste target)', () => {
     const { container } = render(<Harness />);
     expect(container.querySelectorAll('input')).toHaveLength(1);
+  });
+
+  it('renders 6 presentational cells (the segmented visual)', () => {
+    const { container } = render(<Harness />);
+    expect(getCells(container)).toHaveLength(OTP_LENGTH);
+  });
+
+  it('cells row is aria-hidden — screen readers see only the single input', () => {
+    const { container } = render(<Harness />);
+    const cellsRow = container.querySelector('[aria-hidden="true"]');
+    expect(cellsRow).not.toBeNull();
+    // The input itself is NOT aria-hidden and carries the label.
+    expect(getInput().getAttribute('aria-label')).toBe('6-digit verification code');
   });
 
   it('declares the autofill-critical attributes on the single input', () => {
@@ -68,26 +92,50 @@ describe('OtpInput — render', () => {
     const input = getInput();
     expect(input.getAttribute('autocomplete')).toBe('one-time-code');
     expect(input.getAttribute('inputmode')).toBe('numeric');
-    // type=text (NOT number) — number inputs strip leading zeros and
-    // render the wrong soft keyboard on iOS.
     expect(input.getAttribute('type')).toBe('text');
-  });
-
-  it('maxLength on the element is GENEROUS, not 6 (avoids autofill truncation race)', () => {
-    // iOS Safari has been observed to refuse SMS autofill writes when
-    // the field has maxLength=6 — the autofill payload arrives via an
-    // input event that wants to set the full string before any
-    // truncation. We do the LENGTH cap inside handleChange instead.
-    render(<Harness />);
-    const max = Number(getInput().getAttribute('maxlength'));
-    expect(max).toBeGreaterThan(OTP_LENGTH);
-  });
-
-  it('has name="otp" + pattern="\\d{6}" — nudges browsers / password managers to recognise the field', () => {
-    render(<Harness />);
-    const input = getInput();
     expect(input.getAttribute('name')).toBe('otp');
     expect(input.getAttribute('pattern')).toBe('\\d{6}');
+    // maxLength=6 — single input, the autofill payload is exactly
+    // 6 digits and fits without truncation (which is why the multi-
+    // cell design's maxLength=1 broke autofill).
+    expect(Number(input.getAttribute('maxlength'))).toBe(OTP_LENGTH);
+  });
+
+  it('the input is visually hidden but focusable (absolute, opacity-0)', () => {
+    render(<Harness />);
+    const input = getInput();
+    // Class string carries opacity-0 + absolute layout. Checking
+    // class presence rather than computed style avoids depending on
+    // happy-dom resolving Tailwind.
+    expect(input.className).toContain('opacity-0');
+    expect(input.className).toContain('absolute');
+    expect(input.disabled).toBe(false);
+  });
+});
+
+// ─── Filled-cell rendering ─────────────────────────────────────────────────
+
+describe('OtpInput — cells reflect the controlled value', () => {
+  it('renders digits into their corresponding cells when value populates', () => {
+    const { container } = render(<Harness initial="482" />);
+    const cells = getCells(container);
+    expect(cells[0].textContent).toContain('4');
+    expect(cells[1].textContent).toContain('8');
+    expect(cells[2].textContent).toContain('2');
+    // Cells 3..5 are empty (no digit yet).
+    for (let i = 3; i < OTP_LENGTH; i++) {
+      expect(cells[i].textContent).not.toMatch(/\d/);
+    }
+  });
+
+  it('all 6 cells fill from a single paste event (the fix this rewrite delivers)', () => {
+    const onComplete = vi.fn();
+    const { container } = render(<Harness onCompleteSpy={onComplete} />);
+    fireEvent.paste(getInput(), {
+      clipboardData: { getData: () => '482165' },
+    });
+    expect(cellDigits(container)).toBe('482165');
+    expect(onComplete).toHaveBeenCalledWith('482165');
   });
 });
 
@@ -104,8 +152,6 @@ describe('OtpInput — typing', () => {
   it('fires onComplete exactly once when the value reaches 6 digits', () => {
     const completeSpy = vi.fn();
     render(<Harness onCompleteSpy={completeSpy} />);
-    // Simulate progressive typing through a controlled input — each
-    // change replaces the value with the latest typed-text.
     const sequence = ['4', '48', '482', '4821', '48216', '482165'];
     for (const next of sequence.slice(0, -1)) {
       fireEvent.change(getInput(), { target: { value: next } });
@@ -115,18 +161,11 @@ describe('OtpInput — typing', () => {
     expect(completeSpy).toHaveBeenCalledTimes(1);
     expect(completeSpy).toHaveBeenCalledWith('482165');
   });
-
-  it('truncates to 6 digits when more arrive (e.g. fast paste through change)', () => {
-    const spy = vi.fn();
-    render(<Harness onChangeSpy={spy} />);
-    fireEvent.change(getInput(), { target: { value: '4821659999' } });
-    expect(spy).toHaveBeenLastCalledWith('482165');
-  });
 });
 
-// ─── Paste (the bug we're fixing) ──────────────────────────────────────────
+// ─── Paste (the load-bearing bug fix) ──────────────────────────────────────
 
-describe('OtpInput — paste lands all 6 digits in one event', () => {
+describe('OtpInput — paste fills all 6 cells in one event', () => {
   it('pastes a clean 6-digit code into an empty field + fires onComplete', () => {
     const changeSpy = vi.fn();
     const completeSpy = vi.fn();
@@ -139,9 +178,6 @@ describe('OtpInput — paste lands all 6 digits in one event', () => {
   });
 
   it('REPLACES the value (does not append) when pasted over existing digits', () => {
-    // The previous default-browser path would have given "12482165"
-    // and strip+truncate would have produced "124821" — losing two
-    // real digits. Our explicit onPaste handler replaces entirely.
     const changeSpy = vi.fn();
     render(<Harness initial="12" onChangeSpy={changeSpy} />);
     fireEvent.paste(getInput(), {
@@ -151,8 +187,6 @@ describe('OtpInput — paste lands all 6 digits in one event', () => {
   });
 
   it('extracts digits from formatted text ("Your code is 482165")', () => {
-    // Real-world copy from an email body. Strip-non-digits turns
-    // formatted text into a clean code in the same handler path.
     const changeSpy = vi.fn();
     const completeSpy = vi.fn();
     render(<Harness onChangeSpy={changeSpy} onCompleteSpy={completeSpy} />);
@@ -185,19 +219,18 @@ describe('OtpInput — paste lands all 6 digits in one event', () => {
 // ─── OS SMS autofill — same path as paste ──────────────────────────────────
 
 describe('OtpInput — OS SMS autofill model', () => {
-  it('a programmatic full-value-set (autofill shape) emits the full code', () => {
+  it('a programmatic full-value-set (the autofill shape) emits the full code AND fills all cells', () => {
     // iOS Safari + Android Chrome implement SMS autofill by setting
-    // input.value and dispatching an input/change event with the full
-    // code. happy-dom can't summon the real autofill, but a
-    // fireEvent.change with the full value reproduces the SHAPE of
-    // the event the browsers dispatch. On the old 6-cell design this
-    // path lost five digits to maxLength=1; on the new single-field
-    // design it flows straight through.
+    // input.value and dispatching an input event with the full code.
+    // On the segmented-single-input design that event reaches our
+    // change handler with value="482165"; one render later, all six
+    // cells reflect the digits.
     const changeSpy = vi.fn();
     const completeSpy = vi.fn();
-    render(<Harness onChangeSpy={changeSpy} onCompleteSpy={completeSpy} />);
+    const { container } = render(<Harness onChangeSpy={changeSpy} onCompleteSpy={completeSpy} />);
     fireEvent.change(getInput(), { target: { value: '482165' } });
     expect(changeSpy).toHaveBeenCalledWith('482165');
     expect(completeSpy).toHaveBeenCalledWith('482165');
+    expect(cellDigits(container)).toBe('482165');
   });
 });

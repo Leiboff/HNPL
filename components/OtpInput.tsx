@@ -1,42 +1,37 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // ─── OtpInput ────────────────────────────────────────────────────────────
 //
-// SINGLE-FIELD numeric OTP entry (rewritten from the previous 6-cell
-// implementation, 2026-06-20). The six-cell design fought against:
+// SEGMENTED-LOOK OTP entry backed by ONE real input. Rewritten
+// 2026-06-21 to combine the two prior designs' strengths:
 //
-//   • OS-level SMS autofill on iOS Safari + Android Chrome, which sets
-//     `input.value` programmatically. A multi-cell field with
-//     maxLength=1 truncates the autofilled code to the first digit;
-//     this is the documented failure mode (Apple HIG + Google's auth
-//     guidance both call out single-field as the correct pattern).
-//   • Paste anywhere except the first cell — `onPaste` was attached
-//     only to cell 0, so a paste into any other cell hit
-//     maxLength=1 and lost five digits.
+//   • 6 visual cells (segmented look the patient expects).
+//   • 1 real <input> underneath — the only thing the browser and OS
+//     interact with for paste + SMS autofill, so neither flow can
+//     break the way it did on the multi-cell design.
 //
-// A single text field with `autoComplete="one-time-code"`,
-// `inputMode="numeric"`, and a generous letter-spacing visual:
+// How it works:
 //
-//   • Receives the full SMS autofill payload in one onChange event
-//     (no truncation race).
-//   • Receives the full clipboard text on paste (browser default
-//     behaviour fills the field); our handler strips non-digit chars
-//     and truncates to LENGTH so "Your code is 482165" pastes as
-//     "482165" cleanly from an email body.
-//   • Reads visually as a deliberate OTP field via center-aligned
-//     monospaced font with letter-spacing — does NOT look like a
-//     fallback.
+//   • A single invisible-but-focusable <input> is absolutely positioned
+//     over the visual cell row. The container's onClick focuses it.
+//   • The cells are pure presentational divs driven by the controlled
+//     `value` prop. Each renders one character of `value[i]` plus an
+//     active-cell caret on the next-to-be-typed slot.
+//   • Paste + SMS autofill both write into the single input → onChange
+//     fires once with the full code → all 6 cells render filled
+//     simultaneously. No truncation race, no per-cell distribution.
+//   • Backspace, arrow keys, IME — handled natively by the single
+//     input, no custom key handlers required.
 //
-// Used by both /verify-email (email OTP, paste-driven) and the phone
-// OTP step (SMS autofill-driven). Same component, same behaviour app-
-// wide. API kept stable so existing call sites are unchanged.
+// API kept stable so the consumers (PhoneOtpStep + VerifyEmailForm)
+// pick this up with zero call-site changes.
 
 const LENGTH = 6;
 
 type Props = {
-  value:        string;             // string of 0..LENGTH digits
+  value:        string;             // 0..LENGTH digits
   onChange:     (next: string) => void;
   onComplete?:  (full:  string) => void;
   disabled?:    boolean;
@@ -54,37 +49,35 @@ export default function OtpInput({
   autoFocus = false,
   idPrefix  = 'otp',
 }: Props) {
-  const ref = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [focused, setFocused] = useState(false);
 
   useEffect(() => {
     if (!autoFocus) return;
-    ref.current?.focus();
-    // Run once on mount. Re-focusing on value change would steal focus
-    // from the OS autofill suggestion bar, which is the opposite of
-    // what we want.
+    inputRef.current?.focus();
+    // Run once on mount only — focusing again during keystrokes
+    // would steal the OS autofill suggestion bar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Single-path digit handler ──────────────────────────────────────
-  // Every input source — typing, paste, OS SMS autofill — arrives
-  // here as one ChangeEvent. Strip non-digits + truncate to LENGTH,
-  // emit. No per-source branching needed; the design is the fix.
+  // ── Single change handler — every input source funnels here ────────
+  // Typing one digit, paste of "482165", paste of "Your code is 482165",
+  // OS SMS autofill of "482165". All arrive as a ChangeEvent with the
+  // full new value in e.target.value. Strip non-digits + slice to
+  // LENGTH covers them all uniformly.
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const digits = e.target.value.replace(/\D/g, '').slice(0, LENGTH);
     onChange(digits);
     if (digits.length === LENGTH) onComplete?.(digits);
   }
 
-  // ── Paste handler (explicit replace, not append) ───────────────────
-  // The default browser paste INSERTS the clipboard text at the
-  // cursor position. If `value` is already "12" and the user pastes
-  // "482165", the post-default value would be "12482165" — our
-  // change-handler would strip + truncate to "124821", which is
-  // wrong (lost two digits of the actual code).
-  //
-  // Explicit handler: prevent default, take the clipboard digits, and
-  // REPLACE the field's value entirely. Matches user intent — pasting
-  // a code means "use this code", not "append this to what I typed".
+  // ── Paste handler — REPLACE, not append ────────────────────────────
+  // Default browser paste inserts at cursor position; if the field
+  // already contains "12" and the user pastes "482165" the post-paste
+  // value would be "12482165" — strip+slice would yield "124821",
+  // losing the last two real digits of the actual code. Override:
+  // preventDefault, parse the clipboard digits, replace the field
+  // entirely. Matches user intent — "paste a code" means "use this".
   function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
     const text = e.clipboardData.getData('text');
     const digits = text.replace(/\D/g, '').slice(0, LENGTH);
@@ -94,28 +87,79 @@ export default function OtpInput({
     if (digits.length === LENGTH) onComplete?.(digits);
   }
 
+  // The cells render from the current value. Active cell is the slot
+  // we expect the next digit in — useful when the patient is partway
+  // through typing OR when the field is freshly focused and empty.
+  const activeIndex = focused && value.length < LENGTH ? value.length : -1;
+
   return (
-    <div className="flex justify-center" role="group" aria-label="6-digit verification code">
+    <div
+      className="relative inline-flex w-full max-w-sm mx-auto"
+      role="group"
+      aria-label="6-digit verification code"
+      onClick={() => inputRef.current?.focus()}
+    >
+      {/* ── Visual cell row (purely presentational; driven by value) ── */}
+      <div className="flex gap-2 sm:gap-3 w-full justify-center" aria-hidden="true">
+        {Array.from({ length: LENGTH }).map((_, i) => {
+          const ch       = value[i] ?? '';
+          const isActive = i === activeIndex;
+          const filled   = ch !== '';
+
+          const cellClass =
+            'relative flex items-center justify-center '
+            + 'h-14 w-12 sm:h-16 sm:w-14 rounded-xl border-2 '
+            + 'text-2xl sm:text-3xl font-mono tabular-nums '
+            + 'transition-colors '
+            + (hasError
+                ? 'border-red-400 bg-red-50 text-red-700'
+              : filled
+                ? 'border-[#15A89E] bg-white text-[#0F1F3A]'
+              : isActive
+                ? 'border-[#15A89E] bg-white ring-4 ring-[#15A89E]/15'
+                : 'border-[#D8DEE8] bg-white');
+
+          return (
+            <div
+              key={i}
+              data-testid={`otp-cell-${i}`}
+              className={cellClass}
+            >
+              {filled ? (
+                ch
+              ) : isActive ? (
+                // Caret-like indicator on the next-to-be-typed cell.
+                // motion-safe keeps this respectful of reduced-motion.
+                <span
+                  className="block h-7 sm:h-8 w-px bg-[#15A89E] motion-safe:animate-pulse"
+                  aria-hidden="true"
+                />
+              ) : (
+                <span className="text-[#D8DEE8] text-2xl leading-none">•</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Real input — invisible, focusable, absolutely positioned ──
+          THIS is the thing the OS / clipboard / autofill writes into.
+          opacity-0 keeps it invisible; the cells above are what the
+          user sees. caret-color: transparent suppresses the native
+          caret blink (the cell-row draws its own active-cell caret).
+          aria-label is the accessibility surface (cells are
+          aria-hidden so screen readers see exactly one input). */}
       <input
         id={`${idPrefix}-input`}
-        ref={ref}
-        // type="text" not "number" — number inputs strip leading zeros
-        // and on iOS render a non-OTP-friendly keypad. inputMode handles
-        // the numeric keyboard cleanly without those side-effects.
+        ref={inputRef}
         type="text"
         inputMode="numeric"
         autoComplete="one-time-code"
-        // maxLength generous — NOT set to 6. iOS Safari has been
-        // observed to refuse SMS autofill writes when the underlying
-        // input is maxLength=6, because the autofill payload technically
-        // arrives via an input event that wants to set the full string
-        // before any truncation. We do the LENGTH cap in handleChange
-        // after the value has reached us.
-        maxLength={32}
+        // maxLength={6} — single input, the autofill payload is
+        // exactly 6 digits. This is the constraint the user requested
+        // and what most carriers / OS autofill expect.
+        maxLength={LENGTH}
         pattern="\d{6}"
-        // Names that nudge browsers + password managers to recognise
-        // this as an OTP field. "name=otp" + autocomplete="one-time-code"
-        // is the combination Mozilla + Apple docs cite.
         name="otp"
         value={value}
         disabled={disabled}
@@ -123,16 +167,16 @@ export default function OtpInput({
         aria-label="6-digit verification code"
         onChange={handleChange}
         onPaste={handlePaste}
-        placeholder="• • • • • •"
-        className={
-          'h-14 sm:h-16 w-full max-w-[18ch] text-center font-mono '
-          + 'text-2xl sm:text-3xl tabular-nums tracking-[0.6em] indent-[0.6em] '
-          + 'rounded-xl border-2 outline-none transition-all '
-          + (hasError
-            ? 'border-red-400 bg-red-50 text-red-700 focus:ring-2 focus:ring-red-200 placeholder:text-red-300'
-            : 'border-gray-300 bg-white text-gray-900 focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20 placeholder:text-gray-300')
-          + (disabled ? ' opacity-60 cursor-not-allowed' : '')
-        }
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        // Absolute fill: every tap inside the container area hits the
+        // input. Tapping any visual cell focuses the input, so a long-
+        // press anywhere brings up the OS autofill suggestion bar.
+        className="absolute inset-0 w-full h-full opacity-0 cursor-text disabled:cursor-not-allowed"
+        // Native caret hidden — cell-row renders its own. Without this
+        // the native caret would draw at the start of the value in
+        // the absolute-positioned overlay, peeking through cells.
+        style={{ caretColor: 'transparent' }}
       />
     </div>
   );
