@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 
 // ─── Server-side admin guard ─────────────────────────────────────────────────
 //
@@ -9,11 +10,18 @@ import { createClient } from '@/lib/supabase/server';
 // client's getUser() to identify the caller, then reads profiles.role to
 // confirm admin status. We do NOT trust client-side UI gating; both
 // approvePractice and suspendPractice run this check before any write.
+//
+// AUTHZ POSTURE NOTE (2026-06-22, fix 0054):
+//   The writes below switched to the service-role client so that the
+//   BEFORE UPDATE trigger added by migration 0054
+//   (protect_practices_columns) sees `auth.role() = 'service_role'`
+//   and lets the protected-column write through. The service-role
+//   client bypasses RLS, so the guardAdmin() check below is now the
+//   sole authz gate on these writes. It MUST run first and pass
+//   before any service-role write fires. Reordering this is unsafe.
 
 type GuardOk = {
   ok:        true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase:  any;
   userId:    string;
 };
 type GuardErr = { ok: false; error: string };
@@ -33,7 +41,15 @@ async function guardAdmin(): Promise<GuardOk | GuardErr> {
     return { ok: false, error: 'Unauthorized.' };
   }
 
-  return { ok: true, supabase, userId: user.id };
+  return { ok: true, userId: user.id };
+}
+
+function svc() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
 }
 
 // ─── approvePractice ─────────────────────────────────────────────────────────
@@ -45,10 +61,12 @@ async function guardAdmin(): Promise<GuardOk | GuardErr> {
 // as it ALSO has >= 1 active provider.
 
 export async function approvePractice(practiceId: string): Promise<{ error: string | null }> {
+  // App-level admin gate — sole authz on the service-role write that
+  // follows. MUST run + pass before the write fires.
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
-  const { error } = await guard.supabase
+  const { error } = await svc()
     .from('practices')
     .update({
       status:       'approved',
@@ -73,7 +91,7 @@ export async function suspendPractice(practiceId: string): Promise<{ error: stri
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
-  const { error } = await guard.supabase
+  const { error } = await svc()
     .from('practices')
     .update({ status: 'suspended' })
     .eq('id', practiceId);

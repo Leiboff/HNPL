@@ -24,6 +24,23 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+
+// AUTHZ POSTURE NOTE (2026-06-22, fix 0054):
+//   changePracticeFeePercent's UPDATE of practices.fee_percent now
+//   goes through the service-role client so the BEFORE UPDATE
+//   trigger protect_practices_columns() (added in migration 0054)
+//   lets the protected-column write through. The guardAdmin() check
+//   is therefore the sole authz on the write — it MUST pass before
+//   svc() is called.
+
+function svc() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+}
 
 export type AuditEntityType = 'practice' | 'customer';
 
@@ -105,7 +122,10 @@ export async function changePracticeFeePercent(
     return { ok: false, error: 'Fee is unchanged.' };
   }
 
-  const { error: updErr } = await supabase
+  // Service-role write: the protect_practices_columns() trigger
+  // (migration 0054) rejects session-client UPDATEs to fee_percent.
+  // guardAdmin() above is the authoritative authz here.
+  const { error: updErr } = await svc()
     .from('practices')
     .update({ fee_percent: nextRounded })
     .eq('id', practiceId);

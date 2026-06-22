@@ -498,7 +498,8 @@ export type PhoneOtpStartResult =
         | 'invalid_phone'        // normalisation failed
         | 'invalid_token'        // token doesn't match a live invitation
         | 'too_soon'             // <30s since last send
-        | 'daily_limit'          // 5 sends in 24h cap hit
+        | 'daily_limit'          // 5 sends in 24h cap hit for this (token, phone)
+        | 'token_daily_limit'    // 10 sends in 24h cap hit for this token across all phones (SMS-burn guard, 0055)
         | 'sms_failed'           // SMSPortal returned non-2xx / timeout
         | 'sms_not_configured'   // creds missing (dev safety)
         | 'unknown';
@@ -546,7 +547,12 @@ export async function requestPhoneOtp(
   }
   const prepCode = prepResult as string;
   if (prepCode !== 'ok') {
-    if (prepCode === 'too_soon' || prepCode === 'daily_limit' || prepCode === 'invalid_token') {
+    if (
+      prepCode === 'too_soon' ||
+      prepCode === 'daily_limit' ||
+      prepCode === 'token_daily_limit' ||
+      prepCode === 'invalid_token'
+    ) {
       return { ok: false, code: prepCode };
     }
     return { ok: false, code: 'unknown' };

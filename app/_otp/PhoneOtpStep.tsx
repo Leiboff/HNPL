@@ -60,6 +60,9 @@ function otpErrorCopy(code: string): string {
   switch (code) {
     case 'too_soon':            return 'Please wait a moment before requesting another code.';
     case 'daily_limit':         return 'Too many code requests today. Try again tomorrow.';
+    case 'token_daily_limit':   return 'Too many code requests for this bill today. Try again tomorrow or contact your practice.';
+    case 'user_daily_limit':    return 'Too many code requests today. Try again tomorrow.';
+    case 'phone_mismatch':      return 'That number doesn’t match the one on your account. Update your profile first.';
     case 'invalid_token':       return 'This invitation link is no longer valid.';
     case 'invalid_user':        return 'We couldn’t verify your account. Please sign in again.';
     case 'invalid_phone':       return 'That phone number looks wrong. Go back and check it.';

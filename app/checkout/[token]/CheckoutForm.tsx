@@ -51,6 +51,7 @@ export type PhoneOtpStartResult =
   | { ok: true }
   | { ok: false; code:
         | 'invalid_phone' | 'invalid_token' | 'too_soon' | 'daily_limit'
+        | 'token_daily_limit'    // 0055 — per-token total cap (SMS-burn)
         | 'sms_failed' | 'sms_not_configured' | 'unknown';
     };
 

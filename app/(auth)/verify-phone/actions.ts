@@ -40,8 +40,10 @@ export type PhoneOtpStartResultForUser =
         | 'invalid_user'
         | 'unauthenticated'
         | 'no_phone_on_profile'
+        | 'phone_mismatch'          // p_phone ≠ profile.phone (0055)
         | 'too_soon'
         | 'daily_limit'
+        | 'user_daily_limit'        // 10 sends in 24h across all phones (0055)
         | 'sms_failed'
         | 'sms_not_configured'
         | 'unknown';
@@ -63,7 +65,7 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
 
   const { data: profile } = await svc
     .from('profiles')
-    .select('phone, phone_verified_at')
+    .select('phone')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -72,9 +74,18 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
   const normalizedPhone = normalizePhoneZA(profile.phone);
   if (!normalizedPhone) return { ok: false, code: 'invalid_phone' };
 
-  // Already verified — short-circuit. The caller's UI will treat
-  // 'ok' here as "you're done" and route to /patient.
-  if (profile.phone_verified_at) return { ok: true };
+  // Already-verified short-circuit reads from phone_verifications (the
+  // source of truth), NOT profiles.phone_verified_at — defence in
+  // depth against H3-style bypass even though migration 0054 locks
+  // the column.
+  const { data: priorVerification } = await svc
+    .from('phone_verifications')
+    .select('verified_at')
+    .eq('user_id', user.id)
+    .eq('phone_e164', normalizedPhone)
+    .not('verified_at', 'is', null)
+    .maybeSingle();
+  if (priorVerification?.verified_at) return { ok: true };
 
   let code: string;
   let codeHash: string;
@@ -97,7 +108,13 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
   }
   const prepCode = prepResult as string;
   if (prepCode !== 'ok') {
-    if (prepCode === 'too_soon' || prepCode === 'daily_limit' || prepCode === 'invalid_user') {
+    if (
+      prepCode === 'too_soon' ||
+      prepCode === 'daily_limit' ||
+      prepCode === 'user_daily_limit' ||
+      prepCode === 'phone_mismatch' ||
+      prepCode === 'invalid_user'
+    ) {
       return { ok: false, code: prepCode };
     }
     return { ok: false, code: 'unknown' };
@@ -143,7 +160,7 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
 
   const { data: profile } = await svc
     .from('profiles')
-    .select('phone, phone_verified_at')
+    .select('phone')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile?.phone) return { ok: false, code: 'no_phone_on_profile' };
@@ -151,9 +168,17 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
   const normalizedPhone = normalizePhoneZA(profile.phone);
   if (!normalizedPhone) return { ok: false, code: 'invalid_phone' };
 
-  // Already verified — return ok without an RPC roundtrip. Mirrors
-  // the verify_phone_otp behaviour for verified rows but cheaper.
-  if (profile.phone_verified_at) return { ok: true };
+  // Already-verified short-circuit reads phone_verifications (source
+  // of truth), not profiles.phone_verified_at. See requestPhoneOtpForUser
+  // above for the rationale.
+  const { data: priorVerification } = await svc
+    .from('phone_verifications')
+    .select('verified_at')
+    .eq('user_id', user.id)
+    .eq('phone_e164', normalizedPhone)
+    .not('verified_at', 'is', null)
+    .maybeSingle();
+  if (priorVerification?.verified_at) return { ok: true };
 
   let codeHash: string;
   try {

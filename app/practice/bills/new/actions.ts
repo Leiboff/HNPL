@@ -219,7 +219,11 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     };
   }
 
-  const { data: invoiceNumber, error: invoiceError } = await supabase.rpc('next_invoice_number');
+  // Service-role: migration 0056 (2026-06-22) revoked next_invoice_number
+  // EXECUTE from the authenticated role to stop any logged-in caller
+  // from burning sequence numbers. Bill creation is the sole
+  // legitimate caller and routes through svc here.
+  const { data: invoiceNumber, error: invoiceError } = await svc.rpc('next_invoice_number');
   if (invoiceError || !invoiceNumber) {
     return { error: 'Failed to generate invoice number. Please try again.' };
   }

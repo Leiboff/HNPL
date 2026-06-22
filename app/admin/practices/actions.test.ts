@@ -14,6 +14,7 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Session client — used by guardAdmin() to read the caller's role.
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: {
@@ -22,7 +23,7 @@ vi.mock('@/lib/supabase/server', () => ({
         error: null,
       }),
     },
-    from(table: string) {
+    from(_table: string) {
       function selectChain() {
         return {
           eq: () => selectChain(),
@@ -35,6 +36,26 @@ vi.mock('@/lib/supabase/server', () => ({
       }
       return {
         select: selectChain,
+        // Session client should NOT be writing to practices any more — the
+        // post-0054 code routes the UPDATE through the service-role mock
+        // below. A session-client update would be a regression.
+        update: (_row: unknown) => ({
+          eq: () => Promise.resolve({ data: null, error: { message: 'session-client UPDATE not allowed' } }),
+        }),
+      };
+    },
+  })),
+}));
+
+// Service-role client — the post-0054 path for practices UPDATE writes.
+// Migration 0054's protect_practices_columns() trigger lets these pass
+// because auth.role() = 'service_role' inside the trigger when the
+// service-role key is used. The mock records every update so the
+// assertions below can check the row shape unchanged.
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => ({
+    from(table: string) {
+      return {
         update: (row: unknown) => ({
           eq: () => {
             updates.push({ table, row });

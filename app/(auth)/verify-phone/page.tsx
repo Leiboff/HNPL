@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import VerifyPhoneClient from './VerifyPhoneClient';
 import {
   requestPhoneOtpForUser,
@@ -47,15 +48,9 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('phone, phone_verified_at, role')
+    .select('phone, role')
     .eq('id', user.id)
     .maybeSingle();
-
-  // Already verified — skip the gate. Refreshes / back-button after
-  // success land here and bounce straight on.
-  if (profile?.phone_verified_at) {
-    redirect(target);
-  }
 
   // No phone on profile — the signup form is the right place to add
   // one. Send them back to the patient signup with a hint. This is a
@@ -63,6 +58,40 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
   // this branch implies an unusual data state.
   if (!profile?.phone) {
     redirect('/signup/patient?missing=phone');
+  }
+
+  // ── Source-of-truth read: phone_verifications, NOT profiles ────────
+  //
+  // The audit (2026-06-21, H3) flagged that reading verified-state from
+  // profiles.phone_verified_at is bypassable if anyone can write the
+  // column. Migration 0054 closes the write path; this read change adds
+  // defence in depth — we consult the actual verification row written
+  // by the SECURITY DEFINER verify_phone_otp_for_user RPC. Even if
+  // some future code path lets the column drift, the gate still
+  // engages on the row itself.
+  //
+  // The patient's verified row is keyed by (user_id, phone_e164). We
+  // look it up via the service-role client because phone_verifications
+  // has NO anon/authenticated RLS policies (locked down per 0052) —
+  // only the SECURITY DEFINER RPCs may touch it. Reading from a server
+  // component as service-role is fine; we're not exposing the row to
+  // the client, just deciding whether to redirect.
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+  const { data: verification } = await svc
+    .from('phone_verifications')
+    .select('verified_at')
+    .eq('user_id', user.id)
+    .eq('phone_e164', profile.phone)
+    .not('verified_at', 'is', null)
+    .maybeSingle();
+
+  // Already verified — skip the gate.
+  if (verification?.verified_at) {
+    redirect(target);
   }
 
   // Hint for the client whether SMS is set up — used to surface the

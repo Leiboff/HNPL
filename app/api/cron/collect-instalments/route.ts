@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import {
@@ -35,8 +36,20 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       console.error('[cron/collect-instalments] CRON_SECRET is not set — refusing to run.');
       return NextResponse.json({ error: 'Cron secret not configured.' }, { status: 500 });
     }
-    const expected = `Bearer ${secret}`;
-    if (req.headers.get('authorization') !== expected) {
+    // Constant-time compare via crypto.timingSafeEqual — same pattern
+    // the Paystack webhook handler uses for its HMAC signature check
+    // (app/api/webhooks/paystack/route.ts). The length check guards
+    // against a mismatched-size header throwing instead of cleanly
+    // rejecting; an attacker-supplied short/garbage header gets the
+    // same 401 as a wrong-secret-of-equal-length one. (M5 fix, 2026-06-22.)
+    const expected     = `Bearer ${secret}`;
+    const receivedHdr  = req.headers.get('authorization') ?? '';
+    const expectedBuf  = Buffer.from(expected, 'utf8');
+    const receivedBuf  = Buffer.from(receivedHdr, 'utf8');
+    const authValid =
+      receivedBuf.length === expectedBuf.length &&
+      crypto.timingSafeEqual(receivedBuf, expectedBuf);
+    if (!authValid) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
   }

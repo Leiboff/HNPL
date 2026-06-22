@@ -128,8 +128,13 @@ describe('Signup server actions — reuse the OTP machinery, never trust client 
     expect(SIGNUP_ACTS).toMatch(/\.update\(\{\s*phone_verified_at:/);
   });
 
-  it('short-circuits when profile.phone_verified_at is already set (idempotent on refresh)', () => {
-    expect(SIGNUP_ACTS).toMatch(/profile\.phone_verified_at[\s\S]{0,80}return\s+\{\s*ok:\s*true/);
+  it('short-circuits via phone_verifications row (idempotent on refresh, post-H3 hardening)', () => {
+    // Defence in depth (audit H3, 2026-06-22): both signup server
+    // actions read the already-verified state from phone_verifications
+    // (source of truth), NOT profiles.phone_verified_at. Migration
+    // 0054 also locks the profile column from user-side writes; this
+    // read change is the second line of defence.
+    expect(SIGNUP_ACTS).toMatch(/\.from\('phone_verifications'\)[\s\S]{0,400}priorVerification\?\.verified_at/);
   });
 });
 
@@ -157,8 +162,13 @@ describe('/verify-phone page — auth-required + idempotent', () => {
     expect(SIGNUP_PAGE).toMatch(/redirect\(`\/login\?next=\$\{encodeURIComponent\('\/verify-phone'\)\}`\)/);
   });
 
-  it('redirects straight to target when profile.phone_verified_at is already set', () => {
-    expect(SIGNUP_PAGE).toMatch(/if\s*\(profile\?\.phone_verified_at\)\s*\{[\s\S]{0,80}redirect\(target\)/);
+  it('redirects straight to target when a verified phone_verifications row exists (post-H3 read change)', () => {
+    // Per the 2026-06-22 H3 hardening, the page reads verified-state
+    // from phone_verifications keyed by (user_id, phone_e164), not
+    // from profiles.phone_verified_at — the column lock from 0054 is
+    // the first line of defence, this read is the second.
+    expect(SIGNUP_PAGE).toMatch(/\.from\('phone_verifications'\)[\s\S]{0,300}\.eq\('user_id',\s*user\.id\)/);
+    expect(SIGNUP_PAGE).toMatch(/if\s*\(verification\?\.verified_at\)\s*\{[\s\S]{0,80}redirect\(target\)/);
   });
 
   it('passes smsConfigured hint to the client (so dev surfaces the skip eagerly)', () => {
