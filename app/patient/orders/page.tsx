@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { declinePlan } from '../actions';
-import { selfSettleInstalment } from './settle-actions';
+import { selfSettleInstalment, selfSettleEntirePlan } from './settle-actions';
 import OrdersView from './OrdersView';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
@@ -103,6 +103,7 @@ export default async function OrdersPage() {
         historicPlans={historicPlans}
         declinePlan={declinePlan}
         settleInstalment={selfSettleInstalment}
+        settleEntirePlan={selfSettleEntirePlan}
         specialtyMap={specialtyMap}
         patientBlocked={patientBlocked}
       />

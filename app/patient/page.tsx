@@ -9,23 +9,10 @@ import PushSoftAsk from '@/app/_pwa/PushSoftAsk';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function ordinal(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
-}
-
-const MONTHS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-] as const;
-
-// Matches the formatDate / formatRand used in OrdersView.
-function formatDate(dateStr: string): string {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return `${day} ${MONTHS[month - 1]} ${year}`;
-}
+//
+// Date formatting moved into <InstalmentHero> / <InstalmentBreakdownModal>
+// once the hero became ladder-aware. The dashboard page itself only needs
+// the rand formatter for the pending-bill amount.
 
 function formatRand(n: number): string {
   const [integer, decimal] = n.toFixed(2).split('.');
@@ -57,11 +44,13 @@ type PaymentPlanEmbed = {
 } | null;
 
 type UpcomingPayment = {
-  id:                string;
-  amount:            number;
-  due_date:          string;
-  status:            string;
-  instalment_number: number;
+  id:                  string;
+  amount:              number;
+  due_date:            string;
+  status:              string;
+  instalment_number:   number;
+  dunning_fees_cents:  number | null;
+  next_attempt_date:   string | null;
   // Supabase returns many-to-one embeds as an object; typed as union to guard
   // against the rare case where it arrives as a single-element array.
   plan: PaymentPlanEmbed | PaymentPlanEmbed[];
@@ -128,19 +117,25 @@ export default async function PatientDashboardPage() {
         .from('plans')
         .select('id, status, total_amount, practice:practices(name)')
         .eq('patient_id', user.id),
-      // All unpaid instalments ordered soonest-first — no limit so we can sum
-      // every payment due on the same date and pass them all to the modal.
-      // No profiles embed — same ambiguous-FK reason as above.
+      // All unsettled instalments — soonest-first by *effective* date.
+      // We must include 'failed' and 'defaulted' (post-0057) because the
+      // hero needs to surface ladder state truthfully. Excluding them
+      // would hide a payment-in-trouble from the dashboard at the worst
+      // possible moment — the patient gets a "we'll retry on [date]"
+      // email and the app would still say "all paid up". 'processing'
+      // stays in because the row is mid-charge; rendering it as the
+      // soonest item is fine (it has a definite scheduled origin).
       supabase
         .from('payments')
         .select(`
           id, amount, due_date, status, instalment_number,
+          dunning_fees_cents, next_attempt_date,
           plan:plans!payments_plan_id_fkey(
             id, plan_type, practice:practices(name)
           )
         `)
         .eq('patient_id', user.id)
-        .in('status', ['scheduled', 'processing'])
+        .in('status', ['scheduled', 'processing', 'failed', 'defaulted'])
         .order('due_date', { ascending: true }),
     ]);
 
@@ -154,9 +149,15 @@ export default async function PatientDashboardPage() {
     ? new Date(profile.passkey_prompt_dismissed_at as string).getTime()
     : null;
   const dismissedCount = (profile?.passkey_prompt_dismissed_count as number | null) ?? 0;
+  // Server component — Date.now() is the server's request time and is
+  // safe (no re-render impurity concern; this function runs once per
+  // request). The react-hooks/purity rule can't distinguish server
+  // components and would flag it as impure, so disable here.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
   const showPasskeyPrompt =
     dismissedCount === 0 ||
-    (dismissedCount === 1 && dismissedAtMs !== null && Date.now() - dismissedAtMs > THIRTY_DAYS_MS);
+    (dismissedCount === 1 && dismissedAtMs !== null && nowMs - dismissedAtMs > THIRTY_DAYS_MS);
 
   const allPlans     = (rawPlans   ?? []) as unknown as PlanSummary[];
   const payments     = (rawPayments ?? []) as unknown as UpcomingPayment[];
@@ -226,33 +227,57 @@ export default async function PatientDashboardPage() {
       );
     }
   } else if (payments.length > 0) {
-    // ── B: upcoming instalments ─────────────────────────────────────────────
-    // Payments are already sorted ascending — first row has the soonest due_date.
-    const soonestDate = payments[0].due_date;
-    // Group all payments sharing that date (multiple plans can coincide).
-    const dueGroup    = payments.filter((p) => p.due_date === soonestDate);
-    const total       = dueGroup.reduce((sum, p) => sum + Number(p.amount), 0);
+    // ── B: upcoming / failed / defaulted instalments ─────────────────────────
+    // Sort ladder-aware: the "effective date" of an instalment is its
+    // next_attempt_date when set (the ladder rescheduled it), else its
+    // original due_date. A failed row whose next attempt is sooner than
+    // a healthy scheduled row's due_date should rank first.
+    const effectiveDate = (p: UpcomingPayment): string =>
+      p.next_attempt_date ?? p.due_date;
 
-    const isOverdue = soonestDate < todayStr;
-    const isToday   = soonestDate === todayStr;
+    const sorted     = [...payments].sort((a, b) => effectiveDate(a).localeCompare(effectiveDate(b)));
+    const soonestKey = effectiveDate(sorted[0]);
+    const dueGroup   = sorted.filter((p) => effectiveDate(p) === soonestKey);
+
+    // Outstanding = bare instalment + accrued dunning fees. A failed
+    // row charges instalment + fees on the next retry (see
+    // lib/payments/dunning.ts), so the hero must reflect that total —
+    // showing the bare amount when fees have accrued misleads the patient.
+    const total = dueGroup.reduce(
+      (sum, p) => sum + Number(p.amount) + Number(p.dunning_fees_cents ?? 0) / 100,
+      0,
+    );
+
+    const isOverdue = soonestKey < todayStr;
+    const isToday   = soonestKey === todayStr;
+
+    // Group-level state: defaulted dominates failed dominates scheduled.
+    // If any row in the same-date group is defaulted, the hero copy
+    // reflects default; same for failed. Otherwise it's a normal upcoming.
+    const groupState: 'defaulted' | 'failed' | 'scheduled' =
+      dueGroup.some((p) => p.status === 'defaulted') ? 'defaulted' :
+      dueGroup.some((p) => p.status === 'failed')    ? 'failed'    :
+                                                       'scheduled';
 
     const instalments: InstalmentRow[] = dueGroup.map((p) => {
-      // Guard: Supabase returns many-to-one as object, but handle array defensively.
       const planData = Array.isArray(p.plan) ? (p.plan[0] ?? null) : p.plan;
       return {
         practiceName:     getPracticeName(planData?.practice ?? null),
         instalmentNumber: p.instalment_number,
         planType:         planData?.plan_type ?? null,
         amount:           Number(p.amount),
+        dunningFeesCents: Number(p.dunning_fees_cents ?? 0),
+        status:           p.status,
       };
     });
 
     hero = (
       <InstalmentHero
-        dueDate={soonestDate}
+        dueDate={soonestKey}
         total={total}
         isOverdue={isOverdue}
         isToday={isToday}
+        groupState={groupState}
         instalments={instalments}
       />
     );

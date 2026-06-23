@@ -21,7 +21,17 @@ export type InstalmentRow = {
   practiceName:     string;
   instalmentNumber: number;
   planType:         number | null;
+  /** Bare instalment amount in Rands (no fees). */
   amount:           number;
+  /** Dunning fees accrued on this row (cents). 0 when none. */
+  dunningFeesCents: number;
+  /**
+   * Row status — drives the per-row label inside the breakdown. The
+   * hero-level groupState says what the whole hero is about; this lets
+   * us call out which row(s) inside the group are the failed/defaulted
+   * ones when there's a mix.
+   */
+  status:           string;
 };
 
 type Props = {
@@ -30,6 +40,7 @@ type Props = {
   dueDate:     string;
   total:       number;
   isOverdue:   boolean;
+  groupState:  'scheduled' | 'failed' | 'defaulted';
   instalments: InstalmentRow[];
 };
 
@@ -39,6 +50,7 @@ export default function InstalmentBreakdownModal({
   dueDate,
   total,
   isOverdue,
+  groupState,
   instalments,
 }: Props) {
   const handleKey = useCallback(
@@ -58,6 +70,13 @@ export default function InstalmentBreakdownModal({
 
   if (!open) return null;
 
+  const headerText =
+    groupState === 'defaulted' ? 'Outstanding (in default)' :
+    groupState === 'failed'    ? `Retry on ${formatDate(dueDate)}` :
+                                 `What's due on ${formatDate(dueDate)}`;
+
+  const isUrgent = groupState !== 'scheduled' || isOverdue;
+
   return (
     <div className="fixed inset-0 z-50">
       {/* Backdrop */}
@@ -74,7 +93,7 @@ export default function InstalmentBreakdownModal({
           {/* Header */}
           <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
             <h2 className="text-base font-semibold text-gray-900">
-              What&apos;s due on {formatDate(dueDate)}
+              {headerText}
             </h2>
             <button
               type="button"
@@ -97,29 +116,42 @@ export default function InstalmentBreakdownModal({
 
           {/* Instalment rows */}
           <div className="divide-y divide-gray-50 px-6">
-            {instalments.map((inst, i) => (
-              <div key={i} className="flex items-center justify-between py-3.5">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{inst.practiceName}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Instalment {inst.instalmentNumber}
-                    {inst.planType != null ? ` of ${inst.planType}` : ''}
-                  </p>
+            {instalments.map((inst, i) => {
+              const rowTotal = inst.amount + inst.dunningFeesCents / 100;
+              const rowFailed    = inst.status === 'failed';
+              const rowDefaulted = inst.status === 'defaulted';
+              const rowSubtitle =
+                rowDefaulted ? 'In default' :
+                rowFailed    ? 'Payment failed' :
+                               `Instalment ${inst.instalmentNumber}${inst.planType != null ? ` of ${inst.planType}` : ''}`;
+              return (
+                <div key={i} className="flex items-start justify-between py-3.5 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{inst.practiceName}</p>
+                    <p className={`text-xs mt-0.5 ${rowFailed || rowDefaulted ? 'text-red-600' : 'text-gray-500'}`}>
+                      {rowSubtitle}
+                    </p>
+                    {inst.dunningFeesCents > 0 && (
+                      <p className="text-[11px] text-red-600 mt-0.5 tabular-nums">
+                        Includes {formatRand(inst.dunningFeesCents / 100)} in late fees
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-sm font-semibold tabular-nums text-gray-900 shrink-0">
+                    {formatRand(rowTotal)}
+                  </span>
                 </div>
-                <span className="text-sm font-semibold tabular-nums text-gray-900">
-                  {formatRand(inst.amount)}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Divider + total */}
           <div className="px-6 pb-6 pt-2">
             <div className="border-t border-gray-200 pt-4 flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-700">Total</span>
+              <span className="text-sm font-semibold text-gray-700">Total outstanding</span>
               <span
-                className={`text-lg font-bold tabular-nums ${isOverdue ? 'text-red-600' : ''}`}
-                style={isOverdue ? undefined : { color: '#13294B' }}
+                className={`text-lg font-bold tabular-nums ${isUrgent ? 'text-red-600' : ''}`}
+                style={isUrgent ? undefined : { color: '#13294B' }}
               >
                 {formatRand(total)}
               </span>

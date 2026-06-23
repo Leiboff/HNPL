@@ -6,7 +6,8 @@ import StatusChip from '@/components/StatusChip';
 import { computePlanProgress } from '@/lib/planProgress';
 import { planCompletionDate, sortPlansByAnchorDesc, type OrdersTab } from '@/lib/planAnchor';
 import PayNowButton from './PayNowButton';
-import type { SelfSettleResult } from './settle-actions';
+import SettleEntireBillButton from './SettleEntireBillButton';
+import type { SelfSettleResult, SettleAllOutcome } from './settle-actions';
 import type { PlanRow, PaymentRow } from './page';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,10 +54,44 @@ const PAYMENT_STATUS: Record<string, { label: string; cls: string }> = {
   defaulted:   { label: 'Defaulted',   cls: 'bg-red-100 text-red-700'       },
 };
 
-// Statuses where the Pay-now affordance appears on the row. 'scheduled'
-// is omitted today — early-settle is a future addition; the brief asks
-// only that past-due and defaulted rows show Pay now.
-const SETTLEABLE_ROW_STATUSES = new Set(['failed', 'defaulted']);
+// Statuses where the Settle-now affordance appears on the row.
+// Includes 'scheduled' (early-settle a healthy not-yet-due instalment)
+// in addition to 'failed' / 'defaulted'. All three route through the
+// same attemptChargeInstalment(selfSettle:true) atomic claim, so a
+// concurrent cron attempt + tap still resolves to exactly one charge
+// per instalment. The settle-actions whitelist matches; the cron will
+// not have surfaced a scheduled row whose due_date is in the future,
+// so the only race for 'scheduled' is patient-double-tap (covered by
+// the in-flight transition status → claim_lost).
+const SETTLEABLE_ROW_STATUSES = new Set(['scheduled', 'failed', 'defaulted']);
+
+// Per-payment row date label. The original due_date is misleading once
+// the ladder has rescheduled a row, so failed shows the next attempt
+// and defaulted shows the terminal state. Collected anchors to the
+// actual collected_at. processing / retried / written_off render with
+// a sensible fallback so an unexpected status doesn't crash the view.
+function paymentDateLabel(p: PaymentRow): string {
+  switch (p.status) {
+    case 'failed':
+      return p.next_attempt_date
+        ? `Retrying ${formatDate(p.next_attempt_date)}`
+        : 'Payment failed';
+    case 'defaulted':
+      return 'In default';
+    case 'collected':
+      return p.collected_at
+        ? `Paid ${formatDate(p.collected_at.slice(0, 10))}`
+        : 'Paid';
+    case 'processing':
+      return `Charging — was due ${formatDate(p.due_date)}`;
+    case 'retried':
+      return `Retried — was due ${formatDate(p.due_date)}`;
+    case 'written_off':
+      return 'Written off';
+    default:
+      return `Due ${formatDate(p.due_date)}`;
+  }
+}
 
 // ─── Badge components ─────────────────────────────────────────────────────────
 // Both badges now delegate chip chrome to <StatusChip /> so every status
@@ -132,10 +167,12 @@ function PlanCard({
   plan,
   tab,
   settleInstalment,
+  settleEntirePlan,
 }: {
   plan: PlanRow;
   tab: OrdersTab;
   settleInstalment: (paymentId: string) => Promise<SelfSettleResult>;
+  settleEntirePlan: (planId: string) => Promise<SettleAllOutcome>;
 }) {
   const practiceName = getPracticeName(plan);
 
@@ -206,8 +243,14 @@ function PlanCard({
                   <span className="whitespace-nowrap">
                     Instalment {payment.instalment_number}
                   </span>
-                  <span className="text-xs text-gray-400 whitespace-nowrap">
-                    {formatDate(payment.due_date)}
+                  <span
+                    className={`text-xs whitespace-nowrap ${
+                      payment.status === 'failed' || payment.status === 'defaulted'
+                        ? 'text-red-600 font-medium'
+                        : 'text-gray-400'
+                    }`}
+                  >
+                    {paymentDateLabel(payment)}
                   </span>
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
@@ -237,6 +280,35 @@ function PlanCard({
       ) : (
         <p className="px-4 sm:px-6 py-4 mt-3 text-xs text-gray-400">No payment schedule yet.</p>
       )}
+
+      {/* Settle entire bill — visible on Current plans whenever there's
+          at least one non-collected instalment. The button shows the
+          outstanding total (sum of bare amounts + accrued fees) so the
+          patient sees what they'll pay before confirming. The action
+          loops through the per-row atomic claim, so a double-tap or a
+          concurrent cron attempt resolves to exactly one charge per
+          row — no schema change needed. */}
+      {tab === 'current' && (() => {
+        const outstanding = plan.payments.filter((p) =>
+          p.status === 'scheduled' || p.status === 'failed' || p.status === 'defaulted',
+        );
+        if (outstanding.length === 0) return null;
+        const totalCents = outstanding.reduce(
+          (sum, p) =>
+            sum + Math.round(Number(p.amount) * 100) + Number(p.dunning_fees_cents ?? 0),
+          0,
+        );
+        return (
+          <div className="px-4 sm:px-6 py-3 border-t border-gray-100">
+            <SettleEntireBillButton
+              planId={plan.id}
+              outstandingTotalCents={totalCents}
+              outstandingCount={outstanding.length}
+              settleAllAction={settleEntirePlan}
+            />
+          </div>
+        );
+      })()}
 
       {/* Footer: muted reference line, smallest text. Hidden when the
           practice supplied no invoice number AND no practice ref. */}
@@ -273,6 +345,7 @@ type Props = {
   historicPlans:  PlanRow[];
   declinePlan:      (planId: string)    => Promise<{ error: string | null }>;
   settleInstalment: (paymentId: string) => Promise<SelfSettleResult>;
+  settleEntirePlan: (planId: string)    => Promise<SettleAllOutcome>;
   specialtyMap:   Record<string, string>;
   patientBlocked: boolean;
 };
@@ -285,6 +358,7 @@ export default function OrdersView({
   historicPlans,
   declinePlan,
   settleInstalment,
+  settleEntirePlan,
   patientBlocked,
 }: Props) {
   const [tab, setTab] = useState<'pending' | 'current' | 'historic'>(
@@ -344,7 +418,13 @@ export default function OrdersView({
                 blocked={patientBlocked}
               />
             ) : (
-              <PlanCard key={plan.id} plan={plan} tab={tab} settleInstalment={settleInstalment} />
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                tab={tab}
+                settleInstalment={settleInstalment}
+                settleEntirePlan={settleEntirePlan}
+              />
             )
           )}
         </div>
