@@ -16,12 +16,27 @@ type Props = {
   amountToChargeCents:      number;
   /** Server action wrapper provided by the orders page (avoids server-action import inside a client tree). */
   settleAction: (paymentId: string) => Promise<SelfSettleResult>;
+  /**
+   * Button label. Defaults to "Pay now" for the per-row compact pill.
+   * The plan-level affordance overrides to "Pay next instalment · R…"
+   * when 2+ instalments outstanding (so the choice between paying ONE
+   * and paying ALL is differentiated by the amounts on each label).
+   */
+  label?: string;
+  /** Visual variant — compact pill (per-row) or full-width primary CTA (plan-level). */
+  variant?: 'compact' | 'primary';
 };
 
-// Compact per-row button. The amount is already visible on the row, so
-// the button reads just "Pay now" — the amount reappears in the
-// ConfirmChargeDialog at the moment of commitment.
-export default function PayNowButton({ paymentId, amountToChargeCents, settleAction }: Props) {
+// Used both as a per-row compact pill ("Pay now") and as the plan-level
+// primary CTA ("Pay next instalment · R<amount>") via the label /
+// variant props. The atomic claim path is identical either way.
+export default function PayNowButton({
+  paymentId,
+  amountToChargeCents,
+  settleAction,
+  label = 'Pay now',
+  variant = 'compact',
+}: Props) {
   const [confirming, setConfirming] = useState(false);
   const [isPending,  startTransition] = useTransition();
   const [feedback,   setFeedback] = useState<string | null>(null);
@@ -62,8 +77,12 @@ export default function PayNowButton({ paymentId, amountToChargeCents, settleAct
   }
 
   if (done) {
-    return <p className="text-xs text-gray-500">{feedback}</p>;
+    return <p className={variant === 'primary' ? 'text-xs text-gray-500 text-center' : 'text-xs text-gray-500'}>{feedback}</p>;
   }
+
+  const buttonCls = variant === 'primary'
+    ? 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50'
+    : 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm disabled:opacity-50';
 
   return (
     <>
@@ -71,11 +90,15 @@ export default function PayNowButton({ paymentId, amountToChargeCents, settleAct
         type="button"
         onClick={() => setConfirming(true)}
         disabled={isPending}
-        className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm disabled:opacity-50"
+        className={buttonCls}
       >
-        Pay now
+        {label}
       </button>
-      {feedback && !confirming && <p className="mt-1 text-[11px] text-red-600">{feedback}</p>}
+      {feedback && !confirming && (
+        <p className={variant === 'primary' ? 'mt-1 text-xs text-red-600 text-center' : 'mt-1 text-[11px] text-red-600'}>
+          {feedback}
+        </p>
+      )}
 
       <ConfirmChargeDialog
         open={confirming}

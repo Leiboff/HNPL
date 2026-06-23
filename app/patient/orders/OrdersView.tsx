@@ -6,7 +6,7 @@ import StatusChip from '@/components/StatusChip';
 import { computePlanProgress } from '@/lib/planProgress';
 import { planCompletionDate, sortPlansByAnchorDesc, type OrdersTab } from '@/lib/planAnchor';
 import PayNowButton from './PayNowButton';
-import SettleEntireBillButton from './SettleEntireBillButton';
+import PlanSettleAffordance from './PlanSettleAffordance';
 import type { SelfSettleResult, SettleAllOutcome } from './settle-actions';
 import type { PlanRow, PaymentRow } from './page';
 
@@ -230,7 +230,14 @@ function PlanCard({
             // Three weight tiers: collected (muted + check), next-due (normal),
             // later scheduled (muted) — directs the eye to what's next.
             const rowMuted = isCollected || !isNextDue;
-            const isSettleable = SETTLEABLE_ROW_STATUSES.has(payment.status);
+            // Per-row Pay-now stays on SETTLEABLE rows EXCEPT the
+            // next-due one — that row is targeted by the plan-level
+            // affordance (Pay now / Pay next instalment), so showing
+            // two buttons that do the same thing is confusing. The
+            // per-row button is for early-settle of a SPECIFIC later
+            // scheduled instalment.
+            const isSettleableStatus = SETTLEABLE_ROW_STATUSES.has(payment.status);
+            const isSettleable       = isSettleableStatus && !isNextDue;
             const feesCents    = Number(payment.dunning_fees_cents ?? 0);
             const settleCents  = Math.round(Number(payment.amount) * 100) + feesCents;
             return (
@@ -281,13 +288,15 @@ function PlanCard({
         <p className="px-4 sm:px-6 py-4 mt-3 text-xs text-gray-400">No payment schedule yet.</p>
       )}
 
-      {/* Settle entire bill — visible on Current plans whenever there's
-          at least one non-collected instalment. The button shows the
-          outstanding total (sum of bare amounts + accrued fees) so the
-          patient sees what they'll pay before confirming. The action
-          loops through the per-row atomic claim, so a double-tap or a
-          concurrent cron attempt resolves to exactly one charge per
-          row — no schema change needed. */}
+      {/* Plan-level settle affordance — single "Pay now" CTA when
+          exactly one instalment is outstanding (both buttons would be
+          the same action for the same amount), expandable choice
+          ("Pay next instalment" vs "Settle entire bill") when 2+ are
+          outstanding (the amounts now differ, the choice is meaningful).
+          The amounts displayed come from the same sources the per-row
+          PayNowButton and SettleEntireBillButton already use; the
+          authoritative settle-all sum is still computed by the RPC at
+          claim time. */}
       {tab === 'current' && (() => {
         const outstanding = plan.payments.filter((p) =>
           p.status === 'scheduled' || p.status === 'failed' || p.status === 'defaulted',
@@ -298,13 +307,24 @@ function PlanCard({
             sum + Math.round(Number(p.amount) * 100) + Number(p.dunning_fees_cents ?? 0),
           0,
         );
+        // "Next outstanding" — the first non-collected instalment in
+        // instalment_number order. Already aligns with nextDueNumber
+        // used to mute the row UI.
+        const next = outstanding[0];
+        const nextCents = Math.round(Number(next.amount) * 100) + Number(next.dunning_fees_cents ?? 0);
         return (
           <div className="px-4 sm:px-6 py-3 border-t border-gray-100">
-            <SettleEntireBillButton
+            <PlanSettleAffordance
               planId={plan.id}
-              outstandingTotalCents={totalCents}
               outstandingCount={outstanding.length}
-              settleAllAction={settleEntirePlan}
+              outstandingTotalCents={totalCents}
+              nextOutstanding={{
+                paymentId:         next.id,
+                chargeAmountCents: nextCents,
+                instalmentNumber:  next.instalment_number,
+              }}
+              settleInstalment={settleInstalment}
+              settleEntirePlan={settleEntirePlan}
             />
           </div>
         );
