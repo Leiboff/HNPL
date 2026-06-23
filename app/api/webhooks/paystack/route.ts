@@ -221,12 +221,24 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
 
   const { data: payment } = await supabase
     .from('payments')
-    .select('id, plan_id, instalment_number, patient_id, status, retry_count, dunning_fees_cents, amount')
+    .select('id, plan_id, instalment_number, patient_id, status, retry_count, dunning_fees_cents, amount, kind')
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
   if (!payment) {
     console.warn('[paystack-webhook] charge.success: no payment row for reference', reference);
+    return;
+  }
+
+  // ── Settlement-row branch ─────────────────────────────────────────────
+  // A row with kind='settlement' represents a single "settle entire bill"
+  // charge that covered N instalments. On success, mark the settlement
+  // row collected AND fan out collected to every instalment row that
+  // points at it via settled_by_payment_id. The plan-complete check at
+  // the bottom of the recurring branch still applies — fall through to
+  // that logic after the fan-out by routing into a helper.
+  if (payment.kind === 'settlement') {
+    await handleSettlementChargeSuccess(supabase, payment, reference);
     return;
   }
 
@@ -443,12 +455,19 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
 
   const { data: payment } = await supabase
     .from('payments')
-    .select('id, plan_id, instalment_number, status, amount, consecutive_failed_attempts, dunning_fees_cents, retry_count')
+    .select('id, plan_id, instalment_number, status, amount, consecutive_failed_attempts, dunning_fees_cents, retry_count, kind, pre_settlement_snapshot')
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
   if (!payment) {
     console.warn('[paystack-webhook] charge.failed: no payment row for reference', reference);
+    return;
+  }
+
+  // Settlement-row branch: revert every covered instalment to its
+  // snapshot status, mark the settlement row failed.
+  if (payment.kind === 'settlement') {
+    await handleSettlementChargeFailed(supabase, payment, data);
     return;
   }
 
@@ -716,6 +735,217 @@ function handleCardRegistrationFailed(data: ChargeData): void {
     reference: data.reference,
     reason:    data.gateway_response ?? data.message ?? 'unknown',
   });
+}
+
+// ─── Settlement-row handlers ──────────────────────────────────────────────
+//
+// "Settle entire bill" produces ONE Paystack charge against a single
+// payment row with kind='settlement' that covers N instalments. The
+// instalments were atomically claimed (status → 'processing',
+// settled_by_payment_id → settlement.id) by the
+// claim_plan_for_settlement RPC before the charge fired. These two
+// handlers close the loop:
+//
+//   • on charge.success: fan out 'collected' to the settlement row and
+//     every covered instalment, run the plan-complete check, audit.
+//   • on charge.failed: revert every covered instalment to its
+//     snapshot status (from pre_settlement_snapshot), fail the
+//     settlement row, notify.
+
+async function handleSettlementChargeSuccess(
+  supabase: ReturnType<typeof createServiceClient>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  settlement: any,
+  reference: string | undefined,
+): Promise<void> {
+  // Idempotency: redelivered webhook on an already-collected settlement.
+  if (settlement.status === 'collected') {
+    console.log('[paystack-webhook] settlement charge.success: already collected (duplicate)', {
+      settlementId: settlement.id, reference,
+    });
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  // 1. Mark the settlement row collected.
+  const { error: settleErr } = await supabase
+    .from('payments')
+    .update({ status: 'collected', collected_at: now })
+    .eq('id', settlement.id);
+  if (settleErr) {
+    console.error('[paystack-webhook] settlement charge.success: failed to mark settlement collected', settleErr.message);
+    return;
+  }
+
+  // 2. Fan out collected to every covered instalment. Filter on
+  //    settled_by_payment_id AND status='processing' so a redelivered
+  //    webhook (or admin intervention) can't re-mark a row that has
+  //    already moved on.
+  const { data: covered, error: fanErr } = await supabase
+    .from('payments')
+    .update({
+      status:            'collected',
+      collected_at:      now,
+      next_attempt_date: null,
+    })
+    .eq('settled_by_payment_id', settlement.id)
+    .eq('status', 'processing')
+    .select('id, instalment_number, amount, dunning_fees_cents');
+  if (fanErr) {
+    console.error('[paystack-webhook] settlement charge.success: fan-out to covered instalments failed', fanErr.message);
+    // The settlement row is collected; the patient owes nothing, but
+    // some covered rows may still be in 'processing'. Admin reconcile.
+    return;
+  }
+
+  console.log('[paystack-webhook] settlement charge.success: closed', {
+    settlementId:    settlement.id,
+    reference,
+    coveredCount:    covered?.length ?? 0,
+  });
+
+  // 3. Plan-complete check — settle-all that covered every outstanding
+  //    instalment leaves nothing un-collected on the plan.
+  const { data: remaining } = await supabase
+    .from('payments')
+    .select('id')
+    .eq('plan_id', settlement.plan_id)
+    .eq('kind', 'instalment')
+    .neq('status', 'collected');
+
+  if (!remaining || remaining.length === 0) {
+    await supabase
+      .from('plans')
+      .update({ status: 'completed', completed_at: now })
+      .eq('id', settlement.plan_id);
+    console.log('[paystack-webhook] settlement charge.success: plan completed', {
+      planId: settlement.plan_id,
+    });
+  }
+
+  // 4. Audit + best-effort patient notification (push). Email is sent
+  //    by notifyRecoverySucceeded once per covered instalment would be
+  //    spammy — one email here for the whole settlement is the right
+  //    granularity, but reusing notifyRecoverySucceeded against the
+  //    settlement row passes the right amount through.
+  await supabase.from('plan_events').insert({
+    plan_id:    settlement.plan_id,
+    patient_id: settlement.patient_id,
+    event_type: 'instalment_attempt_succeeded',
+    payload: {
+      settlement_id:          settlement.id,
+      reference,
+      collected_amount_cents: Math.round(Number(settlement.amount) * 100),
+      via_settle_entire:      true,
+      covered_count:          covered?.length ?? 0,
+    },
+  });
+
+  await notifyRecoverySucceeded(supabase, {
+    paymentId:            settlement.id,
+    collectedAmountCents: Math.round(Number(settlement.amount) * 100),
+    viaSelfSettle:        true,
+  });
+
+  if (settlement.patient_id) {
+    await safePush(settlement.patient_id, {
+      type:  'plan',
+      title: 'Bill settled in full',
+      body:  `Thanks — we collected ${formatRandCents(Number(settlement.amount))}.`,
+      url:   `/patient/orders`,
+      tag:   `settlement:${settlement.id}:collected`,
+    });
+  }
+}
+
+async function handleSettlementChargeFailed(
+  supabase: ReturnType<typeof createServiceClient>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  settlement: any,
+  data: ChargeData,
+): Promise<void> {
+  if (settlement.status === 'failed') {
+    console.log('[paystack-webhook] settlement charge.failed: already failed (duplicate)', { settlementId: settlement.id });
+    return;
+  }
+
+  const failureReason = data.gateway_response ?? data.message ?? 'Charge failed';
+
+  // 1. Mark settlement row failed.
+  const { error: settleErr } = await supabase
+    .from('payments')
+    .update({ status: 'failed', failure_reason: failureReason })
+    .eq('id', settlement.id);
+  if (settleErr) {
+    console.error('[paystack-webhook] settlement charge.failed: failed to mark settlement failed', settleErr.message);
+    return;
+  }
+
+  // 2. Revert every covered instalment to its snapshot status. The
+  //    snapshot is the JSONB { paymentId: { status, ... } } map
+  //    captured by the claim RPC. Only rows we ourselves claimed are
+  //    in scope (settled_by_payment_id = settlement.id AND status =
+  //    'processing'); the kind filter is belt-and-braces.
+  const snapshot = (settlement.pre_settlement_snapshot ?? {}) as Record<string, { status: string }>;
+
+  const { data: coveredRows, error: fetchErr } = await supabase
+    .from('payments')
+    .select('id, status')
+    .eq('settled_by_payment_id', settlement.id)
+    .eq('status', 'processing')
+    .eq('kind', 'instalment');
+  if (fetchErr) {
+    console.error('[paystack-webhook] settlement charge.failed: covered-rows fetch failed', fetchErr.message);
+    return;
+  }
+
+  for (const row of (coveredRows ?? []) as Array<{ id: string }>) {
+    const prior = snapshot[row.id]?.status ?? 'failed';
+    const { error: rvErr } = await supabase
+      .from('payments')
+      .update({
+        status:                prior,
+        settled_by_payment_id: null,
+      })
+      .eq('id', row.id)
+      .eq('settled_by_payment_id', settlement.id)
+      .eq('status', 'processing');
+    if (rvErr) {
+      console.error('[paystack-webhook] settlement charge.failed: revert failed', { row: row.id, message: rvErr.message });
+    }
+  }
+
+  console.log('[paystack-webhook] settlement charge.failed: reverted', {
+    settlementId:  settlement.id,
+    reverted:      coveredRows?.length ?? 0,
+    failureReason,
+  });
+
+  // 3. Audit + patient notification (push). No email — covered rows
+  //    are back where they were; the next cron run will pick up any
+  //    failed/scheduled rows on their normal cadence.
+  await supabase.from('plan_events').insert({
+    plan_id:    settlement.plan_id,
+    patient_id: settlement.patient_id,
+    event_type: 'instalment_attempt_failed',
+    payload: {
+      settlement_id:    settlement.id,
+      reference:        data.reference,
+      failure_reason:   failureReason,
+      reverted_count:   coveredRows?.length ?? 0,
+      via_settle_entire: true,
+    },
+  });
+
+  if (settlement.patient_id) {
+    await safePush(settlement.patient_id, {
+      title: 'Settlement payment didn\'t go through',
+      body:  `Your bill is unchanged. Please check your card and try again.`,
+      url:   `/patient/orders`,
+      tag:   `settlement:${settlement.id}:failed`,
+    });
+  }
 }
 
 // ─── Refund lifecycle handlers ────────────────────────────────────────────────

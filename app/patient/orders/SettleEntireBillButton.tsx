@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import ConfirmChargeDialog from './ConfirmChargeDialog';
 import type { SettleAllOutcome } from './settle-actions';
 
 function formatRandCents(cents: number): string {
@@ -19,9 +20,10 @@ type Props = {
   settleAllAction:         (planId: string) => Promise<SettleAllOutcome>;
 };
 
-// Two-step confirm: tap once → confirm panel with the total; tap
-// confirm → fire. Stops accidental settle-everything from a fat-finger
-// while keeping the affordance one tap away on intent.
+// Plan-level "Settle entire bill". Button label keeps the rand amount
+// (the total IS useful at the plan level — unlike per-row Pay-now where
+// the amount is already on the row). Confirms via ConfirmChargeDialog
+// before firing the single Paystack charge.
 export default function SettleEntireBillButton({
   planId,
   outstandingTotalCents,
@@ -33,76 +35,78 @@ export default function SettleEntireBillButton({
   const [resultMsg,  setResultMsg]    = useState<string | null>(null);
   const [done,       setDone]         = useState(false);
 
-  function onConfirm() {
+  function fire() {
     setResultMsg(null);
     startTransition(async () => {
       const result = await settleAllAction(planId);
-      if (result.ok && result.status === 'settled_all') {
-        const charged = result.results.filter(r => r.outcome === 'charged').length;
-        const skipped = result.results.length - charged;
-        if (charged === 0) {
-          setResultMsg(`Nothing was charged — every instalment was already in progress or unavailable.`);
-        } else if (skipped === 0) {
-          setResultMsg(`Charging ${formatRandCents(result.totalChargedCents)} across ${charged} instalments. We'll confirm shortly.`);
-        } else {
-          setResultMsg(`Charging ${formatRandCents(result.totalChargedCents)} across ${charged} of ${result.results.length} instalments. ${skipped} skipped (already in progress or unavailable).`);
-        }
+      setConfirming(false);
+      if (result.ok && result.status === 'charged') {
+        setResultMsg(
+          `Charging ${formatRandCents(result.amountCents)} for ${result.coveredCount} ` +
+          `instalment${result.coveredCount === 1 ? '' : 's'}. We'll confirm shortly.`,
+        );
         setDone(true);
         return;
       }
       if (!result.ok) {
         switch (result.status) {
-          case 'unauthorized':       setResultMsg('Your session expired. Please log in again.'); return;
-          case 'plan_not_found':     setResultMsg('Plan not found.'); return;
-          case 'nothing_to_settle':  setResultMsg('Nothing outstanding to settle on this plan.'); setDone(true); return;
+          case 'unauthorized':
+            setResultMsg('Your session expired. Please log in again.');
+            return;
+          case 'plan_not_found':
+            setResultMsg('Plan not found.');
+            return;
+          case 'nothing_to_settle':
+            setResultMsg('Nothing outstanding to settle on this plan.');
+            setDone(true);
+            return;
+          case 'race_lost':
+            setResultMsg('Some instalments are being collected right now. Please try again in a moment.');
+            return;
+          case 'transport_error':
+            setResultMsg(`Couldn't reach the payment processor. Please try again in a moment.`);
+            return;
+          case 'no_authorization_code':
+            setResultMsg('No saved card on this plan — please contact support.');
+            return;
+          case 'no_email':
+            setResultMsg('Missing account email — please contact support.');
+            return;
         }
       }
     });
   }
 
   if (done) {
-    return <p className="mt-2 text-xs text-gray-500">{resultMsg}</p>;
-  }
-
-  if (!confirming) {
-    return (
-      <button
-        type="button"
-        onClick={() => setConfirming(true)}
-        className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
-      >
-        Settle entire bill · {formatRandCents(outstandingTotalCents)}
-      </button>
-    );
+    return <p className="mt-2 text-xs text-gray-500 text-center">{resultMsg}</p>;
   }
 
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
-      <p className="text-sm text-gray-800">
-        Pay <strong className="tabular-nums">{formatRandCents(outstandingTotalCents)}</strong> now
-        to settle {outstandingCount} outstanding instalment{outstandingCount === 1 ? '' : 's'}
-        {outstandingCount === 0 ? '' : ' plus any accrued fees'}.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={isPending}
-          className="inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-50"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-        >
-          {isPending ? 'Settling…' : `Confirm — pay ${formatRandCents(outstandingTotalCents)}`}
-        </button>
-        <button
-          type="button"
-          onClick={() => setConfirming(false)}
-          disabled={isPending}
-          className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-        >
-          Cancel
-        </button>
-      </div>
-      {resultMsg && <p className="text-xs text-red-600">{resultMsg}</p>}
+    <div className="flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        disabled={isPending}
+        className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+      >
+        Settle entire bill · {formatRandCents(outstandingTotalCents)}
+      </button>
+      {resultMsg && !confirming && (
+        <p className="text-xs text-red-600 text-center">{resultMsg}</p>
+      )}
+
+      <ConfirmChargeDialog
+        open={confirming}
+        headline={`Settle your entire bill of ${formatRandCents(outstandingTotalCents)} now?`}
+        subtitle={
+          `Your card will be charged immediately for ${outstandingCount} outstanding ` +
+          `instalment${outstandingCount === 1 ? '' : 's'} plus any accrued fees.`
+        }
+        amountCents={outstandingTotalCents}
+        isPending={isPending}
+        onConfirm={fire}
+        onCancel={() => setConfirming(false)}
+      />
     </div>
   );
 }

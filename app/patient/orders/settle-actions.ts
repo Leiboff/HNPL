@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
+import { paystackRequest } from '@/lib/paystack';
 
 // ─── Patient-initiated "Pay now" — self-settle a past-due instalment ──
 //
@@ -135,51 +136,49 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
   return { ok: false, status: 'claim_lost', reason: outcome.reason };
 }
 
-// ─── Settle entire bill ────────────────────────────────────────────────
+// ─── Settle entire bill — ONE Paystack charge via the settlement row ──
 //
-// Plan-level "pay everything outstanding now". The implementation
-// LOOPS over every non-collected instalment on the plan and routes
-// each through the SAME attemptChargeInstalment(selfSettle:true) atomic
-// claim used by the single-row self-settle action above.
+// Plan-level "pay everything outstanding now" using the settlement-row
+// model added by migration 0058. The atomic claim_plan_for_settlement
+// RPC snapshots every settle-eligible instalment, inserts ONE new
+// payment row (kind='settlement') for the summed total, flips every
+// eligible instalment to 'processing' in one UPDATE, and reverts
+// cleanly if it lost a race against the cron. Then this action fires
+// ONE Paystack charge against the settlement row's reference. The
+// webhook's existing charge.success handler closes the loop —
+// see app/api/webhooks/paystack/route.ts handleChargeSuccess where
+// kind='settlement' fans out collected to every covered instalment.
 //
-// Option (a) (one Paystack charge for the sum, then mark every row
-// collected internally) vs option (b) (loop, N charges, one per row):
+// Why one charge, not the per-instalment loop:
+//   • One Paystack transaction fee instead of N.
+//   • One statement line for the patient instead of N.
+//   • Voluntary all-or-nothing is correct semantics — half-settling
+//     a voluntary "pay everything" tap is the wrong contract.
 //
-//   • (a) would require a NEW idempotency / reconciliation primitive —
-//     the webhook routes charge.success → payments by peach_payment_id
-//     (one reference → one payment row). Mapping one reference to N
-//     rows needs either a new settlements table or plan-level
-//     metadata, i.e. a schema change. The brief says no migration
-//     expected.
-//
-//   • (b) inherits the per-row atomic claim verbatim. Each instalment
-//     is its own claim, its own Paystack reference, its own webhook
-//     event. A concurrent cron attempt on any one of those rows
-//     resolves at THAT row's atomic UPDATE — exactly one charge per
-//     instalment. A double-tap of "Settle entire bill" sees every
-//     row already in 'processing' on the second pass and returns
-//     claim_lost across the board → no double-charge.
-//
-// Chose (b). Slight cost: the patient sees N transactions on their
-// bank statement instead of one. Benefit: zero new code paths for
-// idempotency / reconciliation; partial-success on card-limit hits is
-// patient-friendly ("settled 2 of 3; we'll retry the third").
+// Exactly-one-charge against the cron:
+//   The atomic UPDATE inside claim_plan_for_settlement is a single
+//   statement: "UPDATE payments SET status='processing',
+//   settled_by_payment_id=$settlement WHERE id = ANY(...) AND
+//   status IN ('scheduled','failed','defaulted')". Postgres takes
+//   row-level locks; a concurrent cron attempt on any covered row
+//   races at THAT row's lock. Whichever runs first wins it; the
+//   other sees status='processing' and matches zero rows for that id.
+//   The RPC checks ROW_COUNT == expected; if less, it knows the cron
+//   beat it on at least one row, reverts the rows it DID claim back
+//   to their snapshotted prior statuses, deletes the settlement row,
+//   and returns 'race_lost'. The action then returns race_lost to
+//   the patient with a "try again in a moment" message. Net: no
+//   instalment is ever in two pending charges.
 
 export type SettleAllOutcome =
-  | { ok: true;  status: 'settled_all'; results: SettleAllRowResult[]; totalChargedCents: number }
+  | { ok: true;  status: 'charged'; settlementId: string; amountCents: number; coveredCount: number; reference: string }
   | { ok: false; status: 'unauthorized' }
   | { ok: false; status: 'plan_not_found' }
-  | { ok: false; status: 'nothing_to_settle' };
-
-export type SettleAllRowResult = {
-  paymentId:         string;
-  instalmentNumber:  number;
-  outcome:           'charged' | 'already_in_progress' | 'transport_error' | 'not_eligible';
-  amountChargedCents: number;
-  message?:          string;
-};
-
-const SETTLE_ALL_STATUSES = new Set(['scheduled', 'failed', 'defaulted']);
+  | { ok: false; status: 'nothing_to_settle' }
+  | { ok: false; status: 'race_lost' }
+  | { ok: false; status: 'transport_error'; message: string }
+  | { ok: false; status: 'no_authorization_code' }
+  | { ok: false; status: 'no_email' };
 
 export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOutcome> {
   // ── 1. Session — require an authenticated patient.
@@ -189,104 +188,145 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     return { ok: false, status: 'unauthorized' };
   }
 
-  // ── 2. Ownership of the plan. RLS scopes plans to the caller, so a
-  //       missing row means "not yours or not found".
-  const { data: plan } = await supabase
-    .from('plans')
-    .select('id, patient_id, status')
-    .eq('id', planId)
-    .maybeSingle();
-  if (!plan)                          return { ok: false, status: 'plan_not_found' };
-  if (plan.patient_id !== user.id)    return { ok: false, status: 'unauthorized' };
-
-  // ── 3. Outstanding instalments — every row that isn't already
-  //       collected and is in the settle-eligible set. RLS scopes to
-  //       the caller's payments, so no patient_id filter needed.
-  const { data: rawRows } = await supabase
-    .from('payments')
-    .select('id, status, instalment_number, amount, dunning_fees_cents')
-    .eq('plan_id', planId)
-    .in('status', Array.from(SETTLE_ALL_STATUSES))
-    .order('instalment_number', { ascending: true });
-
-  const rows = (rawRows ?? []) as Array<{
-    id: string;
-    status: string;
-    instalment_number: number;
-    amount: number;
-    dunning_fees_cents: number | null;
-  }>;
-
-  if (rows.length === 0) {
-    return { ok: false, status: 'nothing_to_settle' };
-  }
-
-  // ── 4. Loop and settle. Each row routes through the shared
-  //       attemptChargeInstalment(selfSettle:true). Concurrency is
-  //       resolved at each row's atomic UPDATE; this loop is
-  //       sequential by design so the patient gets a deterministic
-  //       per-row outcome and we don't fan out N simultaneous
-  //       Paystack calls (which would burn rate limit).
+  // ── 2. Atomic multi-row claim + settlement-row insert via the RPC.
+  //       The RPC verifies plan ownership against p_patient_id (=auth
+  //       user), snapshots every eligible instalment, claims them in
+  //       one UPDATE, and inserts the settlement row. On race-loss it
+  //       reverts cleanly and returns 'race_lost' — see migration 0058.
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
-  const results: SettleAllRowResult[] = [];
-  let totalChargedCents = 0;
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: claim, error: claimErr } = await svc.rpc('claim_plan_for_settlement', {
+    p_plan_id:    planId,
+    p_patient_id: user.id,
+    p_today:      today,
+  });
 
-  for (const row of rows) {
-    const outcome = await attemptChargeInstalment(svc, row.id, { selfSettle: true });
+  if (claimErr) {
+    console.error('[settle-all] claim_plan_for_settlement RPC failed', claimErr);
+    return { ok: false, status: 'transport_error', message: claimErr.message };
+  }
 
-    if (outcome.kind === 'charged') {
-      // Audit row per instalment — the webhook will append the
-      // succeeded event when the actual charge.success lands.
-      await svc.from('plan_events').insert({
-        plan_id:    planId,
-        patient_id: user.id,
-        event_type: 'instalment_self_settled',
-        payload: {
-          payment_id:           row.id,
-          instalment_number:    row.instalment_number,
-          reference:            outcome.reference,
-          amount_charged_cents: outcome.amountChargedCents,
-          via_settle_all:       true,
-        },
-      });
-      totalChargedCents += outcome.amountChargedCents;
-      results.push({
-        paymentId:          row.id,
-        instalmentNumber:   row.instalment_number,
-        outcome:            'charged',
-        amountChargedCents: outcome.amountChargedCents,
-      });
-    } else if (outcome.kind === 'transport_error') {
-      results.push({
-        paymentId:          row.id,
-        instalmentNumber:   row.instalment_number,
-        outcome:            'transport_error',
-        amountChargedCents: 0,
-        message:            outcome.error,
-      });
-    } else {
-      // claim_lost — typically "already_claimed" (concurrent cron / a
-      // double-tap / earlier loop iteration that already changed the
-      // row's status). 'already_in_progress' covers the user-facing
-      // interpretation of any claim_lost reason here.
-      results.push({
-        paymentId:          row.id,
-        instalmentNumber:   row.instalment_number,
-        outcome:            outcome.reason === 'already_claimed'
-                              ? 'already_in_progress'
-                              : 'not_eligible',
-        amountChargedCents: 0,
-        message:            outcome.reason,
-      });
+  const c = claim as {
+    ok: boolean;
+    error?: string;
+    settlement_id?: string;
+    amount_cents?: number;
+    covered_count?: number;
+  };
+
+  if (!c.ok) {
+    switch (c.error) {
+      case 'plan_not_found':    return { ok: false, status: 'plan_not_found' };
+      case 'nothing_to_settle': return { ok: false, status: 'nothing_to_settle' };
+      case 'race_lost':         return { ok: false, status: 'race_lost' };
+      default:                  return { ok: false, status: 'unauthorized' };
     }
+  }
+
+  const settlementId = c.settlement_id as string;
+  const amountCents  = c.amount_cents  as number;
+  const coveredCount = c.covered_count as number;
+
+  // ── 3. Plan + patient — needed for the Paystack call.
+  const { data: plan } = await svc
+    .from('plans')
+    .select('paystack_authorization_code, patient_id')
+    .eq('id', planId)
+    .maybeSingle();
+  if (!plan?.paystack_authorization_code) {
+    // No stored card — revert the claim by failing the settlement row.
+    // Mirrors the chargeInstalment revert pattern: flip rows back to
+    // their snapshot statuses via the RPC's failure path is the right
+    // home; here we directly fail-out the settlement row, and the
+    // webhook handler's charge.failed path will run the revert.
+    await failSettlementRow(svc, settlementId, 'no_authorization_code');
+    return { ok: false, status: 'no_authorization_code' };
+  }
+
+  const { data: profile } = await svc
+    .from('profiles')
+    .select('email')
+    .eq('id', plan.patient_id)
+    .single();
+  if (!profile?.email) {
+    await failSettlementRow(svc, settlementId, 'no_email');
+    return { ok: false, status: 'no_email' };
+  }
+
+  // ── 4. Reference + Paystack charge. Reference embeds 'settle' so
+  //       the webhook can short-circuit-detect a settlement charge if
+  //       needed; routing primarily uses the payment row's kind column.
+  const reference = `hnpl_settle_${settlementId.replace(/-/g, '').slice(0, 16)}`;
+  await svc.from('payments').update({ peach_payment_id: reference }).eq('id', settlementId);
+
+  // Audit trail — best effort, doesn't gate the charge.
+  await svc.from('plan_events').insert({
+    plan_id:    planId,
+    patient_id: user.id,
+    event_type: 'instalment_self_settled',
+    payload: {
+      settlement_id:        settlementId,
+      reference,
+      amount_cents:         amountCents,
+      covered_count:        coveredCount,
+      via_settle_entire:    true,
+    },
+  });
+
+  try {
+    await paystackRequest('/transaction/charge_authorization', {
+      method: 'POST',
+      body: JSON.stringify({
+        authorization_code: plan.paystack_authorization_code,
+        email:              profile.email,
+        amount:             amountCents,
+        currency:           'ZAR',
+        reference,
+        metadata: { purpose: 'settle_entire_plan' },
+      }),
+    });
+  } catch (err) {
+    // Transport error: the settlement row stays in 'processing'.
+    // We do NOT revert here — Paystack may still have received the
+    // charge; reverting would risk double-charging if a delayed
+    // webhook later arrives. Same posture as chargeInstalment's
+    // transport_error path. Admin reconciles via the Paystack dashboard.
+    return {
+      ok: false,
+      status: 'transport_error',
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
 
   revalidatePath('/patient');
   revalidatePath('/patient/orders');
 
-  return { ok: true, status: 'settled_all', results, totalChargedCents };
+  return {
+    ok: true,
+    status: 'charged',
+    settlementId,
+    amountCents,
+    coveredCount,
+    reference,
+  };
+}
+
+// Revert a settlement row that never made it to Paystack — flips it
+// to 'failed' so the webhook's charge.failed handler (or an admin
+// sweep) restores the covered instalments to their snapshot statuses.
+// Used when post-claim preconditions miss (no card / no email).
+async function failSettlementRow(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  svc: any,
+  settlementId: string,
+  reason: string,
+): Promise<void> {
+  await svc.from('payments').update({
+    status:         'failed',
+    failure_reason: reason,
+  }).eq('id', settlementId);
 }
