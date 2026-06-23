@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { declinePlan } from '../actions';
+import { selfSettleInstalment } from './settle-actions';
 import OrdersView from './OrdersView';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
@@ -18,6 +19,8 @@ export type PaymentRow = {
   due_date: string;
   status: string;
   collected_at: string | null;
+  dunning_fees_cents: number | null;
+  next_attempt_date: string | null;
 };
 
 export type ProviderRef = { first_name: string; last_name: string };
@@ -53,7 +56,7 @@ export default async function OrdersPage() {
       provider_id, practice_id,
       provider:profiles!plans_provider_id_fkey(first_name, last_name),
       practice:practices(name),
-      payments(id, instalment_number, amount, due_date, status, collected_at)
+      payments(id, instalment_number, amount, due_date, status, collected_at, dunning_fees_cents, next_attempt_date)
     `)
     .eq('patient_id', user.id)
     .order('created_at', { ascending: false });
@@ -99,6 +102,7 @@ export default async function OrdersPage() {
         currentPlans={currentPlans}
         historicPlans={historicPlans}
         declinePlan={declinePlan}
+        settleInstalment={selfSettleInstalment}
         specialtyMap={specialtyMap}
         patientBlocked={patientBlocked}
       />

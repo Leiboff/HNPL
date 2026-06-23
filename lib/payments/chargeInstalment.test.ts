@@ -17,7 +17,7 @@ vi.mock('@/lib/paystack', () => ({
   paystackRequest: (...args: unknown[]) => paystackRequestSpy(...args),
 }));
 
-import { attemptChargeInstalment, writeOffExceededAttempts, MAX_ATTEMPTS } from './chargeInstalment';
+import { attemptChargeInstalment, MAX_ATTEMPTS } from './chargeInstalment';
 
 // ─── Stub Supabase ──────────────────────────────────────────────────────────
 
@@ -29,7 +29,9 @@ type PaymentRow = {
   plan_id:      string;
   patient_id:   string;
   due_date:     string;
-  peach_payment_id?: string | null;
+  peach_payment_id?:           string | null;
+  dunning_fees_cents?:         number;
+  last_dunning_attempt_date?:  string | null;
 };
 type PlanRow = {
   id:                          string;
@@ -39,11 +41,6 @@ type PlanRow = {
 };
 type ProfileRow = { id: string; email: string };
 
-// Extracted so each `const state: StubState = { ... }` literal in the test cases
-// below can be annotated with this type. Without the annotation TS
-// infers a narrower shape from the inline literal (e.g. PaymentRow
-// loses the optional `peach_payment_id` field), which then breaks
-// later assertions like `state.payments[0].peach_payment_id`.
 type StubState = {
   payments:  PaymentRow[];
   plans:     PlanRow[];
@@ -57,7 +54,6 @@ function makeStub(state: StubState) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const stub: any = {
     from(table: string) {
-      // ── SELECT chain ──────────────────────────────────────────────
       function select() {
         const filters: Array<(row: Record<string, unknown>) => boolean> = [];
         const builder = {
@@ -66,10 +62,6 @@ function makeStub(state: StubState) {
             return builder;
           },
           maybeSingle: async () => {
-            // Double-cast through unknown: the state container also
-            // holds a non-table `today?: string` field, so a direct
-            // `as Record<string, ...>` no longer satisfies TS. We do
-            // not iterate the container — we only index by table name.
             const rows = (state as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
             const found = rows.find((r) => filters.every((f) => f(r)));
             return { data: found ?? null, error: null };
@@ -83,7 +75,6 @@ function makeStub(state: StubState) {
         return builder;
       }
 
-      // ── UPDATE chain (with WHERE predicates) ─────────────────────
       function update(patch: Record<string, unknown>) {
         const eqs: Array<[string, unknown]> = [];
         const ins: Array<[string, unknown[]]>   = [];
@@ -95,8 +86,6 @@ function makeStub(state: StubState) {
           lt(col: string, val: number) { lts.push([col, val]); return builder; },
           lte(col: string, val: string) { ltes.push([col, val]); return builder; },
           gte(col: string, val: number) {
-            // gte semantics: stored against same lts array but reverse polarity tracked separately
-            // for the small surface this stub needs we'll fold gte into a filter list directly.
             ltes.push([col, '__GTE__:' + val]);
             return builder;
           },
@@ -204,7 +193,7 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
 });
 
 describe('attemptChargeInstalment — successful charge', () => {
-  it('writes a fresh reference, increments retry_count, marks processing, calls Paystack with the correct payload', async () => {
+  it('writes a fresh reference, increments retry_count, stamps last_dunning_attempt_date, marks processing, calls Paystack with the correct payload', async () => {
     const state: StubState = {
       payments: [{
         id: 'aaaa1111-bbbb-2222-cccc-333344445555',
@@ -223,20 +212,20 @@ describe('attemptChargeInstalment — successful charge', () => {
     if (result.kind !== 'charged') return;
     expect(result.attemptNumber).toBe(1);
     expect(result.reference).toMatch(/^hnpl_[a-f0-9]{16}_a1$/);
+    expect(result.amountChargedCents).toBe(25075);
 
-    // Row state mutated as expected.
     expect(state.payments[0].status).toBe('processing');
     expect(state.payments[0].retry_count).toBe(1);
     expect(state.payments[0].peach_payment_id).toBe(result.reference);
+    expect(state.payments[0].last_dunning_attempt_date).toBe('2026-06-15');
 
-    // Paystack was called with the right shape.
     expect(paystackRequestSpy).toHaveBeenCalledTimes(1);
     const [endpoint, opts] = paystackRequestSpy.mock.calls[0] as [string, RequestInit];
     expect(endpoint).toBe('/transaction/charge_authorization');
     const body = JSON.parse(opts.body as string);
     expect(body.authorization_code).toBe('AUTH_ABC');
     expect(body.email).toBe('u@example.com');
-    expect(body.amount).toBe(25075); // R250.75 → cents
+    expect(body.amount).toBe(25075);
     expect(body.currency).toBe('ZAR');
     expect(body.reference).toBe(result.reference);
   });
@@ -259,6 +248,27 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(result.reference).toMatch(/_a3$/);
     expect(state.payments[0].retry_count).toBe(3);
   });
+
+  it('includes accrued dunning fees in the Paystack amount (retry-carries-fees)', async () => {
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'failed', retry_count: 2, amount: 250,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+        dunning_fees_cents: 10_000, // R100 accrued
+      }],
+      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    paystackRequestSpy.mockResolvedValue({ status: true });
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+    expect(result.kind).toBe('charged');
+    if (result.kind !== 'charged') return;
+    // 250.00 instalment + R100 fees = R350 = 35000 cents
+    expect(result.amountChargedCents).toBe(35_000);
+    const body = JSON.parse((paystackRequestSpy.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.amount).toBe(35_000);
+  });
 });
 
 describe('attemptChargeInstalment — Paystack transport error', () => {
@@ -276,8 +286,6 @@ describe('attemptChargeInstalment — Paystack transport error', () => {
 
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('transport_error');
-    // Row left in processing — we do NOT know whether Paystack got the
-    // charge or not. Reverting could cause a double-charge.
     expect(state.payments[0].status).toBe('processing');
     expect(state.payments[0].retry_count).toBe(1);
     expect(state.payments[0].peach_payment_id).toBeTruthy();
@@ -298,7 +306,6 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('claim_lost');
     if (result.kind === 'claim_lost') expect(result.reason).toBe('plan_not_active');
-    // Reverted to original.
     expect(state.payments[0].status).toBe('scheduled');
     expect(state.payments[0].retry_count).toBe(0);
     expect(state.payments[0].peach_payment_id).toBeNull();
@@ -324,26 +331,63 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
   });
 });
 
-// ─── writeOffExceededAttempts ───────────────────────────────────────────────
+// ─── self-settle path ──────────────────────────────────────────────────────
 
-describe('writeOffExceededAttempts', () => {
-  it('flips status=failed AND retry_count>=MAX_ATTEMPTS rows to written_off', async () => {
+describe('attemptChargeInstalment — selfSettle widens the claim', () => {
+  it('charges a defaulted row when selfSettle=true', async () => {
     const state: StubState = {
-      payments: [
-        { id: 'a', status: 'failed' as string,    retry_count: MAX_ATTEMPTS,     amount: 1, plan_id: 'p', patient_id: 'u', due_date: '2026-06-14' },
-        { id: 'b', status: 'failed' as string,    retry_count: MAX_ATTEMPTS - 1, amount: 1, plan_id: 'p', patient_id: 'u', due_date: '2026-06-14' },
-        { id: 'c', status: 'scheduled' as string, retry_count: MAX_ATTEMPTS,     amount: 1, plan_id: 'p', patient_id: 'u', due_date: '2026-06-14' },
-        { id: 'd', status: 'collected' as string, retry_count: MAX_ATTEMPTS,     amount: 1, plan_id: 'p', patient_id: 'u', due_date: '2026-06-14' },
-      ],
-      plans:    [],
-      profiles: [],
+      payments: [{
+        id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+        dunning_fees_cents: 30_000,
+      }],
+      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    const ids = await writeOffExceededAttempts(svc);
-    expect(ids).toEqual(['a']);
-    expect(state.payments.find(p => p.id === 'a')!.status).toBe('written_off');
-    expect(state.payments.find(p => p.id === 'b')!.status).toBe('failed');     // under cap
-    expect(state.payments.find(p => p.id === 'c')!.status).toBe('scheduled');  // wrong status
-    expect(state.payments.find(p => p.id === 'd')!.status).toBe('collected');  // wrong status
+    paystackRequestSpy.mockResolvedValue({ status: true });
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15', selfSettle: true });
+    expect(result.kind).toBe('charged');
+    if (result.kind !== 'charged') return;
+    expect(result.amountChargedCents).toBe(25_000 + 30_000); // R250 + R300 fees
+    expect(state.payments[0].status).toBe('processing');
+  });
+
+  it('refuses to charge a defaulted row when selfSettle=false (cron path)', async () => {
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+        dunning_fees_cents: 30_000,
+      }],
+      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+    expect(result.kind).toBe('claim_lost');
+    expect(paystackRequestSpy).not.toHaveBeenCalled();
+  });
+
+  it('selfSettle race vs cron — exactly one charge fires', async () => {
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'failed', retry_count: 2, amount: 100,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+        dunning_fees_cents: 10_000,
+      }],
+      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    paystackRequestSpy.mockResolvedValue({ status: true });
+
+    const cron       = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+    const selfSettle = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15', selfSettle: true });
+
+    // Whichever ran first claimed; the other got claim_lost.
+    const outcomes = [cron.kind, selfSettle.kind].sort();
+    expect(outcomes).toEqual(['charged', 'claim_lost']);
+    expect(paystackRequestSpy).toHaveBeenCalledTimes(1);
   });
 });

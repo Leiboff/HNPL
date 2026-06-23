@@ -1,10 +1,7 @@
 import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import {
-  attemptChargeInstalment,
-  writeOffExceededAttempts,
-} from '@/lib/payments/chargeInstalment';
+import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 
 // ─── Daily installment collection cron ──────────────────────────────────────
 //
@@ -62,38 +59,57 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
-  // ── 2. Write-off sweep — promote any 'failed' rows whose retry_count
-  //       hit the cap into 'written_off' BEFORE we iterate the queue,
-  //       so no row that has exhausted its retries can be re-attempted.
-  const writtenOff = await writeOffExceededAttempts(svc);
-
-  // ── 3. Find due payments.
+  // ── 2. Find due payments. Two-source pull — scheduled rows by
+  //       due_date (first attempts) and failed rows by the dunning
+  //       ladder's next_attempt_date. We do not need a separate
+  //       write-off sweep anymore — the ladder transitions cap-hit
+  //       rows to terminal 'defaulted' inline (in the webhook), so
+  //       they're already excluded from the SELECT below by status.
   //
-  //   • status IN ('scheduled', 'failed')  — first run + retries of
-  //                                          previous failures.
-  //   • due_date <= today                  — IMPORTANT: <= not =, so
-  //                                          a clamped salary date that
-  //                                          fell on a day the cron
-  //                                          didn't run still gets
-  //                                          picked up the next day.
   //   • plan.status = 'active'             — don't charge cancelled or
   //                                          completed plans.
   //   • plan.paystack_authorization_code   — must have a stored token.
   //                                          Filter at the join.
-  const { data: dueRows, error: dueErr } = await svc
-    .from('payments')
-    .select('id, plan_id, plans!inner(status, paystack_authorization_code)')
-    .in('status', ['scheduled', 'failed'])
-    .lte('due_date', todayStr)
-    .eq('plans.status', 'active')
-    .not('plans.paystack_authorization_code', 'is', null);
+  //   • last_dunning_attempt_date < today  — belt-and-braces same-day
+  //                                          re-run guard. The atomic
+  //                                          claim's status filter is
+  //                                          the primary lock; this
+  //                                          ensures the SELECT itself
+  //                                          doesn't even surface rows
+  //                                          we already attempted today.
 
-  if (dueErr) {
-    console.error('[cron/collect-instalments] due-payments query failed', dueErr);
-    return NextResponse.json({ error: dueErr.message }, { status: 500 });
+  const sameDayGuard = `last_dunning_attempt_date.is.null,last_dunning_attempt_date.lt.${todayStr}`;
+
+  const [scheduledRes, failedRes] = await Promise.all([
+    svc
+      .from('payments')
+      .select('id, plans!inner(status, paystack_authorization_code)')
+      .eq('status', 'scheduled')
+      .lte('due_date', todayStr)
+      .or(sameDayGuard)
+      .eq('plans.status', 'active')
+      .not('plans.paystack_authorization_code', 'is', null),
+    svc
+      .from('payments')
+      .select('id, plans!inner(status, paystack_authorization_code)')
+      .eq('status', 'failed')
+      .not('next_attempt_date', 'is', null)
+      .lte('next_attempt_date', todayStr)
+      .or(sameDayGuard)
+      .eq('plans.status', 'active')
+      .not('plans.paystack_authorization_code', 'is', null),
+  ]);
+
+  if (scheduledRes.error) {
+    console.error('[cron/collect-instalments] scheduled-payments query failed', scheduledRes.error);
+    return NextResponse.json({ error: scheduledRes.error.message }, { status: 500 });
+  }
+  if (failedRes.error) {
+    console.error('[cron/collect-instalments] failed-payments query failed', failedRes.error);
+    return NextResponse.json({ error: failedRes.error.message }, { status: 500 });
   }
 
-  const due = (dueRows ?? []) as Array<{ id: string }>;
+  const due = ([...(scheduledRes.data ?? []), ...(failedRes.data ?? [])]) as Array<{ id: string }>;
 
   // ── 4. Attempt each. attemptChargeInstalment is its own atomic claim;
   //       running concurrent batches against overlapping ids is safe.
@@ -121,14 +137,12 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
   const finishedAt = new Date();
   const summary = {
-    started_at:        startedAt.toISOString(),
-    finished_at:       finishedAt.toISOString(),
-    written_off_count: writtenOff.length,
-    written_off_ids:   writtenOff,
-    eligible_count:    due.length,
-    charged_count:     charged,
-    claim_lost_count:  claimLost,
-    transport_errors:  transportErrors,
+    started_at:          startedAt.toISOString(),
+    finished_at:         finishedAt.toISOString(),
+    eligible_count:      due.length,
+    charged_count:       charged,
+    claim_lost_count:    claimLost,
+    transport_errors:    transportErrors,
     transport_error_ids: transportErrorIds,
   };
 

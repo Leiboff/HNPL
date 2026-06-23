@@ -5,6 +5,8 @@ import PendingPlanCard from '@/app/patient/PendingPlanCard';
 import StatusChip from '@/components/StatusChip';
 import { computePlanProgress } from '@/lib/planProgress';
 import { planCompletionDate, sortPlansByAnchorDesc, type OrdersTab } from '@/lib/planAnchor';
+import PayNowButton from './PayNowButton';
+import type { SelfSettleResult } from './settle-actions';
 import type { PlanRow, PaymentRow } from './page';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -48,7 +50,13 @@ const PAYMENT_STATUS: Record<string, { label: string; cls: string }> = {
   failed:      { label: 'Failed',      cls: 'bg-red-100 text-red-700'       },
   retried:     { label: 'Retried',     cls: 'bg-amber-100 text-amber-800'   },
   written_off: { label: 'Written off', cls: 'bg-gray-100 text-gray-500'     },
+  defaulted:   { label: 'Defaulted',   cls: 'bg-red-100 text-red-700'       },
 };
+
+// Statuses where the Pay-now affordance appears on the row. 'scheduled'
+// is omitted today — early-settle is a future addition; the brief asks
+// only that past-due and defaulted rows show Pay now.
+const SETTLEABLE_ROW_STATUSES = new Set(['failed', 'defaulted']);
 
 // ─── Badge components ─────────────────────────────────────────────────────────
 // Both badges now delegate chip chrome to <StatusChip /> so every status
@@ -120,7 +128,15 @@ function PlanProgress({ plan }: { plan: PlanRow }) {
 
 // ─── Plan card (non-pending) ──────────────────────────────────────────────────
 
-function PlanCard({ plan, tab }: { plan: PlanRow; tab: OrdersTab }) {
+function PlanCard({
+  plan,
+  tab,
+  settleInstalment,
+}: {
+  plan: PlanRow;
+  tab: OrdersTab;
+  settleInstalment: (paymentId: string) => Promise<SelfSettleResult>;
+}) {
   const practiceName = getPracticeName(plan);
 
   // Header date anchor — "Started …" everywhere except a Historic plan
@@ -177,6 +193,9 @@ function PlanCard({ plan, tab }: { plan: PlanRow; tab: OrdersTab }) {
             // Three weight tiers: collected (muted + check), next-due (normal),
             // later scheduled (muted) — directs the eye to what's next.
             const rowMuted = isCollected || !isNextDue;
+            const isSettleable = SETTLEABLE_ROW_STATUSES.has(payment.status);
+            const feesCents    = Number(payment.dunning_fees_cents ?? 0);
+            const settleCents  = Math.round(Number(payment.amount) * 100) + feesCents;
             return (
               <div
                 key={payment.id}
@@ -191,11 +210,25 @@ function PlanCard({ plan, tab }: { plan: PlanRow; tab: OrdersTab }) {
                     {formatDate(payment.due_date)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                  <PaymentStatusBadge status={payment.status} />
-                  <span className={`text-sm tabular-nums ${rowMuted ? 'text-gray-500' : 'font-medium text-gray-900'}`}>
-                    {formatRand(Number(payment.amount))}
-                  </span>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <PaymentStatusBadge status={payment.status} />
+                    <span className={`text-sm tabular-nums ${rowMuted ? 'text-gray-500' : 'font-medium text-gray-900'}`}>
+                      {formatRand(Number(payment.amount))}
+                    </span>
+                  </div>
+                  {feesCents > 0 && (
+                    <p className="text-[11px] text-red-600 tabular-nums">
+                      + {formatRand(feesCents / 100)} fees
+                    </p>
+                  )}
+                  {isSettleable && (
+                    <PayNowButton
+                      paymentId={payment.id}
+                      amountToChargeCents={settleCents}
+                      settleAction={settleInstalment}
+                    />
+                  )}
                 </div>
               </div>
             );
@@ -238,7 +271,8 @@ type Props = {
   pendingPlans:   PlanRow[];
   currentPlans:   PlanRow[];
   historicPlans:  PlanRow[];
-  declinePlan: (planId: string) => Promise<{ error: string | null }>;
+  declinePlan:      (planId: string)    => Promise<{ error: string | null }>;
+  settleInstalment: (paymentId: string) => Promise<SelfSettleResult>;
   specialtyMap:   Record<string, string>;
   patientBlocked: boolean;
 };
@@ -250,6 +284,7 @@ export default function OrdersView({
   currentPlans,
   historicPlans,
   declinePlan,
+  settleInstalment,
   patientBlocked,
 }: Props) {
   const [tab, setTab] = useState<'pending' | 'current' | 'historic'>(
@@ -309,7 +344,7 @@ export default function OrdersView({
                 blocked={patientBlocked}
               />
             ) : (
-              <PlanCard key={plan.id} plan={plan} tab={tab} />
+              <PlanCard key={plan.id} plan={plan} tab={tab} settleInstalment={settleInstalment} />
             )
           )}
         </div>

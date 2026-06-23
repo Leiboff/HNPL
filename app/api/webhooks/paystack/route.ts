@@ -12,6 +12,12 @@ import {
   type PaystackAuthorization,
 } from '@/lib/paystack/saveCardForPatient';
 import { sendPushToUser } from '@/lib/notifications/sendPush';
+import { advanceLadderAfterFailure, chargeAmountCents } from '@/lib/payments/dunning';
+import {
+  notifyAttemptFailed,
+  notifyDefaulted,
+  notifyRecoverySucceeded,
+} from '@/lib/payments/dunningNotifications';
 
 // Note: the middleware (proxy.ts / updateSession) only refreshes Supabase session
 // cookies and never redirects — so this unauthenticated route is unaffected by it.
@@ -215,7 +221,7 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
 
   const { data: payment } = await supabase
     .from('payments')
-    .select('id, plan_id, instalment_number, patient_id, status')
+    .select('id, plan_id, instalment_number, patient_id, status, retry_count, dunning_fees_cents, amount')
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
@@ -336,13 +342,49 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
     return;
   }
 
+  const wasRecovery =
+    Number(payment.retry_count ?? 0) > 1 ||
+    Number(payment.dunning_fees_cents ?? 0) > 0;
+
+  // Clear ladder scheduling state — the row is terminal-collected now,
+  // no further attempts. dunning_fees_cents stays as-is so the row
+  // records what was actually collected (instalment + fees, if any).
   const { error: pmtErr } = await supabase
     .from('payments')
-    .update({ status: 'collected', collected_at: now })
+    .update({
+      status:            'collected',
+      collected_at:      now,
+      next_attempt_date: null,
+    })
     .eq('id', payment.id);
   if (pmtErr) {
     console.error('[paystack-webhook] charge.success: failed to mark instalment collected', pmtErr.message);
     return;
+  }
+
+  if (wasRecovery) {
+    const collectedCents =
+      Math.round(Number(payment.amount) * 100) +
+      Number(payment.dunning_fees_cents ?? 0);
+    const { error: evErr } = await supabase.from('plan_events').insert({
+      plan_id:    plan.id,
+      patient_id: plan.patient_id,
+      event_type: 'instalment_attempt_succeeded',
+      payload: {
+        payment_id:           payment.id,
+        instalment_number:    payment.instalment_number,
+        collected_amount_cents: collectedCents,
+        via_self_settle:      false,
+      },
+    });
+    if (evErr) {
+      console.error('[paystack-webhook] charge.success: plan_events insert failed (non-fatal)', evErr.message);
+    }
+    await notifyRecoverySucceeded(supabase, {
+      paymentId:            payment.id,
+      collectedAmountCents: collectedCents,
+      viaSelfSettle:        false,
+    });
   }
 
   // If every instalment is now collected, mark the plan completed
@@ -401,7 +443,7 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
 
   const { data: payment } = await supabase
     .from('payments')
-    .select('id, plan_id, instalment_number, status, amount')
+    .select('id, plan_id, instalment_number, status, amount, consecutive_failed_attempts, dunning_fees_cents, retry_count')
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
@@ -412,7 +454,7 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status, patient_id')
+    .select('id, status, patient_id, total_amount')
     .eq('id', payment.plan_id)
     .maybeSingle();
 
@@ -460,35 +502,133 @@ async function handleChargeFailed(data: ChargeData): Promise<void> {
   // ── Instalments 2 / 3: mark failed, leave plan active ────────────────────
   // The practice payout is already created; this is HNPL's collection risk.
 
-  if (payment.status === 'failed') {
-    console.log('[paystack-webhook] charge.failed: instalment already marked failed (duplicate)', { paymentId: payment.id, reference });
+  if (payment.status === 'failed' || payment.status === 'defaulted') {
+    // Idempotency: redelivered failure webhook (status is already past
+    // the failure-handling point). Bail before re-advancing the ladder
+    // or re-emitting the failure notification.
+    console.log('[paystack-webhook] charge.failed: instalment already in terminal/failed state (duplicate)', { paymentId: payment.id, reference, status: payment.status });
     return;
   }
 
+  // ── Advance the dunning ladder. Pure math; the new state is what we
+  //    persist next. The "today" anchor for the next-attempt-date math
+  //    is the UTC date of the failure event — same calendar day the
+  //    cron uses on its next run.
+  const todayUtc      = new Date().toISOString().slice(0, 10);
+  const feesBefore    = (payment.dunning_fees_cents ?? 0) as number;
+  const counterBefore = (payment.consecutive_failed_attempts ?? 0) as number;
+  const attemptedAmountCents = chargeAmountCents(Number(payment.amount), feesBefore);
+
+  const ladder = advanceLadderAfterFailure({
+    consecutiveFailedAttemptsBefore: counterBefore,
+    dunningFeesCentsBefore:          feesBefore,
+    originalBillRands:               Number(plan.total_amount),
+    today:                           todayUtc,
+  });
+
+  const newStatus: 'failed' | 'defaulted' = ladder.terminalStatus ?? 'failed';
+
   const { error: pmtErr } = await supabase
     .from('payments')
-    .update({ status: 'failed', failure_reason: failureReason })
+    .update({
+      status:                      newStatus,
+      failure_reason:              failureReason,
+      consecutive_failed_attempts: ladder.consecutiveFailedAttemptsAfter,
+      dunning_fees_cents:          ladder.dunningFeesCentsAfter,
+      next_attempt_date:           ladder.nextAttemptDate,
+    })
     .eq('id', payment.id);
   if (pmtErr) {
     console.error('[paystack-webhook] charge.failed: failed to mark instalment failed', pmtErr.message);
     return;
   }
 
-  console.log('[paystack-webhook] charge.failed: instalment failed (plan remains active)', {
-    paymentId:        payment.id,
-    instalmentNumber: payment.instalment_number,
-    planId:           plan.id,
+  // ── Audit trail. One row per ladder event. plan_events RLS lets the
+  //    patient read their own rows; the admin sees everything. Errors
+  //    are non-fatal — the actual state is on the payment row.
+  const planEventInserts: Record<string, unknown>[] = [
+    {
+      plan_id:    plan.id,
+      patient_id: plan.patient_id,
+      event_type: 'instalment_attempt_failed',
+      payload: {
+        payment_id:        payment.id,
+        instalment_number: payment.instalment_number,
+        failure_reason:    failureReason,
+        consecutive_failed_attempts_after: ladder.consecutiveFailedAttemptsAfter,
+        next_attempt_date: ladder.nextAttemptDate,
+      },
+    },
+  ];
+  if (ladder.feeAppliedThisAttempt > 0) {
+    planEventInserts.push({
+      plan_id:    plan.id,
+      patient_id: plan.patient_id,
+      event_type: 'dunning_fee_applied',
+      payload: {
+        payment_id:                 payment.id,
+        instalment_number:          payment.instalment_number,
+        fee_applied_cents:          ladder.feeAppliedThisAttempt,
+        dunning_fees_cents_after:   ladder.dunningFeesCentsAfter,
+      },
+    });
+  }
+  if (ladder.capReached) {
+    planEventInserts.push({
+      plan_id:    plan.id,
+      patient_id: plan.patient_id,
+      event_type: 'instalment_defaulted',
+      payload: {
+        payment_id:               payment.id,
+        instalment_number:        payment.instalment_number,
+        outstanding_amount_cents: chargeAmountCents(Number(payment.amount), ladder.dunningFeesCentsAfter),
+      },
+    });
+  }
+  const { error: eventsErr } = await supabase.from('plan_events').insert(planEventInserts);
+  if (eventsErr) {
+    console.error('[paystack-webhook] charge.failed: plan_events insert failed (non-fatal)', eventsErr.message);
+  }
+
+  console.log('[paystack-webhook] charge.failed: ladder advanced', {
+    paymentId:                       payment.id,
+    instalmentNumber:                payment.instalment_number,
+    planId:                          plan.id,
     failureReason,
+    feeApplied:                      ladder.feeAppliedThisAttempt,
+    dunningFeesAfter:                ladder.dunningFeesCentsAfter,
+    consecutiveAfter:                ladder.consecutiveFailedAttemptsAfter,
+    nextAttempt:                     ladder.nextAttemptDate,
+    capReached:                      ladder.capReached,
+    newStatus,
   });
 
-  // Action-needed push — the cron will retry, but the patient should
-  // hear about it now so they can fund the card / update details.
+  // ── Patient-facing notifications. Sender failures must NEVER fail
+  //    the webhook (which would cause Paystack to retry the whole
+  //    handler and risk duplicate ladder-advances). Both helpers wrap
+  //    in try/catch internally; the per-channel pushes also self-swallow.
+  await notifyAttemptFailed(supabase, {
+    paymentId:                       payment.id,
+    consecutiveFailedAttemptsBefore: counterBefore,
+    feeAppliedCents:                 ladder.feeAppliedThisAttempt,
+    dunningFeesCentsAfter:           ladder.dunningFeesCentsAfter,
+    attemptedAmountCents,
+    nextAttemptDate:                 ladder.nextAttemptDate,
+  });
+  if (ladder.capReached) {
+    await notifyDefaulted(supabase, {
+      paymentId:              payment.id,
+      outstandingAmountCents: chargeAmountCents(Number(payment.amount), ladder.dunningFeesCentsAfter),
+    });
+  }
   if (plan.patient_id) {
     await safePush(plan.patient_id, {
       title: 'Payment didn\'t go through',
-      body:  `We couldn't collect ${formatRandCents(Number(payment.amount))}. We'll try again — please make sure your card has funds.`,
-      url:   `/patient/orders/${plan.id}`,
-      tag:   `payment:${payment.id}:failed`,
+      body:  ladder.feeAppliedThisAttempt > 0
+        ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. A ${formatRandCents(ladder.feeAppliedThisAttempt / 100)} fee was added. Tap to settle now and stop further fees.`
+        : `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. We'll try again — fund your card now or settle to avoid further fees.`,
+      url:   `/patient/orders`,
+      tag:   `payment:${payment.id}:failed:r${payment.retry_count ?? 0}`,
     });
   }
 }
