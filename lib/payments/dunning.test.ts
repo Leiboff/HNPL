@@ -56,6 +56,51 @@ describe('chargeAmountCents — retry-carries-fees', () => {
   });
 });
 
+// ─── Uneven-cents agreement: settle-all SUM == sum of individual Pay-now ─
+//
+// Real plans split into uneven cents because the first instalment absorbs
+// the rounding remainder, e.g. R1,277.00 / 3 → R425.68 + R425.66 + R425.66.
+// The settle-entire-bill RPC (claim_plan_for_settlement) sums in Postgres
+// via `SUM(ROUND(amount*100)::BIGINT + COALESCE(dunning_fees_cents,0))`,
+// while single-instalment Pay-now sums in JS via chargeAmountCents
+// (Math.round(amount*100) + fees). For the two paths to agree to the cent,
+// chargeAmountCents on each leg must produce the same per-leg cents PG
+// computes — and the JS sum of those legs must equal the PG SUM.
+//
+// PG NUMERIC arithmetic on amount*100 is exact (NUMERIC(10,2) × INTEGER
+// is NUMERIC, ROUND of an already-integer NUMERIC is the same integer).
+// JS Math.round corrects the IEEE-754 drift on amount*100 (e.g.
+// 425.68*100 may yield 42567.99999... in JS, Math.round → 42568).
+
+describe('chargeAmountCents — fractional-rand instalments (R425.68 + R425.66 + R425.66)', () => {
+  it('produces 42568 for R425.68 despite IEEE-754 drift on the multiply', () => {
+    expect(chargeAmountCents(425.68, 0)).toBe(42_568);
+  });
+
+  it('produces 42566 for R425.66', () => {
+    expect(chargeAmountCents(425.66, 0)).toBe(42_566);
+  });
+
+  it('JS sum of the three legs equals the SQL SUM expected from the RPC (127700)', () => {
+    // Mirrors what the patient sees: if they tap Pay-now on each
+    // instalment, the cumulative Paystack-amount = 127700. The
+    // claim_plan_for_settlement RPC sums in Postgres NUMERIC and
+    // returns 127700 too. The two charge paths agree to the cent.
+    const a = chargeAmountCents(425.68, 0);
+    const b = chargeAmountCents(425.66, 0);
+    const c = chargeAmountCents(425.66, 0);
+    expect(a + b + c).toBe(127_700);
+  });
+
+  it('with accrued dunning fees mixed in: 3 instalments + R100 fee on the failed one', () => {
+    // R425.68 + R425.66 (with R100 fee) + R425.66 = R1,277 + R100 = R1,377 → 137700 cents
+    const a = chargeAmountCents(425.68, 0);
+    const b = chargeAmountCents(425.66, 10_000); // R100 fee on this leg
+    const c = chargeAmountCents(425.66, 0);
+    expect(a + b + c).toBe(137_700);
+  });
+});
+
 // ─── Ladder progression on a typical R1000 bill (large bill, R300 cap) ──────
 
 describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {

@@ -127,9 +127,14 @@ export default async function AdminCustomersPage({
         .from('plans')
         .select('id, patient_id, total_amount, status')
         .in('patient_id', patientIds),
+      // kind='instalment' — per-customer outstanding/reliability is
+      // computed from instalment rows only. A settlement row would
+      // double-count outstanding (its amount = sum of covered rows
+      // that are independently in the aggregate) and skew reliability.
       supabase
         .from('payments')
         .select('id, patient_id, amount, status, due_date, retry_count, instalment_number')
+        .eq('kind', 'instalment')
         .in('patient_id', patientIds),
     ]);
 

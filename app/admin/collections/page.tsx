@@ -187,7 +187,15 @@ export default async function AdminCollectionsPage({
   // Range-scoped — switching chips keeps the user's range, and the
   // chip counts reflect "how many in THIS range, per chip". Without
   // a range applied the counts go global (all-time).
-  let countsQuery = supabase.from('payments').select('id, status, due_date').limit(50000);
+  //
+  // kind='instalment' so settlement rows (post-0058) don't conflate
+  // with instalment health metrics. The DETAIL table above (the row
+  // selection at applyRange/query) stays unfiltered so admins can
+  // still see settlement rows for audit.
+  let countsQuery = supabase.from('payments')
+    .select('id, status, due_date')
+    .eq('kind', 'instalment')
+    .limit(50000);
   countsQuery = applyRange(countsQuery);
   const { data: rawAll } = await countsQuery;
 

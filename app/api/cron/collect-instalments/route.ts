@@ -80,10 +80,19 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
   const sameDayGuard = `last_dunning_attempt_date.is.null,last_dunning_attempt_date.lt.${todayStr}`;
 
+  // kind='instalment' is EXPLICIT. Settlement rows (kind='settlement',
+  // added by 0058) happen to be excluded today by accident — they are
+  // created in 'processing' (not 'scheduled') and have NULL
+  // next_attempt_date — but the charging path must not rely on that
+  // accident. A future change to settlement-row creation that breaks
+  // either of those incidental filters would otherwise cause the cron
+  // to fire a duplicate per-instalment charge against a settlement-row
+  // total. The explicit kind filter is the load-bearing guarantee.
   const [scheduledRes, failedRes] = await Promise.all([
     svc
       .from('payments')
       .select('id, plans!inner(status, paystack_authorization_code)')
+      .eq('kind', 'instalment')
       .eq('status', 'scheduled')
       .lte('due_date', todayStr)
       .or(sameDayGuard)
@@ -92,6 +101,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     svc
       .from('payments')
       .select('id, plans!inner(status, paystack_authorization_code)')
+      .eq('kind', 'instalment')
       .eq('status', 'failed')
       .not('next_attempt_date', 'is', null)
       .lte('next_attempt_date', todayStr)

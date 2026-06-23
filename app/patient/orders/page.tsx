@@ -21,6 +21,10 @@ export type PaymentRow = {
   collected_at: string | null;
   dunning_fees_cents: number | null;
   next_attempt_date: string | null;
+  /** 'instalment' (default) or 'settlement'. Settlement rows are
+      filtered out of the per-plan list before render — they live in
+      the audit timeline but are not instalments. */
+  kind: string;
 };
 
 export type ProviderRef = { first_name: string; last_name: string };
@@ -56,16 +60,22 @@ export default async function OrdersPage() {
       provider_id, practice_id,
       provider:profiles!plans_provider_id_fkey(first_name, last_name),
       practice:practices(name),
-      payments(id, instalment_number, amount, due_date, status, collected_at, dunning_fees_cents, next_attempt_date)
+      payments(id, instalment_number, amount, due_date, status, collected_at, dunning_fees_cents, next_attempt_date, kind)
     `)
     .eq('patient_id', user.id)
     .order('created_at', { ascending: false });
 
   const plans = ((rawPlans ?? []) as unknown as PlanRow[]).map((p) => ({
     ...p,
-    payments: [...(p.payments ?? [])].sort(
-      (a, b) => a.instalment_number - b.instalment_number
-    ),
+    // Strip settlement rows out of the per-plan schedule. Settlement
+    // rows (kind='settlement', instalment_number=0) are audit-only —
+    // they represent a "settle entire bill" charge and would otherwise
+    // render as a phantom "Instalment 0", inflate computePlanProgress
+    // totals, and double-count the outstanding sum used by the
+    // Settle-entire-bill button. The audit trail lives in plan_events.
+    payments: [...(p.payments ?? [])]
+      .filter((pmt) => pmt.kind !== 'settlement')
+      .sort((a, b) => a.instalment_number - b.instalment_number),
   }));
 
   const providerIds = [...new Set(

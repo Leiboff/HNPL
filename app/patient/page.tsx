@@ -135,6 +135,7 @@ export default async function PatientDashboardPage() {
           )
         `)
         .eq('patient_id', user.id)
+        .eq('kind', 'instalment')
         .in('status', ['scheduled', 'processing', 'failed', 'defaulted'])
         .order('due_date', { ascending: true }),
     ]);

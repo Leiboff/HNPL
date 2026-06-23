@@ -45,7 +45,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       .in('status', ['initiated', 'pending'])
       .lt('initiated_at', new Date(Date.now() - 60 * 60 * 1000).toISOString()),
     // Overdue = scheduled past due_date (cron hasn't picked up yet).
+    // kind='instalment' so a settlement row (post-0058) never inflates
+    // the sidebar badge — settlement rows are administrative artifacts,
+    // not instalments needing collection.
     supabase.from('payments').select('*', { count: 'exact', head: true })
+      .eq('kind', 'instalment')
       .eq('status', 'scheduled').lt('due_date', todayStr),
     supabase.from('payouts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
   ]);

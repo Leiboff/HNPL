@@ -399,11 +399,17 @@ async function handleChargeSuccess(data: ChargeData): Promise<void> {
     });
   }
 
-  // If every instalment is now collected, mark the plan completed
+  // If every instalment is now collected, mark the plan completed.
+  // kind='instalment' filter is critical — a settlement row left in
+  // 'failed' (e.g. settle-all failed, covered rows reverted, normal
+  // cron later succeeded on those rows) would otherwise prevent the
+  // plan from ever completing. The settlement-row's own success path
+  // (handleSettlementChargeSuccess) has the same filter applied.
   const { data: remaining } = await supabase
     .from('payments')
     .select('id')
     .eq('plan_id', plan.id)
+    .eq('kind', 'instalment')
     .neq('status', 'collected');
 
   if (!remaining || remaining.length === 0) {

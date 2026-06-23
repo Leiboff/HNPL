@@ -62,10 +62,19 @@ export default async function AdminDashboardPage() {
     supabase.from('profiles').select('*',      { count: 'exact', head: true }).eq('role', 'patient'),
     supabase.from('plans').select('*',         { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('refunds').select('*',       { count: 'exact', head: true }).in('status', ['initiated', 'pending']),
-    supabase.from('payments').select('amount').eq('status', 'scheduled').eq('due_date', todayStr),
-    supabase.from('payments').select('amount').eq('status', 'scheduled').lt('due_date', todayStr),
+    // All payment aggregations filter kind='instalment' so settlement
+    // rows (kind='settlement', created by claim_plan_for_settlement in
+    // 0058) don't double-count: a settle-entire-bill that collects 3
+    // instalments produces 4 'collected' rows (3 instalments + the
+    // settlement row whose amount is the sum). Counting both would
+    // inflate "Collected this month" by exactly the sum of the
+    // covered instalments. Same hazard on at-risk (failed settlement +
+    // its reverted covered rows). The collections-detail table stays
+    // unfiltered so admins can still see settlement rows for audit.
+    supabase.from('payments').select('amount').eq('kind', 'instalment').eq('status', 'scheduled').eq('due_date', todayStr),
+    supabase.from('payments').select('amount').eq('kind', 'instalment').eq('status', 'scheduled').lt('due_date', todayStr),
     supabase.from('payouts').select('net_amount').eq('status', 'pending'),
-    supabase.from('payments').select('amount').eq('status', 'collected').gte('collected_at', monthStartStr),
+    supabase.from('payments').select('amount').eq('kind', 'instalment').eq('status', 'collected').gte('collected_at', monthStartStr),
     supabase.from('cron_runs').select('started_at, finished_at, summary')
       .eq('job_name', 'collect-instalments').order('started_at', { ascending: false }).limit(1).maybeSingle(),
     // At-risk proxy: payments currently in failed / retried (in-flight
@@ -73,6 +82,7 @@ export default async function AdminDashboardPage() {
     // plan_id fields let us count distinct entities downstream.
     supabase.from('payments')
       .select('patient_id, plan_id, amount, status')
+      .eq('kind', 'instalment')
       .in('status', ['failed', 'retried', 'written_off']),
   ]);
 
