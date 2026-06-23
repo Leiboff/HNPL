@@ -16,6 +16,19 @@
 --   • app/api/cron/collect-instalments/route.ts  (selects by next_attempt_date)
 --   • lib/payments/selfSettleInstalment.ts       (patient-initiated charge,
 --                                                  shares the atomic claim)
+--
+-- Idempotency: every ADD COLUMN uses IF NOT EXISTS, every constraint is
+-- dropped (IF EXISTS) before being re-added, and the index is dropped
+-- before re-creation. Re-running this migration against an already-
+-- migrated DB is a no-op (or, more precisely, a re-statement of the
+-- same shape) — important because the prior version of this file
+-- failed apply and rolled back; a corrected re-apply has to work
+-- regardless of partial residue.
+--
+-- CHECK constraints are EXTENDED, never narrowed: each new IN(...) list
+-- is the UNION of every value the live constraint already allowed plus
+-- the new ladder values. A CHECK must hold for every existing row, so
+-- dropping a value that's already in use fails the migration.
 
 -- ── 1. payments — ladder state columns ──────────────────────────────────
 
@@ -45,31 +58,47 @@ ALTER TABLE payments
 ALTER TABLE payments
   ADD COLUMN IF NOT EXISTS last_dunning_attempt_date DATE;
 
--- ── 2. payments.status — extend to include 'defaulted' ──────────────────
+-- ── 2. payments.status — extend with 'defaulted' (UNION with existing) ──
 --
 -- New terminal state for "cap reached, debt still owed". Distinct from
 -- 'written_off' (explicit forgiveness, no debt).
+--
+-- The IN(...) list below is the UNION of the six values the existing
+-- payments_status_check already allowed (set in 0001_initial_schema.sql)
+-- PLUS 'defaulted'. No existing value is removed.
 ALTER TABLE payments
   DROP CONSTRAINT IF EXISTS payments_status_check;
 
 ALTER TABLE payments
   ADD CONSTRAINT payments_status_check
   CHECK (status IN (
-    'scheduled', 'processing', 'collected', 'failed',
-    'retried', 'written_off', 'defaulted'
+    'scheduled',
+    'processing',
+    'collected',
+    'failed',
+    'retried',
+    'written_off',
+    'defaulted'
   ));
 
 -- Index for the cron's "give me failed rows due to be retried today"
 -- scan. Partial index keeps it tiny — only the rows actively in the
--- ladder are indexed.
+-- ladder are indexed. Drop-then-create so a re-apply against an already-
+-- migrated DB doesn't error if the index definition ever evolves.
+DROP INDEX IF EXISTS payments_next_attempt_date_idx;
+
 CREATE INDEX IF NOT EXISTS payments_next_attempt_date_idx
   ON payments (next_attempt_date)
   WHERE status = 'failed' AND next_attempt_date IS NOT NULL;
 
 -- ── 3. plan_events — extend event_type CHECK with ladder events ─────────
 --
--- Append-only audit row per significant ladder event. Read by the
--- patient (own plans) + admin (everywhere) via existing RLS in 0038.
+-- The IN(...) list below is the UNION of the two values the existing
+-- plan_events_event_type_check already allowed (set in 0038, extended
+-- in 0041 to add 'token_refreshed') PLUS the five new ladder events.
+-- No existing value is removed — at least one live row uses
+-- 'token_refreshed', so dropping it would violate the CHECK and roll
+-- back the migration.
 ALTER TABLE plan_events
   DROP CONSTRAINT IF EXISTS plan_events_event_type_check;
 
@@ -77,6 +106,7 @@ ALTER TABLE plan_events
   ADD CONSTRAINT plan_events_event_type_check
   CHECK (event_type IN (
     'collection_card_changed',
+    'token_refreshed',
     'instalment_attempt_failed',
     'instalment_attempt_succeeded',
     'dunning_fee_applied',

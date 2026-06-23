@@ -21,7 +21,11 @@ vi.mock('@/lib/payments/chargeInstalment', () => ({
 // Stub the service-role Supabase client. Each test sets up scheduledRows
 // and failedRows separately so we can assert the cron's two-source pull
 // behaves correctly (it issues one SELECT per source via Promise.all).
+// The capturedOrCalls array records every .or() filter the cron sends —
+// used by the same-day-noop test to verify the per-day guard is present
+// on BOTH the scheduled and failed pulls.
 const inserts: Array<{ table: string; row: unknown }> = [];
+const capturedOrCalls: string[] = [];
 const queryState: {
   scheduled: Array<{ id: string }>;
   failed:    Array<{ id: string }>;
@@ -34,10 +38,15 @@ vi.mock('@supabase/supabase-js', () => ({
         select() {
           let selectedStatus: string | null = null;
           const builder: Record<string, unknown> = {};
-          for (const k of ['in', 'lte', 'or', 'not']) {
+          for (const k of ['in', 'lte', 'not']) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (builder as any)[k] = function () { return builder; };
           }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (builder as any).or = function (expr: string) {
+            capturedOrCalls.push(expr);
+            return builder;
+          };
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (builder as any).eq = function (col: string, val: unknown) {
             if (col === 'status' && typeof val === 'string') selectedStatus = val;
@@ -64,6 +73,7 @@ vi.mock('@supabase/supabase-js', () => ({
 beforeEach(() => {
   attemptChargeInstalmentSpy.mockReset();
   inserts.length = 0;
+  capturedOrCalls.length = 0;
   queryState.scheduled = [];
   queryState.failed = [];
   process.env.CRON_SECRET = 'test-secret-abc';
@@ -160,6 +170,26 @@ describe('cron route — behaviour', () => {
     expect(row.summary.transport_errors).toBe(1);
     expect(Array.isArray(row.summary.transport_error_ids)).toBe(true);
     expect(row.summary.transport_error_ids).toContain('p3');
+  });
+
+  it('same-day re-run is a no-op — every SELECT carries the last_dunning_attempt_date guard', async () => {
+    // The cron stamps last_dunning_attempt_date = todayStr on every
+    // claim (in chargeInstalment.ts). To make the cron itself idempotent
+    // on a same-day re-run, both source SELECTs (scheduled + failed)
+    // must include a guard that excludes rows already attempted today.
+    // This test pins that the guard string is sent to PostgREST exactly
+    // as expected — DATE-to-DATE comparison on a UTC date string so
+    // there's no local-vs-UTC mismatch between write and read.
+    const today = new Date().toISOString().slice(0, 10);
+    await POST(makeReq('Bearer test-secret-abc'));
+
+    // One .or() per source pull — both must use the same UTC date.
+    expect(capturedOrCalls.length).toBe(2);
+    for (const expr of capturedOrCalls) {
+      expect(expr).toBe(
+        `last_dunning_attempt_date.is.null,last_dunning_attempt_date.lt.${today}`,
+      );
+    }
   });
 
   it('records a run even when there are zero due payments (proof-of-life for the cron)', async () => {
