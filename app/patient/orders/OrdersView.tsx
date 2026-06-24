@@ -5,7 +5,6 @@ import PendingPlanCard from '@/app/patient/PendingPlanCard';
 import StatusChip from '@/components/StatusChip';
 import { computePlanProgress } from '@/lib/planProgress';
 import { planCompletionDate, sortPlansByAnchorDesc, type OrdersTab } from '@/lib/planAnchor';
-import PayNowButton from './PayNowButton';
 import PlanSettleAffordance from './PlanSettleAffordance';
 import type { SelfSettleResult, SettleAllOutcome } from './settle-actions';
 import type { PlanRow, PaymentRow } from './page';
@@ -53,17 +52,6 @@ const PAYMENT_STATUS: Record<string, { label: string; cls: string }> = {
   written_off: { label: 'Written off', cls: 'bg-gray-100 text-gray-500'     },
   defaulted:   { label: 'Defaulted',   cls: 'bg-red-100 text-red-700'       },
 };
-
-// Statuses where the Settle-now affordance appears on the row.
-// Includes 'scheduled' (early-settle a healthy not-yet-due instalment)
-// in addition to 'failed' / 'defaulted'. All three route through the
-// same attemptChargeInstalment(selfSettle:true) atomic claim, so a
-// concurrent cron attempt + tap still resolves to exactly one charge
-// per instalment. The settle-actions whitelist matches; the cron will
-// not have surfaced a scheduled row whose due_date is in the future,
-// so the only race for 'scheduled' is patient-double-tap (covered by
-// the in-flight transition status → claim_lost).
-const SETTLEABLE_ROW_STATUSES = new Set(['scheduled', 'failed', 'defaulted']);
 
 // Per-payment row date label. The original due_date is misleading once
 // the ladder has rescheduled a row, so failed shows the next attempt
@@ -230,16 +218,11 @@ function PlanCard({
             // Three weight tiers: collected (muted + check), next-due (normal),
             // later scheduled (muted) — directs the eye to what's next.
             const rowMuted = isCollected || !isNextDue;
-            // Per-row Pay-now stays on SETTLEABLE rows EXCEPT the
-            // next-due one — that row is targeted by the plan-level
-            // affordance (Pay now / Pay next instalment), so showing
-            // two buttons that do the same thing is confusing. The
-            // per-row button is for early-settle of a SPECIFIC later
-            // scheduled instalment.
-            const isSettleableStatus = SETTLEABLE_ROW_STATUSES.has(payment.status);
-            const isSettleable       = isSettleableStatus && !isNextDue;
-            const feesCents    = Number(payment.dunning_fees_cents ?? 0);
-            const settleCents  = Math.round(Number(payment.amount) * 100) + feesCents;
+            // Per-row Pay-now buttons are gone post-consolidation. All
+            // settle paths route through the plan-level "Manage payments"
+            // CTA so the card has ONE calm entry point. The schedule list
+            // here is read-only: status + amount + accrued fees.
+            const feesCents = Number(payment.dunning_fees_cents ?? 0);
             return (
               <div
                 key={payment.id}
@@ -271,13 +254,6 @@ function PlanCard({
                     <p className="text-[11px] text-red-600 tabular-nums">
                       + {formatRand(feesCents / 100)} fees
                     </p>
-                  )}
-                  {isSettleable && (
-                    <PayNowButton
-                      paymentId={payment.id}
-                      amountToChargeCents={settleCents}
-                      settleAction={settleInstalment}
-                    />
                   )}
                 </div>
               </div>

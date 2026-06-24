@@ -65,7 +65,7 @@ describe('PlanSettleAffordance — 2+ outstanding instalments', () => {
   it('collapses by default — only a "Settle…" toggle is visible', () => {
     setup(3, 42_566, 127_700); // 3 instalments, next R425.66, sum R1,277.00
     // The toggle button exists; the two options are NOT rendered.
-    const toggle = screen.getByRole('button', { name: /Settle…/ });
+    const toggle = screen.getByRole('button', { name: /^Manage payments$/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('button', { name: /Pay next instalment/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Settle entire bill/i })).toBeNull();
@@ -73,7 +73,7 @@ describe('PlanSettleAffordance — 2+ outstanding instalments', () => {
 
   it('expanding the toggle reveals BOTH options with DIFFERENT amounts (the meaningful choice)', () => {
     setup(3, 42_566, 127_700); // next R425.66, sum R1,277.00
-    const toggle = screen.getByRole('button', { name: /Settle…/ });
+    const toggle = screen.getByRole('button', { name: /^Manage payments$/ });
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
@@ -84,7 +84,7 @@ describe('PlanSettleAffordance — 2+ outstanding instalments', () => {
 
   it('collapsing again hides the options', () => {
     setup(3, 42_566, 127_700);
-    const toggle = screen.getByRole('button', { name: /Settle…/ });
+    const toggle = screen.getByRole('button', { name: /^Manage payments$/ });
     fireEvent.click(toggle); // expand
     fireEvent.click(toggle); // collapse
     expect(screen.queryByRole('button', { name: /Pay next instalment/i })).toBeNull();

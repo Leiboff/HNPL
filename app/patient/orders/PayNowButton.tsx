@@ -23,8 +23,14 @@ type Props = {
    * and paying ALL is differentiated by the amounts on each label).
    */
   label?: string;
-  /** Visual variant — compact pill (per-row) or full-width primary CTA (plan-level). */
-  variant?: 'compact' | 'primary';
+  /**
+   * Visual variant:
+   *  • 'compact'  — per-row pill (small, bordered, white bg).
+   *  • 'primary'  — full-width primary CTA (1-outstanding case).
+   *  • 'menuItem' — light text-style row inside the Manage-payments menu
+   *                  (visually subordinate to the menu toggle).
+   */
+  variant?: 'compact' | 'primary' | 'menuItem';
 };
 
 // Used both as a per-row compact pill ("Pay now") and as the plan-level
@@ -77,12 +83,32 @@ export default function PayNowButton({
   }
 
   if (done) {
-    return <p className={variant === 'primary' ? 'text-xs text-gray-500 text-center' : 'text-xs text-gray-500'}>{feedback}</p>;
+    const doneCls =
+      variant === 'primary'  ? 'text-xs text-gray-500 text-center'  :
+      variant === 'menuItem' ? 'text-xs text-gray-500 px-2'         :
+                               'text-xs text-gray-500';
+    return <p className={doneCls}>{feedback}</p>;
   }
 
-  const buttonCls = variant === 'primary'
-    ? 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50'
-    : 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm disabled:opacity-50';
+  // variant styles:
+  //  • primary  — full-width primary CTA (1-outstanding plan card).
+  //  • compact  — per-row pill (legacy; no longer rendered in OrdersView
+  //               post-consolidation, but kept for the API in case other
+  //               surfaces use it).
+  //  • menuItem — left-aligned text row inside the Manage-payments menu.
+  //               Subordinate to the menu toggle: no border, no shadow,
+  //               teal text colour, hover bg only.
+  const buttonCls =
+    variant === 'menuItem'
+      ? 'inline-flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 text-left'
+      : variant === 'primary'
+        ? 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50'
+        : 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm disabled:opacity-50';
+
+  // menuItem renders the label in the brand teal-on-navy gradient text
+  // so it reads as "the actionable thing" while staying visually lighter
+  // than a full button.
+  const labelStyle = variant === 'menuItem' ? { color: '#13294B' } : undefined;
 
   return (
     <>
@@ -91,11 +117,16 @@ export default function PayNowButton({
         onClick={() => setConfirming(true)}
         disabled={isPending}
         className={buttonCls}
+        style={labelStyle}
       >
         {label}
       </button>
       {feedback && !confirming && (
-        <p className={variant === 'primary' ? 'mt-1 text-xs text-red-600 text-center' : 'mt-1 text-[11px] text-red-600'}>
+        <p className={
+          variant === 'primary'  ? 'mt-1 text-xs text-red-600 text-center' :
+          variant === 'menuItem' ? 'mt-1 text-[11px] text-red-600 px-2'    :
+                                   'mt-1 text-[11px] text-red-600'
+        }>
           {feedback}
         </p>
       )}

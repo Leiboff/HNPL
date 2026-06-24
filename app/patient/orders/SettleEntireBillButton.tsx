@@ -18,6 +18,12 @@ type Props = {
   outstandingCount:        number;
   /** Server action — provided by the parent so this client component doesn't import the action file directly. */
   settleAllAction:         (planId: string) => Promise<SettleAllOutcome>;
+  /**
+   * Visual variant:
+   *  • 'standalone' — original full button (kept for the API; not used today).
+   *  • 'menuItem'   — light text row inside the Manage-payments menu.
+   */
+  variant?:                'standalone' | 'menuItem';
 };
 
 // Plan-level "Settle entire bill". Button label keeps the rand amount
@@ -29,6 +35,7 @@ export default function SettleEntireBillButton({
   outstandingTotalCents,
   outstandingCount,
   settleAllAction,
+  variant = 'standalone',
 }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [isPending,  startTransition] = useTransition();
@@ -77,22 +84,39 @@ export default function SettleEntireBillButton({
     });
   }
 
+  const isMenuItem = variant === 'menuItem';
+
   if (done) {
-    return <p className="mt-2 text-xs text-gray-500 text-center">{resultMsg}</p>;
+    return (
+      <p className={isMenuItem ? 'text-xs text-gray-500 px-2' : 'mt-2 text-xs text-gray-500 text-center'}>
+        {resultMsg}
+      </p>
+    );
   }
 
+  const buttonCls = isMenuItem
+    ? 'inline-flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 text-left'
+    : 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50';
+
+  const wrapperCls = isMenuItem
+    ? 'flex flex-col'
+    : 'flex flex-col items-center gap-2';
+
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className={wrapperCls}>
       <button
         type="button"
         onClick={() => setConfirming(true)}
         disabled={isPending}
-        className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+        className={buttonCls}
+        style={isMenuItem ? { color: '#13294B' } : undefined}
       >
         Settle entire bill · {formatRandCents(outstandingTotalCents)}
       </button>
       {resultMsg && !confirming && (
-        <p className="text-xs text-red-600 text-center">{resultMsg}</p>
+        <p className={isMenuItem ? 'text-xs text-red-600 px-2' : 'text-xs text-red-600 text-center'}>
+          {resultMsg}
+        </p>
       )}
 
       <ConfirmChargeDialog

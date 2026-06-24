@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/client';
+import { logoutAndRedirect } from '@/lib/auth/logout';
 
 interface Props {
   firstName: string;
@@ -116,11 +116,10 @@ export default function SettingsSheet({ firstName, lastName, email, phone, open:
     return () => { document.body.style.overflow = ''; };
   }, [open]);
 
-  async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    window.location.href = '/login';
-  }
+  // Logout is shared via lib/auth/logout — see comment there for why
+  // the redirect must run unconditionally (mobile network can stall the
+  // server-side signOut indefinitely; a try/finally + scope:'local'
+  // keeps the UX intact).
 
   const fullName = [firstName, lastName].filter(Boolean).join(' ');
 
@@ -222,7 +221,7 @@ export default function SettingsSheet({ firstName, lastName, email, phone, open:
 
               {/* Sign out */}
               <button
-                onClick={handleSignOut}
+                onClick={logoutAndRedirect}
                 className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition-colors"
               >
                 <LogOutIcon />

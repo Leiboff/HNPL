@@ -1,35 +1,29 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PayNowButton from './PayNowButton';
 import SettleEntireBillButton from './SettleEntireBillButton';
 import type { SelfSettleResult, SettleAllOutcome } from './settle-actions';
 
-// ─── Plan-level settle affordance — keyed on outstanding count ─────────
+// ─── Plan-level settle affordance — one calm CTA per card ──────────────
 //
-// Decides between a single "Pay now" CTA (when exactly one instalment
-// is outstanding — both buttons would be the SAME action for the SAME
-// amount, so we collapse them) and an expandable choice (when 2+ are
-// outstanding — "Pay next instalment" vs "Settle entire bill" now have
-// different amounts so the choice is meaningful).
+// PRESENTATION ONLY. Conditional logic is unchanged from the previous
+// build: 1 outstanding → single "Pay now" button; 2+ outstanding →
+// expandable "Manage payments" menu with two options at distinct
+// amounts. Routes to the same PayNowButton + SettleEntireBillButton
+// + ConfirmChargeDialog underneath, which call the same self-settle
+// actions backed by the same atomic claim primitive (RPC + claim/lock
+// untouched).
 //
-// PRESENTATION ONLY. Routes to the same PayNowButton +
-// SettleEntireBillButton + ConfirmChargeDialog underneath, which call
-// the same self-settle actions (selfSettleInstalment /
-// selfSettleEntirePlan) backed by the same atomic claim primitive
-// (attemptChargeInstalment with selfSettle:true and
-// claim_plan_for_settlement RPC). No payment-logic changes.
-//
-// The two amounts shown in the expanded choice come from the SAME
-// sources the existing components already use:
-//   • Pay next instalment   — bare instalment + accrued fees on the
-//                              next-due payment row (same as the per-row
-//                              PayNowButton's amount).
-//   • Settle entire bill    — pre-computed display total (sum of
-//                              outstanding amounts + fees) already
-//                              passed to SettleEntireBillButton; the
-//                              authoritative server-side sum is still
-//                              computed by the RPC at claim time.
+// What changed cosmetically:
+//   • "Settle…" → "Manage payments" with chevron. A complete, intentional
+//     label that says what it does — no truncated ellipsis-only text.
+//   • Revealed options are visually subordinate: lighter weight, tighter
+//     grouping, indented under the toggle with a left rule so they read
+//     as a sub-menu belonging to it, not as peer buttons.
+//   • Click-outside + Escape close the menu (real menu semantics).
+//   • Single-outstanding case stays a plain primary button — no menu
+//     when there's only one thing to do.
 
 type Props = {
   planId:                  string;
@@ -53,6 +47,21 @@ function formatRandCents(cents: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
+function ChevronDown({ open }: { open: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 20 20"
+      className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 8l5 5 5-5" />
+    </svg>
+  );
+}
+
 export default function PlanSettleAffordance({
   planId,
   outstandingCount,
@@ -61,17 +70,37 @@ export default function PlanSettleAffordance({
   settleInstalment,
   settleEntirePlan,
 }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState(false);
+  const containerRef    = useRef<HTMLDivElement>(null);
+
+  // Real menu semantics: close on outside tap + Escape. Only attach
+  // listeners while the menu is open so resting state has zero cost.
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(e: PointerEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
 
   if (outstandingCount === 0 || !nextOutstanding) {
     return null;
   }
 
-  // ── 1 outstanding: single "Pay now" CTA. "Settle entire bill" is NOT
-  //    rendered — it would be the same action for the same amount.
+  // ── 1 outstanding: plain primary "Pay now" — no menu needed.
   if (outstandingCount === 1) {
     return (
-      <div className="flex flex-col items-center gap-2">
+      <div className="flex justify-center">
         <PayNowButton
           paymentId={nextOutstanding.paymentId}
           amountToChargeCents={nextOutstanding.chargeAmountCents}
@@ -83,37 +112,39 @@ export default function PlanSettleAffordance({
     );
   }
 
-  // ── 2+ outstanding: single primary action that expands to a choice.
-  //    Collapsed by default; tap "Settle…" to reveal both options with
-  //    their distinct amounts.
+  // ── 2+ outstanding: single "Manage payments ▾" entry point. The
+  //    two options live inside an indented sub-menu so they read as
+  //    belonging to the toggle, not as peer CTAs.
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div ref={containerRef} className="flex flex-col items-center">
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+        style={{
+          background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)',
+        }}
       >
-        Settle…
-        <svg
-          aria-hidden
-          viewBox="0 0 20 20"
-          className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2.5}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 8l5 5 5-5" />
-        </svg>
+        Manage payments
+        <ChevronDown open={open} />
       </button>
 
-      {expanded && (
-        <div className="w-full max-w-xs flex flex-col items-stretch gap-2">
+      {open && (
+        <div
+          role="menu"
+          aria-label="Payment options"
+          className="mt-3 w-full max-w-xs pl-3 border-l-2 border-gray-200 flex flex-col gap-1.5"
+        >
+          {/* Pay-next-instalment — text link, not a button. Subordinate
+              to the toggle. Confirm gate (ConfirmChargeDialog) is the
+              actual commitment surface. */}
           <PayNowButton
             paymentId={nextOutstanding.paymentId}
             amountToChargeCents={nextOutstanding.chargeAmountCents}
             settleAction={settleInstalment}
-            variant="primary"
+            variant="menuItem"
             label={`Pay next instalment · ${formatRandCents(nextOutstanding.chargeAmountCents)}`}
           />
           <SettleEntireBillButton
@@ -121,6 +152,7 @@ export default function PlanSettleAffordance({
             outstandingTotalCents={outstandingTotalCents}
             outstandingCount={outstandingCount}
             settleAllAction={settleEntirePlan}
+            variant="menuItem"
           />
         </div>
       )}
