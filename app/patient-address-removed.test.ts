@@ -1,0 +1,107 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// ─── POPIA minimisation regression — patient physical address is gone ───
+//
+// Migration 0059 dropped six columns from `profiles`:
+//   address_line1, address_line2, suburb, city, province, postal_code
+//
+// These tests pin that no code path references the dropped columns
+// anywhere on the patient or admin surface, and that email/phone
+// (which are load-bearing for auth/OTP/notifications) are NOT touched.
+
+const ROOT = resolve(process.cwd());
+function read(p: string): string {
+  return readFileSync(resolve(ROOT, p), 'utf8');
+}
+
+const MIG_0059          = read('supabase/migrations/0059_drop_patient_address.sql');
+const PROFILE_PAGE      = read('app/patient/profile/page.tsx');
+const PROFILE_ACCORDION = read('app/patient/profile/ProfileAccordion.tsx');
+const PHONE_FORM        = read('app/patient/profile/PhoneForm.tsx');
+const ADMIN_CUSTOMER    = read('app/admin/customers/[patientId]/page.tsx');
+
+const DROPPED = [
+  'address_line1',
+  'address_line2',
+  // 'suburb', 'city', 'province' — these names appear on the PRACTICE
+  // schema too (practices.suburb, practices.city, practices.practice_province).
+  // Asserting on those bare names would false-positive on practice code.
+  // The two _line names + postal_code are unique to the patient context.
+  'postal_code',
+];
+
+describe('Migration 0059 — drops the six patient-address columns idempotently', () => {
+  it('declares DROP COLUMN IF EXISTS for every patient-address column', () => {
+    for (const col of ['address_line1', 'address_line2', 'suburb', 'city', 'province', 'postal_code']) {
+      const re = new RegExp(`ALTER TABLE profiles DROP COLUMN IF EXISTS ${col}\\b`);
+      expect(MIG_0059).toMatch(re);
+    }
+  });
+
+  it('does NOT drop email or phone (load-bearing for auth + OTP)', () => {
+    expect(MIG_0059).not.toMatch(/DROP COLUMN[^;]*\bemail\b/);
+    expect(MIG_0059).not.toMatch(/DROP COLUMN[^;]*\bphone\b/);
+  });
+});
+
+describe('Patient profile page — no longer reads or writes address fields', () => {
+  it('the profile SELECT does not include address columns', () => {
+    for (const col of DROPPED) {
+      expect(PROFILE_PAGE).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
+  });
+
+  it('the updateProfile server action accepts ONLY { phone } now', () => {
+    // The action's parameter type narrowed to { phone: string | null }.
+    expect(PROFILE_PAGE).toMatch(/data:\s*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
+  });
+
+  it('email + phone are still selected (we did NOT collateral-damage them)', () => {
+    expect(PROFILE_PAGE).toMatch(/\bemail\b/);
+    expect(PROFILE_PAGE).toMatch(/\bphone\b/);
+  });
+});
+
+describe('ProfileAccordion — the "Contact & billing address" section is gone', () => {
+  it('exposes a `phone` prop, not a `contactAddress` prop', () => {
+    expect(PROFILE_ACCORDION).toMatch(/phone:\s*React\.ReactNode/);
+    expect(PROFILE_ACCORDION).not.toMatch(/contactAddress/);
+  });
+
+  it('renders a "Phone number" section title (no "billing address" copy left)', () => {
+    expect(PROFILE_ACCORDION).toMatch(/title="Phone number"/);
+    expect(PROFILE_ACCORDION).not.toMatch(/billing address/i);
+  });
+});
+
+describe('PhoneForm — phone-only editor replaces AddressForm', () => {
+  it('captures phone only (no address fields)', () => {
+    expect(PHONE_FORM).toMatch(/type PhoneData\s*=\s*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
+    for (const col of DROPPED) {
+      expect(PHONE_FORM).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
+  });
+
+  it('the AddressForm.tsx file has been removed', () => {
+    expect(existsSync(resolve(ROOT, 'app/patient/profile/AddressForm.tsx'))).toBe(false);
+  });
+});
+
+describe('Admin customer detail page — does not display patient address', () => {
+  it('does not select the dropped columns', () => {
+    for (const col of DROPPED) {
+      expect(ADMIN_CUSTOMER).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
+  });
+
+  it('the "Contact & address" section title is gone — "Contact" only', () => {
+    expect(ADMIN_CUSTOMER).not.toMatch(/Contact & address/);
+  });
+
+  it('still shows email + phone (we kept the load-bearing fields)', () => {
+    expect(ADMIN_CUSTOMER).toMatch(/Field label="Email"/);
+    expect(ADMIN_CUSTOMER).toMatch(/Field label="Phone"/);
+  });
+});

@@ -1,51 +1,23 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import AddressForm from './AddressForm';
+import PhoneForm from './PhoneForm';
 import PasskeysSection from './PasskeysSection';
 import ProfileAccordion from './ProfileAccordion';
 import NotificationsToggle from './NotificationsToggle';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
 
-const VALID_PROVINCES = new Set([
-  'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal',
-  'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape',
-]);
-
-async function updateProfile(data: {
-  phone: string | null;
-  address_line1: string | null;
-  address_line2: string | null;
-  suburb: string | null;
-  city: string | null;
-  province: string | null;
-  postal_code: string | null;
-}): Promise<{ error: string | null }> {
+async function updateProfile(data: { phone: string | null }): Promise<{ error: string | null }> {
   'use server';
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Session expired. Please log in again.' };
 
-  if (data.postal_code && !/^\d{4,6}$/.test(data.postal_code)) {
-    return { error: 'Postal code must be 4–6 digits.' };
-  }
-  if (data.province && !VALID_PROVINCES.has(data.province)) {
-    return { error: 'Please select a valid South African province.' };
-  }
-
   const { error } = await supabase
     .from('profiles')
-    .update({
-      phone:         data.phone,
-      address_line1: data.address_line1,
-      address_line2: data.address_line2,
-      suburb:        data.suburb,
-      city:          data.city,
-      province:      data.province,
-      postal_code:   data.postal_code,
-    })
+    .update({ phone: data.phone })
     .eq('id', user.id);
 
   if (error) return { error: error.message };
@@ -71,7 +43,7 @@ export default async function ProfilePage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('first_name, last_name, email, phone, sa_id_number, address_line1, address_line2, suburb, city, province, postal_code')
+    .select('first_name, last_name, email, phone, sa_id_number')
     .eq('id', user.id)
     .single();
 
@@ -82,16 +54,6 @@ export default async function ProfilePage() {
   const lastName  = profile?.last_name  ?? '';
   const fullName  = [firstName, lastName].filter(Boolean).join(' ');
   const initials  = [firstName[0], lastName[0]].filter(Boolean).join('').toUpperCase() || '?';
-
-  const addressCurrent = {
-    phone:         profile?.phone         ?? null,
-    address_line1: profile?.address_line1 ?? null,
-    address_line2: profile?.address_line2 ?? null,
-    suburb:        profile?.suburb        ?? null,
-    city:          profile?.city          ?? null,
-    province:      profile?.province      ?? null,
-    postal_code:   profile?.postal_code   ?? null,
-  };
 
   const card = 'bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm';
 
@@ -111,7 +73,7 @@ export default async function ProfilePage() {
         </p>
       </div>
 
-      {/* ── Accordion: Personal details / Contact & billing / Security ── */}
+      {/* ── Accordion: Personal details / Phone / Notifications / Security ── */}
       <ProfileAccordion
         personalDetails={
           <div className="space-y-4">
@@ -130,7 +92,7 @@ export default async function ProfilePage() {
             </p>
           </div>
         }
-        contactAddress={<AddressForm current={addressCurrent} updateProfile={updateProfile} />}
+        phone={<PhoneForm current={{ phone: profile?.phone ?? null }} updateProfile={updateProfile} />}
         notifications={<NotificationsToggle />}
         passkeys={<PasskeysSection />}
       />

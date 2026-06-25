@@ -39,12 +39,6 @@ type Profile = {
   phone:          string | null;
   sa_id_number:   string | null;
   created_at:     string;
-  address_line1?: string | null;
-  address_line2?: string | null;
-  suburb?:        string | null;
-  city?:          string | null;
-  province?:      string | null;
-  postal_code?:   string | null;
 };
 
 type Plan = {
@@ -186,8 +180,7 @@ export default async function CustomerDetailPage({
   const { data: patientRaw } = await supabase
     .from('profiles')
     .select(`
-      id, first_name, last_name, email, phone, sa_id_number, created_at,
-      address_line1, address_line2, suburb, city, province, postal_code, role
+      id, first_name, last_name, email, phone, sa_id_number, created_at, role
     `)
     .eq('id', patientId)
     .maybeSingle();
@@ -575,17 +568,13 @@ export default async function CustomerDetailPage({
         )}
       </Section>
 
-      {/* ── Contact / address ────────────────────────────────────────── */}
-      <Section title="Contact & address">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
+      {/* ── Contact ───────────────────────────────────────────────────
+          Patient physical address dropped by migration 0059 (POPIA
+          minimisation — HNPL is a payment product, no delivery use). */}
+      <Section title="Contact">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
           <Field label="Email" value={patient.email} />
           <Field label="Phone" value={patient.phone ?? '—'} />
-          <Field label="Address line 1" value={patient.address_line1 ?? '—'} />
-          <Field label="Address line 2" value={patient.address_line2 ?? '—'} />
-          <Field label="Suburb"         value={patient.suburb        ?? '—'} />
-          <Field label="City"           value={patient.city          ?? '—'} />
-          <Field label="Province"       value={patient.province      ?? '—'} />
-          <Field label="Postal code"    value={patient.postal_code   ?? '—'} />
         </div>
       </Section>
 

@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import AccordionSection from '@/components/AccordionSection';
 
-type SectionKey = 'personal' | 'address' | 'notifications' | 'security';
+type SectionKey = 'personal' | 'phone' | 'notifications' | 'security';
 
 type Props = {
   /** Server-rendered Personal-details body (read-only fields + footnote). */
   personalDetails: React.ReactNode;
-  /** Client AddressForm with its own Save button. */
-  contactAddress: React.ReactNode;
+  /** Client PhoneForm — phone-only after migration 0059 dropped the
+      physical-address columns from profiles (POPIA minimisation). */
+  phone: React.ReactNode;
   /** Client NotificationsToggle (push on/off). */
   notifications: React.ReactNode;
   /** Client PasskeysSection (untouched). */
@@ -23,7 +24,7 @@ type Props = {
  */
 export default function ProfileAccordion({
   personalDetails,
-  contactAddress,
+  phone,
   notifications,
   passkeys,
 }: Props) {
@@ -49,11 +50,11 @@ export default function ProfileAccordion({
       </AccordionSection>
 
       <AccordionSection
-        title="Contact & billing address"
-        open={open.has('address')}
-        onToggle={() => toggle('address')}
+        title="Phone number"
+        open={open.has('phone')}
+        onToggle={() => toggle('phone')}
       >
-        {contactAddress}
+        {phone}
       </AccordionSection>
 
       <AccordionSection

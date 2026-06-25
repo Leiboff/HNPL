@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { isValidEmail, normalizePhoneZA, checkPassword } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { notifyAdminOfPracticeSignup } from '@/lib/email/notifyAdminOfPracticeSignup';
+import { geocodeAddress } from '@/lib/maps/geocode';
 
 // ─── Input / result shapes ───────────────────────────────────────────────────
 
@@ -187,6 +188,27 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     adminUserId = justCreated.id;
 
     // 2. Insert the practice (service-role, RLS bypass — see Phase 2 doc).
+    //
+    // Geocode the address server-side before insert so the explore
+    // page's "practices near me" filter can sort this new practice by
+    // distance from the patient. A geocode failure (Google down,
+    // ambiguous query, no key set in dev) is NON-FATAL — the practice
+    // is created with NULL coords, an admin can re-geocode or set
+    // coordinates manually later (see app/admin/practices/actions.ts).
+    const addressQuery = [
+      input.addressLine1.trim(),
+      input.suburb.trim(),
+      input.city.trim(),
+      input.province,
+      input.postalCode.trim(),
+    ].filter(Boolean).join(', ');
+    const geocode = await geocodeAddress(addressQuery);
+    if (!geocode.ok) {
+      console.warn('[signup/practice] geocode failed (non-fatal)', {
+        practiceId, reason: geocode.reason,
+      });
+    }
+
     const { error: practiceErr } = await svc.from('practices').insert({
       id:                           practiceId,
       owner_id:                     adminUserId,
@@ -201,6 +223,8 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       city:                         input.city.trim(),
       practice_province:            input.province,
       postal_code:                  input.postalCode.trim(),
+      latitude:                     geocode.ok ? geocode.latitude  : null,
+      longitude:                    geocode.ok ? geocode.longitude : null,
       status:                       'pending',
     });
     if (practiceErr) throw new Error(`Practice: ${practiceErr.message}`);

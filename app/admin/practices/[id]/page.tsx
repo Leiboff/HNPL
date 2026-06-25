@@ -1,8 +1,15 @@
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { approvePractice, suspendPractice } from '../actions';
+import {
+  approvePractice,
+  suspendPractice,
+  regeocodePractice,
+  setPracticeCoordinates,
+  clearPracticeCoordinates,
+} from '../actions';
 import PracticeStatusActions from './PracticeStatusActions';
+import PracticeCoordsPanel from './PracticeCoordsPanel';
 import { formatRand, formatDateStr } from '../../_lib/format';
 import CollectionStatusBadge, { classifyCollection } from '../../_components/CollectionStatusBadge';
 import {
@@ -63,6 +70,8 @@ type PracticeFull = {
   created_at:                    string;
   approved_at:                   string | null;
   approved_by:                   string | null;
+  latitude:                      number | null;
+  longitude:                     number | null;
 };
 
 type MemberFull = {
@@ -149,6 +158,7 @@ export default async function PracticeDetailPage({
       practice_registration_number, hpcsa_number,
       email, phone,
       address_line1, address_line2, suburb, city, practice_province, postal_code,
+      latitude, longitude,
       bank_name, bank_account_number, branch_code, account_holder, account_type,
       fee_percent, owner_id,
       created_at, approved_at, approved_by
@@ -469,6 +479,20 @@ export default async function PracticeDetailPage({
           <Field label="Phone" value={practice.phone || '—'} mono />
           <Field label="Full address" value={fullAddress(practice)} />
         </Grid>
+      </Section>
+
+      {/* Coordinates — drives the patient "practices near me" filter.
+          Set by Google Geocoding at signup; admin can re-geocode or
+          enter manually here. */}
+      <Section title="Location coordinates">
+        <PracticeCoordsPanel
+          practiceId={practice.id}
+          latitude={practice.latitude}
+          longitude={practice.longitude}
+          regeocodeAction={regeocodePractice}
+          setCoordsAction={setPracticeCoordinates}
+          clearCoordsAction={clearPracticeCoordinates}
+        />
       </Section>
 
       {/* Owner */}
