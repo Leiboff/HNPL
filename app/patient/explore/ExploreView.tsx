@@ -2,8 +2,8 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { haversineKm, formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
+import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import type { PracticeCard } from './page';
-import type { SuburbGeocodeResult } from './actions';
 
 // ─── Explore practices — geolocation + suburb fallback + Haversine ─────
 //
@@ -15,9 +15,10 @@ import type { SuburbGeocodeResult } from './actions';
 //      distance and hides practices beyond the selected radius.
 //   3. Denied / unavailable / dismissed → leave userLocation null; the
 //      page shows all practices alphabetically AND a "search by suburb"
-//      text input. Submitting that calls geocodeSuburb server-side
-//      (Google API key stays on the server) and sets userLocation
-//      from the result.
+//      Places (New) Autocomplete input (locality-biased). On selection,
+//      the place's coords drive the same Haversine sort. No server-side
+//      Places call — the picker is client-side; the key is the
+//      domain-restricted Places key.
 //
 // POPIA: userLocation is component state only — never written to the
 // DB. Lives for the session, dies when the page unmounts.
@@ -39,11 +40,10 @@ type GeoState =
   | { kind: 'denied' };
 
 type Props = {
-  practices:      PracticeCard[];
-  geocodeSuburb:  (query: string) => Promise<SuburbGeocodeResult>;
+  practices: PracticeCard[];
 };
 
-export default function ExploreView({ practices, geocodeSuburb }: Props) {
+export default function ExploreView({ practices }: Props) {
   const [search,    setSearch]    = useState('');
   const [specialty, setSpecialty] = useState<string | null>(null);
   const [radiusKm,  setRadiusKm]  = useState<number>(DEFAULT_RADIUS);
@@ -59,9 +59,9 @@ export default function ExploreView({ practices, geocodeSuburb }: Props) {
     return { kind: 'requesting' };
   });
 
-  const [suburbInput,  setSuburbInput]  = useState('');
-  const [suburbState,  setSuburbState]  = useState<'idle' | 'loading' | 'failed'>('idle');
-  const [suburbError,  setSuburbError]  = useState<string | null>(null);
+  // suburb-search state: just the picked label. Coords arrive via the
+  // PlacesAutocomplete onSelect and feed straight into setGeo — no
+  // server-side geocode action needed.
 
   // Fire the geolocation prompt once on mount, but only if the lazy
   // initializer above already put us in 'requesting' (i.e. the API is
@@ -89,31 +89,15 @@ export default function ExploreView({ practices, geocodeSuburb }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function onSuburbSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSuburbError(null);
-    if (!suburbInput.trim()) return;
-
-    setSuburbState('loading');
-    const r = await geocodeSuburb(suburbInput);
-    if (r.ok) {
-      setGeo({
-        kind:     'granted',
-        location: { latitude: r.latitude, longitude: r.longitude },
-        source:   'suburb',
-        label:    r.formatted,
-      });
-      setSuburbState('idle');
-    } else {
-      setSuburbState('failed');
-      setSuburbError(
-        r.reason === 'no_results'      ? "Couldn't find that suburb. Try a nearby place name." :
-        r.reason === 'not_configured'  ? 'Location search not available right now.' :
-        r.reason === 'timeout'         ? 'Location search timed out. Try again.' :
-        r.reason === 'empty'           ? 'Enter a suburb name.' :
-                                         'Location search failed. Try again.',
-      );
-    }
+  // Picker-driven suburb selection. Coords come from the place's
+  // location field; no geocode action needed.
+  function onSuburbPicked(latitude: number, longitude: number, label: string) {
+    setGeo({
+      kind:     'granted',
+      location: { latitude, longitude },
+      source:   'suburb',
+      label,
+    });
   }
 
   const specialties = useMemo(() => {
@@ -175,14 +159,7 @@ export default function ExploreView({ practices, geocodeSuburb }: Props) {
   return (
     <div className="space-y-5">
       {/* ── Location card — sets the basis for nearest-first sort ───── */}
-      <LocationCard
-        geo={geo}
-        suburbInput={suburbInput}
-        setSuburbInput={setSuburbInput}
-        suburbState={suburbState}
-        suburbError={suburbError}
-        onSuburbSubmit={onSuburbSubmit}
-      />
+      <LocationCard geo={geo} onSuburbPicked={onSuburbPicked} />
 
       {/* ── Radius preset — only shown when we have a location ────── */}
       {geo.kind === 'granted' && (
@@ -282,18 +259,10 @@ export default function ExploreView({ practices, geocodeSuburb }: Props) {
 
 function LocationCard({
   geo,
-  suburbInput,
-  setSuburbInput,
-  suburbState,
-  suburbError,
-  onSuburbSubmit,
+  onSuburbPicked,
 }: {
   geo:             GeoState;
-  suburbInput:     string;
-  setSuburbInput:  (v: string) => void;
-  suburbState:     'idle' | 'loading' | 'failed';
-  suburbError:     string | null;
-  onSuburbSubmit:  (e: React.FormEvent) => void;
+  onSuburbPicked:  (lat: number, lng: number, label: string) => void;
 }) {
   if (geo.kind === 'idle' || geo.kind === 'requesting') {
     return (
@@ -324,35 +293,22 @@ function LocationCard({
     );
   }
 
-  // denied → suburb fallback
+  // denied → suburb fallback via Google Places (New) Autocomplete.
+  // Locality-biased so "Rosebank" surfaces the area, not 40 individual
+  // street addresses. Coords come from Place Details on selection.
   return (
     <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
       <p className="text-sm font-medium" style={{ color: '#13294B' }}>
         Search by suburb
       </p>
-      <p className="mt-1 text-xs text-gray-500">
+      <p className="mt-1 text-xs text-gray-500 mb-3">
         Or enable location in your browser to see practices near you.
       </p>
-      <form onSubmit={onSuburbSubmit} className="mt-3 flex gap-2">
-        <input
-          type="text"
-          value={suburbInput}
-          onChange={(e) => setSuburbInput(e.target.value)}
-          placeholder="e.g. Rosebank"
-          className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]"
-        />
-        <button
-          type="submit"
-          disabled={suburbState === 'loading'}
-          className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-        >
-          {suburbState === 'loading' ? 'Searching…' : 'Search'}
-        </button>
-      </form>
-      {suburbError && (
-        <p className="mt-2 text-xs text-red-600">{suburbError}</p>
-      )}
+      <PlacesAutocomplete
+        variant="locality"
+        placeholder="e.g. Rosebank"
+        onSelect={(place) => onSuburbPicked(place.latitude, place.longitude, place.formattedAddress)}
+      />
     </div>
   );
 }

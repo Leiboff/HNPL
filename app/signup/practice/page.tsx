@@ -9,17 +9,14 @@ import {
   focusAndScrollTo,
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
+import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
+import { parseAddressComponents } from '@/lib/maps/places';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SPECIALTIES = [
   'General Practice', 'Dentistry', 'Physiotherapy', 'Optometry',
   'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
-];
-
-const PROVINCES = [
-  'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal',
-  'Limpopo', 'Mpumalanga', 'Northern Cape', 'North West', 'Western Cape',
 ];
 
 const INPUT_BASE =
@@ -81,12 +78,19 @@ const BLANK = {
   practiceName:      '',
   specialty:         '',
   practiceRegNumber: '',
+  // Address — populated by a Places (New) selection. The picker writes
+  // addressLine1 (= formattedAddress), suburb/city/province/postalCode
+  // (parsed from addressComponents), and latitude/longitude (from the
+  // place's location). addressLine2 is the only field the user types
+  // by hand (Places doesn't capture unit/suite).
   addressLine1:      '',
   addressLine2:      '',
   suburb:            '',
   city:              '',
   province:          '',
   postalCode:        '',
+  latitude:          null as number | null,
+  longitude:         null as number | null,
 
   // Admin
   firstName:         '',
@@ -109,11 +113,15 @@ type Fields = typeof BLANK;
 const SCHEMA: FieldsSchema<Fields> = {
   practiceName: { validate: (v) => v.practiceName.trim() ? null : 'Practice name is required.' },
   specialty:    { validate: (v) => v.specialty ? null : 'Specialty is required.' },
-  addressLine1: { validate: (v) => v.addressLine1.trim() ? null : 'Street address is required.' },
-  suburb:       { validate: (v) => v.suburb.trim() ? null : 'Suburb is required.' },
-  city:         { validate: (v) => v.city.trim() ? null : 'City is required.' },
-  province:     { validate: (v) => v.province ? null : 'Province is required.' },
-  postalCode:   { validate: (v) => v.postalCode.trim() ? null : 'Postal code is required.' },
+  // Address is required ONLY via the Places picker — confirmed when
+  // addressLine1 (formatted) AND latitude are populated. Typing without
+  // selecting a suggestion leaves latitude null and fails validation.
+  addressLine1: {
+    validate: (v) =>
+      v.addressLine1.trim() && v.latitude != null
+        ? null
+        : 'Select an address from the dropdown.',
+  },
   firstName:    { validate: (v) => v.firstName.trim() ? null : 'First name is required.' },
   lastName:     { validate: (v) => v.lastName.trim() ? null : 'Last name is required.' },
   email:        { validate: (v) => isValidEmail(v.email) ? null : 'Enter a valid email address.' },
@@ -181,6 +189,8 @@ export default function PracticeSignupPage() {
       city:               fields.city,
       province:           fields.province,
       postalCode:         fields.postalCode,
+      latitude:           fields.latitude,
+      longitude:          fields.longitude,
       firstName:          fields.firstName,
       lastName:           fields.lastName,
       email:              fields.email,
@@ -282,21 +292,35 @@ export default function PracticeSignupPage() {
             </Field>
           </Section>
 
-          {/* ── Practice address ───────────────────────────────── */}
+          {/* ── Practice address — Google Places (New) picker ──────
+              Type-ahead pulls real ZA addresses from Places Autocomplete.
+              On selection: addressLine1 = formatted address, lat/long
+              from the place's location, suburb/city/province/postalCode
+              parsed from addressComponents. addressLine2 (unit/suite)
+              stays a free-text input — Places doesn't capture it. */}
           <Section title="Practice address">
-            <Field label="Street address" required error={errors.addressLine1 ?? null}>
-              <input
-                id="practice-addressLine1"
-                className={inputClass(!!errors.addressLine1)}
-                type="text"
-                value={fields.addressLine1}
-                onChange={setText('addressLine1')}
-                onBlur={onBlur('addressLine1')}
-                aria-invalid={!!errors.addressLine1}
-                placeholder="123 Main Street"
+            <Field label="Search for the practice address" required error={errors.addressLine1 ?? null}>
+              <PlacesAutocomplete
+                variant="address"
+                inputId="practice-addressLine1"
+                initialValue={fields.addressLine1}
+                placeholder="Start typing — e.g. 1 Sandton Drive"
+                onSelect={(place) => {
+                  const parsed = parseAddressComponents(place.addressComponents);
+                  setFields((f) => ({
+                    ...f,
+                    addressLine1: place.formattedAddress,
+                    suburb:       parsed.suburb     ?? '',
+                    city:         parsed.city       ?? '',
+                    province:     parsed.province   ?? '',
+                    postalCode:   parsed.postalCode ?? '',
+                    latitude:     place.latitude,
+                    longitude:    place.longitude,
+                  }));
+                }}
               />
             </Field>
-            <Field label="Address line 2">
+            <Field label="Unit / suite">
               <input
                 id="practice-addressLine2"
                 className={inputClass(false)}
@@ -306,59 +330,12 @@ export default function PracticeSignupPage() {
                 placeholder="Suite 4B"
               />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Suburb" required error={errors.suburb ?? null}>
-                <input
-                  id="practice-suburb"
-                  className={inputClass(!!errors.suburb)}
-                  type="text"
-                  value={fields.suburb}
-                  onChange={setText('suburb')}
-                  onBlur={onBlur('suburb')}
-                  aria-invalid={!!errors.suburb}
-                  placeholder="Sandton"
-                />
-              </Field>
-              <Field label="City" required error={errors.city ?? null}>
-                <input
-                  id="practice-city"
-                  className={inputClass(!!errors.city)}
-                  type="text"
-                  value={fields.city}
-                  onChange={setText('city')}
-                  onBlur={onBlur('city')}
-                  aria-invalid={!!errors.city}
-                  placeholder="Johannesburg"
-                />
-              </Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Province" required error={errors.province ?? null}>
-                <select
-                  id="practice-province"
-                  className={inputClass(!!errors.province)}
-                  value={fields.province}
-                  onChange={setText('province')}
-                  onBlur={onBlur('province')}
-                  aria-invalid={!!errors.province}
-                >
-                  <option value="">Select…</option>
-                  {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </Field>
-              <Field label="Postal code" required error={errors.postalCode ?? null}>
-                <input
-                  id="practice-postalCode"
-                  className={inputClass(!!errors.postalCode)}
-                  type="text"
-                  value={fields.postalCode}
-                  onChange={setText('postalCode')}
-                  onBlur={onBlur('postalCode')}
-                  aria-invalid={!!errors.postalCode}
-                  placeholder="2196"
-                />
-              </Field>
-            </div>
+            {fields.addressLine1 && fields.latitude != null && (
+              <p className="text-[11px] text-gray-500">
+                Parsed: {[fields.suburb, fields.city, fields.province, fields.postalCode]
+                  .filter(Boolean).join(' · ') || '—'}
+              </p>
+            )}
           </Section>
 
           {/* ── Admin account ──────────────────────────────────── */}

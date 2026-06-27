@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import ExploreView from './ExploreView';
-import { geocodeSuburb } from './actions';
 
 // ─── Explore practices ─────────────────────────────────────────────────
 //
@@ -42,7 +41,7 @@ export default async function ExplorePage() {
       <p className="text-sm text-gray-500 mb-6">
         Allow location to see practices near you, or search by suburb.
       </p>
-      <ExploreView practices={practices} geocodeSuburb={geocodeSuburb} />
+      <ExploreView practices={practices} />
     </div>
   );
 }

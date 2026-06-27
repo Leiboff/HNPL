@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { geocodeAddress, isWithinSouthAfrica, SA_BOUNDS } from '@/lib/maps/geocode';
+import { isWithinSouthAfrica, SA_BOUNDS } from '@/lib/maps/saBounds';
 
 // ─── Server-side admin guard ─────────────────────────────────────────────────
 //
@@ -103,67 +103,66 @@ export async function suspendPractice(practiceId: string): Promise<{ error: stri
   return { error: null };
 }
 
-// ─── regeocodePractice — re-run geocoding from the stored address ──────
+// ─── updatePracticeAddressFromPlace — admin re-pick via Places (New) ───
 //
-// Used when:
-//   • signup-time geocode failed (Google down / dev had no key set);
-//   • an admin manually updated the practice address (currently
-//     out-of-band; this is the recovery hook).
+// Replaces the old "re-geocode from stored address" flow. The admin
+// uses the Places (New) Autocomplete in the coords panel to pick the
+// correct place; this action writes its coords + formatted address
+// (and parsed sub-fields) back to the practice row.
 //
-// Returns a clear status the admin UI surfaces — geocode failures
-// must NOT block other admin actions on the practice.
+// Cost-correctness: the picker on the client owns the Places session
+// token; this action accepts the resolved place data and just writes.
+// No server-side Places call → no second key, no double billing.
 
-export type RegeocodeResult =
-  | { ok: true;  latitude: number; longitude: number }
-  | { ok: false; error: string };
+export type PlacePickPayload = {
+  latitude:        number;
+  longitude:       number;
+  formattedAddress: string;
+  suburb?:         string | null;
+  city?:           string | null;
+  province?:       string | null;
+  postalCode?:     string | null;
+};
 
-export async function regeocodePractice(practiceId: string): Promise<RegeocodeResult> {
+export async function updatePracticeAddressFromPlace(
+  practiceId: string,
+  place:      PlacePickPayload,
+): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
-  if (!guard.ok) return { ok: false, error: guard.error };
+  if (!guard.ok) return { error: guard.error };
 
-  // Read the address from the practice row (service-role; RLS bypass
-  // is fine — guardAdmin gated access).
-  const client = svc();
-  const { data: practice, error: readErr } = await client
+  // SA-range backstop. Real Google ZA-restricted Places shouldn't trip
+  // this, but a tampered client payload could.
+  if (!Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) {
+    return { error: 'Latitude and longitude must be numbers.' };
+  }
+  if (!isWithinSouthAfrica(place.latitude, place.longitude)) {
+    return {
+      error:
+        `Coordinates outside South Africa. Expected lat ∈ [${SA_BOUNDS.latMin}, ${SA_BOUNDS.latMax}], ` +
+        `lng ∈ [${SA_BOUNDS.lngMin}, ${SA_BOUNDS.lngMax}].`,
+    };
+  }
+  if (!place.formattedAddress.trim()) {
+    return { error: 'Formatted address is empty.' };
+  }
+
+  const { error } = await svc()
     .from('practices')
-    .select('address_line1, suburb, city, practice_province, postal_code')
-    .eq('id', practiceId)
-    .maybeSingle();
-
-  if (readErr || !practice) {
-    return { ok: false, error: 'Practice not found.' };
-  }
-
-  const addressQuery = [
-    practice.address_line1,
-    practice.suburb,
-    practice.city,
-    practice.practice_province,
-    practice.postal_code,
-  ].filter(Boolean).join(', ');
-
-  if (!addressQuery) {
-    return { ok: false, error: 'No address on file to geocode.' };
-  }
-
-  const geocode = await geocodeAddress(addressQuery);
-  if (!geocode.ok) {
-    const reason =
-      geocode.reason === 'not_configured' ? 'Geocoding not configured (GOOGLE_MAPS_API_KEY missing).' :
-      geocode.reason === 'no_results'     ? 'Google found no match for this address. Enter coordinates manually.' :
-      geocode.reason === 'timeout'        ? 'Geocoding timed out. Please try again.' :
-                                            'Geocoding service unavailable. Please try again.';
-    return { ok: false, error: reason };
-  }
-
-  const { error: updErr } = await client
-    .from('practices')
-    .update({ latitude: geocode.latitude, longitude: geocode.longitude })
+    .update({
+      latitude:           place.latitude,
+      longitude:          place.longitude,
+      address_line1:      place.formattedAddress,
+      suburb:             place.suburb     ?? null,
+      city:               place.city       ?? null,
+      practice_province:  place.province   ?? null,
+      postal_code:        place.postalCode ?? null,
+    })
     .eq('id', practiceId);
-  if (updErr) return { ok: false, error: updErr.message };
+  if (error) return { error: error.message };
 
   revalidatePath(`/admin/practices/${practiceId}`);
-  return { ok: true, latitude: geocode.latitude, longitude: geocode.longitude };
+  return { error: null };
 }
 
 // ─── setPracticeCoordinates — admin manual override ────────────────────

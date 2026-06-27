@@ -4,7 +4,7 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import {
   approvePractice,
   suspendPractice,
-  regeocodePractice,
+  updatePracticeAddressFromPlace,
   setPracticeCoordinates,
   clearPracticeCoordinates,
 } from '../actions';
@@ -489,7 +489,7 @@ export default async function PracticeDetailPage({
           practiceId={practice.id}
           latitude={practice.latitude}
           longitude={practice.longitude}
-          regeocodeAction={regeocodePractice}
+          updateFromPlaceAction={updatePracticeAddressFromPlace}
           setCoordsAction={setPracticeCoordinates}
           clearCoordsAction={clearPracticeCoordinates}
         />

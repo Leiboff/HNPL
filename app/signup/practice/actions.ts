@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { isValidEmail, normalizePhoneZA, checkPassword } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { notifyAdminOfPracticeSignup } from '@/lib/email/notifyAdminOfPracticeSignup';
-import { geocodeAddress } from '@/lib/maps/geocode';
+import { isWithinSouthAfrica } from '@/lib/maps/saBounds';
 
 // ─── Input / result shapes ───────────────────────────────────────────────────
 
@@ -14,12 +14,19 @@ export type CreatePracticeInput = {
   practiceName:       string;
   specialty:          string;
   practiceRegNumber:  string;  // BHF "Practice number (PR)" — optional
+  // Address: client posts what the Places (New) picker captured. The
+  // formatted address goes into addressLine1; suburb/city/province/
+  // postalCode are parsed from the place's addressComponents on the
+  // client (lib/maps/places parseAddressComponents). lat/long come
+  // straight from the place's location field — no server-side geocode.
   addressLine1:       string;
   addressLine2:       string;
   suburb:             string;
   city:               string;
   province:           string;
   postalCode:         string;
+  latitude:           number | null;
+  longitude:          number | null;
 
   // Admin (the human signing up)
   firstName:          string;
@@ -189,24 +196,20 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
 
     // 2. Insert the practice (service-role, RLS bypass — see Phase 2 doc).
     //
-    // Geocode the address server-side before insert so the explore
-    // page's "practices near me" filter can sort this new practice by
-    // distance from the patient. A geocode failure (Google down,
-    // ambiguous query, no key set in dev) is NON-FATAL — the practice
-    // is created with NULL coords, an admin can re-geocode or set
-    // coordinates manually later (see app/admin/practices/actions.ts).
-    const addressQuery = [
-      input.addressLine1.trim(),
-      input.suburb.trim(),
-      input.city.trim(),
-      input.province,
-      input.postalCode.trim(),
-    ].filter(Boolean).join(', ');
-    const geocode = await geocodeAddress(addressQuery);
-    if (!geocode.ok) {
-      console.warn('[signup/practice] geocode failed (non-fatal)', {
-        practiceId, reason: geocode.reason,
+    // Coordinates come from the client's Places (New) picker (the
+    // `latitude` / `longitude` fields on the input). SA-range backstop
+    // here protects against a future client bug or hand-rolled POST
+    // that sets bogus coords. Out-of-range → NULL coords + warn, but
+    // the practice is still created so signup never blocks on a
+    // location glitch.
+    let lat: number | null = input.latitude;
+    let lng: number | null = input.longitude;
+    if (lat != null && lng != null && !isWithinSouthAfrica(lat, lng)) {
+      console.warn('[signup/practice] coords from client outside SA range — stored as NULL', {
+        practiceId, lat, lng,
       });
+      lat = null;
+      lng = null;
     }
 
     const { error: practiceErr } = await svc.from('practices').insert({
@@ -219,12 +222,12 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       phone:                        normalizedPhone,
       address_line1:                input.addressLine1.trim(),
       address_line2:                input.addressLine2.trim() || null,
-      suburb:                       input.suburb.trim(),
-      city:                         input.city.trim(),
-      practice_province:            input.province,
-      postal_code:                  input.postalCode.trim(),
-      latitude:                     geocode.ok ? geocode.latitude  : null,
-      longitude:                    geocode.ok ? geocode.longitude : null,
+      suburb:                       input.suburb.trim() || null,
+      city:                         input.city.trim() || null,
+      practice_province:            input.province || null,
+      postal_code:                  input.postalCode.trim() || null,
+      latitude:                     lat,
+      longitude:                    lng,
       status:                       'pending',
     });
     if (practiceErr) throw new Error(`Practice: ${practiceErr.message}`);
