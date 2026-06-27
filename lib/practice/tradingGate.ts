@@ -26,7 +26,10 @@ export const PENDING_APPROVAL_MESSAGE =
 export const NO_PROVIDERS_MESSAGE =
   'Add at least one provider (the doctor, dentist, or practitioner) to your practice before creating a bill. You can do this on Team.';
 
-export type TradingGateReason = 'pending_approval' | 'no_providers';
+export const NO_BANKING_MESSAGE =
+  'This branch has no banking on file and no group banking to fall back on. Add banking on the branch or on the brand before creating bills.';
+
+export type TradingGateReason = 'pending_approval' | 'no_providers' | 'no_banking';
 
 export type TradingGateResult =
   | { ok: true }
@@ -48,14 +51,20 @@ export type TradingGateResult =
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type TradingGateSupabase = any;
 
+import { resolvePayoutBanking } from './banking';
+
 export async function checkTradingGate(
   supabase: TradingGateSupabase,
   practiceId: string,
 ): Promise<TradingGateResult> {
   // ── Condition (a): status = 'approved' ──────────────────────────────────
+  // Also reads group_id so we know whether to apply the branch-only
+  // banking precondition below. Standalone (group_id NULL) keeps the
+  // existing two-condition gate verbatim — adding the column to the
+  // SELECT does not change any predicate that already exists.
   const { data: practice, error: practiceError } = await supabase
     .from('practices')
-    .select('status')
+    .select('status, group_id')
     .eq('id', practiceId)
     .single();
 
@@ -80,6 +89,17 @@ export async function checkTradingGate(
 
   if (providerError || !providers || providers.length === 0) {
     return { ok: false, reason: 'no_providers', message: NO_PROVIDERS_MESSAGE };
+  }
+
+  // ── Condition (c) — BRANCHES ONLY: resolved banking exists ──────────────
+  // Standalone practices (group_id NULL) skip this so the existing
+  // two-condition gate stays byte-for-byte unchanged. For a branch,
+  // the resolver checks own banking, then group banking, then 'none'.
+  if (practice.group_id) {
+    const banking = await resolvePayoutBanking(supabase, practiceId);
+    if (banking.source === 'none') {
+      return { ok: false, reason: 'no_banking', message: NO_BANKING_MESSAGE };
+    }
   }
 
   return { ok: true };

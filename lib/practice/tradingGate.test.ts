@@ -3,6 +3,7 @@ import {
   checkTradingGate,
   PENDING_APPROVAL_MESSAGE,
   NO_PROVIDERS_MESSAGE,
+  NO_BANKING_MESSAGE,
   type TradingGateSupabase,
 } from './tradingGate';
 
