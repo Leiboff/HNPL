@@ -5,14 +5,14 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isWithinSouthAfrica } from '@/lib/maps/saBounds';
 
-// ─── Brand-admin server actions (Phase 1 minimal) ──────────────────────
+// ─── Brand-admin server actions ────────────────────────────────────────
 //
 // One action surface owned by brand-admins: createBranch (which
-// creates a pending practice under a group they admin). The action
+// creates a pending practice under a brand they admin). The action
 // uses the service-role client for the INSERT because:
 //   • RLS on practices has no permissive INSERT policy for non-owners
 //     (a brand-admin is not the practice's owner_id at this point —
-//     they're creating the branch ON BEHALF of the group).
+//     they're creating the practice ON BEHALF of the brand).
 //   • The 0054 column-lock trigger fires only on UPDATE, not INSERT,
 //     so a service-role INSERT with status='pending' is the correct
 //     posture — the trigger then blocks any subsequent status change
@@ -20,11 +20,12 @@ import { isWithinSouthAfrica } from '@/lib/maps/saBounds';
 //
 // Approval continues to flow through the existing platform-admin
 // path (app/admin/practices/actions.ts approvePractice). Brand-admin
-// never approves their own branch.
+// never approves their own practice.
 //
-// Standalone practices (group_id NULL) are untouched by this file —
-// these actions only apply when the caller is a brand-admin of a
-// specific group.
+// Post-0062: every customer account is rooted at a brand. The solo
+// signup flow creates a 1-practice brand silently and the brand is
+// invisible at n=1; this action is what the brand-owner calls when
+// they add their second (or third, ...) practice from /brand/new-practice.
 
 type GuardOk  = { ok: true;  userId: string };
 type GuardErr = { ok: false; error: string };

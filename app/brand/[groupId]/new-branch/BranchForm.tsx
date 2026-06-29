@@ -68,7 +68,7 @@ export default function BranchForm({ groupId, createAction }: Props) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm p-5">
-      <input className={inputCls} placeholder="Branch name"           value={name}  onChange={(e) => setName(e.target.value)} />
+      <input className={inputCls} placeholder="Practice name"         value={name}  onChange={(e) => setName(e.target.value)} />
       <select className={inputCls} value={specialty} onChange={(e) => setSpecialty(e.target.value)}>
         <option value="">Select specialty…</option>
         {SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -77,10 +77,10 @@ export default function BranchForm({ groupId, createAction }: Props) {
       <input className={inputCls} placeholder="Phone (optional)"      value={phone} onChange={(e) => setPhone(e.target.value)} />
 
       <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">Branch address</label>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Practice address</label>
         <PlacesAutocomplete
           variant="address"
-          placeholder="Start typing the branch address…"
+          placeholder="Start typing the practice address…"
           initialValue={addressLine1}
           onSelect={(place) => {
             const parsed = parseAddressComponents(place.addressComponents);
@@ -111,7 +111,7 @@ export default function BranchForm({ groupId, createAction }: Props) {
         className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
       >
-        {isPending ? 'Creating…' : 'Create branch (pending approval)'}
+        {isPending ? 'Creating…' : 'Create practice (pending approval)'}
       </button>
     </form>
   );

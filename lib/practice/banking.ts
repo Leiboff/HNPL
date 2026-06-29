@@ -1,17 +1,22 @@
 // ─── Banking resolution — group-or-branch flexibility ──────────────────
 //
-// Resolves which banking row to settle a branch's payouts against:
+// Resolves which banking row to settle a practice's payouts against:
 //   • If the practice has its own banking populated → use it
-//     (per-branch billing — e.g. Lamberti chain).
-//   • Else fall back to the GROUP's banking
-//     (central billing — e.g. a retail chain).
+//     (per-practice billing — solo practitioner OR a brand-with-many
+//     where each branch bills itself).
+//   • Else fall back to the BRAND's banking
+//     (central billing — e.g. a retail chain that bills centrally).
 //   • If neither → no banking; not settleable.
 //
-// Standalone practices (group_id = NULL) ALWAYS resolve to "branch"
-// (their own banking) — the group lookup short-circuits when there's
-// no group_id. The behaviour for standalone is byte-for-byte
-// equivalent to "read the practice row directly" — same columns, same
-// fallback rules — so the prime directive (standalone unchanged) holds.
+// Post-0062: every practice belongs to a brand (group_id NOT NULL).
+// The pre-0062 "standalone short-circuit" (no group_id → return
+// source:none) is gone — it became unreachable once the column was
+// made NOT NULL. The shape of the answer is unchanged for the solo
+// case: solo practitioner with their own banking still resolves to
+// source:'branch'; solo practitioner with NO banking (and a brand row
+// whose banking is also empty — the default for an auto-created
+// brand) still resolves to source:'none'. The new model is just one
+// code path instead of two.
 //
 // The function accepts a Supabase client through a structural type so
 // the caller can pass either the SSR or service-role client. Same
@@ -38,11 +43,16 @@ function hasBanking(b: Partial<BankingFields> | null | undefined): boolean {
 }
 
 /**
- * Resolve banking for a practice's payouts. Returns the BRANCH's own
- * banking when populated; falls back to the GROUP's banking when the
- * branch belongs to a group AND has no own banking; returns 'none'
- * when neither is set. Standalone practices (group_id NULL) skip the
- * group lookup entirely.
+ * Resolve banking for a practice's payouts. Returns the PRACTICE's
+ * own banking when populated; falls back to the BRAND's banking when
+ * the practice has no own banking; returns 'none' when neither is set.
+ *
+ * Post-0062: every practice has a group_id (NOT NULL at the DB layer).
+ * The solo case is "brand of n=1 practices where the brand banking
+ * row is usually empty" — the resolver returns source:'branch' for
+ * the practice's own banking and the user never sees the word "brand"
+ * in their dashboard. The "source:'group'" branch only meaningfully
+ * fires for multi-branch brands that have centralised banking.
  *
  * The "has banking" predicate is: bank_name + bank_account_number
  * both non-empty. branch_code etc. are nice-to-have for the actual
@@ -61,7 +71,8 @@ export async function resolvePayoutBanking(
 
   if (!practice) return { source: 'none' };
 
-  // Branch's own banking wins when set.
+  // Practice's own banking wins when set — solo practitioner OR a
+  // branch in a brand that bills per-location.
   if (hasBanking(practice)) {
     return {
       source: 'branch',
@@ -75,11 +86,15 @@ export async function resolvePayoutBanking(
     };
   }
 
-  // Standalone (group_id NULL) and no own banking → 'none'. The group
-  // lookup below short-circuits here, so standalone is unchanged.
+  // No own banking. Every practice now has a brand (group_id NOT NULL
+  // post-0062) — defensively skip the lookup if a snapshot/restore
+  // has somehow surfaced a NULL row, so the helper still degrades
+  // safely to source:'none' in that pathological case.
   if (!practice.group_id) return { source: 'none' };
 
-  // Branch + no own banking → fall back to the group's banking.
+  // Fall back to the brand's banking. For a solo brand the row is
+  // usually empty (no central banking) → falls through to 'none'.
+  // For a centrally-billed brand the row is populated → 'group'.
   const { data: group } = await supabase
     .from('practice_groups')
     .select('id, bank_name, bank_account_number, branch_code, account_holder, account_type')

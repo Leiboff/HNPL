@@ -44,10 +44,15 @@ export default async function AdminPracticesPage({
   //   • banking complete? — bank_name + bank_account_number both present
   //   • approved_at / approved_by — for the "Approved by" column when
   //     looking at approved practices
+  //   • group_id + brand context — post-0062 every practice belongs to
+  //     a brand. A SOLO brand (1 practice) is treated like the old
+  //     "standalone" — no brand chip shown. A MULTI brand (≥2) shows a
+  //     "Brand: X · n of m" chip so the admin sees that this approval
+  //     creates a new location under an existing customer.
   const { data: rawPractices } = await supabase
     .from('practices')
     .select(`
-      id, name, specialty, status,
+      id, name, specialty, status, group_id,
       practice_registration_number, hpcsa_number,
       email, phone,
       address_line1, address_line2, suburb, city, practice_province, postal_code,
@@ -57,7 +62,8 @@ export default async function AdminPracticesPage({
     .eq('status', status)
     .order('created_at', { ascending: false });
 
-  const practices = (rawPractices ?? []) as PracticeRow[];
+  type PracticeWithGroup = PracticeRow & { group_id: string | null };
+  const practices = (rawPractices ?? []) as PracticeWithGroup[];
 
   // ── Per-practice aggregates (providers count, HPCSAs across members) ────
   // One round-trip for every visible practice. Acceptable at admin
@@ -74,6 +80,28 @@ export default async function AdminPracticesPage({
     aggregates[p.id] = {
       providerCount: memberRows.filter(r => r.role === 'provider').length,
       memberHpcsas:  memberRows.map(r => r.hpcsa_number).filter((h): h is string => !!h),
+    };
+  }
+
+  // ── Brand context: name + sibling count per practice ───────────────────
+  // For each unique group_id in the visible list, fetch the brand row
+  // and the count of practices under it. We only surface "brand" wording
+  // when the brand has >=2 practices — a solo brand is invisible
+  // (matches the brand-first UX rule: brand hidden at n=1).
+  const uniqueGroupIds = Array.from(
+    new Set(practices.map(p => p.group_id).filter((g): g is string => !!g))
+  );
+  const brandContext: Record<string, { brandName: string; siblingCount: number }> = {};
+  for (const gid of uniqueGroupIds) {
+    const [{ data: groupRow }, { count: practiceCount }] = await Promise.all([
+      supabase.from('practice_groups').select('name').eq('id', gid).maybeSingle(),
+      supabase.from('practices')
+        .select('id', { count: 'exact', head: true })
+        .eq('group_id', gid),
+    ]);
+    brandContext[gid] = {
+      brandName:    (groupRow?.name as string | undefined) ?? '—',
+      siblingCount: practiceCount ?? 0,
     };
   }
 
@@ -126,16 +154,21 @@ export default async function AdminPracticesPage({
           </div>
         ) : (
           <div className="space-y-3">
-            {practices.map((p) => (
-              <PracticeApprovalRow
-                key={p.id}
-                practice={p}
-                providerCount={aggregates[p.id]?.providerCount ?? 0}
-                memberHpcsas={aggregates[p.id]?.memberHpcsas ?? []}
-                approvePractice={approvePractice}
-                suspendPractice={suspendPractice}
-              />
-            ))}
+            {practices.map((p) => {
+              const ctx = p.group_id ? brandContext[p.group_id] : null;
+              const showBrand = !!(ctx && ctx.siblingCount >= 2);
+              return (
+                <PracticeApprovalRow
+                  key={p.id}
+                  practice={p}
+                  providerCount={aggregates[p.id]?.providerCount ?? 0}
+                  memberHpcsas={aggregates[p.id]?.memberHpcsas ?? []}
+                  brand={showBrand && ctx ? { name: ctx.brandName, siblingCount: ctx.siblingCount } : null}
+                  approvePractice={approvePractice}
+                  suspendPractice={suspendPractice}
+                />
+              );
+            })}
           </div>
         )}
     </div>

@@ -41,6 +41,10 @@ type Props = {
   practice:        PracticeRow;
   providerCount:   number;
   memberHpcsas:    string[];
+  // Brand context — non-null only when the practice belongs to a brand
+  // with >=2 practices (a multi-branch chain). Solo brands stay hidden
+  // (matches the n=1 brand-invisible rule in the customer UX).
+  brand:           { name: string; siblingCount: number } | null;
   approvePractice: (id: string) => Promise<{ error: string | null }>;
   suspendPractice: (id: string) => Promise<{ error: string | null }>;
 };
@@ -83,6 +87,7 @@ export default function PracticeApprovalRow({
   practice,
   providerCount,
   memberHpcsas,
+  brand,
   approvePractice,
   suspendPractice,
 }: Props) {
@@ -142,6 +147,14 @@ export default function PracticeApprovalRow({
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-base font-semibold text-gray-900 break-words">{practice.name}</h2>
               <span className="text-xs text-gray-500">{practice.specialty}</span>
+              {brand && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200"
+                  title={`This practice is one of ${brand.siblingCount} under the ${brand.name} brand.`}
+                >
+                  Brand: {brand.name} · {brand.siblingCount} locations
+                </span>
+              )}
             </div>
             <p className="mt-1 text-xs text-gray-500">
               {formatAddress(practice)}

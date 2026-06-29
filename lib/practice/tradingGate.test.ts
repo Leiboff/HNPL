@@ -5,7 +5,9 @@ import {
   NO_PROVIDERS_MESSAGE,
   NO_BANKING_MESSAGE,
   type TradingGateSupabase,
+  type BankingResolver,
 } from './tradingGate';
+import type { ResolvedBanking } from './banking';
 
 // ─── Stub supabase ───────────────────────────────────────────────────────────
 //
@@ -14,6 +16,11 @@ import {
 //     .select('status').eq('id', practiceId).single()
 //   .from('practice_members')
 //     .select('user_id').eq('practice_id', X).eq('active', true).eq('role', 'provider').limit(1)
+//
+// Banking lookup is short-circuited through the BankingResolver
+// injection seam (opts.resolveBanking) — we hand the gate a fake
+// resolver per case so the stub doesn't have to model the resolver's
+// own (practices + practice_groups) query shape.
 //
 // Calls are recorded so we can assert each `.eq` argument and prove the
 // query actually filters on role='provider'. Builder shape is loose typed
@@ -74,6 +81,23 @@ function makeStub(opts: StubOptions): { client: TradingGateSupabase; recorded: {
   return { client, recorded };
 }
 
+// Resolver-injection helpers — every test case spells out exactly what
+// the banking layer would return. Defaults to "branch" (passes the
+// banking gate) unless the test is specifically about no-banking.
+const BANKED: ResolvedBanking = {
+  source: 'branch',
+  banking: {
+    bank_name:           'FNB',
+    bank_account_number: '12345678',
+    branch_code:         '250655',
+    account_holder:      'X',
+    account_type:        'current',
+  },
+};
+const NOT_BANKED: ResolvedBanking = { source: 'none' };
+const branchResolver: BankingResolver  = async () => BANKED;
+const noBankResolver: BankingResolver  = async () => NOT_BANKED;
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('checkTradingGate', () => {
@@ -82,7 +106,7 @@ describe('checkTradingGate', () => {
       practice:  { status: 'pending' },
       providers: [{ user_id: 'p1' }],
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result).toEqual({
       ok: false,
       reason: 'pending_approval',
@@ -95,7 +119,7 @@ describe('checkTradingGate', () => {
       practice:  null,
       providers: [{ user_id: 'p1' }],
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result).toEqual({
       ok: false,
       reason: 'pending_approval',
@@ -108,7 +132,7 @@ describe('checkTradingGate', () => {
       practiceError: { message: 'rls denied' },
       providers:     [{ user_id: 'p1' }],
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('pending_approval');
   });
@@ -118,7 +142,7 @@ describe('checkTradingGate', () => {
       practice:  { status: 'approved' },
       providers: [],
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result).toEqual({
       ok: false,
       reason: 'no_providers',
@@ -131,30 +155,49 @@ describe('checkTradingGate', () => {
       practice:      { status: 'approved' },
       providerError: { message: 'rls denied' },
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('no_providers');
   });
 
-  it('passes when status=approved AND >=1 provider', async () => {
+  it('blocks (no_banking) when status=approved + provider but no banking resolves — universal post-0062', async () => {
+    // Post-0062 every practice belongs to a brand. The banking check
+    // now runs uniformly: a solo practice with no own banking AND no
+    // brand banking fails here. Pre-0062 this case (with group_id NULL
+    // standalone) would have passed — that path is gone.
     const { client } = makeStub({
       practice:  { status: 'approved' },
       providers: [{ user_id: 'p1' }],
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: noBankResolver });
+    expect(result).toEqual({
+      ok: false,
+      reason: 'no_banking',
+      message: NO_BANKING_MESSAGE,
+    });
+  });
+
+  it('passes when status=approved AND >=1 provider AND banking resolves', async () => {
+    const { client } = makeStub({
+      practice:  { status: 'approved' },
+      providers: [{ user_id: 'p1' }],
+    });
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result).toEqual({ ok: true });
   });
 
   it('passes for a solo practice where the admin self-elected as provider', async () => {
     // The admin's own row now has role='provider' (becomeProvider() flipped
     // it from 'admin'). It's the ONLY row in practice_members for this
-    // practice. The gate's eq('role','provider') match is satisfied —
-    // solo practitioner can trade once approved.
+    // practice. The gate's eq('role','provider') match is satisfied.
+    // Solo practices STILL need banking post-0062 — banking is now a
+    // universal precondition; here we hand the gate own-banking via
+    // the resolver.
     const { client } = makeStub({
       practice:  { status: 'approved' },
       providers: [{ user_id: 'admin-self' }],
     });
-    const result = await checkTradingGate(client, 'practice-1');
+    const result = await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
     expect(result).toEqual({ ok: true });
   });
 
@@ -163,7 +206,7 @@ describe('checkTradingGate', () => {
       practice:  { status: 'approved' },
       providers: [{ user_id: 'p1' }],
     });
-    await checkTradingGate(client, 'practice-1');
+    await checkTradingGate(client, 'practice-1', { resolveBanking: branchResolver });
 
     const providerCall = recorded.find(c => c.table === 'practice_members');
     expect(providerCall).toBeDefined();
@@ -179,7 +222,7 @@ describe('checkTradingGate', () => {
       practice:  { status: 'approved' },
       providers: [{ user_id: 'p1' }],
     });
-    await checkTradingGate(client, 'practice-99');
+    await checkTradingGate(client, 'practice-99', { resolveBanking: branchResolver });
 
     const practiceCall = recorded.find(c => c.table === 'practices');
     expect(practiceCall).toBeDefined();

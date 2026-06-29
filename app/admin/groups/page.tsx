@@ -64,9 +64,11 @@ export default async function AdminGroupsPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Practice groups</h1>
+        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Brands</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Brands grouping multiple branches. A practice with no group is a standalone practice.
+          Every practice belongs to a brand — solo customers have a 1-practice brand auto-created at signup. Brands let
+          a single owner manage multiple practices (e.g. a chain). Use this screen for support / banking / brand-admin
+          setup; customers self-serve from <code>/brand</code>.
         </p>
       </header>
 

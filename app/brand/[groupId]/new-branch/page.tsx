@@ -36,10 +36,10 @@ export default async function NewBranchPage({ params }: { params: Promise<{ grou
     <div className="mx-auto max-w-xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
       <header>
         <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>
-          Add a branch to {group.name as string}
+          Add a practice to {group.name as string}
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          The branch will be created in <strong>pending</strong> status. BetterNow approves it before it can trade.
+          The practice will be created in <strong>pending</strong> status. BetterNow approves it before it can trade.
         </p>
       </header>
 

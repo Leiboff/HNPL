@@ -43,6 +43,7 @@ function renderRow(rowOverrides: Partial<PracticeRow> = {}) {
       practice={makeRow(rowOverrides)}
       providerCount={0}
       memberHpcsas={[]}
+      brand={null}
       approvePractice={approve}
       suspendPractice={suspend}
     />,

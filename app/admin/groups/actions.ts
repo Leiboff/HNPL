@@ -113,13 +113,17 @@ export async function updateGroupBanking(input: UpdateGroupBankingInput): Promis
   return { error: null };
 }
 
-// ─── assignPracticeToGroup / unassignPracticeFromGroup ─────────────────
+// ─── assignPracticeToGroup ─────────────────────────────────────────────
 //
-// Sets / clears practices.group_id. This is the ONLY way a standalone
-// practice becomes a branch (and back). The 0054 lock doesn't gate
-// group_id changes — it locks status/approved_at/approved_by/fee_percent,
-// not group_id — so a platform-admin can move a practice into a group
-// freely. Service-role write keeps it untouched by RLS.
+// Moves a practice into a (different) brand. Post-0062 there are no
+// standalone practices — every practice has a group_id NOT NULL — so
+// this is a brand-to-brand reassignment, used by platform support
+// only (no UI affordance; admin runs it via dev console / direct call
+// when a customer asks to split or merge brands).
+//
+// The 0054 lock doesn't gate group_id (it locks status, approved_at,
+// approved_by, fee_percent), so service-role can move a practice
+// between brands freely.
 
 export async function assignPracticeToGroup(practiceId: string, groupId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
@@ -134,21 +138,6 @@ export async function assignPracticeToGroup(practiceId: string, groupId: string)
 
   revalidatePath('/admin/groups');
   revalidatePath(`/admin/groups/${groupId}`);
-  return { error: null };
-}
-
-export async function unassignPracticeFromGroup(practiceId: string): Promise<{ error: string | null }> {
-  const guard = await guardAdmin();
-  if (!guard.ok) return { error: guard.error };
-
-  const { error } = await svc()
-    .from('practices')
-    .update({ group_id: null })
-    .eq('id', practiceId);
-
-  if (error) return { error: error.message };
-
-  revalidatePath('/admin/groups');
   return { error: null };
 }
 

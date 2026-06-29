@@ -1,11 +1,14 @@
 // ─── Trading gate ────────────────────────────────────────────────────────────
 //
-// A practice may create bills / plans only when BOTH:
+// A practice may create bills / plans only when ALL THREE:
 //   a. practices.status = 'approved' — HNPL admin has reviewed and approved
 //      the registration.
 //   b. At least one practice_members row exists with role = 'provider' and
 //      active = true — there is an actual clinician on staff who can be
 //      attached to bills.
+//   c. Banking resolves — the practice has its own banking, OR (for a
+//      multi-branch brand) the brand's central banking is set. We can't
+//      settle a bill without a destination account.
 //
 // This module is the single source of truth for that check. It is called
 // server-side by the bill-creation action AND server-side by the practice
@@ -13,6 +16,12 @@
 // why trading is blocked. RLS is NOT the backstop — the existing policies
 // only check practice membership; without this gate a freshly-signed-up
 // pending practice can trade immediately.
+//
+// Banking universal post-0062: pre-inversion, condition (c) was gated on
+// `practice.group_id` being NOT NULL (branches only). Now every practice
+// belongs to a brand (group_id is NOT NULL at the DB layer), so the gate
+// fires uniformly. The resolver still treats "own banking wins, brand
+// banking is the fallback" — that part is unchanged.
 //
 // The function accepts a Supabase client through a structural type so the
 // caller can pass either the SSR client or the service-role client. We use
@@ -27,7 +36,7 @@ export const NO_PROVIDERS_MESSAGE =
   'Add at least one provider (the doctor, dentist, or practitioner) to your practice before creating a bill. You can do this on Team.';
 
 export const NO_BANKING_MESSAGE =
-  'This branch has no banking on file and no group banking to fall back on. Add banking on the branch or on the brand before creating bills.';
+  'Add banking to your practice before creating bills — we need an account to pay out the patient payments into.';
 
 export type TradingGateReason = 'pending_approval' | 'no_providers' | 'no_banking';
 
@@ -51,20 +60,27 @@ export type TradingGateResult =
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type TradingGateSupabase = any;
 
-import { resolvePayoutBanking } from './banking';
+import { resolvePayoutBanking, type ResolvedBanking } from './banking';
+
+// Optional injection seam — production passes the real
+// resolvePayoutBanking; tests pass a deterministic stub so the
+// trading-gate test suite stays decoupled from the banking-query
+// shape. Default = the real resolver, so production callers don't
+// have to know this exists.
+export type BankingResolver = (
+  supabase:   TradingGateSupabase,
+  practiceId: string,
+) => Promise<ResolvedBanking>;
 
 export async function checkTradingGate(
   supabase: TradingGateSupabase,
   practiceId: string,
+  opts?: { resolveBanking?: BankingResolver },
 ): Promise<TradingGateResult> {
   // ── Condition (a): status = 'approved' ──────────────────────────────────
-  // Also reads group_id so we know whether to apply the branch-only
-  // banking precondition below. Standalone (group_id NULL) keeps the
-  // existing two-condition gate verbatim — adding the column to the
-  // SELECT does not change any predicate that already exists.
   const { data: practice, error: practiceError } = await supabase
     .from('practices')
-    .select('status, group_id')
+    .select('status')
     .eq('id', practiceId)
     .single();
 
@@ -91,15 +107,14 @@ export async function checkTradingGate(
     return { ok: false, reason: 'no_providers', message: NO_PROVIDERS_MESSAGE };
   }
 
-  // ── Condition (c) — BRANCHES ONLY: resolved banking exists ──────────────
-  // Standalone practices (group_id NULL) skip this so the existing
-  // two-condition gate stays byte-for-byte unchanged. For a branch,
-  // the resolver checks own banking, then group banking, then 'none'.
-  if (practice.group_id) {
-    const banking = await resolvePayoutBanking(supabase, practiceId);
-    if (banking.source === 'none') {
-      return { ok: false, reason: 'no_banking', message: NO_BANKING_MESSAGE };
-    }
+  // ── Condition (c): resolved banking exists ──────────────────────────────
+  // Universal post-0062: every practice has a brand, so the resolver
+  // always returns 'branch' (own banking), 'group' (brand fallback),
+  // or 'none'. We block only on 'none'.
+  const resolveBanking = opts?.resolveBanking ?? resolvePayoutBanking;
+  const banking = await resolveBanking(supabase, practiceId);
+  if (banking.source === 'none') {
+    return { ok: false, reason: 'no_banking', message: NO_BANKING_MESSAGE };
   }
 
   return { ok: true };

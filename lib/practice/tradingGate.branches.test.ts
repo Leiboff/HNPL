@@ -4,19 +4,24 @@ import {
   NO_BANKING_MESSAGE,
 } from './tradingGate';
 
-// ─── Tests — trading gate condition (c): branch banking resolution ─────
+// ─── Tests — trading gate condition (c) post-0062 brand-first inversion ─
 //
-// The condition only fires for branches (practices.group_id != NULL).
-// Standalone practices keep the existing two-condition gate verbatim
-// (regression-tested in tradingGate.test.ts).
+// Pre-0062 the banking condition was branch-only (gated on
+// practice.group_id NOT NULL). Post-inversion EVERY practice belongs
+// to a brand and the gate fires uniformly. The cases below pin the
+// new universal behaviour:
 //
-// What this file pins:
-//   • Branch with no own banking AND no group banking → 'no_banking'.
-//   • Branch with no own banking but a banked group → ok (group fallback).
-//   • Branch with its own banking → ok (own wins).
-//   • Standalone with no banking → ok if approved+provider — the
-//     banking condition does NOT apply to standalone, that's the
-//     prime directive.
+//   • Practice with own banking → ok (own wins).
+//   • Practice with NO own banking + brand with banking → ok (group fallback).
+//   • Practice with NO own banking + brand with NO banking → no_banking.
+//   • Solo (brand has just this one practice, no own banking, brand
+//     has no banking) → no_banking. THIS IS THE BREAKING CHANGE from
+//     Phase 1: a solo practice can no longer trade with zero banking
+//     on file. The user adds banking from the dashboard and is good.
+//
+// Banking is provided by a real resolvePayoutBanking call against a
+// stub that models the practices + practice_groups queries the
+// resolver issues — proves the resolver + gate compose correctly.
 
 type Row = Record<string, unknown> | null;
 type State = {
@@ -68,8 +73,8 @@ const NO_BANK = {
 };
 const APPROVED_PROVIDER = { user_id: 'u1', practice_id: 'b1', active: true, role: 'provider' };
 
-describe('Trading gate — branch banking condition (group_id NOT NULL)', () => {
-  it('branch with own banking → ok', async () => {
+describe('Trading gate — banking is universal post-0062', () => {
+  it('practice with own banking → ok', async () => {
     const stub = makeStub({
       practices:        [{ id: 'b1', status: 'approved', group_id: 'g1', ...FULL_BANK }],
       practice_groups:  [{ id: 'g1', ...NO_BANK }],
@@ -79,7 +84,7 @@ describe('Trading gate — branch banking condition (group_id NOT NULL)', () => 
     expect(r).toEqual({ ok: true });
   });
 
-  it('branch with NO own banking + group with banking → ok (fallback)', async () => {
+  it('practice with NO own banking + brand with banking → ok (fallback)', async () => {
     const stub = makeStub({
       practices:        [{ id: 'b1', status: 'approved', group_id: 'g1', ...NO_BANK }],
       practice_groups:  [{ id: 'g1', ...FULL_BANK }],
@@ -89,7 +94,7 @@ describe('Trading gate — branch banking condition (group_id NOT NULL)', () => 
     expect(r).toEqual({ ok: true });
   });
 
-  it('branch with NO own banking + group with NO banking → no_banking', async () => {
+  it('practice with NO own banking + brand with NO banking → no_banking', async () => {
     const stub = makeStub({
       practices:        [{ id: 'b1', status: 'approved', group_id: 'g1', ...NO_BANK }],
       practice_groups:  [{ id: 'g1', ...NO_BANK }],
@@ -104,26 +109,33 @@ describe('Trading gate — branch banking condition (group_id NOT NULL)', () => 
   });
 });
 
-describe('Trading gate — standalone (group_id NULL) ignores banking — prime directive', () => {
-  it('standalone with NO banking is OK if approved + provider — banking check skipped', async () => {
+describe('Trading gate — solo (brand-of-1) post-0062 needs banking too', () => {
+  it('solo with own banking → ok (the auto-brand row stays empty)', async () => {
     const stub = makeStub({
-      practices:        [{ id: 'p1', status: 'approved', group_id: null, ...NO_BANK }],
-      practice_groups:  [],
+      practices:        [{ id: 'p1', status: 'approved', group_id: 'g-auto', ...FULL_BANK }],
+      practice_groups:  [{ id: 'g-auto', ...NO_BANK }],
       practice_members: [{ ...APPROVED_PROVIDER, practice_id: 'p1' }],
     });
     const r = await checkTradingGate(stub, 'p1');
-    // The existing two-condition gate (approved + ≥1 provider) — passes.
-    // No new no_banking failure: this is the standalone-unchanged guarantee.
     expect(r).toEqual({ ok: true });
   });
 
-  it('standalone with own banking is also OK (unchanged path)', async () => {
+  it('solo with NO banking (auto-brand also empty) → no_banking', async () => {
+    // The brand-first inversion's price-of-admission: a solo practice
+    // can no longer trade with zero banking on file. Pre-0062 this
+    // passed (standalone skipped the banking check). Now it fails
+    // with a friendly nudge to add banking — exactly what we want
+    // since a practice with no banking can't actually be settled.
     const stub = makeStub({
-      practices:        [{ id: 'p1', status: 'approved', group_id: null, ...FULL_BANK }],
-      practice_groups:  [],
+      practices:        [{ id: 'p1', status: 'approved', group_id: 'g-auto', ...NO_BANK }],
+      practice_groups:  [{ id: 'g-auto', ...NO_BANK }],
       practice_members: [{ ...APPROVED_PROVIDER, practice_id: 'p1' }],
     });
     const r = await checkTradingGate(stub, 'p1');
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({
+      ok: false,
+      reason: 'no_banking',
+      message: NO_BANKING_MESSAGE,
+    });
   });
 });

@@ -3,8 +3,6 @@ import { redirect, notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import {
   updateGroupBanking,
-  assignPracticeToGroup,
-  unassignPracticeFromGroup,
   grantBrandAdmin,
   revokeBrandAdmin,
 } from '../actions';
@@ -70,18 +68,14 @@ export default async function AdminGroupDetailPage({ params }: { params: Promise
 
   const groupRow = group as GroupRow;
 
-  // Branches in this group
+  // Practices in this brand. Post-0062 every practice belongs to a
+  // brand — there are no orphan/standalone practices to "pull in"
+  // anymore. Brand membership is set at signup or via brand-owner
+  // self-service add-another-practice; admin only ever views it here.
   const { data: branches } = await supabase
     .from('practices')
     .select('id, name, status, city, suburb')
     .eq('group_id', id)
-    .order('name');
-
-  // Standalone practices (no group) — candidates to pull in
-  const { data: standalonePractices } = await supabase
-    .from('practices')
-    .select('id, name, status, city, suburb')
-    .is('group_id', null)
     .order('name');
 
   // Brand admins of this group
@@ -131,13 +125,12 @@ export default async function AdminGroupDetailPage({ params }: { params: Promise
       </section>
 
       <section className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm p-5">
-        <h2 className="text-sm font-semibold mb-3" style={{ color: '#13294B' }}>Branches</h2>
+        <h2 className="text-sm font-semibold mb-3" style={{ color: '#13294B' }}>Practices</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Practices that belong to this brand. New practices are added by the brand owner from their dashboard.
+        </p>
         <GroupBranchManager
-          groupId={groupRow.id}
           branches={(branches ?? []) as BranchRow[]}
-          standalonePractices={(standalonePractices ?? []) as BranchRow[]}
-          assignAction={assignPracticeToGroup}
-          unassignAction={unassignPracticeFromGroup}
         />
       </section>
 

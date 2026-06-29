@@ -7,7 +7,7 @@ import PracticeDashboardClient from './PracticeDashboardClient';
 import CreateBillButton from './CreateBillButton';
 import { PlanSummary } from './billHelpers';
 
-type SearchParams = { reason?: string };
+type SearchParams = { reason?: string; practiceId?: string };
 
 export default async function PracticeDashboardPage({
   searchParams,
@@ -32,19 +32,52 @@ export default async function PracticeDashboardPage({
     else redirect('/login');
   }
 
-  const { data: membership } = await supabase
+  // Post-0062: a brand owner can be a member of multiple practices (one
+  // per practice in their brand). The dashboard scopes to ONE practice
+  // at a time — picked either by ?practiceId= (when switching from the
+  // brand index) or, when absent, the first practice the user joined.
+  // .single() would fail for n=2+; .order().limit(1) is safe at n=1
+  // and consistent at n>=2.
+  const { data: memberships } = await supabase
     .from('practice_members')
-    .select('practice_id, can_manage_practice, practices(name, fee_percent)')
+    .select('practice_id, can_manage_practice, created_at, practices(name, fee_percent)')
     .eq('user_id', user.id)
     .eq('active', true)
-    .single();
+    .order('created_at', { ascending: true });
 
-  if (!membership) redirect('/practice/setup');
+  // Supabase typegen leans toward `{ practices: T[] }` for joined
+  // rows even when the FK is to-one — we cast through unknown and
+  // normalise below so the rest of the page sees the to-one shape we
+  // expect.
+  const memberRowsRaw = (memberships ?? []) as unknown as Array<{
+    practice_id:         string;
+    can_manage_practice: boolean;
+    created_at:          string;
+    practices: { name: string; fee_percent: number } | Array<{ name: string; fee_percent: number }> | null;
+  }>;
+  const memberRows = memberRowsRaw.map((m) => ({
+    ...m,
+    practices: Array.isArray(m.practices) ? (m.practices[0] ?? null) : m.practices,
+  }));
 
-  const practiceInfo = membership.practices as unknown as { name: string; fee_percent: number } | null;
+  if (memberRows.length === 0) redirect('/practice/setup');
+
+  const requestedId = params.practiceId;
+  const picked =
+    (requestedId && memberRows.find((m) => m.practice_id === requestedId)) ||
+    memberRows[0];
+
+  const practiceInfo = picked.practices;
   const practiceName = practiceInfo?.name ?? '';
   const feePercent   = Number(practiceInfo?.fee_percent ?? 6);
-  const practiceId   = membership.practice_id as string;
+  const practiceId   = picked.practice_id;
+
+  // Brand context — how many practices does this user own / belong to?
+  // Drives the n=1-vs-n>=2 UX rule: brand wording is hidden at n=1
+  // and surfaces at n>=2. We DO NOT compute brand name here — the
+  // dashboard shouldn't say "brand X" for a solo user even if they
+  // have a (silent, auto-created) brand row.
+  const practiceCount = memberRows.length;
 
   const { data: rawPlans } = await supabase
     .from('plans')
@@ -98,6 +131,18 @@ export default async function PracticeDashboardPage({
             <p className="mt-1 text-sm text-gray-500">
               Welcome back, {profile?.first_name ?? user.email}
             </p>
+            {/* n>=2: brand-aware switcher. n=1: only the "Add another practice"
+                link, no brand wording — the auto-created brand stays invisible. */}
+            <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+              {practiceCount >= 2 && (
+                <a href="/brand" className="font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+                  See all my practices ({practiceCount})
+                </a>
+              )}
+              <a href="/brand/new-practice" className="font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+                {practiceCount === 1 ? '+ Add another practice' : '+ Add a practice'}
+              </a>
+            </div>
           </div>
           <CreateBillButton gate={gate} variant="primary" />
         </div>
@@ -124,9 +169,9 @@ export default async function PracticeDashboardPage({
             data-testid="trading-gate-panel"
           >
             <p className="font-semibold text-amber-900">
-              {gate.reason === 'pending_approval'
-                ? 'Awaiting approval'
-                : 'Add a provider to start billing'}
+              {gate.reason === 'pending_approval' ? 'Awaiting approval'
+                : gate.reason === 'no_providers'   ? 'Add a provider to start billing'
+                                                   : 'Add banking to start billing'}
             </p>
             <p className="mt-1 text-amber-800">{gate.message}</p>
             {gate.reason === 'no_providers' && (
@@ -136,6 +181,15 @@ export default async function PracticeDashboardPage({
                 style={{ color: '#13294B' }}
               >
                 Go to Team →
+              </a>
+            )}
+            {gate.reason === 'no_banking' && (
+              <a
+                href="/practice/setup"
+                className="mt-2 inline-block font-semibold underline underline-offset-2"
+                style={{ color: '#13294B' }}
+              >
+                Go to Banking →
               </a>
             )}
           </div>

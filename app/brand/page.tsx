@@ -1,15 +1,26 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import BranchCreateLink from './BranchCreateLink';
 
-// ─── Brand-admin dashboard (Phase 1 minimal) ───────────────────────────
+// ─── Brand-admin dashboard ──────────────────────────────────────────────
 //
-// A user with at least one active practice_group_members row lands
-// here. Shows every group they admin, with each group's branches and
-// a "create branch" link.
+// Post-0062 every customer account is rooted at a brand. The brand
+// concept is HIDDEN at n=1 — the solo practitioner experiences the
+// product as "my practice", not "my brand with one practice in it".
+// This page enforces that rule:
+//
+//   n = 0  → /practice/setup (no membership at all — shouldn't happen
+//            in practice but we redirect rather than blank-page)
+//   n = 1  → /practice (the brand layer is invisible; their one
+//            practice IS their experience)
+//   n >= 2 → render the brand index — every practice in their brand
+//            with a status pill, plus "Add another practice".
+//
+// The brand row name is shown only when n>=2 (so a solo who ever
+// stumbles here doesn't see "Brand X" wording when they're meant to
+// see just their own practice).
 
-type GroupRow  = { id: string; name: string; status: string };
+type GroupRow  = { id: string; name: string };
 type BranchRow = {
   id: string; name: string; status: string;
   city: string | null; suburb: string | null;
@@ -22,32 +33,24 @@ export default async function BrandDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // RLS: brand_admin_select_own_group covers this query.
+  // Brand memberships — typically just one (their own auto-created
+  // brand from signup) but a user could be brand_admin of multiple
+  // brands in theory.
   const { data: memberships } = await supabase
     .from('practice_group_members')
-    .select('group_id, role, active')
+    .select('group_id, active')
     .eq('user_id', user.id)
     .eq('active', true);
 
   if (!memberships || memberships.length === 0) {
-    return (
-      <div className="mx-auto max-w-xl px-4 py-10">
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Brand admin</h1>
-        <p className="mt-3 text-sm text-gray-600">
-          You don&apos;t have brand-admin access to any group yet. Please contact BetterNow support.
-        </p>
-      </div>
-    );
+    // No brand_admin row — fall back to their per-practice dashboard.
+    redirect('/practice');
   }
 
   const groupIds = memberships.map((m) => m.group_id as string);
 
-  const { data: rawGroups } = await supabase
-    .from('practice_groups')
-    .select('id, name, status')
-    .in('id', groupIds);
-  const groups = (rawGroups ?? []) as GroupRow[];
-
+  // All practices in their brand(s). Counting these drives the
+  // n=1-vs-n>=2 UX rule below.
   const { data: rawBranches } = await supabase
     .from('practices')
     .select('id, name, status, city, suburb, group_id')
@@ -55,12 +58,29 @@ export default async function BrandDashboardPage() {
     .order('name');
   const branches = (rawBranches ?? []) as BranchRow[];
 
+  if (branches.length === 0) {
+    // Brand exists but no practices yet (rare — would only happen if
+    // a practice was manually deleted). Send them to setup.
+    redirect('/practice/setup');
+  }
+  if (branches.length === 1) {
+    // Solo — keep the brand invisible. Their one practice IS their
+    // dashboard.
+    redirect(`/practice?practiceId=${branches[0].id}`);
+  }
+
+  const { data: rawGroups } = await supabase
+    .from('practice_groups')
+    .select('id, name')
+    .in('id', groupIds);
+  const groups = (rawGroups ?? []) as GroupRow[];
+
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10 space-y-8">
       <header>
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Brand admin</h1>
+        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>My practices</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Manage your group&apos;s branches. New branches go pending — BetterNow approves them before they can trade.
+          Manage every practice you&apos;ve added. New practices go pending — BetterNow approves them before they can trade.
         </p>
       </header>
 
@@ -70,37 +90,39 @@ export default async function BrandDashboardPage() {
           <section key={g.id} className="space-y-3">
             <header className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-gray-900">{g.name}</h2>
-              <BranchCreateLink groupId={g.id} />
+              <Link
+                href="/brand/new-practice"
+                className="text-sm font-semibold underline underline-offset-2"
+                style={{ color: '#13294B' }}
+              >
+                + Add a practice
+              </Link>
             </header>
 
-            {groupBranches.length === 0 ? (
-              <p className="text-sm text-gray-500">No branches yet. Tap &ldquo;Add branch&rdquo; above.</p>
-            ) : (
-              <div className="space-y-2">
-                {groupBranches.map((b) => (
-                  <Link
-                    key={b.id}
-                    href={`/practice?practice_id=${b.id}`}
-                    className="block rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-gray-900 truncate">{b.name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{[b.suburb, b.city].filter(Boolean).join(', ') || '—'}</p>
-                      </div>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                        b.status === 'approved'  ? 'bg-green-100 text-green-700' :
-                        b.status === 'pending'   ? 'bg-amber-100 text-amber-700' :
-                        b.status === 'suspended' ? 'bg-red-100 text-red-700' :
-                                                   'bg-gray-100 text-gray-500'
-                      }`}>
-                        {b.status}
-                      </span>
+            <div className="space-y-2">
+              {groupBranches.map((b) => (
+                <Link
+                  key={b.id}
+                  href={`/practice?practiceId=${b.id}`}
+                  className="block rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 truncate">{b.name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{[b.suburb, b.city].filter(Boolean).join(', ') || '—'}</p>
                     </div>
-                  </Link>
-                ))}
-              </div>
-            )}
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      b.status === 'approved'  ? 'bg-green-100 text-green-700' :
+                      b.status === 'pending'   ? 'bg-amber-100 text-amber-700' :
+                      b.status === 'suspended' ? 'bg-red-100 text-red-700' :
+                                                 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {b.status}
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </div>
           </section>
         );
       })}

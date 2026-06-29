@@ -126,6 +126,7 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
   const svc        = svcClient();
   const practiceId = crypto.randomUUID();
   let   adminUserId: string | null = null;
+  let   createdBrandId: string | null = null;
 
   try {
     // 0. Pre-check existence — covers normal abandon-at-OTP AND AUTH_ONLY
@@ -212,9 +213,31 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       lng = null;
     }
 
+    // 2a. Brand-first inversion (0062): every practice belongs to a
+    //     brand. For a solo signup we create the brand SILENTLY — the
+    //     form has no brand field, the user sees no brand wording, and
+    //     the brand name defaults to the practice name. The /brand
+    //     surface only appears in the UI once the owner adds a second
+    //     practice (n=1 → invisible, n>=2 → visible).
+    const { data: brandRow, error: brandErr } = await svc
+      .from('practice_groups')
+      .insert({
+        name:       input.practiceName.trim(),
+        status:     'active',
+        created_by: adminUserId,
+      })
+      .select('id')
+      .single();
+    if (brandErr || !brandRow) {
+      throw new Error(`Brand: ${brandErr?.message ?? 'no brand row returned'}`);
+    }
+    const brandId = brandRow.id as string;
+    createdBrandId = brandId;
+
     const { error: practiceErr } = await svc.from('practices').insert({
       id:                           practiceId,
       owner_id:                     adminUserId,
+      group_id:                     brandId,
       name:                         input.practiceName.trim(),
       specialty:                    input.specialty,
       practice_registration_number: input.practiceRegNumber.trim() || null,
@@ -243,6 +266,19 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
       payout_destination:  'practice',
     });
     if (memberErr) throw new Error(`Member: ${memberErr.message}`);
+
+    // 3a. Grant the signed-up user brand_admin of their auto-created
+    //     brand. They never SEE the brand at n=1, but the membership
+    //     row is what unlocks add-another-practice later.
+    const { error: brandMemberErr } = await svc
+      .from('practice_group_members')
+      .insert({
+        group_id: brandId,
+        user_id:  adminUserId,
+        role:     'brand_admin',
+        active:   true,
+      });
+    if (brandMemberErr) throw new Error(`Brand member: ${brandMemberErr.message}`);
 
     // 3b. Notify the platform admin so they can review the new practice.
     //     Best-effort: a failed send (missing env vars, Resend outage)
@@ -279,6 +315,14 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
     if (practiceId) {
       const { error: e } = await svc.from('practices').delete().eq('id', practiceId);
       if (e) console.error('[practice signup] rollback practices.delete failed', e);
+    }
+    if (createdBrandId) {
+      // Delete the brand FIRST (cascades practice_group_members via the
+      // ON DELETE CASCADE on practice_group_members.group_id). Order
+      // matters only relative to auth.users — anything keyed on the
+      // brand can go before the user disappears.
+      const { error: bErr } = await svc.from('practice_groups').delete().eq('id', createdBrandId);
+      if (bErr) console.error('[practice signup] rollback practice_groups.delete failed', bErr);
     }
     if (adminUserId) {
       const { error: memErr } = await svc.from('practice_members').delete().eq('user_id', adminUserId);
