@@ -1,34 +1,41 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { haversineKm, formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import type { PracticeCard } from './page';
+import { bucketPractices, type PracticeWithDistance } from './bucket';
 
 // ─── Explore practices — geolocation + suburb fallback + Haversine ─────
 //
 // Flow:
-//   1. On mount, ask the browser for geolocation. Don't BLOCK on it —
-//      the page renders with all practices unsorted while the user
-//      decides whether to grant.
-//   2. Granted → set userLocation; the memo re-sorts by Haversine
-//      distance and hides practices beyond the selected radius.
+//   1. On EVERY mount, attempt navigator.geolocation.getCurrentPosition.
+//      The browser decides whether to actually re-prompt:
+//        • previously hard-BLOCKED → no prompt, error callback fires;
+//          we land in 'denied' and the suburb-search fallback shows.
+//        • previously granted → silent success.
+//        • previously dismissed → browser usually re-prompts (this is
+//          the case bug 2 cared about — we no longer gate the prompt
+//          on first-visit-only state).
+//      Don't BLOCK on it — the page renders ALL approved practices
+//      while the user decides. No approved practice can ever be
+//      invisible in the no-location state.
+//   2. Granted → set userLocation; the memo sorts by Haversine distance
+//      and hides practices beyond the radius preset.
 //   3. Denied / unavailable / dismissed → leave userLocation null; the
-//      page shows all practices alphabetically AND a "search by suburb"
-//      Places (New) Autocomplete input (locality-biased). On selection,
-//      the place's coords drive the same Haversine sort. No server-side
-//      Places call — the picker is client-side; the key is the
-//      domain-restricted Places key.
+//      page shows EVERY practice alphabetically AND a Places-driven
+//      "search by suburb" input. Picking a suburb feeds the same
+//      Haversine sort.
+//   4. The denied/dismissed card also offers a "Try again" button that
+//      re-calls getCurrentPosition — useful when the user has changed
+//      their browser permission via the address-bar pad-lock since
+//      first mount.
 //
 // POPIA: userLocation is component state only — never written to the
 // DB. Lives for the session, dies when the page unmounts.
 //
-// Practices without coordinates (latitude OR longitude NULL) are landed
-// in an "Other practices" bucket below the distance-filtered list when
-// a userLocation is set — they're findable, just not distance-rankable.
-// When no userLocation is set, they merge into the alphabetical list.
-
-type PracticeWithDistance = PracticeCard & { distanceKm: number | null };
+// The bucketing rule is captured in app/patient/explore/bucket.ts so
+// it's testable in isolation.
 
 const RADIUS_PRESETS = [10, 25, 50] as const;
 const DEFAULT_RADIUS = 25;
@@ -47,11 +54,15 @@ export default function ExploreView({ practices }: Props) {
   const [search,    setSearch]    = useState('');
   const [specialty, setSpecialty] = useState<string | null>(null);
   const [radiusKm,  setRadiusKm]  = useState<number>(DEFAULT_RADIUS);
-  // Lazy initializer: decide once at first render whether the browser
-  // can even prompt for location. Avoids a synchronous setState inside
-  // useEffect (which the react-hooks/set-state-in-effect lint rule
-  // discourages — re-render-storm risk). The effect below only sets
-  // state from inside the (async) Geolocation callbacks.
+  // Lazy initializer decides the entry-state synchronously:
+  //   • navigator.geolocation MISSING (SSR, locked-down browser) →
+  //     'denied' — the suburb fallback is the only path.
+  //   • navigator.geolocation PRESENT → 'requesting' — the post-mount
+  //     effect calls getCurrentPosition, which transitions us to
+  //     'granted' (success) or 'denied' (error / dismiss / timeout)
+  //     via the ASYNC callbacks. We never call setGeo synchronously
+  //     inside the effect body — that would trip
+  //     react-hooks/set-state-in-effect.
   const [geo, setGeo] = useState<GeoState>(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       return { kind: 'denied' };
@@ -59,35 +70,64 @@ export default function ExploreView({ practices }: Props) {
     return { kind: 'requesting' };
   });
 
-  // suburb-search state: just the picked label. Coords arrive via the
-  // PlacesAutocomplete onSelect and feed straight into setGeo — no
-  // server-side geocode action needed.
+  // attemptId increments every time we want to (re)try geolocation.
+  // The effect below depends on it, so a button-driven retry simply
+  // bumps the counter and the effect re-fires.
+  const [attemptId, setAttemptId] = useState(0);
 
-  // Fire the geolocation prompt once on mount, but only if the lazy
-  // initializer above already put us in 'requesting' (i.e. the API is
-  // available). The effect itself contains no synchronous setState;
-  // the setGeo calls are inside the async Geolocation callbacks.
+  // Track whether THIS effect run is still the live one — if the
+  // component unmounts or attemptId changes mid-flight, ignore the
+  // callbacks. Vanilla Geolocation API has no abort signal.
+  const livenessRef = useRef({ cancelled: false });
+
+  const tryLocate = useCallback(() => {
+    // Reset to 'requesting' so the user sees the spinner while the
+    // retry runs. This is a normal event-handler setState (not
+    // inside an effect), so the purity lint rule doesn't apply.
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      setGeo({ kind: 'requesting' });
+    }
+    setAttemptId((n) => n + 1);
+  }, []);
+
+  // Re-prompt on every mount AND on every tryLocate() call. Browsers
+  // suppress repeated prompts for hard-blocked permissions — that's
+  // the platform contract, not our code; the suburb fallback covers
+  // it. We always attempt; the browser decides. The setGeo calls live
+  // exclusively inside the async getCurrentPosition callbacks so this
+  // effect body has no synchronous setState.
   useEffect(() => {
-    if (geo.kind !== 'requesting') return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      // Initial state already 'denied' from the lazy initializer.
+      // Nothing to do.
+      return;
+    }
+
+    livenessRef.current = { cancelled: false };
+    const liveness = livenessRef.current;
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        if (liveness.cancelled) return;
         setGeo({
           kind:     'granted',
           location: { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
           source:   'gps',
         });
       },
-      () => { setGeo({ kind: 'denied' }); },
+      () => {
+        if (liveness.cancelled) return;
+        setGeo({ kind: 'denied' });
+      },
       // Cheap settings: don't insist on high accuracy (drains battery)
       // and don't sit on a hanging request for ages.
       { enableHighAccuracy: false, timeout: 8_000, maximumAge: 60_000 },
     );
-    // Run once on mount — geo dep would re-fire on each transition,
-    // which would re-trigger the prompt every time the user changes
-    // their mind. The 'requesting' check above gates the body so the
-    // empty-deps array is the correct shape.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    return () => {
+      liveness.cancelled = true;
+    };
+  }, [attemptId]);
 
   // Picker-driven suburb selection. Coords come from the place's
   // location field; no geocode action needed.
@@ -106,8 +146,8 @@ export default function ExploreView({ practices }: Props) {
     return Array.from(seen).sort();
   }, [practices]);
 
-  // Compute distance once per (practices, geo) pair and reuse across
-  // search/specialty filter re-renders.
+  // Decorate every practice with distanceKm — null whenever geo isn't
+  // granted, or whenever the practice has no coords.
   const withDistance = useMemo<PracticeWithDistance[]>(() => {
     if (geo.kind !== 'granted') {
       return practices.map((p) => ({ ...p, distanceKm: null }));
@@ -132,24 +172,13 @@ export default function ExploreView({ practices }: Props) {
     });
   }, [withDistance, search, specialty]);
 
-  // Split into near / far / no-coord buckets ONLY when a userLocation
-  // is set. Otherwise everything is alphabetical and the buckets don't
-  // apply.
-  const { nearList, otherList } = useMemo(() => {
-    if (geo.kind !== 'granted') {
-      return { nearList: filtered, otherList: [] as PracticeWithDistance[] };
-    }
-    const within: PracticeWithDistance[] = [];
-    const without: PracticeWithDistance[] = [];
-    for (const p of filtered) {
-      if (p.distanceKm == null) without.push(p);
-      else if (p.distanceKm <= radiusKm) within.push(p);
-      // beyond-radius rows are hidden by default (clean "near me" list).
-    }
-    within.sort((a, b) => (a.distanceKm! - b.distanceKm!));
-    without.sort((a, b) => a.name.localeCompare(b.name));
-    return { nearList: within, otherList: without };
-  }, [filtered, geo, radiusKm]);
+  // Bucketing — extracted to bucket.ts so this rule is testable in
+  // isolation. The crucial invariant: when hasLocation is false, the
+  // returned nearList === filtered (no approved practice is hidden).
+  const { nearList, otherList } = useMemo(
+    () => bucketPractices(filtered, geo.kind === 'granted', radiusKm),
+    [filtered, geo, radiusKm],
+  );
 
   const chipStyle = (active: boolean) =>
     active
@@ -159,7 +188,7 @@ export default function ExploreView({ practices }: Props) {
   return (
     <div className="space-y-5">
       {/* ── Location card — sets the basis for nearest-first sort ───── */}
-      <LocationCard geo={geo} onSuburbPicked={onSuburbPicked} />
+      <LocationCard geo={geo} onSuburbPicked={onSuburbPicked} onTryAgain={tryLocate} />
 
       {/* ── Radius preset — only shown when we have a location ────── */}
       {geo.kind === 'granted' && (
@@ -235,10 +264,10 @@ export default function ExploreView({ practices }: Props) {
             </div>
           )}
 
-          {/* Other practices — coords missing OR (in future) beyond radius
-              we chose to surface. Currently only no-coord rows land here
-              so the patient can still find them; beyond-radius rows are
-              hidden by design (the radius preset IS the cutoff). */}
+          {/* "Other practices" — only rendered when location is GRANTED
+              and there's a separate no-coord bucket. In the no-location
+              state, everything is already in `nearList` and this
+              section stays hidden. */}
           {otherList.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 pt-2">
@@ -260,9 +289,11 @@ export default function ExploreView({ practices }: Props) {
 function LocationCard({
   geo,
   onSuburbPicked,
+  onTryAgain,
 }: {
   geo:             GeoState;
   onSuburbPicked:  (lat: number, lng: number, label: string) => void;
+  onTryAgain:      () => void;
 }) {
   if (geo.kind === 'idle' || geo.kind === 'requesting') {
     return (
@@ -293,17 +324,32 @@ function LocationCard({
     );
   }
 
-  // denied → suburb fallback via Google Places (New) Autocomplete.
-  // Locality-biased so "Rosebank" surfaces the area, not 40 individual
-  // street addresses. Coords come from Place Details on selection.
+  // denied → suburb fallback via Google Places (New) Autocomplete +
+  // a "Try again" button. The button re-fires getCurrentPosition,
+  // which on a hard-BLOCKED browser will silently fail (the browser
+  // suppresses the prompt) — the suburb input is the real escape
+  // hatch for that case. For a dismissed state, the browser usually
+  // does re-prompt.
   return (
     <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
-      <p className="text-sm font-medium" style={{ color: '#13294B' }}>
-        Search by suburb
-      </p>
-      <p className="mt-1 text-xs text-gray-500 mb-3">
-        Or enable location in your browser to see practices near you.
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium" style={{ color: '#13294B' }}>
+            Search by suburb
+          </p>
+          <p className="mt-1 text-xs text-gray-500 mb-3">
+            Or enable location in your browser to see practices near you.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onTryAgain}
+          data-testid="explore-try-location-again"
+          className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#13294B] hover:bg-gray-50"
+        >
+          Try location
+        </button>
+      </div>
       <PlacesAutocomplete
         variant="locality"
         placeholder="e.g. Rosebank"
