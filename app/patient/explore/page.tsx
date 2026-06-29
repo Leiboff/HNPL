@@ -8,6 +8,20 @@ import ExploreView from './ExploreView';
 // coordinates and hands the list to <ExploreView> (client). The client
 // then handles geolocation, suburb fallback, Haversine sort, and the
 // radius filter — all in-session, never persisted (POPIA).
+//
+// Why we query `practices_directory` (the view), not `practices`
+// directly:
+//   The `practices` table's SELECT policies are ALL relationship-scoped
+//   (member, owner, platform admin, patient-with-an-existing-plan,
+//   brand admin) — a patient querying the table for discovery sees
+//   only practices they ALREADY have a plan with. Migration 0063
+//   introduces `practices_directory`, a security-definer view that
+//   (a) exposes only directory-safe columns (no banking, no
+//   fee_percent, no internal FKs) and (b) hard-filters to
+//   status = 'approved'. Authenticated patients can SELECT through it
+//   to discover every approved practice; sensitive columns are
+//   physically absent from the view. The base table's policies stay
+//   exactly as they were.
 
 export type PracticeCard = {
   id:        string;
@@ -27,10 +41,12 @@ export default async function ExplorePage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  // The view is approved-only by construction; we don't repeat the
+  // status filter here. Selecting only the columns the page needs
+  // (matches the safe set in the view definition).
   const { data: rawPractices } = await supabase
-    .from('practices')
+    .from('practices_directory')
     .select('id, name, specialty, phone, email, suburb, city, latitude, longitude')
-    .eq('status', 'approved')
     .order('name');
 
   const practices = (rawPractices ?? []) as PracticeCard[];
