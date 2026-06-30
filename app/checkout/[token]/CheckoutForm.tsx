@@ -20,6 +20,7 @@ import {
   PrimaryButton,
   SecondaryButton,
 } from './_components/CheckoutChrome';
+import PlanPickerCards from './_components/PlanPickerCards';
 
 // ─── Multi-step anonymous checkout ─────────────────────────────────────────
 //
@@ -433,11 +434,20 @@ export default function CheckoutForm({
         </StepShell>
       )}
 
-      {/* ── Step 2: plan + salary day ─────────────────────────────────── */}
+      {/* ── Step 2: plan + salary day ───────────────────────────────────
+          Plan choice is rendered by <PlanPickerCards/> — a presentation-
+          only restyle of the previous radio-button grid. The cards show
+          the hero per-instalment amount, the "N payments on your salary
+          dates" honest cadence, the load-bearing "No interest or fees"
+          trust signal, and the total as a de-emphasised secondary line.
+          State (planType, setPlanType) and the per-instalment amount
+          come from THIS component's existing values (previewInstalments
+          + useState above) — the cards never recompute. */}
       {step === 2 && (
         <StepShell
           icon="calendar"
-          heading="Split it how it suits you"
+          heading="Choose how to split your bill"
+          subhead="Interest-free, on the days you get paid."
           actions={
             <div className="flex items-center justify-between gap-4">
               <SecondaryButton onClick={() => setStep(1)}>← Back</SecondaryButton>
@@ -447,41 +457,12 @@ export default function CheckoutForm({
             </div>
           }
         >
-          <div role="radiogroup" aria-label="Number of instalments" className="grid grid-cols-2 gap-3">
-            {[2, 3].map((n) => {
-              const active = planType === n;
-              const each   = previewInstalments(totalAmount, n as 2 | 3)[0];
-              return (
-                <button
-                  key={n}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setPlanType(n as 2 | 3)}
-                  className={`relative rounded-2xl border-2 p-4 text-left transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#15A89E]/20 ${
-                    active
-                      ? 'border-[#15A89E] bg-[#15A89E]/6'
-                      : 'border-[#E5E9F0] bg-white hover:border-[#D8DEE8]'
-                  }`}
-                >
-                  <p className="text-lg font-semibold text-[#0F1F3A]">{n} payments</p>
-                  <p className="text-sm tabular-nums mt-0.5 text-[#3A4B66]">
-                    {formatRand(each)} each
-                  </p>
-                  {active && (
-                    <span
-                      aria-hidden
-                      className="absolute top-3 right-3 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#15A89E] text-white"
-                    >
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
-                        <path d="m5 12.5 4.5 4.5L19 7" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          <PlanPickerCards
+            totalAmount={totalAmount}
+            planType={planType}
+            setPlanType={setPlanType}
+            perInstalmentAmount={(n) => previewInstalments(totalAmount, n)[0]}
+          />
 
           <div>
             <label htmlFor="salaryDay" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
