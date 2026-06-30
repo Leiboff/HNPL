@@ -77,34 +77,53 @@ export default async function BrandDashboardPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10 space-y-8">
-      <header>
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>My practices</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Manage every practice you&apos;ve added. New practices go pending — BetterNow approves them before they can trade.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>My practices</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Manage every practice you&apos;ve added. New practices go pending — BetterNow approves them before they can trade.
+          </p>
+        </div>
       </header>
+
+      {/* Quick links — surface the brand-admin's three management
+          surfaces: revenue (the new dashboard), brand settings, and
+          add-a-practice. Tile layout so each is one tap on mobile. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Link
+          href="/brand/revenue"
+          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+        >
+          <p className="text-xs uppercase tracking-widest text-gray-500">Revenue</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Group dashboard</p>
+        </Link>
+        <Link
+          href="/brand/group"
+          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+        >
+          <p className="text-xs uppercase tracking-widest text-gray-500">Brand</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Settings &amp; logo</p>
+        </Link>
+        <Link
+          href="/brand/new-practice"
+          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+        >
+          <p className="text-xs uppercase tracking-widest text-gray-500">Add</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>+ Add a practice</p>
+        </Link>
+      </div>
 
       {groups.map((g) => {
         const groupBranches = branches.filter((b) => b.group_id === g.id);
         return (
           <section key={g.id} className="space-y-3">
-            <header className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-gray-900">{g.name}</h2>
-              <Link
-                href="/brand/new-practice"
-                className="text-sm font-semibold underline underline-offset-2"
-                style={{ color: '#13294B' }}
-              >
-                + Add a practice
-              </Link>
-            </header>
+            <h2 className="text-lg font-semibold text-gray-900">{g.name}</h2>
 
             <div className="space-y-2">
               {groupBranches.map((b) => (
-                <Link
+                <div
                   key={b.id}
-                  href={`/practice?practiceId=${b.id}`}
-                  className="block rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+                  className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -120,7 +139,23 @@ export default async function BrandDashboardPage() {
                       {b.status}
                     </span>
                   </div>
-                </Link>
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                    <Link
+                      href={`/practice?practiceId=${b.id}`}
+                      className="font-semibold underline underline-offset-2"
+                      style={{ color: '#13294B' }}
+                    >
+                      Open dashboard →
+                    </Link>
+                    <Link
+                      href={`/brand/branch/${b.id}`}
+                      className="font-semibold underline underline-offset-2"
+                      style={{ color: '#13294B' }}
+                    >
+                      Edit details
+                    </Link>
+                  </div>
+                </div>
               ))}
             </div>
           </section>
