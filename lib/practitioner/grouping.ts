@@ -49,6 +49,13 @@ export type LocationOnCard = {
   suburb:        string | null;
   city:          string | null;
   phone:         string | null;
+  // Coords mirrored from the directory row's practice_latitude /
+  // practice_longitude so the per-location Directions button can
+  // build a precise maps pin without a second query. NULL when the
+  // practice has no geocode on file (Directions falls back to a
+  // locality search). Same safe column set as the rest of the view.
+  latitude:      number | null;
+  longitude:     number | null;
   distanceKm:    number | null;
 };
 
@@ -56,6 +63,14 @@ export type PractitionerCard = {
   // Stable id used as React key. Derived from hpcsa_group_key when
   // available; otherwise from the standalone member_id.
   id:               string;
+  // The first member_id we saw for this group — used as a URL-safe
+  // handle when linking to the detail screen
+  // (/patient/practitioner/[memberId]). For grouped rows it can be
+  // any member sharing the hpcsa_group_key; for standalone (null
+  // key) rows it's the one row's own member_id. The detail screen
+  // re-derives the group from this member's hpcsa_group_key, so any
+  // sibling membership would resolve to the same group.
+  representativeMemberId: string;
   firstName:        string;
   lastName:         string;
   fullName:         string;
@@ -119,6 +134,8 @@ export function groupIntoCards(
       suburb:        r.practice_suburb,
       city:          r.practice_city,
       phone:         r.practice_phone,
+      latitude:      r.practice_latitude,
+      longitude:     r.practice_longitude,
       distanceKm:    r.distanceKm,
     };
 
@@ -133,14 +150,15 @@ export function groupIntoCards(
       }
     } else {
       byKey.set(groupId, {
-        id:              groupId,
-        firstName:       r.first_name,
-        lastName:        r.last_name,
-        fullName:        `${r.first_name} ${r.last_name}`.trim(),
-        specialty:       r.specialty,
-        hpcsaRegistered: r.hpcsa_registered,
-        locations:       [location],
-        minDistanceKm:   null,  // computed after all rows are in
+        id:                     groupId,
+        representativeMemberId: r.member_id,
+        firstName:              r.first_name,
+        lastName:               r.last_name,
+        fullName:               `${r.first_name} ${r.last_name}`.trim(),
+        specialty:              r.specialty,
+        hpcsaRegistered:        r.hpcsa_registered,
+        locations:              [location],
+        minDistanceKm:          null,  // computed after all rows are in
       });
     }
   }

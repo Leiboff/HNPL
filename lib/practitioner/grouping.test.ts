@@ -193,9 +193,9 @@ describe('groupIntoCards — distance ordering + minDistanceKm', () => {
 
 describe('filterCards — search + specialty AND together', () => {
   const cards: PractitionerCard[] = [
-    { id: 'c1', firstName: 'Alice',   lastName: 'Smith',  fullName: 'Alice Smith',  specialty: 'Dentistry',     hpcsaRegistered: true, locations: [], minDistanceKm: null },
-    { id: 'c2', firstName: 'Bob',     lastName: 'Jones',  fullName: 'Bob Jones',    specialty: 'Physiotherapy', hpcsaRegistered: true, locations: [], minDistanceKm: null },
-    { id: 'c3', firstName: 'Charlie', lastName: 'Doe',    fullName: 'Charlie Doe',  specialty: 'Dentistry',     hpcsaRegistered: false, locations: [], minDistanceKm: null },
+    { id: 'c1', representativeMemberId: 'mc1', firstName: 'Alice',   lastName: 'Smith',  fullName: 'Alice Smith',  specialty: 'Dentistry',     hpcsaRegistered: true, locations: [], minDistanceKm: null },
+    { id: 'c2', representativeMemberId: 'mc2', firstName: 'Bob',     lastName: 'Jones',  fullName: 'Bob Jones',    specialty: 'Physiotherapy', hpcsaRegistered: true, locations: [], minDistanceKm: null },
+    { id: 'c3', representativeMemberId: 'mc3', firstName: 'Charlie', lastName: 'Doe',    fullName: 'Charlie Doe',  specialty: 'Dentistry',     hpcsaRegistered: false, locations: [], minDistanceKm: null },
   ];
 
   it('empty filters → all cards pass', () => {
@@ -223,8 +223,8 @@ describe('filterCards — search + specialty AND together', () => {
 describe('bucketPractitionerCards — no-location state', () => {
   it('no location → ALL cards in nearList unsorted, otherList empty (never hide anyone)', () => {
     const cards: PractitionerCard[] = [
-      { id: 'c1', firstName: 'A', lastName: 'A', fullName: 'A', specialty: null, hpcsaRegistered: true,  locations: [], minDistanceKm: null },
-      { id: 'c2', firstName: 'B', lastName: 'B', fullName: 'B', specialty: null, hpcsaRegistered: false, locations: [], minDistanceKm: null },
+      { id: 'c1', representativeMemberId: 'mc1', firstName: 'A', lastName: 'A', fullName: 'A', specialty: null, hpcsaRegistered: true,  locations: [], minDistanceKm: null },
+      { id: 'c2', representativeMemberId: 'mc2', firstName: 'B', lastName: 'B', fullName: 'B', specialty: null, hpcsaRegistered: false, locations: [], minDistanceKm: null },
     ];
     const r = bucketPractitionerCards(cards, false, 25);
     expect(r.nearList.map((c) => c.id)).toEqual(['c1', 'c2']);
@@ -235,14 +235,15 @@ describe('bucketPractitionerCards — no-location state', () => {
 describe('bucketPractitionerCards — granted state with radius', () => {
   function card(over: Partial<PractitionerCard> = {}): PractitionerCard {
     return {
-      id:              'x',
-      firstName:       'X',
-      lastName:        'X',
-      fullName:        'X X',
-      specialty:       null,
-      hpcsaRegistered: true,
-      locations:       [],
-      minDistanceKm:   null,
+      id:                     'x',
+      representativeMemberId: 'mx',
+      firstName:              'X',
+      lastName:               'X',
+      fullName:               'X X',
+      specialty:              null,
+      hpcsaRegistered:        true,
+      locations:              [],
+      minDistanceKm:          null,
       ...over,
     };
   }
@@ -288,8 +289,8 @@ describe('bucketPractitionerCards — granted state with radius', () => {
       id: 'mixed',
       minDistanceKm: 5,
       locations: [
-        { practice_id: 'near', practice_name: 'Near', suburb: null, city: null, phone: null, distanceKm: 5  },
-        { practice_id: 'far',  practice_name: 'Far',  suburb: null, city: null, phone: null, distanceKm: 60 },
+        { practice_id: 'near', practice_name: 'Near', suburb: null, city: null, phone: null, latitude: null, longitude: null, distanceKm: 5  },
+        { practice_id: 'far',  practice_name: 'Far',  suburb: null, city: null, phone: null, latitude: null, longitude: null, distanceKm: 60 },
       ],
     });
     const r = bucketPractitionerCards([c], true, 25);
@@ -303,10 +304,10 @@ describe('bucketPractitionerCards — granted state with radius', () => {
 describe('specialtiesFromCards', () => {
   it('returns the distinct specialties alphabetised, skipping null', () => {
     const cards: PractitionerCard[] = [
-      { id: 'c1', firstName: 'A', lastName: 'A', fullName: 'A', specialty: 'Dentistry',     hpcsaRegistered: true, locations: [], minDistanceKm: null },
-      { id: 'c2', firstName: 'B', lastName: 'B', fullName: 'B', specialty: null,            hpcsaRegistered: true, locations: [], minDistanceKm: null },
-      { id: 'c3', firstName: 'C', lastName: 'C', fullName: 'C', specialty: 'Dentistry',     hpcsaRegistered: true, locations: [], minDistanceKm: null },
-      { id: 'c4', firstName: 'D', lastName: 'D', fullName: 'D', specialty: 'Physiotherapy', hpcsaRegistered: true, locations: [], minDistanceKm: null },
+      { id: 'c1', representativeMemberId: 'mc1', firstName: 'A', lastName: 'A', fullName: 'A', specialty: 'Dentistry',     hpcsaRegistered: true, locations: [], minDistanceKm: null },
+      { id: 'c2', representativeMemberId: 'mc2', firstName: 'B', lastName: 'B', fullName: 'B', specialty: null,            hpcsaRegistered: true, locations: [], minDistanceKm: null },
+      { id: 'c3', representativeMemberId: 'mc3', firstName: 'C', lastName: 'C', fullName: 'C', specialty: 'Dentistry',     hpcsaRegistered: true, locations: [], minDistanceKm: null },
+      { id: 'c4', representativeMemberId: 'mc4', firstName: 'D', lastName: 'D', fullName: 'D', specialty: 'Physiotherapy', hpcsaRegistered: true, locations: [], minDistanceKm: null },
     ];
     expect(specialtiesFromCards(cards)).toEqual(['Dentistry', 'Physiotherapy']);
   });

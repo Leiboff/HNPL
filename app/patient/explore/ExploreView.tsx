@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
+import type { LatLng } from '@/lib/maps/haversine';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import {
   decorateWithDistance,
@@ -10,28 +10,27 @@ import {
   bucketPractitionerCards,
   specialtiesFromCards,
   type DirectoryRow,
-  type PractitionerCard,
-  type LocationOnCard,
 } from '@/lib/practitioner/grouping';
+import PractitionerListCard from './PractitionerListCard';
 
-// ─── Find a Practitioner — geolocation + suburb fallback + filters ─────
+// ─── Find a Practitioner — Discovery-inspired card layout, BetterNow tone
 //
-// Renders one card per PRACTITIONER (grouped by HPCSA, with a
-// null-HPCSA fallback to member_id). A practitioner working at two
-// approved practices appears as one card listing both locations,
-// each with its own distance + Call button. Filters: proximity
-// (radius preset) + specialty (chip row). Distance and bucketing
-// rules live in lib/practitioner/grouping.ts so they're unit-tested
-// in isolation.
+// Renders one card per PRACTITIONER (grouped by HPCSA, NULL fallback
+// to member_id). Multi-location practitioners show their nearest
+// location inline + "Show all N locations" to reveal the rest. Each
+// location row has Call to book + Directions actions. Tapping the
+// header "View profile →" opens /patient/practitioner/[memberId].
 //
-// Same no-location contract as before: when we can't measure
-// distance (no user location yet, denied, dismissed), EVERY
-// practitioner appears unsorted. Never hide anyone for missing
-// signal we don't have.
+// Things we DELIBERATELY don't show — these come from Discovery's UI
+// but are wrong for BetterNow (not a medical scheme):
+//   • No "Cover" / "In Network" / "Full network cover" / "Partial cover".
+//   • No "Premier Plus" / "Nominate as primary GP".
+//   • No HPCSA badge (registration assumed for every listed practitioner).
+// These omissions are pinned by source-text tests.
 //
-// Same geolocation re-prompt contract: every mount calls
-// getCurrentPosition, the browser decides whether to actually prompt
-// (hard-blocked → no prompt → suburb fallback is the escape hatch).
+// The data, grouping, distance, no-location, and re-prompt contracts
+// are UNCHANGED from the previous design — only the visual layer and
+// the new detail-screen link are this build.
 
 const RADIUS_PRESETS = [10, 25, 50] as const;
 const DEFAULT_RADIUS = 25;
@@ -50,6 +49,7 @@ export default function ExploreView({ rows }: Props) {
   const [search,    setSearch]    = useState('');
   const [specialty, setSpecialty] = useState<string | null>(null);
   const [radiusKm,  setRadiusKm]  = useState<number>(DEFAULT_RADIUS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [geo, setGeo] = useState<GeoState>(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -69,9 +69,7 @@ export default function ExploreView({ rows }: Props) {
   }, []);
 
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      return;
-    }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
     livenessRef.current = { cancelled: false };
     const liveness = livenessRef.current;
@@ -104,8 +102,7 @@ export default function ExploreView({ rows }: Props) {
     });
   }
 
-  // ── Pipeline: decorate with distance → group into cards → filter →
-  //              bucket. Each step is pure (lib/practitioner/grouping).
+  // ── Pipeline: decorate → group → filter → bucket. All pure. ─────
   const userLocation: LatLng | null = geo.kind === 'granted' ? geo.location : null;
 
   const decorated = useMemo(
@@ -120,78 +117,105 @@ export default function ExploreView({ rows }: Props) {
     [filtered, geo, radiusKm],
   );
 
-  const chipStyle = (active: boolean) =>
-    active
-      ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)', color: '#fff' }
-      : { background: 'rgba(19,41,75,.06)', color: '#13294B' };
+  const activeFilterCount =
+    (specialty ? 1 : 0) +
+    (geo.kind === 'granted' && radiusKm !== DEFAULT_RADIUS ? 1 : 0);
 
   return (
-    <div className="space-y-5">
-      {/* ── Location card — drives the nearest-first sort ───────────── */}
-      <LocationCard geo={geo} onSuburbPicked={onSuburbPicked} onTryAgain={tryLocate} />
-
-      {/* ── Filters ──────────────────────────────────────────────────
-          Two controls — proximity (radius preset) and specialty.
-          Proximity is only meaningful once we have a location;
-          specialty is always offered. Search is a separate input
-          below — keeps it discoverable without nesting too deep. */}
-      <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-5 py-4 space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Filters</p>
-
-        {geo.kind === 'granted' && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 w-20 shrink-0">Proximity</span>
-            {RADIUS_PRESETS.map((km) => (
-              <button
-                key={km}
-                type="button"
-                onClick={() => setRadiusKm(km)}
-                className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-                style={chipStyle(radiusKm === km)}
-                data-testid={`filter-radius-${km}`}
-              >
-                {km} km
-              </button>
-            ))}
-          </div>
-        )}
-
-        {specialties.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 w-20 shrink-0">Specialty</span>
-            <button
-              type="button"
-              onClick={() => setSpecialty(null)}
-              className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-              style={chipStyle(specialty === null)}
-              data-testid="filter-specialty-all"
+    <div className="space-y-4">
+      {/* ── Sticky search + filters bar (Discovery-style header polish) */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <svg
+              aria-hidden
+              className="absolute left-3 top-1/2 -translate-y-1/2"
+              width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A8AA0" strokeWidth={2}
             >
-              All
-            </button>
-            {specialties.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSpecialty(specialty === s ? null : s)}
-                className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-                style={chipStyle(specialty === s)}
-                data-testid={`filter-specialty-${s}`}
-              >
-                {s}
-              </button>
-            ))}
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+            </svg>
+            <input
+              type="search"
+              placeholder="Search practitioners…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none focus:ring-2 focus:ring-[#15A89E]/15"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((o) => !o)}
+            data-testid="filters-toggle"
+            aria-expanded={filtersOpen}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#13294B] hover:bg-gray-50"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+              <path d="M4 6h16M7 12h10M10 18h4" strokeLinecap="round" />
+            </svg>
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="ml-0.5 inline-flex items-center justify-center min-w-4.5 h-4.5 rounded-full bg-[#15A89E] text-white text-[10px] font-semibold px-1">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Compact location indicator + suburb fallback */}
+        <LocationLine geo={geo} onSuburbPicked={onSuburbPicked} onTryAgain={tryLocate} />
+
+        {/* Filters drawer — proximity + specialty. Closed by default
+            to keep the top of the page clean (Discovery-style); the
+            count badge above advertises that filters are applied. */}
+        {filtersOpen && (
+          <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 space-y-3">
+            {geo.kind === 'granted' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 w-20 shrink-0">Proximity</span>
+                {RADIUS_PRESETS.map((km) => {
+                  const active = radiusKm === km;
+                  return (
+                    <button
+                      key={km}
+                      type="button"
+                      onClick={() => setRadiusKm(km)}
+                      data-testid={`filter-radius-${km}`}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                        active
+                          ? 'text-white'
+                          : 'text-[#13294B] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
+                      }`}
+                      style={active ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
+                    >
+                      {km} km
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {specialties.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 w-20 shrink-0">Specialty</span>
+                <SpecialtyChip active={specialty === null} onClick={() => setSpecialty(null)} testId="filter-specialty-all">
+                  All
+                </SpecialtyChip>
+                {specialties.map((s) => (
+                  <SpecialtyChip
+                    key={s}
+                    active={specialty === s}
+                    onClick={() => setSpecialty(specialty === s ? null : s)}
+                    testId={`filter-specialty-${s}`}
+                  >
+                    {s}
+                  </SpecialtyChip>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {/* Search by name */}
-      <input
-        type="search"
-        placeholder="Search practitioners…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]"
-      />
 
       {/* ── Results — nearest first, then "Other practitioners" ─── */}
       {nearList.length === 0 && otherList.length === 0 ? (
@@ -207,15 +231,15 @@ export default function ExploreView({ rows }: Props) {
         <>
           {nearList.length > 0 && (
             <div className="space-y-3">
-              {nearList.map((c) => <PractitionerCardRow key={c.id} card={c} />)}
+              {nearList.map((c) => <PractitionerListCard key={c.id} card={c} />)}
             </div>
           )}
           {otherList.length > 0 && (
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 pt-2">
+            <div className="space-y-3 pt-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
                 Other practitioners
               </p>
-              {otherList.map((c) => <PractitionerCardRow key={c.id} card={c} />)}
+              {otherList.map((c) => <PractitionerListCard key={c.id} card={c} />)}
             </div>
           )}
         </>
@@ -224,9 +248,43 @@ export default function ExploreView({ rows }: Props) {
   );
 }
 
-// ─── Location card — explains the prompt + offers the suburb fallback ──
+// ─── Specialty chip ────────────────────────────────────────────────────
 
-function LocationCard({
+function SpecialtyChip({
+  active,
+  onClick,
+  testId,
+  children,
+}: {
+  active:   boolean;
+  onClick:  () => void;
+  testId:   string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+        active
+          ? 'text-white'
+          : 'text-[#13294B] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
+      }`}
+      style={active ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── LocationLine — the inline "Near your current location" strip ──────
+//
+// Compact one-row replacement for the previous big white card. Shows
+// the current geo state + the "your location is not saved" reassurance.
+// When denied, the suburb picker drops down + a Try-location retry.
+
+function LocationLine({
   geo,
   onSuburbPicked,
   onTryAgain,
@@ -237,41 +295,29 @@ function LocationCard({
 }) {
   if (geo.kind === 'idle' || geo.kind === 'requesting') {
     return (
-      <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
-        <p className="text-sm font-medium" style={{ color: '#13294B' }}>
-          {geo.kind === 'requesting' ? 'Checking your location…' : 'Allow location to see practitioners near you'}
-        </p>
-        <p className="mt-1 text-xs text-gray-500">
-          Your location is used only to sort this list — never saved.
-        </p>
-      </div>
+      <p className="text-xs text-gray-500 flex items-center gap-1.5">
+        <PinIcon /> Checking your location…
+      </p>
     );
   }
 
   if (geo.kind === 'granted') {
-    const sourceLine = geo.source === 'suburb' && geo.label
+    const line = geo.source === 'suburb' && geo.label
       ? `Near ${geo.label}`
       : 'Near your current location';
     return (
-      <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
-        <p className="text-sm font-medium" style={{ color: '#13294B' }}>
-          {sourceLine}
-        </p>
-        <p className="mt-1 text-xs text-gray-500">
-          Sorted nearest-first within the selected radius. Your location is not saved.
-        </p>
-      </div>
+      <p className="text-xs text-gray-500 flex items-center gap-1.5">
+        <PinIcon /> {line} · Your location is not saved.
+      </p>
     );
   }
 
   return (
-    <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
+    <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium" style={{ color: '#13294B' }}>
-            Search by suburb
-          </p>
-          <p className="mt-1 text-xs text-gray-500 mb-3">
+          <p className="text-sm font-medium" style={{ color: '#13294B' }}>Search by suburb</p>
+          <p className="mt-0.5 text-xs text-gray-500">
             Or enable location in your browser to see practitioners near you.
           </p>
         </div>
@@ -293,61 +339,11 @@ function LocationCard({
   );
 }
 
-// ─── Per-practitioner card (with embedded locations) ───────────────────
-
-function PractitionerCardRow({ card }: { card: PractitionerCard }) {
+function PinIcon() {
   return (
-    <div className="bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4" data-testid={`practitioner-card-${card.id}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold text-gray-900 truncate">{card.fullName}</p>
-          {card.specialty && (
-            <p className="text-xs text-gray-500 mt-0.5">{card.specialty}</p>
-          )}
-        </div>
-        {card.hpcsaRegistered && (
-          <span
-            className="shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
-            title="Registered with the Health Professions Council of South Africa."
-          >
-            HPCSA registered ✓
-          </span>
-        )}
-      </div>
-
-      {/* Locations — one row per practice, nearest-first */}
-      <ul className="mt-3 space-y-2">
-        {card.locations.map((loc) => (
-          <LocationRow key={loc.practice_id} loc={loc} />
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function LocationRow({ loc }: { loc: LocationOnCard }) {
-  const locationLine = [loc.suburb, loc.city].filter(Boolean).join(', ');
-  return (
-    <li className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 px-3 py-2">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-gray-900 truncate">{loc.practice_name}</p>
-        {locationLine && (
-          <p className="text-xs text-gray-500 mt-0.5 truncate">{locationLine}</p>
-        )}
-        {loc.distanceKm != null && (
-          <p className="text-xs font-medium mt-1" style={{ color: '#15A89E' }}>
-            {formatDistanceKm(loc.distanceKm)}
-          </p>
-        )}
-      </div>
-      {loc.phone && (
-        <a
-          href={`tel:${loc.phone}`}
-          className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-        >
-          Call
-        </a>
-      )}
-    </li>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+      <path d="M12 22s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z" strokeLinejoin="round" />
+      <circle cx="12" cy="10" r="2.5" />
+    </svg>
   );
 }

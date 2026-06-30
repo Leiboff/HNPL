@@ -207,10 +207,16 @@ describe('Explore page is repointed at the practitioner view', () => {
   });
 });
 
-describe('practitioners_directory is used ONLY by the patient explore page', () => {
+describe('practitioners_directory is used ONLY by patient practitioner-discovery surfaces', () => {
   const allowed = new Set([
     resolve(ROOT, 'app/patient/explore/page.tsx').toLowerCase(),
     resolve(ROOT, 'app/patient/explore/practitioners-directory.test.ts').toLowerCase(),
+    // Detail screen — tap-through from a list card; uses the same
+    // safe view (no new sensitive surface). Both the route's
+    // page.tsx (server) and the DetailView client live under this
+    // dynamic folder.
+    resolve(ROOT, 'app/patient/practitioner/[memberId]/page.tsx').toLowerCase(),
+    resolve(ROOT, 'app/patient/practitioner/[memberId]/DetailView.tsx').toLowerCase(),
     // The pure grouping helper documents the view name in its module
     // header (it's the data source for groupIntoCards etc.).
     resolve(ROOT, 'lib/practitioner/grouping.ts').toLowerCase(),

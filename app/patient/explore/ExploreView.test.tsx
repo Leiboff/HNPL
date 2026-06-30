@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, within } from '@testing-library/react';
 import type { DirectoryRow } from '@/lib/practitioner/grouping';
 
-// ─── Tests — Find a Practitioner UI ────────────────────────────────────
+// ─── Tests — Find a Practitioner UI (post-redesign) ────────────────────
 //
 // Behavioural tests over <ExploreView/>. The pure grouping/bucketing
 // rules are pinned in lib/practitioner/grouping.test.ts; these tests
-// prove the COMPONENT wires them up correctly and that the geolocation
-// state machine still re-prompts on every mount + on the retry button.
+// prove the COMPONENT wires them up correctly, the geo state machine
+// re-prompts on every mount + on the retry button, and the new
+// list-card UX (single-location inline + multi-location expander +
+// Call to book + Directions) renders + behaves correctly.
 //
 // PlacesAutocomplete is mocked — the real one calls Google Places.
 
@@ -114,25 +116,29 @@ describe('ExploreView — geolocation re-prompts on every mount', () => {
   });
 });
 
-describe('ExploreView — grouping by HPCSA produces one card with multiple locations', () => {
+describe('ExploreView — grouping by HPCSA: ONE card per practitioner', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
   beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('two rows with the SAME hpcsa_group_key → ONE card showing both practices', () => {
+  it('two rows with the SAME hpcsa_group_key → ONE card (nearest location inline; rest behind expander)', () => {
     const rows: DirectoryRow[] = [
       r({ member_id: 'm-a', hpcsa_group_key: 'hash-X', hpcsa_registered: true, first_name: 'Jane', last_name: 'Doe', practice_id: 'pA', practice_name: 'Sandton Rooms',  practice_latitude: -26.10, practice_longitude: 28.05 }),
       r({ member_id: 'm-b', hpcsa_group_key: 'hash-X', hpcsa_registered: true, first_name: 'Jane', last_name: 'Doe', practice_id: 'pB', practice_name: 'Rosebank Rooms', practice_latitude: -26.15, practice_longitude: 28.04 }),
     ];
     render(<ExploreView rows={rows} />);
 
-    // One card.
+    // One name appears once.
     expect(screen.getAllByText('Jane Doe')).toHaveLength(1);
-    // Both locations listed.
-    expect(screen.getByText('Sandton Rooms')).toBeTruthy();
+
+    // The nearest location renders inline; the OTHER is behind a
+    // "Show all 2 locations" expander (this is the redesign).
+    expect(screen.queryByText('Rosebank Rooms')).toBeNull();
+
+    // The expander reveals the second location.
+    const expand = screen.getByText(/Show all 2 locations/);
+    act(() => { fireEvent.click(expand); });
     expect(screen.getByText('Rosebank Rooms')).toBeTruthy();
-    // HPCSA badge present.
-    expect(screen.getByText(/HPCSA registered/)).toBeTruthy();
   });
 
   it('row with NULL hpcsa_group_key → standalone card (NOT hidden)', () => {
@@ -141,63 +147,99 @@ describe('ExploreView — grouping by HPCSA produces one card with multiple loca
     ];
     render(<ExploreView rows={rows} />);
     expect(screen.getByText('No HPCSA')).toBeTruthy();
-    // No badge for a non-registered row.
-    expect(screen.queryByText(/HPCSA registered/)).toBeNull();
   });
 });
 
-describe('ExploreView — filters work and AND together', () => {
+describe('ExploreView — list card UX: Call to book + Directions + tap-to-detail', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
   beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('specialty chip narrows the visible cards', () => {
+  it('Call to book is a tel: link to the practice phone', () => {
+    render(<ExploreView rows={[r({ member_id: 'm1', practice_id: 'p1', practice_phone: '+27 11 555 0001' })]} />);
+    // tel: anchor exists for this practice.
+    const tel = document.querySelector('a[href="tel:+27 11 555 0001"]') as HTMLAnchorElement | null;
+    expect(tel).not.toBeNull();
+    expect(tel!.textContent).toMatch(/Call to book/);
+  });
+
+  it('Directions is a maps link to the practice coords when available', () => {
+    render(<ExploreView rows={[r({ member_id: 'm1', practice_id: 'p1', practice_latitude: -26.10, practice_longitude: 28.05 })]} />);
+    const maps = Array.from(document.querySelectorAll('a[target="_blank"]'))
+      .find((a) => (a as HTMLAnchorElement).href.includes('maps.google.com')
+                || (a as HTMLAnchorElement).href.includes('google.com/maps')) as HTMLAnchorElement | undefined;
+    expect(maps).toBeDefined();
+    expect(maps!.href).toContain('-26.1,28.05');
+    expect(maps!.textContent).toMatch(/Directions/);
+  });
+
+  it('"View profile" links to /patient/practitioner/<member_id>', () => {
     const rows: DirectoryRow[] = [
-      r({ member_id: 'm-dent',  hpcsa_group_key: 'd', specialty: 'Dentistry',     first_name: 'D',  last_name: 'Dent' }),
-      r({ member_id: 'm-physio',hpcsa_group_key: 'p', specialty: 'Physiotherapy', first_name: 'P',  last_name: 'Physio' }),
+      r({ member_id: 'm-target', hpcsa_group_key: 'hash', first_name: 'Target', last_name: 'Person' }),
     ];
     render(<ExploreView rows={rows} />);
-    // Before filter: both visible.
+    const card = screen.getByTestId('practitioner-card-hash');
+    const view = within(card).getByText(/View profile/);
+    expect(view.getAttribute('href')).toBe('/patient/practitioner/m-target');
+  });
+});
+
+describe('ExploreView — header polish: collapsible filters drawer', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
+  afterEach(() => { removeGeolocation(); });
+
+  it('Filters drawer is collapsed by default; opens on toggle; specialty narrows results', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'm-dent',   hpcsa_group_key: 'd', specialty: 'Dentistry',     first_name: 'D',  last_name: 'Dent' }),
+      r({ member_id: 'm-physio', hpcsa_group_key: 'p', specialty: 'Physiotherapy', first_name: 'P',  last_name: 'Physio' }),
+    ];
+    render(<ExploreView rows={rows} />);
+
+    // Both visible initially.
     expect(screen.getByText('D Dent')).toBeTruthy();
     expect(screen.getByText('P Physio')).toBeTruthy();
 
-    // Click "Physiotherapy" specialty chip.
+    // Filters closed by default — the chips don't exist in the DOM.
+    expect(screen.queryByTestId('filter-specialty-Physiotherapy')).toBeNull();
+
+    // Open the drawer.
+    act(() => { fireEvent.click(screen.getByTestId('filters-toggle')); });
     act(() => { fireEvent.click(screen.getByTestId('filter-specialty-Physiotherapy')); });
+
     expect(screen.queryByText('D Dent')).toBeNull();
     expect(screen.getByText('P Physio')).toBeTruthy();
   });
 });
 
-describe('ExploreView — distance: appears if ANY location within radius (multi-practice practitioner)', () => {
+describe('ExploreView — Discovery-borrow guardrails (BetterNow tone)', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
   beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('a 2-location practitioner with one within 25km + one beyond → card appears, locations listed nearest-first', () => {
+  it('NO medical-aid-network language anywhere (Cover / In Network / Premier Plus / primary GP)', () => {
     const rows: DirectoryRow[] = [
-      // ~0 km from (-26.10, 28.05)
-      r({ member_id: 'm-near', hpcsa_group_key: 'h', first_name: 'Two', last_name: 'Sites', practice_id: 'p-near', practice_name: 'Near Site', practice_latitude: -26.10, practice_longitude: 28.05 }),
-      // ~120+ km from (-26.10, 28.05)
-      r({ member_id: 'm-far',  hpcsa_group_key: 'h', first_name: 'Two', last_name: 'Sites', practice_id: 'p-far',  practice_name: 'Far Site',  practice_latitude: -25.00, practice_longitude: 28.05 }),
+      r({ member_id: 'm1', first_name: 'A', last_name: 'B' }),
+    ];
+    const { container } = render(<ExploreView rows={rows} />);
+    const text = (container.textContent ?? '').toLowerCase();
+    expect(text).not.toContain('cover');
+    expect(text).not.toContain('in network');
+    expect(text).not.toContain('full network');
+    expect(text).not.toContain('partial network');
+    expect(text).not.toContain('premier plus');
+    expect(text).not.toContain('nominate as primary');
+    expect(text).not.toContain('medical aid');
+    expect(text).not.toContain('medical scheme');
+  });
+
+  it('NO HPCSA badge — registration is assumed, not displayed', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'm1', hpcsa_registered: true,  first_name: 'A', last_name: 'B' }),
+      r({ member_id: 'm2', hpcsa_registered: false, first_name: 'C', last_name: 'D' }),
     ];
     render(<ExploreView rows={rows} />);
-    // Grant location → triggers granted state with radius=25 by default.
-    act(() => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-    });
-
-    // Card visible (because at least one location is within 25 km).
-    expect(screen.getByText('Two Sites')).toBeTruthy();
-    // BOTH locations are present on the card.
-    expect(screen.getByText('Near Site')).toBeTruthy();
-    expect(screen.getByText('Far Site')).toBeTruthy();
-
-    // Near Site appears in DOM BEFORE Far Site (nearest-first sort).
-    const nearEl = screen.getByText('Near Site');
-    const farEl  = screen.getByText('Far Site');
-    const order  = nearEl.compareDocumentPosition(farEl);
-    // Node.DOCUMENT_POSITION_FOLLOWING = 4 → farEl comes after nearEl
-    expect(order & 4).toBe(4);
+    expect(screen.queryByText(/HPCSA registered/)).toBeNull();
+    expect(screen.queryByText(/HPCSA/)).toBeNull();
   });
 });
