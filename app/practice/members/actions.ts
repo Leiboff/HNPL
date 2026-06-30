@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { encryptId } from '@/lib/idEncryption';
 import { isValidEmail, validateSaId } from '@/lib/validation';
+import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -209,6 +210,18 @@ export async function addMember(input: NewMemberInput): Promise<ActionResult> {
   if (!saIdResult.valid) return { error: 'SA ID number is invalid — please check what was typed.' };
   if (input.memberRole === 'provider' && !input.specialty) return { error: 'Specialty is required for practitioners.' };
 
+  // Light HPCSA format validation when an HPCSA number is supplied
+  // for a provider. We do NOT make HPCSA mandatory here (the historic
+  // flow allowed it to be missing) but if SOMETHING is typed, it
+  // must pass the same shape check used by the practitioner
+  // discovery layer's grouping key. This stops malformed entries
+  // ("DP12345 / DP67890") from being captured and polluting the
+  // grouping key downstream.
+  if (input.memberRole === 'provider' && input.hpcsaNumber && input.hpcsaNumber.trim().length > 0) {
+    const hpcsaCheck = checkHpcsa(input.hpcsaNumber);
+    if (!hpcsaCheck.ok) return { error: HPCSA_ERROR_MESSAGE[hpcsaCheck.reason] };
+  }
+
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -341,7 +354,8 @@ export async function becomeProvider(input: BecomeProviderInput): Promise<Action
   if (!specialty) return { error: 'Specialty is required.' };
 
   const hpcsa = input.hpcsaNumber.trim();
-  if (!hpcsa) return { error: 'HPCSA number is required.' };
+  const hpcsaCheck = checkHpcsa(hpcsa);
+  if (!hpcsaCheck.ok) return { error: HPCSA_ERROR_MESSAGE[hpcsaCheck.reason] };
 
   const saIdResult = validateSaId(input.saIdNumber);
   if (!saIdResult.valid) {

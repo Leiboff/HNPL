@@ -128,7 +128,7 @@ describe('becomeProvider — guard', () => {
   it('rejects an unauthenticated caller', async () => {
     sessionUser.id = null;
     const result = await becomeProvider({
-      specialty: 'Dentistry', hpcsaNumber: 'MP1', saIdNumber: VALID_SA_ID,
+      specialty: 'Dentistry', hpcsaNumber: 'MP1234567', saIdNumber: VALID_SA_ID,
     });
     expect(result.error).toBe('Not authenticated.');
     expect(writes).toHaveLength(0);
@@ -137,7 +137,7 @@ describe('becomeProvider — guard', () => {
   it('rejects a member who cannot manage the practice', async () => {
     membership.can_manage_practice = false;
     const result = await becomeProvider({
-      specialty: 'Dentistry', hpcsaNumber: 'MP1', saIdNumber: VALID_SA_ID,
+      specialty: 'Dentistry', hpcsaNumber: 'MP1234567', saIdNumber: VALID_SA_ID,
     });
     expect(result.error).toMatch(/permission/i);
     expect(writes).toHaveLength(0);
@@ -147,7 +147,7 @@ describe('becomeProvider — guard', () => {
 describe('becomeProvider — required fields', () => {
   it('requires specialty', async () => {
     const result = await becomeProvider({
-      specialty: '', hpcsaNumber: 'MP1', saIdNumber: VALID_SA_ID,
+      specialty: '', hpcsaNumber: 'MP1234567', saIdNumber: VALID_SA_ID,
     });
     expect(result.error).toBe('Specialty is required.');
     expect(writes).toHaveLength(0);
@@ -163,7 +163,7 @@ describe('becomeProvider — required fields', () => {
 
   it('rejects an invalid SA ID (any internal reason)', async () => {
     const result = await becomeProvider({
-      specialty: 'Dentistry', hpcsaNumber: 'MP1', saIdNumber: '0000000000000',
+      specialty: 'Dentistry', hpcsaNumber: 'MP1234567', saIdNumber: '0000000000000',
     });
     expect(result.error).toMatch(/SA ID number is invalid/i);
     expect(writes).toHaveLength(0);
@@ -174,7 +174,7 @@ describe('becomeProvider — idempotency', () => {
   it('refuses when the caller is already role=provider', async () => {
     ownRow!.role = 'provider';
     const result = await becomeProvider({
-      specialty: 'Dentistry', hpcsaNumber: 'MP1', saIdNumber: VALID_SA_ID,
+      specialty: 'Dentistry', hpcsaNumber: 'MP1234567', saIdNumber: VALID_SA_ID,
     });
     expect(result.error).toMatch(/already a provider/i);
     expect(writes).toHaveLength(0);

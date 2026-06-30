@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import type { PracticeCard } from './page';
+import type { DirectoryRow } from '@/lib/practitioner/grouping';
 
-// ─── Tests — explore page geolocation re-prompt + no-location render ───
+// ─── Tests — Find a Practitioner UI ────────────────────────────────────
 //
-// Bug 1: a coord-having practice was vanishing when the user hadn't
-// granted location. Bug 2: the geolocation prompt wasn't firing on
-// every visit. Both fixes are in ExploreView.tsx; this file pins
-// them so future edits can't silently regress.
+// Behavioural tests over <ExploreView/>. The pure grouping/bucketing
+// rules are pinned in lib/practitioner/grouping.test.ts; these tests
+// prove the COMPONENT wires them up correctly and that the geolocation
+// state machine still re-prompts on every mount + on the retry button.
 //
-// We mock PlacesAutocomplete to a stub — the real one calls Google
-// Places HTTPs APIs which aren't relevant here.
+// PlacesAutocomplete is mocked — the real one calls Google Places.
 
 vi.mock('@/app/_components/PlacesAutocomplete', () => ({
   default: () => null,
@@ -18,7 +17,7 @@ vi.mock('@/app/_components/PlacesAutocomplete', () => ({
 
 import ExploreView from './ExploreView';
 
-// ─── Helpers ────────────────────────────────────────────────────────────
+// ─── Geolocation harness ────────────────────────────────────────────────
 
 type GeoCb = (pos: GeolocationPosition) => void;
 type ErrCb = (err: GeolocationPositionError) => void;
@@ -44,142 +43,161 @@ function removeGeolocation() {
   });
 }
 
-function p(over: Partial<PracticeCard> = {}): PracticeCard {
+function r(over: Partial<DirectoryRow> = {}): DirectoryRow {
   return {
-    id:        'p',
-    name:      'Practice',
-    specialty: null,
-    phone:     null,
-    email:     null,
-    suburb:    null,
-    city:      null,
-    latitude:  null,
-    longitude: null,
+    member_id:          'm-1',
+    hpcsa_group_key:    null,
+    hpcsa_registered:   false,
+    first_name:         'Jane',
+    last_name:          'Doe',
+    specialty:          'Dentistry',
+    practice_id:        'p-1',
+    practice_name:      'Sandton Rooms',
+    practice_suburb:    'Sandton',
+    practice_city:      'Johannesburg',
+    practice_latitude:  -26.10,
+    practice_longitude:  28.05,
+    practice_phone:     '+27 11 555 0001',
     ...over,
   };
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────
 
-describe('ExploreView — no-location state renders ALL approved practices', () => {
+describe('ExploreView — no-location renders every practitioner', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => {
-    geo = buildGeolocationStub();
-    installGeolocation(geo);
-  });
+  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('renders BOTH coord-having and coord-less practices when getCurrentPosition errors (denied/dismissed)', () => {
-    // Bug 1 repro: pre-fix, Cross Road (coord-having) was invisible in
-    // this state. Now it MUST appear alongside Norwood.
-    const practices: PracticeCard[] = [
-      p({ id: 'cross-road', name: 'Cross Road Therapy', latitude: -26.10, longitude: 28.05 }),
-      p({ id: 'norwood',    name: 'Norwood Medical',    latitude: null,    longitude: null  }),
+  it('shows BOTH coord-having and coord-less practitioners when location is denied', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'm-coord',   first_name: 'Has',  last_name: 'Coords',     practice_latitude: -26.10, practice_longitude: 28.05 }),
+      r({ member_id: 'm-nocoord', first_name: 'No',   last_name: 'Coords',     practice_latitude: null,    practice_longitude: null }),
     ];
-    render(<ExploreView practices={practices} />);
-    // Effect fires getCurrentPosition; trigger the error callback so we
-    // land in the denied (no-location) state.
+    render(<ExploreView rows={rows} />);
     act(() => {
       const [, err] = geo.getCurrentPosition.mock.calls[0]!;
       err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
     });
-    expect(screen.getByText('Cross Road Therapy')).toBeTruthy();
-    expect(screen.getByText('Norwood Medical')).toBeTruthy();
-    // No "Other practices" section in the no-location state — everything
-    // is in one list.
-    expect(screen.queryByText('Other practices')).toBeNull();
-  });
-
-  it('renders ALL approved practices while geolocation is still pending (requesting state)', () => {
-    // Browsers can leave the prompt open for ages without firing
-    // either callback. The page must NOT hide coord-having practices
-    // in the meantime.
-    const practices: PracticeCard[] = [
-      p({ id: 'cross-road', name: 'Cross Road Therapy', latitude: -26.10, longitude: 28.05 }),
-      p({ id: 'norwood',    name: 'Norwood Medical' }),
-    ];
-    render(<ExploreView practices={practices} />);
-    // getCurrentPosition was called but no callback has fired — we're
-    // in the 'requesting' state. Both practices must still render.
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('Cross Road Therapy')).toBeTruthy();
-    expect(screen.getByText('Norwood Medical')).toBeTruthy();
-  });
-
-  it('renders ALL approved practices when navigator.geolocation is unavailable', () => {
-    removeGeolocation();
-    const practices: PracticeCard[] = [
-      p({ id: 'cross-road', name: 'Cross Road Therapy', latitude: -26.10, longitude: 28.05 }),
-      p({ id: 'norwood',    name: 'Norwood Medical' }),
-    ];
-    render(<ExploreView practices={practices} />);
-    expect(screen.getByText('Cross Road Therapy')).toBeTruthy();
-    expect(screen.getByText('Norwood Medical')).toBeTruthy();
+    expect(screen.getByText('Has Coords')).toBeTruthy();
+    expect(screen.getByText('No Coords')).toBeTruthy();
+    expect(screen.queryByText('Other practitioners')).toBeNull();
   });
 });
 
-describe('ExploreView — geolocation is requested on every mount (bug 2)', () => {
+describe('ExploreView — geolocation re-prompts on every mount', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => {
-    geo = buildGeolocationStub();
-    installGeolocation(geo);
-  });
+  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('fires getCurrentPosition immediately on mount', () => {
-    render(<ExploreView practices={[p({ id: 'a' })]} />);
+  it('fires getCurrentPosition on first mount', () => {
+    render(<ExploreView rows={[r({ member_id: 'a' })]} />);
     expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
   });
 
-  it('fires getCurrentPosition AGAIN on remount (a fresh visit re-attempts the prompt)', () => {
-    // Bug 2 contract: every visit to the explore page must attempt
-    // the geolocation prompt. Browsers suppress repeat prompts for
-    // hard-blocked permissions — that's expected. But our component
-    // must always TRY; we never gate the attempt on remembered state.
-    const { unmount } = render(<ExploreView practices={[p({ id: 'a' })]} />);
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+  it('fires AGAIN on remount (revisits get a fresh attempt)', () => {
+    const { unmount } = render(<ExploreView rows={[r({ member_id: 'a' })]} />);
     unmount();
-    render(<ExploreView practices={[p({ id: 'a' })]} />);
+    render(<ExploreView rows={[r({ member_id: 'a' })]} />);
     expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
   });
 
-  it('"Try location" button re-fires getCurrentPosition after a denial', () => {
-    // Manual escape hatch for the case where the user has changed
-    // their browser-level permission since first mount.
-    render(<ExploreView practices={[p({ id: 'a' })]} />);
+  it('"Try location" button re-fires getCurrentPosition after denial', () => {
+    render(<ExploreView rows={[r({ member_id: 'a' })]} />);
     act(() => {
       const [, err] = geo.getCurrentPosition.mock.calls[0]!;
       err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
     });
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
-
-    const tryBtn = screen.getByTestId('explore-try-location-again');
-    act(() => { fireEvent.click(tryBtn); });
+    const btn = screen.getByTestId('explore-try-location-again');
+    act(() => { fireEvent.click(btn); });
     expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('ExploreView — granted state still hides beyond-radius and shows others bucket', () => {
+describe('ExploreView — grouping by HPCSA produces one card with multiple locations', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => {
-    geo = buildGeolocationStub();
-    installGeolocation(geo);
-  });
+  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('granted: shows the "Other practices" header when there are coord-less rows', () => {
-    const practices: PracticeCard[] = [
-      // Very close to (-26.10, 28.05) so it's well within 25km.
-      p({ id: 'nearby',   name: 'Nearby Practice', latitude: -26.10, longitude: 28.05 }),
-      p({ id: 'no-coord', name: 'No Coord Clinic' }),
+  it('two rows with the SAME hpcsa_group_key → ONE card showing both practices', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'm-a', hpcsa_group_key: 'hash-X', hpcsa_registered: true, first_name: 'Jane', last_name: 'Doe', practice_id: 'pA', practice_name: 'Sandton Rooms',  practice_latitude: -26.10, practice_longitude: 28.05 }),
+      r({ member_id: 'm-b', hpcsa_group_key: 'hash-X', hpcsa_registered: true, first_name: 'Jane', last_name: 'Doe', practice_id: 'pB', practice_name: 'Rosebank Rooms', practice_latitude: -26.15, practice_longitude: 28.04 }),
     ];
-    render(<ExploreView practices={practices} />);
+    render(<ExploreView rows={rows} />);
+
+    // One card.
+    expect(screen.getAllByText('Jane Doe')).toHaveLength(1);
+    // Both locations listed.
+    expect(screen.getByText('Sandton Rooms')).toBeTruthy();
+    expect(screen.getByText('Rosebank Rooms')).toBeTruthy();
+    // HPCSA badge present.
+    expect(screen.getByText(/HPCSA registered/)).toBeTruthy();
+  });
+
+  it('row with NULL hpcsa_group_key → standalone card (NOT hidden)', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'm-solo', hpcsa_group_key: null, hpcsa_registered: false, first_name: 'No', last_name: 'HPCSA' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    expect(screen.getByText('No HPCSA')).toBeTruthy();
+    // No badge for a non-registered row.
+    expect(screen.queryByText(/HPCSA registered/)).toBeNull();
+  });
+});
+
+describe('ExploreView — filters work and AND together', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
+  afterEach(() => { removeGeolocation(); });
+
+  it('specialty chip narrows the visible cards', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'm-dent',  hpcsa_group_key: 'd', specialty: 'Dentistry',     first_name: 'D',  last_name: 'Dent' }),
+      r({ member_id: 'm-physio',hpcsa_group_key: 'p', specialty: 'Physiotherapy', first_name: 'P',  last_name: 'Physio' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    // Before filter: both visible.
+    expect(screen.getByText('D Dent')).toBeTruthy();
+    expect(screen.getByText('P Physio')).toBeTruthy();
+
+    // Click "Physiotherapy" specialty chip.
+    act(() => { fireEvent.click(screen.getByTestId('filter-specialty-Physiotherapy')); });
+    expect(screen.queryByText('D Dent')).toBeNull();
+    expect(screen.getByText('P Physio')).toBeTruthy();
+  });
+});
+
+describe('ExploreView — distance: appears if ANY location within radius (multi-practice practitioner)', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
+  afterEach(() => { removeGeolocation(); });
+
+  it('a 2-location practitioner with one within 25km + one beyond → card appears, locations listed nearest-first', () => {
+    const rows: DirectoryRow[] = [
+      // ~0 km from (-26.10, 28.05)
+      r({ member_id: 'm-near', hpcsa_group_key: 'h', first_name: 'Two', last_name: 'Sites', practice_id: 'p-near', practice_name: 'Near Site', practice_latitude: -26.10, practice_longitude: 28.05 }),
+      // ~120+ km from (-26.10, 28.05)
+      r({ member_id: 'm-far',  hpcsa_group_key: 'h', first_name: 'Two', last_name: 'Sites', practice_id: 'p-far',  practice_name: 'Far Site',  practice_latitude: -25.00, practice_longitude: 28.05 }),
+    ];
+    render(<ExploreView rows={rows} />);
+    // Grant location → triggers granted state with radius=25 by default.
     act(() => {
       const [ok] = geo.getCurrentPosition.mock.calls[0]!;
       ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
     });
-    expect(screen.getByText('Nearby Practice')).toBeTruthy();
-    expect(screen.getByText('No Coord Clinic')).toBeTruthy();
-    expect(screen.getByText('Other practices')).toBeTruthy();
+
+    // Card visible (because at least one location is within 25 km).
+    expect(screen.getByText('Two Sites')).toBeTruthy();
+    // BOTH locations are present on the card.
+    expect(screen.getByText('Near Site')).toBeTruthy();
+    expect(screen.getByText('Far Site')).toBeTruthy();
+
+    // Near Site appears in DOM BEFORE Far Site (nearest-first sort).
+    const nearEl = screen.getByText('Near Site');
+    const farEl  = screen.getByText('Far Site');
+    const order  = nearEl.compareDocumentPosition(farEl);
+    // Node.DOCUMENT_POSITION_FOLLOWING = 4 → farEl comes after nearEl
+    expect(order & 4).toBe(4);
   });
 });

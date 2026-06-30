@@ -1,41 +1,37 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { haversineKm, formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
+import { formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
-import type { PracticeCard } from './page';
-import { bucketPractices, type PracticeWithDistance } from './bucket';
+import {
+  decorateWithDistance,
+  groupIntoCards,
+  filterCards,
+  bucketPractitionerCards,
+  specialtiesFromCards,
+  type DirectoryRow,
+  type PractitionerCard,
+  type LocationOnCard,
+} from '@/lib/practitioner/grouping';
 
-// ─── Explore practices — geolocation + suburb fallback + Haversine ─────
+// ─── Find a Practitioner — geolocation + suburb fallback + filters ─────
 //
-// Flow:
-//   1. On EVERY mount, attempt navigator.geolocation.getCurrentPosition.
-//      The browser decides whether to actually re-prompt:
-//        • previously hard-BLOCKED → no prompt, error callback fires;
-//          we land in 'denied' and the suburb-search fallback shows.
-//        • previously granted → silent success.
-//        • previously dismissed → browser usually re-prompts (this is
-//          the case bug 2 cared about — we no longer gate the prompt
-//          on first-visit-only state).
-//      Don't BLOCK on it — the page renders ALL approved practices
-//      while the user decides. No approved practice can ever be
-//      invisible in the no-location state.
-//   2. Granted → set userLocation; the memo sorts by Haversine distance
-//      and hides practices beyond the radius preset.
-//   3. Denied / unavailable / dismissed → leave userLocation null; the
-//      page shows EVERY practice alphabetically AND a Places-driven
-//      "search by suburb" input. Picking a suburb feeds the same
-//      Haversine sort.
-//   4. The denied/dismissed card also offers a "Try again" button that
-//      re-calls getCurrentPosition — useful when the user has changed
-//      their browser permission via the address-bar pad-lock since
-//      first mount.
+// Renders one card per PRACTITIONER (grouped by HPCSA, with a
+// null-HPCSA fallback to member_id). A practitioner working at two
+// approved practices appears as one card listing both locations,
+// each with its own distance + Call button. Filters: proximity
+// (radius preset) + specialty (chip row). Distance and bucketing
+// rules live in lib/practitioner/grouping.ts so they're unit-tested
+// in isolation.
 //
-// POPIA: userLocation is component state only — never written to the
-// DB. Lives for the session, dies when the page unmounts.
+// Same no-location contract as before: when we can't measure
+// distance (no user location yet, denied, dismissed), EVERY
+// practitioner appears unsorted. Never hide anyone for missing
+// signal we don't have.
 //
-// The bucketing rule is captured in app/patient/explore/bucket.ts so
-// it's testable in isolation.
+// Same geolocation re-prompt contract: every mount calls
+// getCurrentPosition, the browser decides whether to actually prompt
+// (hard-blocked → no prompt → suburb fallback is the escape hatch).
 
 const RADIUS_PRESETS = [10, 25, 50] as const;
 const DEFAULT_RADIUS = 25;
@@ -47,22 +43,14 @@ type GeoState =
   | { kind: 'denied' };
 
 type Props = {
-  practices: PracticeCard[];
+  rows: DirectoryRow[];
 };
 
-export default function ExploreView({ practices }: Props) {
+export default function ExploreView({ rows }: Props) {
   const [search,    setSearch]    = useState('');
   const [specialty, setSpecialty] = useState<string | null>(null);
   const [radiusKm,  setRadiusKm]  = useState<number>(DEFAULT_RADIUS);
-  // Lazy initializer decides the entry-state synchronously:
-  //   • navigator.geolocation MISSING (SSR, locked-down browser) →
-  //     'denied' — the suburb fallback is the only path.
-  //   • navigator.geolocation PRESENT → 'requesting' — the post-mount
-  //     effect calls getCurrentPosition, which transitions us to
-  //     'granted' (success) or 'denied' (error / dismiss / timeout)
-  //     via the ASYNC callbacks. We never call setGeo synchronously
-  //     inside the effect body — that would trip
-  //     react-hooks/set-state-in-effect.
+
   const [geo, setGeo] = useState<GeoState>(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       return { kind: 'denied' };
@@ -70,36 +58,18 @@ export default function ExploreView({ practices }: Props) {
     return { kind: 'requesting' };
   });
 
-  // attemptId increments every time we want to (re)try geolocation.
-  // The effect below depends on it, so a button-driven retry simply
-  // bumps the counter and the effect re-fires.
   const [attemptId, setAttemptId] = useState(0);
-
-  // Track whether THIS effect run is still the live one — if the
-  // component unmounts or attemptId changes mid-flight, ignore the
-  // callbacks. Vanilla Geolocation API has no abort signal.
   const livenessRef = useRef({ cancelled: false });
 
   const tryLocate = useCallback(() => {
-    // Reset to 'requesting' so the user sees the spinner while the
-    // retry runs. This is a normal event-handler setState (not
-    // inside an effect), so the purity lint rule doesn't apply.
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       setGeo({ kind: 'requesting' });
     }
     setAttemptId((n) => n + 1);
   }, []);
 
-  // Re-prompt on every mount AND on every tryLocate() call. Browsers
-  // suppress repeated prompts for hard-blocked permissions — that's
-  // the platform contract, not our code; the suburb fallback covers
-  // it. We always attempt; the browser decides. The setGeo calls live
-  // exclusively inside the async getCurrentPosition callbacks so this
-  // effect body has no synchronous setState.
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      // Initial state already 'denied' from the lazy initializer.
-      // Nothing to do.
       return;
     }
 
@@ -119,18 +89,12 @@ export default function ExploreView({ practices }: Props) {
         if (liveness.cancelled) return;
         setGeo({ kind: 'denied' });
       },
-      // Cheap settings: don't insist on high accuracy (drains battery)
-      // and don't sit on a hanging request for ages.
       { enableHighAccuracy: false, timeout: 8_000, maximumAge: 60_000 },
     );
 
-    return () => {
-      liveness.cancelled = true;
-    };
+    return () => { liveness.cancelled = true; };
   }, [attemptId]);
 
-  // Picker-driven suburb selection. Coords come from the place's
-  // location field; no geocode action needed.
   function onSuburbPicked(latitude: number, longitude: number, label: string) {
     setGeo({
       kind:     'granted',
@@ -140,43 +104,19 @@ export default function ExploreView({ practices }: Props) {
     });
   }
 
-  const specialties = useMemo(() => {
-    const seen = new Set<string>();
-    practices.forEach((p) => { if (p.specialty) seen.add(p.specialty); });
-    return Array.from(seen).sort();
-  }, [practices]);
+  // ── Pipeline: decorate with distance → group into cards → filter →
+  //              bucket. Each step is pure (lib/practitioner/grouping).
+  const userLocation: LatLng | null = geo.kind === 'granted' ? geo.location : null;
 
-  // Decorate every practice with distanceKm — null whenever geo isn't
-  // granted, or whenever the practice has no coords.
-  const withDistance = useMemo<PracticeWithDistance[]>(() => {
-    if (geo.kind !== 'granted') {
-      return practices.map((p) => ({ ...p, distanceKm: null }));
-    }
-    const me = geo.location;
-    return practices.map((p) => {
-      if (p.latitude == null || p.longitude == null) {
-        return { ...p, distanceKm: null };
-      }
-      const km = haversineKm(me, { latitude: p.latitude, longitude: p.longitude });
-      return { ...p, distanceKm: km };
-    });
-  }, [practices, geo]);
-
-  // Search + specialty filter on top of the distance-decorated list.
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return withDistance.filter((p) => {
-      const matchesSearch    = !q || p.name.toLowerCase().includes(q);
-      const matchesSpecialty = !specialty || p.specialty === specialty;
-      return matchesSearch && matchesSpecialty;
-    });
-  }, [withDistance, search, specialty]);
-
-  // Bucketing — extracted to bucket.ts so this rule is testable in
-  // isolation. The crucial invariant: when hasLocation is false, the
-  // returned nearList === filtered (no approved practice is hidden).
+  const decorated = useMemo(
+    () => decorateWithDistance(rows, userLocation),
+    [rows, userLocation],
+  );
+  const cards     = useMemo(() => groupIntoCards(decorated), [decorated]);
+  const specialties = useMemo(() => specialtiesFromCards(cards), [cards]);
+  const filtered  = useMemo(() => filterCards(cards, search, specialty), [cards, search, specialty]);
   const { nearList, otherList } = useMemo(
-    () => bucketPractices(filtered, geo.kind === 'granted', radiusKm),
+    () => bucketPractitionerCards(filtered, geo.kind === 'granted', radiusKm),
     [filtered, geo, radiusKm],
   );
 
@@ -187,67 +127,76 @@ export default function ExploreView({ practices }: Props) {
 
   return (
     <div className="space-y-5">
-      {/* ── Location card — sets the basis for nearest-first sort ───── */}
+      {/* ── Location card — drives the nearest-first sort ───────────── */}
       <LocationCard geo={geo} onSuburbPicked={onSuburbPicked} onTryAgain={tryLocate} />
 
-      {/* ── Radius preset — only shown when we have a location ────── */}
-      {geo.kind === 'granted' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-            Radius
-          </span>
-          {RADIUS_PRESETS.map((km) => (
-            <button
-              key={km}
-              type="button"
-              onClick={() => setRadiusKm(km)}
-              className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-              style={chipStyle(radiusKm === km)}
-            >
-              {km} km
-            </button>
-          ))}
-        </div>
-      )}
+      {/* ── Filters ──────────────────────────────────────────────────
+          Two controls — proximity (radius preset) and specialty.
+          Proximity is only meaningful once we have a location;
+          specialty is always offered. Search is a separate input
+          below — keeps it discoverable without nesting too deep. */}
+      <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-5 py-4 space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">Filters</p>
 
-      {/* Search */}
+        {geo.kind === 'granted' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-gray-600 w-20 shrink-0">Proximity</span>
+            {RADIUS_PRESETS.map((km) => (
+              <button
+                key={km}
+                type="button"
+                onClick={() => setRadiusKm(km)}
+                className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
+                style={chipStyle(radiusKm === km)}
+                data-testid={`filter-radius-${km}`}
+              >
+                {km} km
+              </button>
+            ))}
+          </div>
+        )}
+
+        {specialties.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-gray-600 w-20 shrink-0">Specialty</span>
+            <button
+              type="button"
+              onClick={() => setSpecialty(null)}
+              className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
+              style={chipStyle(specialty === null)}
+              data-testid="filter-specialty-all"
+            >
+              All
+            </button>
+            {specialties.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSpecialty(specialty === s ? null : s)}
+                className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
+                style={chipStyle(specialty === s)}
+                data-testid={`filter-specialty-${s}`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Search by name */}
       <input
         type="search"
-        placeholder="Search practices…"
+        placeholder="Search practitioners…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]"
       />
 
-      {/* Specialty chips */}
-      {specialties.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setSpecialty(null)}
-            className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-            style={chipStyle(specialty === null)}
-          >
-            All
-          </button>
-          {specialties.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setSpecialty(specialty === s ? null : s)}
-              className="rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-              style={chipStyle(specialty === s)}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ── Results — within radius first, then "other practices" ── */}
+      {/* ── Results — nearest first, then "Other practitioners" ─── */}
       {nearList.length === 0 && otherList.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-gray-200 py-14 text-center">
-          <p className="font-medium text-gray-500">No practices found</p>
+          <p className="font-medium text-gray-500">No practitioners found</p>
           <p className="mt-1 text-sm text-gray-400">
             {geo.kind === 'granted' && nearList.length === 0
               ? 'Try a wider radius or a different search.'
@@ -258,24 +207,15 @@ export default function ExploreView({ practices }: Props) {
         <>
           {nearList.length > 0 && (
             <div className="space-y-3">
-              {nearList.map((p) => (
-                <PracticeRow key={p.id} practice={p} />
-              ))}
+              {nearList.map((c) => <PractitionerCardRow key={c.id} card={c} />)}
             </div>
           )}
-
-          {/* "Other practices" — only rendered when location is GRANTED
-              and there's a separate no-coord bucket. In the no-location
-              state, everything is already in `nearList` and this
-              section stays hidden. */}
           {otherList.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 pt-2">
-                Other practices
+                Other practitioners
               </p>
-              {otherList.map((p) => (
-                <PracticeRow key={p.id} practice={p} />
-              ))}
+              {otherList.map((c) => <PractitionerCardRow key={c.id} card={c} />)}
             </div>
           )}
         </>
@@ -299,7 +239,7 @@ function LocationCard({
     return (
       <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
         <p className="text-sm font-medium" style={{ color: '#13294B' }}>
-          {geo.kind === 'requesting' ? 'Checking your location…' : 'Allow location to see practices near you'}
+          {geo.kind === 'requesting' ? 'Checking your location…' : 'Allow location to see practitioners near you'}
         </p>
         <p className="mt-1 text-xs text-gray-500">
           Your location is used only to sort this list — never saved.
@@ -324,12 +264,6 @@ function LocationCard({
     );
   }
 
-  // denied → suburb fallback via Google Places (New) Autocomplete +
-  // a "Try again" button. The button re-fires getCurrentPosition,
-  // which on a hard-BLOCKED browser will silently fail (the browser
-  // suppresses the prompt) — the suburb input is the real escape
-  // hatch for that case. For a dismissed state, the browser usually
-  // does re-prompt.
   return (
     <div className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
       <div className="flex items-start justify-between gap-3">
@@ -338,7 +272,7 @@ function LocationCard({
             Search by suburb
           </p>
           <p className="mt-1 text-xs text-gray-500 mb-3">
-            Or enable location in your browser to see practices near you.
+            Or enable location in your browser to see practitioners near you.
           </p>
         </div>
         <button
@@ -359,39 +293,61 @@ function LocationCard({
   );
 }
 
-// ─── Per-practice card ────────────────────────────────────────────────
+// ─── Per-practitioner card (with embedded locations) ───────────────────
 
-function PracticeRow({ practice }: { practice: PracticeWithDistance }) {
-  const locationLine = [practice.suburb, practice.city].filter(Boolean).join(', ');
+function PractitionerCardRow({ card }: { card: PractitionerCard }) {
   return (
-    <div className="bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4">
+    <div className="bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm px-5 py-4" data-testid={`practitioner-card-${card.id}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-semibold text-gray-900 truncate">{practice.name}</p>
-          {practice.specialty && (
-            <p className="text-xs text-gray-400 mt-0.5">{practice.specialty}</p>
-          )}
-          {locationLine && (
-            <p className="text-xs text-gray-500 mt-0.5 truncate">{locationLine}</p>
-          )}
-          {practice.distanceKm != null && (
-            <p className="text-xs font-medium mt-1" style={{ color: '#15A89E' }}>
-              {formatDistanceKm(practice.distanceKm)}
-            </p>
+          <p className="font-semibold text-gray-900 truncate">{card.fullName}</p>
+          {card.specialty && (
+            <p className="text-xs text-gray-500 mt-0.5">{card.specialty}</p>
           )}
         </div>
-        {practice.phone && (
-          <a
-            href={`tel:${practice.phone}`}
-            className="shrink-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+        {card.hpcsaRegistered && (
+          <span
+            className="shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
+            title="Registered with the Health Professions Council of South Africa."
           >
-            Call
-          </a>
+            HPCSA registered ✓
+          </span>
         )}
       </div>
-      {practice.email && (
-        <p className="mt-2 text-xs text-gray-400">{practice.email}</p>
-      )}
+
+      {/* Locations — one row per practice, nearest-first */}
+      <ul className="mt-3 space-y-2">
+        {card.locations.map((loc) => (
+          <LocationRow key={loc.practice_id} loc={loc} />
+        ))}
+      </ul>
     </div>
+  );
+}
+
+function LocationRow({ loc }: { loc: LocationOnCard }) {
+  const locationLine = [loc.suburb, loc.city].filter(Boolean).join(', ');
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-900 truncate">{loc.practice_name}</p>
+        {locationLine && (
+          <p className="text-xs text-gray-500 mt-0.5 truncate">{locationLine}</p>
+        )}
+        {loc.distanceKm != null && (
+          <p className="text-xs font-medium mt-1" style={{ color: '#15A89E' }}>
+            {formatDistanceKm(loc.distanceKm)}
+          </p>
+        )}
+      </div>
+      {loc.phone && (
+        <a
+          href={`tel:${loc.phone}`}
+          className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+        >
+          Call
+        </a>
+      )}
+    </li>
   );
 }
