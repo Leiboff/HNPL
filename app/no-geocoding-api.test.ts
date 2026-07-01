@@ -93,14 +93,22 @@ describe('Geocoding API — fully removed', () => {
 });
 
 describe('Places API (New) — wired in the right places, no server-side key leaked to the browser', () => {
-  it('the Places autocomplete + details endpoints are referenced in lib/maps/places', () => {
+  it('the Places (New) endpoints are only referenced in the Places wrapper modules + their tests', () => {
     const hits = search(/places\.googleapis\.com/);
     const files = new Set(hits.map((h) => h.file));
-    // The runtime module is the only acceptable owner of the URL.
-    // The test file (lib/maps/places.test.ts) also legitimately
-    // references the URL in its assertions; allow that.
+    // Runtime modules and their test companions are the only
+    // acceptable owners of the Places (New) URL. The forward-lookup
+    // wrapper (places.ts) + the reverse-geocode wrapper
+    // (reverseGeocode.ts) are the two modules; both may be
+    // referenced by their `.test` companions.
+    const ALLOWED = new Set([
+      'lib/maps/places.ts',
+      'lib/maps/places.test.ts',
+      'lib/maps/reverseGeocode.ts',
+      'lib/maps/reverseGeocode.test.ts',
+    ]);
     for (const f of files) {
-      expect(f === 'lib/maps/places.ts' || f === 'lib/maps/places.test.ts').toBe(true);
+      expect(ALLOWED.has(f)).toBe(true);
     }
     expect(files.has('lib/maps/places.ts')).toBe(true);
   });

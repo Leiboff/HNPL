@@ -20,14 +20,22 @@ import type { LocationOnCard, PractitionerCard } from '@/lib/practitioner/groupi
 // stops event propagation — a tap on Call dials the practice; a tap
 // on Directions opens maps; a tap anywhere else opens the detail.
 //
-// Explicitly kept on this card (per the current decision):
-//   • HPCSA badge — the trust signal is worth the space.
-//
 // Explicitly absent (do not re-introduce):
+//   • The HPCSA-registered badge — final, per the current decision.
+//     Registration is assumed for every listed practitioner; the
+//     visible badge was noise. The `hpcsa_group_key` hash the
+//     grouping helper uses is UNAFFECTED — that's a hidden merge
+//     key, never rendered.
 //   • The practice's name (nested box). Only the AREA is shown here
 //     — the detail screen names each practice.
 //   • Any "Cover" / "In Network" / "Premier Plus" language.
 //   • Any Vet/Hospital/Pharmacy chip.
+//
+// Location line — STACKED (two lines):
+//   1. Suburb, City (with a pin icon)
+//   2. N km away  (only when distance is known)
+// Previously the two were joined on one line and truncated on narrow
+// screens; stacking fixes the truncation without changing the data.
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -51,14 +59,9 @@ function mapsHref(loc: LocationOnCard): string | null {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fallback)}`;
 }
 
-function areaLine(loc: LocationOnCard | undefined, distanceKm: number | null): string {
+function areaOnly(loc: LocationOnCard | undefined): string {
   if (!loc) return '';
-  const area = [loc.suburb, loc.city].filter(Boolean).join(', ');
-  const distText = distanceKm != null ? formatDistanceKm(distanceKm) : null;
-  if (area && distText) return `${area} · ${distText} away`;
-  if (area)             return area;
-  if (distText)         return distText;
-  return '';
+  return [loc.suburb, loc.city].filter(Boolean).join(', ');
 }
 
 // ─── PractitionerListCard ──────────────────────────────────────────────
@@ -82,7 +85,8 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
       />
 
       <div className="relative px-5 py-4 space-y-3">
-        {/* Header — avatar + name/specialty (compact) */}
+        {/* Header — avatar + name/specialty (compact). HPCSA badge
+            intentionally absent (see module header). */}
         <header className="flex items-start gap-3">
           <div
             aria-hidden
@@ -96,35 +100,44 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
             {card.specialty && (
               <p className="text-xs text-gray-500 mt-0.5">{card.specialty}</p>
             )}
-            {card.hpcsaRegistered && (
-              <span
-                className="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
-                data-testid={`practitioner-card-${card.id}-hpcsa`}
-                title="Registered with the Health Professions Council of South Africa."
-              >
-                HPCSA registered
-              </span>
-            )}
           </div>
         </header>
 
-        {/* Closest location — AREA line, no practice-name box */}
-        {nearest && (
-          <div className="space-y-1" data-testid={`practitioner-card-${card.id}-area`}>
-            <p className="text-sm text-gray-700 flex items-center gap-1.5">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden className="shrink-0 text-gray-400">
-                <path d="M12 22s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z" strokeLinejoin="round" />
-                <circle cx="12" cy="10" r="2.5" />
-              </svg>
-              <span className="truncate">{areaLine(nearest, nearest.distanceKm) || '—'}</span>
-            </p>
-            {totalLocations >= 2 && (
-              <p className="text-[11px] text-gray-400 pl-[19px]">
-                Also practises at {totalLocations - 1} other location{totalLocations - 1 === 1 ? '' : 's'} — see profile.
+        {/* Closest location — TWO stacked lines:
+              1. Suburb, City   (with pin icon)
+              2. N km away      (only when distance is known)
+            Previously joined on one line with `·` and truncated on
+            narrow screens. Stacking fixes truncation without any
+            change to the underlying data. */}
+        {nearest && (() => {
+          const area     = areaOnly(nearest);
+          const distText = nearest.distanceKm != null ? formatDistanceKm(nearest.distanceKm) : null;
+          return (
+            <div className="space-y-0.5" data-testid={`practitioner-card-${card.id}-area`}>
+              <p className="text-sm text-gray-700 flex items-center gap-1.5">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden className="shrink-0 text-gray-400">
+                  <path d="M12 22s7-7 7-12a7 7 0 0 0-14 0c0 5 7 12 7 12z" strokeLinejoin="round" />
+                  <circle cx="12" cy="10" r="2.5" />
+                </svg>
+                <span>{area || '—'}</span>
               </p>
-            )}
-          </div>
-        )}
+              {distText && (
+                <p
+                  className="text-xs font-medium pl-4.75"
+                  style={{ color: '#15A89E' }}
+                  data-testid={`practitioner-card-${card.id}-distance`}
+                >
+                  {distText} away
+                </p>
+              )}
+              {totalLocations >= 2 && (
+                <p className="text-[11px] text-gray-400 pl-4.75">
+                  Also practises at {totalLocations - 1} other location{totalLocations - 1 === 1 ? '' : 's'} — see profile.
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Actions — at the BOTTOM of the card. z-index above the
             whole-card Link so taps here don't navigate. */}

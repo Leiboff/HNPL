@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { LatLng } from '@/lib/maps/haversine';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
+import { reverseGeocodeSuburb } from '@/lib/maps/reverseGeocode';
 import {
   decorateWithDistance,
   groupIntoCards,
@@ -105,6 +106,53 @@ export default function ExploreView({ rows }: Props) {
     });
   }
 
+  // Reverse-geocode ONCE per GPS resolution so the location indicator
+  // shows "Near <Suburb>" instead of the generic "Near your current
+  // location". Fires only when:
+  //   • geo is granted from GPS (suburb-picked already carries a
+  //     human label), and
+  //   • we don't already have a resolvedGpsLabel for these coords.
+  // Cached against the resolved lat/lng via `resolvedForRef` so a
+  // subsequent re-render (e.g. a filter change) doesn't re-fire. The
+  // helper is best-effort — a null result falls back to the generic
+  // label at the derivation site below.
+  //
+  // The effect body never calls setState synchronously — every
+  // setState is inside the async `.then` callback, so
+  // react-hooks/set-state-in-effect stays green. A stale label from a
+  // previous location is never displayed because the derivation
+  // below only reads `resolvedGpsLabel` when geo.source === 'gps',
+  // and the ref-cache re-fires the fetch when lat/lng changes.
+  const [resolvedGpsLabel, setResolvedGpsLabel] = useState<string | null>(null);
+  const resolvedForRef = useRef<{ lat: number; lng: number } | null>(null);
+  useEffect(() => {
+    if (geo.kind !== 'granted' || geo.source !== 'gps') {
+      // Drop the cache marker so a future GPS resolution re-fetches.
+      // We do NOT synchronously null out resolvedGpsLabel here — the
+      // derivation below ignores it whenever source !== 'gps', so a
+      // stale value can't leak into the UI. Keeping the effect body
+      // free of synchronous setState is what the lint rule needs.
+      resolvedForRef.current = null;
+      return;
+    }
+    const { latitude, longitude } = geo.location;
+    if (
+      resolvedForRef.current
+      && resolvedForRef.current.lat === latitude
+      && resolvedForRef.current.lng === longitude
+    ) {
+      // Same coords as last resolve — no need to hit the API again.
+      return;
+    }
+    resolvedForRef.current = { lat: latitude, lng: longitude };
+    let cancelled = false;
+    reverseGeocodeSuburb(latitude, longitude).then((label) => {
+      if (cancelled) return;
+      setResolvedGpsLabel(label);
+    });
+    return () => { cancelled = true; };
+  }, [geo]);
+
   // ── Pipeline: decorate → group → filter → bucket. ─────────────────
   const userLocation: LatLng | null = geo.kind === 'granted' ? geo.location : null;
 
@@ -116,9 +164,18 @@ export default function ExploreView({ rows }: Props) {
   const specialties = useMemo(() => specialtiesFromCards(cards),      [cards]);
   const categories  = useMemo(() => categoryCounts(cards),            [cards]);
 
+  // Location hint priority when geolocation is granted:
+  //   1. suburb-picked → the human-readable label the user chose.
+  //   2. gps + reverseGeocode succeeded → "Near <Suburb, City>".
+  //   3. gps + reverseGeocode pending/failed → "Near your current
+  //      location" (the pre-Fix-1 fallback — never blank, never error).
   const locationHint =
     geo.kind === 'granted'
-      ? (geo.source === 'suburb' && geo.label ? `Near ${geo.label}` : 'Near your current location')
+      ? (geo.source === 'suburb' && geo.label
+          ? `Near ${geo.label}`
+          : resolvedGpsLabel
+            ? `Near ${resolvedGpsLabel}`
+            : 'Near your current location')
       : null;
 
   // ── LANDING view ──────────────────────────────────────────────────
@@ -342,21 +399,16 @@ function ResultsView({
           </p>
         </div>
       ) : (
-        <>
-          {nearList.length > 0 && (
-            <div className="space-y-3">
-              {nearList.map((c) => <PractitionerListCard key={c.id} card={c} />)}
-            </div>
-          )}
-          {otherList.length > 0 && (
-            <div className="space-y-3 pt-2">
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-                Other practitioners
-              </p>
-              {otherList.map((c) => <PractitionerListCard key={c.id} card={c} />)}
-            </div>
-          )}
-        </>
+        // One continuous list — the bucketing ORDER stays (near-first,
+        // coord-less-after), but the "Other practitioners" subheading
+        // is gone so the results read as a single clean stream.
+        // No-location contract preserved: when there's no user location,
+        // `nearList` contains ALL practitioners (from bucketPractitionerCards)
+        // and `otherList` is empty — same as before, just no heading.
+        <div className="space-y-3">
+          {nearList.map((c) => <PractitionerListCard key={c.id} card={c} />)}
+          {otherList.map((c) => <PractitionerListCard key={c.id} card={c} />)}
+        </div>
       )}
     </div>
   );

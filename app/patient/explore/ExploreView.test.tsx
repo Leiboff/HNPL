@@ -18,6 +18,14 @@ vi.mock('@/app/_components/PlacesAutocomplete', () => ({
   default: () => null,
 }));
 
+// Reverse-geocode is best-effort — tests inject the return value so we
+// can prove both the success path (suburb label appears) AND the
+// fallback path (null → generic "Near your current location").
+const reverseGeocodeMock = vi.fn<(latitude: number, longitude: number) => Promise<string | null>>();
+vi.mock('@/lib/maps/reverseGeocode', () => ({
+  reverseGeocodeSuburb: (latitude: number, longitude: number) => reverseGeocodeMock(latitude, longitude),
+}));
+
 // Mockable useSearchParams — each test sets the params it needs.
 const currentParams = new URLSearchParams();
 vi.mock('next/navigation', async () => {
@@ -33,6 +41,14 @@ function setParams(params: Record<string, string>) {
   Array.from(currentParams.keys()).forEach((k) => currentParams.delete(k));
   for (const [k, v] of Object.entries(params)) currentParams.set(k, v);
 }
+
+// Default the reverse-geocode mock to a resolved null (falls back to
+// "Near your current location"). Individual tests override it via
+// reverseGeocodeMock.mockResolvedValueOnce(...) or similar.
+beforeEach(() => {
+  reverseGeocodeMock.mockReset();
+  reverseGeocodeMock.mockResolvedValue(null);
+});
 
 import ExploreView from './ExploreView';
 
@@ -224,14 +240,59 @@ describe('ExploreView — simplified list card', () => {
   });
   afterEach(() => { removeGeolocation(); });
 
-  it('card shows name, specialty, and HPCSA badge (kept per current decision)', () => {
+  it('card shows name + specialty; the HPCSA badge is FINAL — no longer rendered', () => {
     render(<ExploreView rows={[r({
       member_id: 'm1', hpcsa_group_key: 'hh', hpcsa_registered: true,
       first_name: 'Alice', last_name: 'Smith', specialty: 'Dentistry',
     })]} />);
     expect(screen.getByText('Alice Smith')).toBeTruthy();
     expect(screen.getByText('Dentistry')).toBeTruthy();
-    expect(screen.getByTestId('practitioner-card-hh-hpcsa')).toBeTruthy();
+    // The HPCSA badge has been removed from discovery entirely.
+    expect(screen.queryByTestId('practitioner-card-hh-hpcsa')).toBeNull();
+    expect(screen.queryByText(/HPCSA registered/i)).toBeNull();
+  });
+
+  it('card location line is STACKED — suburb on one row, "N km away" beneath (Fix 3)', () => {
+    render(<ExploreView rows={[r({
+      member_id: 'm1', hpcsa_group_key: 'hh',
+      practice_name: 'Sandton Rooms',
+      practice_suburb: 'Glenhazel', practice_city: 'Johannesburg',
+      practice_latitude: -26.10, practice_longitude: 28.05,
+    })]} />);
+    act(() => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+    });
+
+    // Suburb-only line contains the suburb but NOT the "km" fragment.
+    const area = screen.getByTestId('practitioner-card-hh-area');
+    const suburbLine = area.querySelector('p')!;
+    expect(suburbLine.textContent).toMatch(/Glenhazel, Johannesburg/);
+    expect(suburbLine.textContent).not.toMatch(/km/);
+
+    // A SEPARATE distance line lives beneath it.
+    const distanceLine = screen.getByTestId('practitioner-card-hh-distance');
+    expect(distanceLine.textContent).toMatch(/km/);
+    expect(distanceLine.textContent).toMatch(/away/);
+
+    // The distance element comes AFTER the suburb element in the DOM.
+    const order = suburbLine.compareDocumentPosition(distanceLine);
+    expect(order & 4).toBe(4);   // DOCUMENT_POSITION_FOLLOWING
+  });
+
+  it('card location shows ONLY the suburb line (no empty "km away") when there is no user location', () => {
+    render(<ExploreView rows={[r({
+      member_id: 'm1', hpcsa_group_key: 'hh',
+      practice_name: 'Sandton Rooms',
+      practice_suburb: 'Glenhazel', practice_city: 'Johannesburg',
+    })]} />);
+    // Deny geo → no distance → distance line should NOT render.
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    expect(screen.getByTestId('practitioner-card-hh-area').textContent).toMatch(/Glenhazel, Johannesburg/);
+    expect(screen.queryByTestId('practitioner-card-hh-distance')).toBeNull();
   });
 
   it('card shows the AREA (suburb, city) of the closest location, NOT the practice name', () => {
@@ -240,10 +301,8 @@ describe('ExploreView — simplified list card', () => {
       practice_name: 'Sandton Rooms',
       practice_suburb: 'Glenhazel', practice_city: 'Johannesburg',
     })]} />);
-    // The area line contains the suburb + city.
     const area = screen.getByTestId('practitioner-card-hh-area');
     expect(area.textContent).toMatch(/Glenhazel, Johannesburg/);
-    // The practice name is NOT rendered on the card.
     expect(area.textContent).not.toMatch(/Sandton Rooms/);
     expect(screen.queryByText('Sandton Rooms')).toBeNull();
   });
@@ -326,5 +385,117 @@ describe('ExploreView — BetterNow tone: no medical-aid-network language, no Ve
     expect(screen.queryByText(/^A\s*[·|]\s*B\s*[·|]/)).toBeNull();
     expect(screen.queryByText(/Alphabetical/i)).toBeNull();
     expect(screen.queryByText(/Browse\s+A[-–]Z/i)).toBeNull();
+  });
+});
+
+// ─── Fix 1 — reverse-geocode ───────────────────────────────────────────
+
+describe('ExploreView — reverse-geocode label on GPS grant (Fix 1)', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => {
+    setParams({});
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
+  afterEach(() => { removeGeolocation(); });
+
+  it('shows "Near <Suburb, City>" when reverse-geocode resolves a label', async () => {
+    reverseGeocodeMock.mockResolvedValueOnce('Glenhazel, Johannesburg');
+    render(<ExploreView rows={[r()]} />);
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      // Flush the reverse-geocode microtask.
+      await Promise.resolve();
+    });
+    expect(reverseGeocodeMock).toHaveBeenCalledWith(-26.10, 28.05);
+    expect(screen.getByText(/Near Glenhazel, Johannesburg/)).toBeTruthy();
+  });
+
+  it('falls back to "Near your current location" when reverse-geocode returns null', async () => {
+    reverseGeocodeMock.mockResolvedValueOnce(null);
+    render(<ExploreView rows={[r()]} />);
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/Near your current location/)).toBeTruthy();
+  });
+
+  it('reverse-geocode is called ONCE per resolution — not on every render', async () => {
+    reverseGeocodeMock.mockResolvedValueOnce('Glenhazel, Johannesburg');
+    const { rerender } = render(<ExploreView rows={[r()]} />);
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      await Promise.resolve();
+    });
+    expect(reverseGeocodeMock).toHaveBeenCalledTimes(1);
+    // Force a re-render with a different rows array — the resolved
+    // label should stick, and reverse-geocode should NOT re-fire.
+    rerender(<ExploreView rows={[r({ member_id: 'm-other' })]} />);
+    expect(reverseGeocodeMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Near Glenhazel, Johannesburg/)).toBeTruthy();
+  });
+
+  it('does NOT reverse-geocode for suburb-picked locations (the user already chose a label)', async () => {
+    render(<ExploreView rows={[r()]} />);
+    // Deny GPS, then pick a suburb (through the fallback picker).
+    await act(async () => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+      await Promise.resolve();
+    });
+    // Suburb-pick path never calls reverseGeocode — the picker
+    // returned the label directly.
+    expect(reverseGeocodeMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Fix 4 — no "Other practitioners" subheading ───────────────────────
+
+describe('ExploreView — Fix 4: one continuous results list', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => {
+    setParams({ view: 'results' });
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
+  afterEach(() => { removeGeolocation(); });
+
+  it('does NOT render the "Other practitioners" subheading, even when there are coord-less cards', () => {
+    // Grant location so the bucketing splits into near vs other:
+    // "near" = has coords + within radius; "other" = coord-less.
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'has', hpcsa_group_key: 'h1', first_name: 'Coord',   last_name: 'Has', practice_latitude: -26.10, practice_longitude: 28.05 }),
+      r({ member_id: 'no',  hpcsa_group_key: 'h2', first_name: 'Coord',   last_name: 'No',  practice_latitude: null,    practice_longitude: null }),
+    ];
+    render(<ExploreView rows={rows} />);
+    act(() => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+    });
+
+    // Both cards render.
+    expect(screen.getByText('Coord Has')).toBeTruthy();
+    expect(screen.getByText('Coord No')).toBeTruthy();
+    // The subheading is gone.
+    expect(screen.queryByText(/Other practitioners/i)).toBeNull();
+  });
+
+  it('no-location state still shows every practitioner (unchanged contract) and NO subheading', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'a', hpcsa_group_key: 'ha', first_name: 'A', last_name: 'A' }),
+      r({ member_id: 'b', hpcsa_group_key: 'hb', first_name: 'B', last_name: 'B' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    expect(screen.getByText('A A')).toBeTruthy();
+    expect(screen.getByText('B B')).toBeTruthy();
+    expect(screen.queryByText(/Other practitioners/i)).toBeNull();
   });
 });
