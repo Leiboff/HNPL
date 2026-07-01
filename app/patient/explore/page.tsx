@@ -58,12 +58,12 @@ export default async function ExplorePage() {
   // the column set (asserted by the source-text tests).
   const rows = (rawRows ?? []) as unknown as DirectoryRow[];
 
+  // The Landing screen owns its own hero heading + copy; the Results
+  // view owns its own back-link + search bar. The page shell here is
+  // deliberately empty of headings so the two views can each set
+  // their own tone without a mismatched outer H1.
   return (
     <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8">
-      <h1 className="text-2xl font-semibold mb-1" style={{ color: '#13294B' }}>Find a Practitioner</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Allow location to see practitioners near you, or search by suburb. A practitioner working at multiple practices appears as one card with all their locations.
-      </p>
       <ExploreView rows={rows} />
     </div>
   );

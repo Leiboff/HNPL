@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { LatLng } from '@/lib/maps/haversine';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
@@ -11,32 +13,29 @@ import {
   specialtiesFromCards,
   type DirectoryRow,
 } from '@/lib/practitioner/grouping';
+import { categoryCounts } from '@/lib/practitioner/categories';
 import PractitionerListCard from './PractitionerListCard';
+import Landing from './Landing';
 
-// ─── Find a Practitioner — Discovery-inspired card layout, BetterNow tone
+// ─── Find a Practitioner — orchestrator ───────────────────────────────
 //
-// Renders one card per PRACTITIONER (grouped by HPCSA, NULL fallback
-// to member_id). Multi-location practitioners show their nearest
-// location inline + "Show all N locations" to reveal the rest. Each
-// location row has Call to book + Directions actions. Tapping the
-// header "View profile →" opens /patient/practitioner/[memberId].
+// Two views under one route:
+//   • Landing (default, no ?view / no ?specialty / no ?q) — data-driven
+//     categories, search box, "See all practitioners", "Use my
+//     location" button.
+//   • Results (?view=results OR ?specialty=X OR ?q=X) — the redesigned
+//     list with grouping + filters + no-location contract.
 //
-// Things we DELIBERATELY don't show — these come from Discovery's UI
-// but are wrong for BetterNow (not a medical scheme):
-//   • No "Cover" / "In Network" / "Full network cover" / "Partial cover".
-//   • No "Premier Plus" / "Nominate as primary GP".
-//   • No HPCSA badge (registration assumed for every listed practitioner).
-// These omissions are pinned by source-text tests.
-//
-// The data, grouping, distance, no-location, and re-prompt contracts
-// are UNCHANGED from the previous design — only the visual layer and
-// the new detail-screen link are this build.
+// Geo state + auto-prompt live in THIS component so both views share
+// one location. The "Use my location" button (on Landing) and the
+// "Try location" retry (on Results denied state) both call the same
+// tryLocate() handler.
 
 const RADIUS_PRESETS = [10, 25, 50] as const;
 const DEFAULT_RADIUS = 25;
 
 type GeoState =
-  | { kind: 'idle' }                                         // pre-prompt
+  | { kind: 'idle' }
   | { kind: 'requesting' }
   | { kind: 'granted'; location: LatLng; source: 'gps' | 'suburb'; label?: string }
   | { kind: 'denied' };
@@ -46,11 +45,15 @@ type Props = {
 };
 
 export default function ExploreView({ rows }: Props) {
-  const [search,    setSearch]    = useState('');
-  const [specialty, setSpecialty] = useState<string | null>(null);
-  const [radiusKm,  setRadiusKm]  = useState<number>(DEFAULT_RADIUS);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const viewParam      = searchParams?.get('view');
+  const specialtyParam = searchParams?.get('specialty');
+  const qParam         = searchParams?.get('q');
 
+  // Any non-null filter or view=results puts us in results mode.
+  const isResults = viewParam === 'results' || !!specialtyParam || !!qParam;
+
+  // ── Geo state machine ─────────────────────────────────────────────
   const [geo, setGeo] = useState<GeoState>(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       return { kind: 'denied' };
@@ -102,16 +105,80 @@ export default function ExploreView({ rows }: Props) {
     });
   }
 
-  // ── Pipeline: decorate → group → filter → bucket. All pure. ─────
+  // ── Pipeline: decorate → group → filter → bucket. ─────────────────
   const userLocation: LatLng | null = geo.kind === 'granted' ? geo.location : null;
 
   const decorated = useMemo(
     () => decorateWithDistance(rows, userLocation),
     [rows, userLocation],
   );
-  const cards     = useMemo(() => groupIntoCards(decorated), [decorated]);
-  const specialties = useMemo(() => specialtiesFromCards(cards), [cards]);
-  const filtered  = useMemo(() => filterCards(cards, search, specialty), [cards, search, specialty]);
+  const cards       = useMemo(() => groupIntoCards(decorated),        [decorated]);
+  const specialties = useMemo(() => specialtiesFromCards(cards),      [cards]);
+  const categories  = useMemo(() => categoryCounts(cards),            [cards]);
+
+  const locationHint =
+    geo.kind === 'granted'
+      ? (geo.source === 'suburb' && geo.label ? `Near ${geo.label}` : 'Near your current location')
+      : null;
+
+  // ── LANDING view ──────────────────────────────────────────────────
+  if (!isResults) {
+    return (
+      <Landing
+        categories={categories}
+        totalPractitioners={cards.length}
+        locationHint={locationHint}
+        hasLocation={geo.kind === 'granted'}
+        onUseMyLocation={tryLocate}
+        onSuburbPicked={onSuburbPicked}
+      />
+    );
+  }
+
+  // ── RESULTS view ──────────────────────────────────────────────────
+  return (
+    <ResultsView
+      cards={cards}
+      specialties={specialties}
+      geo={geo}
+      onUseMyLocation={tryLocate}
+      onSuburbPicked={onSuburbPicked}
+      locationHint={locationHint}
+      initialSpecialty={specialtyParam}
+      initialQuery={qParam ?? ''}
+    />
+  );
+}
+
+// ─── ResultsView ───────────────────────────────────────────────────────
+
+type ResultsProps = {
+  cards:            ReturnType<typeof groupIntoCards>;
+  specialties:      string[];
+  geo:              GeoState;
+  onUseMyLocation:  () => void;
+  onSuburbPicked:   (lat: number, lng: number, label: string) => void;
+  locationHint:     string | null;
+  initialSpecialty: string | null;
+  initialQuery:     string;
+};
+
+function ResultsView({
+  cards,
+  specialties,
+  geo,
+  onUseMyLocation,
+  onSuburbPicked,
+  locationHint,
+  initialSpecialty,
+  initialQuery,
+}: ResultsProps) {
+  const [search,      setSearch]      = useState(initialQuery);
+  const [specialty,   setSpecialty]   = useState<string | null>(initialSpecialty);
+  const [radiusKm,    setRadiusKm]    = useState<number>(DEFAULT_RADIUS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const filtered = useMemo(() => filterCards(cards, search, specialty), [cards, search, specialty]);
   const { nearList, otherList } = useMemo(
     () => bucketPractitionerCards(filtered, geo.kind === 'granted', radiusKm),
     [filtered, geo, radiusKm],
@@ -123,7 +190,17 @@ export default function ExploreView({ rows }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* ── Sticky search + filters bar (Discovery-style header polish) */}
+      {/* Back to categories */}
+      <Link
+        href="/patient/explore"
+        data-testid="results-back-to-landing"
+        className="inline-flex items-center gap-1 text-xs font-semibold"
+        style={{ color: '#13294B' }}
+      >
+        ← Browse by specialty
+      </Link>
+
+      {/* Sticky search + filters + Use-my-location */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -162,12 +239,35 @@ export default function ExploreView({ rows }: Props) {
           </button>
         </div>
 
-        {/* Compact location indicator + suburb fallback */}
-        <LocationLine geo={geo} onSuburbPicked={onSuburbPicked} onTryAgain={tryLocate} />
+        {/* Location line + always-visible Use-my-location button. The
+            button is also on the Landing screen; both call the same
+            tryLocate() so browsers that suppress the auto-prompt still
+            let the patient explicitly request geolocation. */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="text-xs text-gray-500 flex items-center gap-1.5">
+            <PinIcon />
+            {locationHint ?? (geo.kind === 'requesting' ? 'Checking your location…' : 'No location — showing all practitioners.')}
+            {locationHint && <span className="text-gray-400"> · not saved</span>}
+          </p>
+          {geo.kind !== 'granted' || geo.source === 'suburb' ? (
+            <button
+              type="button"
+              onClick={onUseMyLocation}
+              data-testid="use-my-location"
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold hover:bg-gray-50"
+              style={{ color: '#13294B' }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+                <circle cx="12" cy="12" r="3" />
+                <path d="M12 3v2M12 19v2M3 12h2M19 12h2" strokeLinecap="round" />
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+              Use my location
+            </button>
+          ) : null}
+        </div>
 
-        {/* Filters drawer — proximity + specialty. Closed by default
-            to keep the top of the page clean (Discovery-style); the
-            count badge above advertises that filters are applied. */}
+        {/* Filters drawer */}
         {filtersOpen && (
           <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 space-y-3">
             {geo.kind === 'granted' && (
@@ -182,9 +282,7 @@ export default function ExploreView({ rows }: Props) {
                       onClick={() => setRadiusKm(km)}
                       data-testid={`filter-radius-${km}`}
                       className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                        active
-                          ? 'text-white'
-                          : 'text-[#13294B] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
+                        active ? 'text-white' : 'text-[#13294B] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
                       }`}
                       style={active ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
                     >
@@ -215,9 +313,25 @@ export default function ExploreView({ rows }: Props) {
             )}
           </div>
         )}
+
+        {/* Denied-state suburb fallback — the browser-hard-blocked
+            escape hatch. Landing has the same PlacesAutocomplete in
+            its own denied panel; the two are equivalent. */}
+        {geo.kind === 'denied' && (
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 mb-1.5">
+              Or search by suburb
+            </p>
+            <PlacesAutocomplete
+              variant="locality"
+              placeholder="e.g. Rosebank"
+              onSelect={(place) => onSuburbPicked(place.latitude, place.longitude, place.formattedAddress)}
+            />
+          </div>
+        )}
       </div>
 
-      {/* ── Results — nearest first, then "Other practitioners" ─── */}
+      {/* Results */}
       {nearList.length === 0 && otherList.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-gray-200 py-14 text-center">
           <p className="font-medium text-gray-500">No practitioners found</p>
@@ -248,7 +362,7 @@ export default function ExploreView({ rows }: Props) {
   );
 }
 
-// ─── Specialty chip ────────────────────────────────────────────────────
+// ─── Small shared pieces ───────────────────────────────────────────────
 
 function SpecialtyChip({
   active,
@@ -275,67 +389,6 @@ function SpecialtyChip({
     >
       {children}
     </button>
-  );
-}
-
-// ─── LocationLine — the inline "Near your current location" strip ──────
-//
-// Compact one-row replacement for the previous big white card. Shows
-// the current geo state + the "your location is not saved" reassurance.
-// When denied, the suburb picker drops down + a Try-location retry.
-
-function LocationLine({
-  geo,
-  onSuburbPicked,
-  onTryAgain,
-}: {
-  geo:             GeoState;
-  onSuburbPicked:  (lat: number, lng: number, label: string) => void;
-  onTryAgain:      () => void;
-}) {
-  if (geo.kind === 'idle' || geo.kind === 'requesting') {
-    return (
-      <p className="text-xs text-gray-500 flex items-center gap-1.5">
-        <PinIcon /> Checking your location…
-      </p>
-    );
-  }
-
-  if (geo.kind === 'granted') {
-    const line = geo.source === 'suburb' && geo.label
-      ? `Near ${geo.label}`
-      : 'Near your current location';
-    return (
-      <p className="text-xs text-gray-500 flex items-center gap-1.5">
-        <PinIcon /> {line} · Your location is not saved.
-      </p>
-    );
-  }
-
-  return (
-    <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 space-y-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium" style={{ color: '#13294B' }}>Search by suburb</p>
-          <p className="mt-0.5 text-xs text-gray-500">
-            Or enable location in your browser to see practitioners near you.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onTryAgain}
-          data-testid="explore-try-location-again"
-          className="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#13294B] hover:bg-gray-50"
-        >
-          Try location
-        </button>
-      </div>
-      <PlacesAutocomplete
-        variant="locality"
-        placeholder="e.g. Rosebank"
-        onSelect={(place) => onSuburbPicked(place.latitude, place.longitude, place.formattedAddress)}
-      />
-    </div>
   );
 }
 

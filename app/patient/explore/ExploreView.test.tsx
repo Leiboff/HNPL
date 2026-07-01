@@ -1,21 +1,38 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { DirectoryRow } from '@/lib/practitioner/grouping';
 
-// ─── Tests — Find a Practitioner UI (post-redesign) ────────────────────
+// ─── Tests — Find a Practitioner UI (landing + results) ────────────────
 //
-// Behavioural tests over <ExploreView/>. The pure grouping/bucketing
-// rules are pinned in lib/practitioner/grouping.test.ts; these tests
-// prove the COMPONENT wires them up correctly, the geo state machine
-// re-prompts on every mount + on the retry button, and the new
-// list-card UX (single-location inline + multi-location expander +
-// Call to book + Directions) renders + behaves correctly.
+// Two views under /patient/explore, controlled by URL params:
+//   • No params → Landing (data-driven categories + search + "See all").
+//   • ?view=results OR ?specialty=X OR ?q=X → Results list.
 //
-// PlacesAutocomplete is mocked — the real one calls Google Places.
+// We drive the URL params via a mockable useSearchParams stub. The
+// Landing test file (Landing.test.tsx) covers the category grid;
+// this file covers the orchestrator + the Results view.
+//
+// PlacesAutocomplete is mocked out — no external HTTP.
 
 vi.mock('@/app/_components/PlacesAutocomplete', () => ({
   default: () => null,
 }));
+
+// Mockable useSearchParams — each test sets the params it needs.
+const currentParams = new URLSearchParams();
+vi.mock('next/navigation', async () => {
+  const actual = await vi.importActual<typeof import('next/navigation')>('next/navigation');
+  return {
+    ...actual,
+    useSearchParams: () => currentParams,
+    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn(), back: vi.fn(), forward: vi.fn() }),
+  };
+});
+
+function setParams(params: Record<string, string>) {
+  Array.from(currentParams.keys()).forEach((k) => currentParams.delete(k));
+  for (const [k, v] of Object.entries(params)) currentParams.set(k, v);
+}
 
 import ExploreView from './ExploreView';
 
@@ -64,17 +81,116 @@ function r(over: Partial<DirectoryRow> = {}): DirectoryRow {
   };
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────
+// ─── Landing view (default, no URL params) ─────────────────────────────
 
-describe('ExploreView — no-location renders every practitioner', () => {
+describe('ExploreView — landing is the default view', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
+  beforeEach(() => {
+    setParams({});
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
   afterEach(() => { removeGeolocation(); });
 
-  it('shows BOTH coord-having and coord-less practitioners when location is denied', () => {
+  it('renders the Landing screen (category picker + See all) when no query params are present', () => {
     const rows: DirectoryRow[] = [
-      r({ member_id: 'm-coord',   first_name: 'Has',  last_name: 'Coords',     practice_latitude: -26.10, practice_longitude: 28.05 }),
-      r({ member_id: 'm-nocoord', first_name: 'No',   last_name: 'Coords',     practice_latitude: null,    practice_longitude: null }),
+      r({ member_id: 'm-dent',    hpcsa_group_key: 'd',  specialty: 'Dentistry',     first_name: 'D' }),
+      r({ member_id: 'm-physio',  hpcsa_group_key: 'p',  specialty: 'Physiotherapy', first_name: 'P' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    expect(screen.getByTestId('landing-categories')).toBeTruthy();
+    expect(screen.getByTestId('landing-see-all')).toBeTruthy();
+    // Neither the results-list "Filters" toggle nor a card header
+    // should appear on landing.
+    expect(screen.queryByTestId('filters-toggle')).toBeNull();
+  });
+
+  it('categories are data-driven — only specialties with ≥1 live practitioner appear', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'a', hpcsa_group_key: 'ha', specialty: 'Dentistry',     first_name: 'A' }),
+      r({ member_id: 'b', hpcsa_group_key: 'hb', specialty: 'Physiotherapy', first_name: 'B' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    expect(screen.getByTestId('landing-category-Dentistry')).toBeTruthy();
+    expect(screen.getByTestId('landing-category-Physiotherapy')).toBeTruthy();
+    // Pharmacy / Hospital / Vet are not hard-coded; they never appear
+    // just because a designer might have listed them.
+    expect(screen.queryByText(/Pharmacy/)).toBeNull();
+    expect(screen.queryByText(/Hospital/)).toBeNull();
+    expect(screen.queryByText(/Vet(erinary)?/i)).toBeNull();
+  });
+
+  it('category tiles show the correct count (distinct practitioners per specialty)', () => {
+    const rows: DirectoryRow[] = [
+      // 2 dentists (2 groups)
+      r({ member_id: 'a', hpcsa_group_key: 'ha', specialty: 'Dentistry', first_name: 'A' }),
+      r({ member_id: 'b', hpcsa_group_key: 'hb', specialty: 'Dentistry', first_name: 'B' }),
+      // 1 physio
+      r({ member_id: 'c', hpcsa_group_key: 'hc', specialty: 'Physiotherapy', first_name: 'C' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    const dent   = screen.getByTestId('landing-category-Dentistry');
+    const physio = screen.getByTestId('landing-category-Physiotherapy');
+    expect(dent.textContent).toMatch(/2 practitioners/);
+    expect(physio.textContent).toMatch(/1 practitioner\b/);
+  });
+
+  it('Landing has a "Use my location" button that re-triggers geolocation', () => {
+    render(<ExploreView rows={[r()]} />);
+    // The initial mount call has already happened (from useEffect).
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    const btn = screen.getByTestId('use-my-location');
+    act(() => { fireEvent.click(btn); });
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+  });
+
+  it('the See-all tile links to ?view=results (no specialty filter)', () => {
+    render(<ExploreView rows={[r()]} />);
+    const seeAll = screen.getByTestId('landing-see-all') as HTMLAnchorElement;
+    expect(seeAll.getAttribute('href')).toBe('/patient/explore?view=results');
+  });
+
+  it('a category tile links to ?view=results&specialty=<name>', () => {
+    render(<ExploreView rows={[r({ specialty: 'Dentistry' })]} />);
+    const tile = screen.getByTestId('landing-category-Dentistry') as HTMLAnchorElement;
+    expect(tile.getAttribute('href')).toBe('/patient/explore?view=results&specialty=Dentistry');
+  });
+});
+
+// ─── Results view (any URL param present) ──────────────────────────────
+
+describe('ExploreView — results view when URL params are present', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => {
+    setParams({ view: 'results' });
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
+  afterEach(() => { removeGeolocation(); });
+
+  it('renders the results list with the Filters toggle and back-to-landing link', () => {
+    render(<ExploreView rows={[r()]} />);
+    expect(screen.getByTestId('filters-toggle')).toBeTruthy();
+    expect(screen.getByTestId('results-back-to-landing')).toBeTruthy();
+    // Landing surfaces are NOT rendered in results mode.
+    expect(screen.queryByTestId('landing-categories')).toBeNull();
+  });
+
+  it('an initial ?specialty=X pre-filters the list', () => {
+    setParams({ view: 'results', specialty: 'Physiotherapy' });
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'd', hpcsa_group_key: 'hd', specialty: 'Dentistry',     first_name: 'D', last_name: 'Dent' }),
+      r({ member_id: 'p', hpcsa_group_key: 'hp', specialty: 'Physiotherapy', first_name: 'P', last_name: 'Physio' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    expect(screen.getByText('P Physio')).toBeTruthy();
+    expect(screen.queryByText('D Dent')).toBeNull();
+  });
+
+  it('no-location still shows every practitioner (the no-location contract)', () => {
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'co', hpcsa_group_key: 'hco', first_name: 'Has',  last_name: 'Coords',  practice_latitude: -26.10, practice_longitude: 28.05 }),
+      r({ member_id: 'nc', hpcsa_group_key: 'hnc', first_name: 'No',   last_name: 'Coords',  practice_latitude: null,    practice_longitude: null }),
     ];
     render(<ExploreView rows={rows} />);
     act(() => {
@@ -83,163 +199,132 @@ describe('ExploreView — no-location renders every practitioner', () => {
     });
     expect(screen.getByText('Has Coords')).toBeTruthy();
     expect(screen.getByText('No Coords')).toBeTruthy();
-    expect(screen.queryByText('Other practitioners')).toBeNull();
-  });
-});
-
-describe('ExploreView — geolocation re-prompts on every mount', () => {
-  let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
-  afterEach(() => { removeGeolocation(); });
-
-  it('fires getCurrentPosition on first mount', () => {
-    render(<ExploreView rows={[r({ member_id: 'a' })]} />);
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
   });
 
-  it('fires AGAIN on remount (revisits get a fresh attempt)', () => {
-    const { unmount } = render(<ExploreView rows={[r({ member_id: 'a' })]} />);
-    unmount();
-    render(<ExploreView rows={[r({ member_id: 'a' })]} />);
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
-  });
-
-  it('"Try location" button re-fires getCurrentPosition after denial', () => {
-    render(<ExploreView rows={[r({ member_id: 'a' })]} />);
+  it('"Use my location" button on results re-triggers geolocation when denied', () => {
+    render(<ExploreView rows={[r()]} />);
     act(() => {
       const [, err] = geo.getCurrentPosition.mock.calls[0]!;
       err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
     });
-    const btn = screen.getByTestId('explore-try-location-again');
+    const btn = screen.getByTestId('use-my-location');
     act(() => { fireEvent.click(btn); });
     expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('ExploreView — grouping by HPCSA: ONE card per practitioner', () => {
+// ─── Card layout (results view rendering) ──────────────────────────────
+
+describe('ExploreView — simplified list card', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
+  beforeEach(() => {
+    setParams({ view: 'results' });
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
   afterEach(() => { removeGeolocation(); });
 
-  it('two rows with the SAME hpcsa_group_key → ONE card (nearest location inline; rest behind expander)', () => {
-    const rows: DirectoryRow[] = [
-      r({ member_id: 'm-a', hpcsa_group_key: 'hash-X', hpcsa_registered: true, first_name: 'Jane', last_name: 'Doe', practice_id: 'pA', practice_name: 'Sandton Rooms',  practice_latitude: -26.10, practice_longitude: 28.05 }),
-      r({ member_id: 'm-b', hpcsa_group_key: 'hash-X', hpcsa_registered: true, first_name: 'Jane', last_name: 'Doe', practice_id: 'pB', practice_name: 'Rosebank Rooms', practice_latitude: -26.15, practice_longitude: 28.04 }),
-    ];
+  it('card shows name, specialty, and HPCSA badge (kept per current decision)', () => {
+    render(<ExploreView rows={[r({
+      member_id: 'm1', hpcsa_group_key: 'hh', hpcsa_registered: true,
+      first_name: 'Alice', last_name: 'Smith', specialty: 'Dentistry',
+    })]} />);
+    expect(screen.getByText('Alice Smith')).toBeTruthy();
+    expect(screen.getByText('Dentistry')).toBeTruthy();
+    expect(screen.getByTestId('practitioner-card-hh-hpcsa')).toBeTruthy();
+  });
+
+  it('card shows the AREA (suburb, city) of the closest location, NOT the practice name', () => {
+    render(<ExploreView rows={[r({
+      member_id: 'm1', hpcsa_group_key: 'hh',
+      practice_name: 'Sandton Rooms',
+      practice_suburb: 'Glenhazel', practice_city: 'Johannesburg',
+    })]} />);
+    // The area line contains the suburb + city.
+    const area = screen.getByTestId('practitioner-card-hh-area');
+    expect(area.textContent).toMatch(/Glenhazel, Johannesburg/);
+    // The practice name is NOT rendered on the card.
+    expect(area.textContent).not.toMatch(/Sandton Rooms/);
+    expect(screen.queryByText('Sandton Rooms')).toBeNull();
+  });
+
+  it('a multi-location practitioner shows ONLY the closest location on the card (all locations live on the detail screen)', () => {
+    render(<ExploreView rows={[
+      r({ member_id: 'a', hpcsa_group_key: 'hh', practice_id: 'pA', practice_name: 'A', practice_suburb: 'Sandton',  practice_city: 'JHB', practice_latitude: -26.10, practice_longitude: 28.05 }),
+      r({ member_id: 'b', hpcsa_group_key: 'hh', practice_id: 'pB', practice_name: 'B', practice_suburb: 'Rosebank', practice_city: 'JHB', practice_latitude: -26.15, practice_longitude: 28.04 }),
+    ]} />);
+    // No "Show all N locations" expander — the closest location is
+    // the only one on the card; the detail screen has the rest.
+    expect(screen.queryByText(/Show all/)).toBeNull();
+    // A subtle "also practises at 1 other location" hint is fine —
+    // the card just doesn't nest a full location list.
+    expect(screen.getByText(/other location/i)).toBeTruthy();
+  });
+
+  it('Call to book (tel:) and Get directions (maps) live at the BOTTOM of the card', () => {
+    render(<ExploreView rows={[r({
+      member_id: 'm1', hpcsa_group_key: 'hh', practice_id: 'pA',
+      practice_phone: '+27 11 555 0001',
+      practice_latitude: -26.10, practice_longitude: 28.05,
+    })]} />);
+    const call = screen.getByTestId('practitioner-card-hh-call') as HTMLAnchorElement;
+    const dir  = screen.getByTestId('practitioner-card-hh-directions') as HTMLAnchorElement;
+    expect(call.href).toBe('tel:+27 11 555 0001');
+    expect(dir.href).toContain('google.com/maps');
+    expect(call.textContent).toMatch(/Call to book/);
+    expect(dir.textContent).toMatch(/Get directions/);
+  });
+
+  it('"View" link on the card goes to /patient/practitioner/<member_id>', () => {
+    const rows: DirectoryRow[] = [r({ member_id: 'm-target', hpcsa_group_key: 'hh', first_name: 'Target', last_name: 'Person' })];
     render(<ExploreView rows={rows} />);
-
-    // One name appears once.
-    expect(screen.getAllByText('Jane Doe')).toHaveLength(1);
-
-    // The nearest location renders inline; the OTHER is behind a
-    // "Show all 2 locations" expander (this is the redesign).
-    expect(screen.queryByText('Rosebank Rooms')).toBeNull();
-
-    // The expander reveals the second location.
-    const expand = screen.getByText(/Show all 2 locations/);
-    act(() => { fireEvent.click(expand); });
-    expect(screen.getByText('Rosebank Rooms')).toBeTruthy();
-  });
-
-  it('row with NULL hpcsa_group_key → standalone card (NOT hidden)', () => {
-    const rows: DirectoryRow[] = [
-      r({ member_id: 'm-solo', hpcsa_group_key: null, hpcsa_registered: false, first_name: 'No', last_name: 'HPCSA' }),
-    ];
-    render(<ExploreView rows={rows} />);
-    expect(screen.getByText('No HPCSA')).toBeTruthy();
-  });
-});
-
-describe('ExploreView — list card UX: Call to book + Directions + tap-to-detail', () => {
-  let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
-  afterEach(() => { removeGeolocation(); });
-
-  it('Call to book is a tel: link to the practice phone', () => {
-    render(<ExploreView rows={[r({ member_id: 'm1', practice_id: 'p1', practice_phone: '+27 11 555 0001' })]} />);
-    // tel: anchor exists for this practice.
-    const tel = document.querySelector('a[href="tel:+27 11 555 0001"]') as HTMLAnchorElement | null;
-    expect(tel).not.toBeNull();
-    expect(tel!.textContent).toMatch(/Call to book/);
-  });
-
-  it('Directions is a maps link to the practice coords when available', () => {
-    render(<ExploreView rows={[r({ member_id: 'm1', practice_id: 'p1', practice_latitude: -26.10, practice_longitude: 28.05 })]} />);
-    const maps = Array.from(document.querySelectorAll('a[target="_blank"]'))
-      .find((a) => (a as HTMLAnchorElement).href.includes('maps.google.com')
-                || (a as HTMLAnchorElement).href.includes('google.com/maps')) as HTMLAnchorElement | undefined;
-    expect(maps).toBeDefined();
-    expect(maps!.href).toContain('-26.1,28.05');
-    expect(maps!.textContent).toMatch(/Directions/);
-  });
-
-  it('"View profile" links to /patient/practitioner/<member_id>', () => {
-    const rows: DirectoryRow[] = [
-      r({ member_id: 'm-target', hpcsa_group_key: 'hash', first_name: 'Target', last_name: 'Person' }),
-    ];
-    render(<ExploreView rows={rows} />);
-    const card = screen.getByTestId('practitioner-card-hash');
-    const view = within(card).getByText(/View profile/);
+    const view = screen.getByTestId('practitioner-card-hh-view') as HTMLAnchorElement;
     expect(view.getAttribute('href')).toBe('/patient/practitioner/m-target');
   });
 });
 
-describe('ExploreView — header polish: collapsible filters drawer', () => {
+// ─── Discovery-borrow guardrails ───────────────────────────────────────
+
+describe('ExploreView — BetterNow tone: no medical-aid-network language, no Vet/A-Z', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
-  afterEach(() => { removeGeolocation(); });
-
-  it('Filters drawer is collapsed by default; opens on toggle; specialty narrows results', () => {
-    const rows: DirectoryRow[] = [
-      r({ member_id: 'm-dent',   hpcsa_group_key: 'd', specialty: 'Dentistry',     first_name: 'D',  last_name: 'Dent' }),
-      r({ member_id: 'm-physio', hpcsa_group_key: 'p', specialty: 'Physiotherapy', first_name: 'P',  last_name: 'Physio' }),
-    ];
-    render(<ExploreView rows={rows} />);
-
-    // Both visible initially.
-    expect(screen.getByText('D Dent')).toBeTruthy();
-    expect(screen.getByText('P Physio')).toBeTruthy();
-
-    // Filters closed by default — the chips don't exist in the DOM.
-    expect(screen.queryByTestId('filter-specialty-Physiotherapy')).toBeNull();
-
-    // Open the drawer.
-    act(() => { fireEvent.click(screen.getByTestId('filters-toggle')); });
-    act(() => { fireEvent.click(screen.getByTestId('filter-specialty-Physiotherapy')); });
-
-    expect(screen.queryByText('D Dent')).toBeNull();
-    expect(screen.getByText('P Physio')).toBeTruthy();
+  beforeEach(() => {
+    setParams({});
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
   });
-});
-
-describe('ExploreView — Discovery-borrow guardrails (BetterNow tone)', () => {
-  let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
   afterEach(() => { removeGeolocation(); });
 
-  it('NO medical-aid-network language anywhere (Cover / In Network / Premier Plus / primary GP)', () => {
-    const rows: DirectoryRow[] = [
-      r({ member_id: 'm1', first_name: 'A', last_name: 'B' }),
-    ];
-    const { container } = render(<ExploreView rows={rows} />);
+  it('landing has NO Cover / In Network / Premier Plus / medical aid / medical scheme language', () => {
+    const { container } = render(<ExploreView rows={[r()]} />);
     const text = (container.textContent ?? '').toLowerCase();
     expect(text).not.toContain('cover');
     expect(text).not.toContain('in network');
     expect(text).not.toContain('full network');
-    expect(text).not.toContain('partial network');
     expect(text).not.toContain('premier plus');
     expect(text).not.toContain('nominate as primary');
     expect(text).not.toContain('medical aid');
     expect(text).not.toContain('medical scheme');
   });
 
-  it('NO HPCSA badge — registration is assumed, not displayed', () => {
-    const rows: DirectoryRow[] = [
-      r({ member_id: 'm1', hpcsa_registered: true,  first_name: 'A', last_name: 'B' }),
-      r({ member_id: 'm2', hpcsa_registered: false, first_name: 'C', last_name: 'D' }),
-    ];
-    render(<ExploreView rows={rows} />);
-    expect(screen.queryByText(/HPCSA registered/)).toBeNull();
-    expect(screen.queryByText(/HPCSA/)).toBeNull();
+  it('landing has no hard-coded Doctor / Dentist / Pharmacy / Hospital / Vet category grid', () => {
+    // Categories are DATA-DRIVEN. When there are zero practitioners
+    // at all, no categories show up — proving no hard-coded list.
+    render(<ExploreView rows={[]} />);
+    expect(screen.queryByTestId('landing-category-Doctor')).toBeNull();
+    expect(screen.queryByTestId('landing-category-Dentist')).toBeNull();
+    expect(screen.queryByTestId('landing-category-Pharmacy')).toBeNull();
+    expect(screen.queryByTestId('landing-category-Hospital')).toBeNull();
+    expect(screen.queryByTestId('landing-category-Vet')).toBeNull();
+    expect(screen.queryByTestId('landing-category-Veterinary')).toBeNull();
+  });
+
+  it('landing has no A-Z alphabetical specialty list (no A B C … Z scaffolding)', () => {
+    // We assert against the presence of a scaffolded A-Z index in
+    // the DOM. Categories that HAPPEN to be alphabetical don't count
+    // — the test looks for the A-Z-index header pattern.
+    render(<ExploreView rows={[r({ specialty: 'Dentistry' })]} />);
+    expect(screen.queryByText(/^A\s*[·|]\s*B\s*[·|]/)).toBeNull();
+    expect(screen.queryByText(/Alphabetical/i)).toBeNull();
+    expect(screen.queryByText(/Browse\s+A[-–]Z/i)).toBeNull();
   });
 });
