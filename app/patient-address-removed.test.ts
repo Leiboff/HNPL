@@ -19,7 +19,11 @@ function read(p: string): string {
 const MIG_0059          = read('supabase/migrations/0059_drop_patient_address.sql');
 const PROFILE_PAGE      = read('app/patient/profile/page.tsx');
 const PROFILE_ACCORDION = read('app/patient/profile/ProfileAccordion.tsx');
-const PHONE_FORM        = read('app/patient/profile/PhoneForm.tsx');
+// Post-0065 the standalone phone accordion is gone — phone is now
+// an inline edit-toggle field inside Personal details, owned by
+// PhoneField.tsx. This test still verifies the phone-only capture
+// contract; just against the successor component.
+const PHONE_FORM        = read('app/patient/profile/PhoneField.tsx');
 const ADMIN_CUSTOMER    = read('app/admin/customers/[patientId]/page.tsx');
 
 const DROPPED = [
@@ -65,20 +69,29 @@ describe('Patient profile page — no longer reads or writes address fields', ()
 });
 
 describe('ProfileAccordion — the "Contact & billing address" section is gone', () => {
-  it('exposes a `phone` prop, not a `contactAddress` prop', () => {
-    expect(PROFILE_ACCORDION).toMatch(/phone:\s*React\.ReactNode/);
+  // Post-0065 there is no standalone Phone section — phone folded
+  // into Personal Details. The accordion now exposes
+  // { personalDetails, salaryDay, notifications, passkeys }. Only
+  // the "no address-fields ANYWHERE" invariant matters for the
+  // address-removal test; the section shape moved on.
+  it('no "contactAddress" or "billing address" copy remains in the accordion', () => {
     expect(PROFILE_ACCORDION).not.toMatch(/contactAddress/);
+    expect(PROFILE_ACCORDION).not.toMatch(/billing address/i);
   });
 
-  it('renders a "Phone number" section title (no "billing address" copy left)', () => {
-    expect(PROFILE_ACCORDION).toMatch(/title="Phone number"/);
-    expect(PROFILE_ACCORDION).not.toMatch(/billing address/i);
+  it('accordion no longer has a standalone "Phone number" section title', () => {
+    // Phone is inline within Personal details (PhoneField). The
+    // standalone accordion header is gone.
+    expect(PROFILE_ACCORDION).not.toMatch(/title="Phone number"/);
   });
 });
 
-describe('PhoneForm — phone-only editor replaces AddressForm', () => {
+describe('PhoneField — phone-only editor (successor to AddressForm + PhoneForm)', () => {
   it('captures phone only (no address fields)', () => {
-    expect(PHONE_FORM).toMatch(/type PhoneData\s*=\s*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
+    // PhoneField's update payload is a single `{ phone: string | null }`
+    // — this regex pins the shape without depending on a specific
+    // type alias name.
+    expect(PHONE_FORM).toMatch(/updateProfile.*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
     for (const col of DROPPED) {
       expect(PHONE_FORM).not.toMatch(new RegExp(`\\b${col}\\b`));
     }

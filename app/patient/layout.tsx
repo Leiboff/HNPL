@@ -4,6 +4,7 @@ import PatientNav from './PatientNav';
 import PatientBottomNav from './PatientBottomNav';
 import LogoutButton from './LogoutButton';
 import InstallPrompt from '@/app/_pwa/InstallPrompt';
+import PostLoginPasskeyPrompt from './PostLoginPasskeyPrompt';
 
 export default async function PatientLayout({
   children,
@@ -16,7 +17,10 @@ export default async function PatientLayout({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, first_name, last_name, email, phone')
+    .select(`
+      role, first_name, last_name, email, phone,
+      login_count, passkey_prompt_next_show_at_login, passkey_prompt_permanent_dismiss
+    `)
     .eq('id', user.id)
     .single();
 
@@ -29,6 +33,17 @@ export default async function PatientLayout({
       redirect('/login');
     }
   }
+
+  // Post-login passkey prompt frequency cap (0065). The client
+  // component's own gate hides the prompt if the user already has a
+  // passkey enrolled (Supabase auth.passkey.list on mount) — the
+  // server can't check that here without an admin API call. Both
+  // gates must pass for the sheet to render.
+  const loginCount              = (profile?.login_count as number | null) ?? 0;
+  const nextShowAt              = (profile?.passkey_prompt_next_show_at_login as number | null) ?? 1;
+  const permanentlyDismissed    = (profile?.passkey_prompt_permanent_dismiss  as boolean | null) ?? false;
+  const serverAllowsPasskeyPrompt =
+    !permanentlyDismissed && loginCount >= nextShowAt;
 
   return (
     <div className="min-h-screen bg-[#f7fbfb] flex flex-col">
@@ -62,6 +77,11 @@ export default async function PatientLayout({
           Safari gets the share-then-Add-to-Home-Screen hint; Android
           Chrome gets a real Install button driven by beforeinstallprompt. */}
       <InstallPrompt />
+
+      {/* Post-login passkey prompt (0065). Full-sheet, skippable,
+          frequency-capped. Client component self-hides when the user
+          already has a passkey. */}
+      <PostLoginPasskeyPrompt serverAllows={serverAllowsPasskeyPrompt} />
     </div>
   );
 }

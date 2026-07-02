@@ -1,18 +1,30 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import SalaryDayForm from './SalaryDayForm';
 import InstalmentHero, { type InstalmentRow } from './InstalmentHero';
-import PasskeySetupCard from './PasskeySetupCard';
+import ApprovedBalanceCard from './ApprovedBalanceCard';
+import FindCareBar from './FindCareBar';
 import PushSoftAsk from '@/app/_pwa/PushSoftAsk';
-import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
+import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Patient home dashboard ──────────────────────────────────────────────
 //
-// Date formatting moved into <InstalmentHero> / <InstalmentBreakdownModal>
-// once the hero became ladder-aware. The dashboard page itself only needs
-// the rand formatter for the pending-bill amount.
+// Post-0065 rebuild:
+//   • Approved balance (widget, renders only when limit is non-null).
+//   • Hero — next instalment / bill-to-review / all-paid-up (existing
+//     lifecycle logic; restyled into the new dashboard order).
+//   • Active plans count (tappable → /patient/orders).
+//   • Find-care bar — search-shaped LINK to /patient/explore.
+//
+// Removed from the dashboard in this build:
+//   • The Salary date card. Salary day is now a profile-only field
+//     (see /patient/profile). Checkout reads it server-side.
+//   • The PasskeySetupCard nudge. The post-login passkey prompt now
+//     lives in the layout as a full-sheet overlay, frequency-capped.
+//
+// The approved-balance widget respects the "real data only" rule: it
+// renders nothing when the patient has no limit set. No placeholder
+// like "R0 available" is ever shown.
 
 function formatRand(n: number): string {
   const [integer, decimal] = n.toFixed(2).split('.');
@@ -51,37 +63,13 @@ type UpcomingPayment = {
   instalment_number:   number;
   dunning_fees_cents:  number | null;
   next_attempt_date:   string | null;
-  // Supabase returns many-to-one embeds as an object; typed as union to guard
+  plan_id:             string | null;
+  // Supabase returns many-to-one embeds as an object; union to guard
   // against the rare case where it arrives as a single-element array.
   plan: PaymentPlanEmbed | PaymentPlanEmbed[];
 };
 
-// ─── Server Action ────────────────────────────────────────────────────────────
-
-async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
-  'use server';
-
-  if (!isAllowedSalaryDay(day)) {
-    return { error: `Salary day must be one of: ${ALLOWED_SALARY_DAYS.join(', ')}.` };
-  }
-
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Session expired. Please log in again.' };
-
-  const { error } = await supabase
-    .from('profiles')
-    .update({ salary_day: day })
-    .eq('id', user.id);
-
-  if (error) return { error: error.message };
-
-  revalidatePath('/patient');
-  return { error: null };
-}
-
 // ─── Shared card class (applied to every block for consistency) ───────────────
-// hero keeps rounded-3xl per design; all others use rounded-2xl.
 const card = 'bg-white rounded-2xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6';
 
 // Card label: small uppercase navy, used as the title in every card.
@@ -108,28 +96,22 @@ export default async function PatientDashboardPage() {
     await Promise.all([
       supabase
         .from('profiles')
-        .select('first_name, salary_day, passkey_prompt_dismissed_at, passkey_prompt_dismissed_count')
+        .select('first_name, approved_credit_limit')
         .eq('id', user.id)
         .single(),
-      // No profiles embed here — plans has two FKs to profiles (patient + provider)
-      // which causes an ambiguous relationship error. Only embed practices(name).
+      // No profiles embed here — plans has two FKs to profiles (patient +
+      // provider) which causes an ambiguous relationship error. Only embed
+      // practices(name).
       supabase
         .from('plans')
         .select('id, status, total_amount, practice:practices(name)')
         .eq('patient_id', user.id),
       // All unsettled instalments — soonest-first by *effective* date.
-      // We must include 'failed' and 'defaulted' (post-0057) because the
-      // hero needs to surface ladder state truthfully. Excluding them
-      // would hide a payment-in-trouble from the dashboard at the worst
-      // possible moment — the patient gets a "we'll retry on [date]"
-      // email and the app would still say "all paid up". 'processing'
-      // stays in because the row is mid-charge; rendering it as the
-      // soonest item is fine (it has a definite scheduled origin).
       supabase
         .from('payments')
         .select(`
           id, amount, due_date, status, instalment_number,
-          dunning_fees_cents, next_attempt_date,
+          dunning_fees_cents, next_attempt_date, plan_id,
           plan:plans!payments_plan_id_fkey(
             id, plan_type, practice:practices(name)
           )
@@ -140,37 +122,34 @@ export default async function PatientDashboardPage() {
         .order('due_date', { ascending: true }),
     ]);
 
-  const salaryDay: number | null = (profile?.salary_day as number | null) ?? null;
-
-  // Passkey nudge: show on first dismissal allowance, and one re-prompt
-  // 30+ days after the first dismissal. The card itself self-hides when the
-  // patient already has a registered passkey.
-  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-  const dismissedAtMs  = profile?.passkey_prompt_dismissed_at
-    ? new Date(profile.passkey_prompt_dismissed_at as string).getTime()
-    : null;
-  const dismissedCount = (profile?.passkey_prompt_dismissed_count as number | null) ?? 0;
-  // Server component — Date.now() is the server's request time and is
-  // safe (no re-render impurity concern; this function runs once per
-  // request). The react-hooks/purity rule can't distinguish server
-  // components and would flag it as impure, so disable here.
-  // eslint-disable-next-line react-hooks/purity
-  const nowMs = Date.now();
-  const showPasskeyPrompt =
-    dismissedCount === 0 ||
-    (dismissedCount === 1 && dismissedAtMs !== null && nowMs - dismissedAtMs > THIRTY_DAYS_MS);
-
-  const allPlans     = (rawPlans   ?? []) as unknown as PlanSummary[];
-  const payments     = (rawPayments ?? []) as unknown as UpcomingPayment[];
+  const allPlans   = (rawPlans   ?? []) as unknown as PlanSummary[];
+  const payments   = (rawPayments ?? []) as unknown as UpcomingPayment[];
 
   const totalCount   = allPlans.length;
   const pendingPlans = allPlans.filter((p) => p.status === 'pending_acceptance');
   const pendingCount = pendingPlans.length;
   const currentCount = allPlans.filter((p) => p.status === 'active').length;
 
-  // Today in SA time — YYYY-MM-DD string compared directly against due_date
-  // (also YYYY-MM-DD from the DB). String comparison is timezone-safe and avoids
-  // the UTC-midnight-offset bug fixed in finance.ts.
+  // Approved balance — computed server-side from the raw payment set.
+  // Filter to payments that belong to ACTIVE plans (a defaulted /
+  // completed plan's balance is not the patient's forward-looking
+  // spending capacity). NULL limit → the card component renders null;
+  // we still pass a safe zero as `available` for typing.
+  const approvedLimit: number | null =
+    (profile?.approved_credit_limit as number | null) ?? null;
+  const activePlanIds = new Set(
+    allPlans.filter((p) => p.status === 'active').map((p) => p.id),
+  );
+  const paymentsForBalance: PaymentForBalance[] = payments
+    .filter((p) => p.plan_id != null && activePlanIds.has(p.plan_id as string))
+    .map((p) => ({ amount: Number(p.amount), status: p.status }));
+  const available = approvedLimit != null
+    ? availableBalance(approvedLimit, paymentsForBalance)
+    : 0;
+
+  // Today in SA time — YYYY-MM-DD string compared directly against
+  // due_date (also YYYY-MM-DD from the DB). String comparison is
+  // timezone-safe.
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
 
   // ── Hero: priority A > B > C ───────────────────────────────────────────────
@@ -180,7 +159,6 @@ export default async function PatientDashboardPage() {
   let hero: React.ReactNode;
 
   if (pendingCount > 0) {
-    // ── A: action needed ────────────────────────────────────────────────────
     if (pendingCount === 1) {
       const plan         = pendingPlans[0];
       const practiceName = getPracticeName(plan.practice);
@@ -228,11 +206,6 @@ export default async function PatientDashboardPage() {
       );
     }
   } else if (payments.length > 0) {
-    // ── B: upcoming / failed / defaulted instalments ─────────────────────────
-    // Sort ladder-aware: the "effective date" of an instalment is its
-    // next_attempt_date when set (the ladder rescheduled it), else its
-    // original due_date. A failed row whose next attempt is sooner than
-    // a healthy scheduled row's due_date should rank first.
     const effectiveDate = (p: UpcomingPayment): string =>
       p.next_attempt_date ?? p.due_date;
 
@@ -240,10 +213,6 @@ export default async function PatientDashboardPage() {
     const soonestKey = effectiveDate(sorted[0]);
     const dueGroup   = sorted.filter((p) => effectiveDate(p) === soonestKey);
 
-    // Outstanding = bare instalment + accrued dunning fees. A failed
-    // row charges instalment + fees on the next retry (see
-    // lib/payments/dunning.ts), so the hero must reflect that total —
-    // showing the bare amount when fees have accrued misleads the patient.
     const total = dueGroup.reduce(
       (sum, p) => sum + Number(p.amount) + Number(p.dunning_fees_cents ?? 0) / 100,
       0,
@@ -252,9 +221,6 @@ export default async function PatientDashboardPage() {
     const isOverdue = soonestKey < todayStr;
     const isToday   = soonestKey === todayStr;
 
-    // Group-level state: defaulted dominates failed dominates scheduled.
-    // If any row in the same-date group is defaulted, the hero copy
-    // reflects default; same for failed. Otherwise it's a normal upcoming.
     const groupState: 'defaulted' | 'failed' | 'scheduled' =
       dueGroup.some((p) => p.status === 'defaulted') ? 'defaulted' :
       dueGroup.some((p) => p.status === 'failed')    ? 'failed'    :
@@ -283,7 +249,6 @@ export default async function PatientDashboardPage() {
       />
     );
   } else {
-    // ── C: all paid up ──────────────────────────────────────────────────────
     hero = (
       <div className="bg-white rounded-3xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6">
         <CardLabel>Payments</CardLabel>
@@ -304,55 +269,23 @@ export default async function PatientDashboardPage() {
     <div className="bg-[#f7fbfb] min-h-full">
       <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8 space-y-4">
 
-        {/* Greeting */}
         <p className="text-lg font-semibold" style={{ color: '#13294B' }}>
           Hi, {profile?.first_name ?? user.email?.split('@')[0] ?? 'there'} 👋
         </p>
 
-        {showPasskeyPrompt && <PasskeySetupCard />}
-
         {/* PWA push notifications — soft-ask shown only when the patient
-            has an active plan and hasn't already been prompted. Dismisses
-            permanently. Settings toggle in /profile remains the canonical
-            on/off control after dismissal. */}
+            has an active plan and hasn't already been prompted. */}
         <PushSoftAsk enabled={currentCount > 0} />
 
-        {/* ── HERO CARD ─────────────────────────────────────────────────────────
-            Priority A: pending bill(s) to review (amber border, action CTA)
-            Priority B: sum of all instalments due on soonest date — tappable,
-                        opens InstalmentBreakdownModal with per-plan breakdown
-            Priority C: all paid up
-            This slot is also designed to later hold a credit-limit display.
-        ──────────────────────────────────────────────────────────────────── */}
+        {/* Approved balance — renders ONLY when limit is set. Null →
+            null render, no placeholder, no "R0 available". */}
+        <ApprovedBalanceCard limit={approvedLimit} available={available} />
+
+        {/* Hero: pending bill / next instalment / all-paid-up */}
         {hero}
 
-        {/* ── SALARY DATE CARD ─────────────────────────────────────────────── */}
-        <div className={`${card} space-y-3`}>
-          <CardLabel>Salary Date</CardLabel>
-          {salaryDay === null && (
-            <p className="text-sm text-amber-700">
-              Set your salary date so we can time your payments.
-            </p>
-          )}
-          <div className="flex flex-col sm:flex-row sm:items-start gap-5">
-            <div
-              className="sm:order-last sm:w-44 sm:ml-auto rounded-xl p-4 text-xs leading-relaxed space-y-1.5"
-              style={{ background: 'rgba(19,41,75,.04)' }}
-            >
-              <p className="font-semibold text-[#13294B]">Heads up</p>
-              <p className="text-gray-500">
-                Your salary date sets when we collect your monthly instalments.
-              </p>
-              <p className="text-gray-500">
-                Changes here only apply to <span className="font-medium text-gray-700">new plans</span> — existing active plans will continue collecting on their current schedule.
-              </p>
-            </div>
-            <SalaryDayForm currentDay={salaryDay} saveSalaryDay={saveSalaryDay} />
-          </div>
-        </div>
-
-        {/* ── PLANS CARD ───────────────────────────────────────────────────── */}
-        <div className={card}>
+        {/* Active plans count → tappable to /patient/orders */}
+        <Link href="/patient/orders" className={`${card} block hover:shadow-md transition-shadow`}>
           <CardLabel>Your Plans</CardLabel>
           {totalCount === 0 ? (
             <div className="mt-3 rounded-xl border border-dashed border-gray-200 py-8 text-center">
@@ -363,17 +296,19 @@ export default async function PatientDashboardPage() {
             <div className="mt-3 flex items-center justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Active</p>
-                <p className="text-4xl font-bold tabular-nums mt-0.5" style={{ color: '#13294B' }}>{currentCount}</p>
+                <p className="text-4xl font-bold tabular-nums mt-0.5" style={{ color: '#13294B' }} data-testid="dashboard-active-plans-count">
+                  {currentCount}
+                </p>
               </div>
-              <a
-                href="/patient/orders"
-                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
-              >
+              <span className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm">
                 View all →
-              </a>
+              </span>
             </div>
           )}
-        </div>
+        </Link>
+
+        {/* Find-care search bar (LINK to explore). */}
+        <FindCareBar />
 
       </div>
     </div>

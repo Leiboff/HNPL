@@ -77,7 +77,12 @@ export type InitiateCheckoutInput = {
   saIdNumber:  string;
   phone:       string;
   planType:    2 | 3;
-  salaryDay:   number;
+  // Post-0065: salary day is a PROFILE-first source of truth. The
+  // client sends this only when the patient has no salary_day on
+  // their profile yet (new signup or legacy edge). If both the
+  // profile and this field are unset, the server returns
+  // `missing_salary_day` and the client shows an inline prompt.
+  salaryDay?:  number | null;
 };
 
 export type InitiateCheckoutResult =
@@ -90,7 +95,9 @@ export type InitiateCheckoutResult =
   | { ok: false; error: string; requireLogin: true; loginUrl: string };
 
 export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
-  const { token, firstName, lastName, saIdNumber, phone, planType, salaryDay } = input;
+  const { token, firstName, lastName, saIdNumber, phone, planType } = input;
+  const clientSalaryDay: number | null =
+    typeof input.salaryDay === 'number' ? input.salaryDay : null;
 
   if (!token)                  return { ok: false, error: 'Missing token.' };
   if (!firstName.trim())       return { ok: false, error: 'First name is required.' };
@@ -108,7 +115,9 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   if (!normalizedPhone) return { ok: false, error: 'Enter a valid South African cellphone number.' };
 
   if (planType !== 2 && planType !== 3) return { ok: false, error: 'Pick 2 or 3 instalments.' };
-  if (!isAllowedSalaryDay(salaryDay)) {
+  // Client-supplied salary day (when present) must be allowed. Blank
+  // is fine — we'll try to source it from the profile below.
+  if (clientSalaryDay !== null && !isAllowedSalaryDay(clientSalaryDay)) {
     return { ok: false, error: `Salary day must be one of: ${ALLOWED_SALARY_DAYS.join(', ')}.` };
   }
 
@@ -250,6 +259,34 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     }
     userId    = created.user.id;
     isNewUser = true;
+  }
+
+  // ── 3b. Resolve the salary_day — profile is the source of truth ─────
+  // Post-0065 the profile holds the canonical salary_day. Precedence:
+  //   1. profile.salary_day if already set (returning patient) —
+  //      the client value is IGNORED, defence-in-depth against a
+  //      tampered submission.
+  //   2. client-supplied value (new signup, or legacy patient
+  //      without a stored salary_day).
+  //   3. neither → 'missing_salary_day' code so the client can
+  //      show the inline picker and retry.
+  // For a brand-new patient (decision.action === 'create-new') we
+  // don't have a profile row yet — the trigger writes a minimal row
+  // but salary_day starts NULL, so we always fall through to the
+  // client value.
+  const { data: existingProfile } = await svc
+    .from('profiles')
+    .select('salary_day')
+    .eq('id', userId)
+    .maybeSingle();
+  const profileSalaryDay: number | null =
+    (existingProfile?.salary_day as number | null) ?? null;
+  const salaryDay: number | null =
+    profileSalaryDay != null && isAllowedSalaryDay(profileSalaryDay)
+      ? profileSalaryDay
+      : clientSalaryDay;
+  if (salaryDay === null || !isAllowedSalaryDay(salaryDay)) {
+    return { ok: false, error: 'missing_salary_day' };
   }
 
   // ── 4. Upsert the profile row with the patient's details ──────────────

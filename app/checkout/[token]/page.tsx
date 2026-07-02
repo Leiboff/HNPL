@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import CheckoutForm from './CheckoutForm';
 import { initiateCheckout, requestPhoneOtp, verifyPhoneOtp } from './actions';
+import { isAllowedSalaryDay } from '@/lib/salaryDates';
 
 // ─── /checkout/[token] ─────────────────────────────────────────────────────
 //
@@ -102,6 +104,37 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
   const row          = rows[0];
   const practiceName = row.practice_name ?? 'your practice';
 
+  // Post-0065: salary_day is a profile-first field. If a profile
+  // already exists for the invitation's email AND has a salary_day
+  // stored, we skip the checkout picker (it's derivable server-side
+  // at initiateCheckout time). Otherwise the form shows the inline
+  // picker so the value is captured once and persisted alongside
+  // the plan creation.
+  //
+  // Service-role client scoped to a single lookup by email — safe
+  // because the invitation RPC (SECURITY DEFINER) already proved
+  // the caller controls this inbox. If the lookup fails for any
+  // reason we default to "no salary day known" and the picker
+  // renders — never blocks the flow.
+  let initialSalaryDay: number | null = null;
+  try {
+    const svc = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { persistSession: false } },
+    );
+    const { data: existingProfile } = await svc
+      .from('profiles')
+      .select('salary_day')
+      .eq('email', row.email)
+      .maybeSingle();
+    const stored = existingProfile?.salary_day as number | null | undefined;
+    if (isAllowedSalaryDay(stored)) initialSalaryDay = stored;
+  } catch (err) {
+    console.warn('[checkout] salary_day lookup failed (non-fatal)',
+      err instanceof Error ? err.message : err);
+  }
+
   // ── viewed_at stamp ────────────────────────────────────────────────────
   // Drives the practice-side "Viewed" lifecycle signal (the receptionist
   // wants to know the patient at least opened the link). The RPC is
@@ -149,6 +182,7 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
           totalAmount={Number(row.plan_total_amount)}
           invoiceNumber={row.invoice_number}
           practiceReference={row.practice_reference}
+          initialSalaryDay={initialSalaryDay}
           initiateCheckout={initiateCheckout}
           requestPhoneOtp={requestPhoneOtp}
           verifyPhoneOtp={verifyPhoneOtp}

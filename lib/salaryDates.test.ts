@@ -114,9 +114,14 @@ describe('clampSalaryDateForMonth', () => {
 // If a future contributor pastes [1, 15, 20, 25, ...] inline, this fails.
 
 describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
+  // Post-0065 the patient dashboard no longer contains a salary-day
+  // form — the responsibility moved to the profile as an edit-toggle
+  // section (SalaryDaySection). page.tsx also no longer imports the
+  // canonical set (nothing on the dashboard needs it). Signup +
+  // profile are the two remaining places.
   const surfaces = [
-    'app/patient/SalaryDayForm.tsx',
-    'app/patient/page.tsx',
+    'app/patient/profile/SalaryDaySection.tsx',
+    'app/patient/profile/page.tsx',
     'app/signup/patient/PatientSignupForm.tsx',
     'app/signup/patient/actions.ts',
   ];

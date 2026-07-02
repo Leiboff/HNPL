@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { resendConfirmation } from '@/app/auth/resend/actions';
 import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
 import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
+import { recordLoginLanding } from '@/app/patient/passkey-actions';
 import InstallCallout from '@/app/_pwa/InstallCallout';
 
 export default function LoginPage() {
@@ -63,6 +64,16 @@ export default function LoginPage() {
       else setError(signInError.message);
       setLoading(false);
       return;
+    }
+
+    // 0065: increment profile.login_count before navigating. The
+    // patient layout reads this to decide whether to render the
+    // post-login passkey prompt. Best-effort — a failed increment
+    // just skips one login and the next covers it.
+    try {
+      await recordLoginLanding();
+    } catch {
+      // Swallow — prompt frequency capping is a nudge, not a gate.
     }
 
     window.location.href = '/dashboard';

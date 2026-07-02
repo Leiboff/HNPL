@@ -70,6 +70,16 @@ type Props = {
   totalAmount:        number;
   invoiceNumber:      string | null;
   practiceReference:  string | null;
+  /**
+   * Post-0065: profile is the source of truth for salary_day. The
+   * server passes it down when the invitation's email resolves to
+   * a profile that already has one; the form then hides the
+   * inline picker. Null → the form renders the picker so a first-
+   * time patient (or a legacy profile without a salary_day) can
+   * set it once — value flows back through initiateCheckout and
+   * is persisted alongside the plan.
+   */
+  initialSalaryDay:   number | null;
   initiateCheckout:   (input: {
     token:       string;
     firstName:   string;
@@ -77,7 +87,7 @@ type Props = {
     saIdNumber:  string;
     phone:       string;
     planType:    2 | 3;
-    salaryDay:   number;
+    salaryDay?:  number | null;
   }) => Promise<
     | { ok: true;  authorizationUrl: string }
     | { ok: false; error: string }
@@ -225,13 +235,27 @@ const BLANK_DETAILS: DetailsFields = {
 
 export default function CheckoutForm({
   token, email, practiceName, totalAmount, invoiceNumber, practiceReference,
+  initialSalaryDay,
   initiateCheckout, requestPhoneOtp, verifyPhoneOtp,
 }: Props) {
   const [step, setStep] = useState<Step>(1);
 
   // Step 2 state — defaults are always valid; no schema entries needed.
   const [planType,  setPlanType]  = useState<2 | 3>(2);
-  const [salaryDay, setSalaryDay] = useState<number>(25);
+  // Post-0065: prefer the value the server already knows (profile
+  // source of truth). If none, fall back to 25 which is the modal
+  // ZA payday and keeps the schedule preview meaningful before the
+  // patient explicitly picks.
+  const [salaryDay, setSalaryDay] = useState<number>(initialSalaryDay ?? 25);
+  // The inline picker renders only when we don't have a stored
+  // salary_day — a returning patient with one on their profile
+  // never sees it. `forceSalaryDayPicker` is the client-side
+  // fallback for the edge case where a server-side race between
+  // page load and Pay submit left the profile with no salary_day
+  // (rare, but the server returns 'missing_salary_day' and we
+  // toggle this flag to reveal the picker on Step 2).
+  const [forceSalaryDayPicker, setForceSalaryDayPicker] = useState(false);
+  const showSalaryDayPicker = initialSalaryDay == null || forceSalaryDayPicker;
 
   // Step 3 state — passed as a single object into useFieldValidation so
   // the blur/keystroke-after-error semantics behave identically to the
@@ -352,7 +376,12 @@ export default function CheckoutForm({
           saIdNumber: details.saIdNumber.trim(),
           phone:      details.phone.trim(),
           planType,
-          salaryDay,
+          // Only send the client-picked value when the picker was
+          // rendered. For a returning patient whose profile has one
+          // already, the server sources it — sending anything here
+          // would be silently ignored, but we omit it to make the
+          // wire trace unambiguous.
+          salaryDay:  showSalaryDayPicker ? salaryDay : null,
         });
         if (!result.ok) {
           // The server's "verify_phone_required" code means the row
@@ -367,6 +396,15 @@ export default function CheckoutForm({
             resetOtpStep();
             setStep(4);
             setError(null);
+            return;
+          }
+          if (result.error === 'missing_salary_day') {
+            // Server couldn't source a salary_day from the profile
+            // and we didn't send one. Force the inline picker on and
+            // bounce back to Step 2 with a clear message.
+            setForceSalaryDayPicker(true);
+            setStep(2);
+            setError('Please pick when you get paid — this saves to your profile for future bills too.');
             return;
           }
           setError(result.error);
@@ -464,23 +502,32 @@ export default function CheckoutForm({
             perInstalmentAmount={(n) => previewInstalments(totalAmount, n)[0]}
           />
 
-          <div>
-            <label htmlFor="salaryDay" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
-              When do you get paid?
-            </label>
-            <select
-              id="salaryDay"
-              value={salaryDay}
-              onChange={(e) => setSalaryDay(parseInt(e.target.value, 10))}
-              className="w-full rounded-xl border border-[#D8DEE8] bg-white px-3.5 py-3 text-base text-[#0F1F3A] focus:border-[#15A89E] focus:ring-4 focus:ring-[#15A89E]/15 outline-none"
-            >
-              {ALLOWED_SALARY_DAYS.map((d) => (
-                <option key={d} value={d}>
-                  {d}{d === 1 || d === 31 ? 'st' : 'th'} of the month
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Inline salary-day capture — rendered ONLY when the server
+              couldn't source one from the patient's profile (new
+              signup or legacy profile with no stored value).
+              Returning patients with a stored value never see this. */}
+          {showSalaryDayPicker && (
+            <div data-testid="checkout-salary-day-picker">
+              <label htmlFor="salaryDay" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
+                When do you get paid?
+              </label>
+              <p className="text-xs text-[#7A8AA0] mb-2">
+                We&apos;ll save this to your profile so future bills use it automatically.
+              </p>
+              <select
+                id="salaryDay"
+                value={salaryDay}
+                onChange={(e) => setSalaryDay(parseInt(e.target.value, 10))}
+                className="w-full rounded-xl border border-[#D8DEE8] bg-white px-3.5 py-3 text-base text-[#0F1F3A] focus:border-[#15A89E] focus:ring-4 focus:ring-[#15A89E]/15 outline-none"
+              >
+                {ALLOWED_SALARY_DAYS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}{d === 1 || d === 31 ? 'st' : 'th'} of the month
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <ScheduleStrip instalments={instalments} dates={dates} />
         </StepShell>

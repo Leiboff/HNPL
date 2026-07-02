@@ -3,14 +3,16 @@
 import { useState } from 'react';
 import AccordionSection from '@/components/AccordionSection';
 
-type SectionKey = 'personal' | 'phone' | 'notifications' | 'security';
+type SectionKey = 'personal' | 'salary' | 'notifications' | 'security';
 
 type Props = {
-  /** Server-rendered Personal-details body (read-only fields + footnote). */
+  /** Personal-details body — includes phone as an inline editable
+      field (0065: phone moved out of its standalone accordion). */
   personalDetails: React.ReactNode;
-  /** Client PhoneForm — phone-only after migration 0059 dropped the
-      physical-address columns from profiles (POPIA minimisation). */
-  phone: React.ReactNode;
+  /** Salary-date section — edit-toggle dropdown. Post-0065 the
+      salary_day source of truth is the profile; checkout reads it
+      server-side. Changes here affect FUTURE plans only. */
+  salaryDay: React.ReactNode;
   /** Client NotificationsToggle (push on/off). */
   notifications: React.ReactNode;
   /** Client PasskeysSection (untouched). */
@@ -24,7 +26,7 @@ type Props = {
  */
 export default function ProfileAccordion({
   personalDetails,
-  phone,
+  salaryDay,
   notifications,
   passkeys,
 }: Props) {
@@ -50,11 +52,11 @@ export default function ProfileAccordion({
       </AccordionSection>
 
       <AccordionSection
-        title="Phone number"
-        open={open.has('phone')}
-        onToggle={() => toggle('phone')}
+        title="Salary date"
+        open={open.has('salary')}
+        onToggle={() => toggle('salary')}
       >
-        {phone}
+        {salaryDay}
       </AccordionSection>
 
       <AccordionSection
