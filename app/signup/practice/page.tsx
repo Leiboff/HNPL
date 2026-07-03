@@ -226,16 +226,29 @@ export default function PracticeSignupPage() {
     >
       <div className="mx-auto max-w-xl">
 
-        {/* Header */}
-        <div className="mb-8 text-center">
+        {/* Header + prominent already-registered log-in link. The
+            link is visible without scrolling on mobile — placed in
+            the top-right rather than buried at the bottom. */}
+        <div className="mb-6 flex items-start justify-between gap-3">
           <Link
             href="/"
-            className="inline-block text-2xl font-bold tracking-tight mb-1"
+            className="inline-block text-2xl font-bold tracking-tight"
             style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
           >
             <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold text-gray-900" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+          <Link
+            href="/login"
+            data-testid="practice-signup-login-cross-link"
+            className="text-sm font-semibold rounded-lg border border-[rgba(19,41,75,.12)] bg-white px-3 py-1.5 hover:bg-gray-50"
+            style={{ color: '#13294B' }}
+          >
+            Log in
+          </Link>
+        </div>
+
+        <div className="mb-8 text-center">
+          <h1 className="text-2xl font-semibold text-gray-900" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
             Register your practice
           </h1>
           <p className="mt-1 text-sm text-gray-500">

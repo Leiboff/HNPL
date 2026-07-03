@@ -35,10 +35,20 @@ export default async function PatientSignupPage({ searchParams }: Props) {
     >
       <div className="w-full max-w-md">
 
-        {/* Brand mark */}
-        <div className="text-center mb-8">
+        {/* Brand mark + prominent already-registered link. The link is
+            visible without scrolling on mobile — placed in the header
+            row rather than buried at the bottom. */}
+        <div className="mb-8 flex items-center justify-between">
           <Link href="/" className="inline-block text-2xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
             <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+          </Link>
+          <Link
+            href="/login"
+            data-testid="patient-signup-login-cross-link"
+            className="text-sm font-semibold rounded-lg border border-[rgba(19,41,75,.12)] bg-white px-3 py-1.5 hover:bg-gray-50"
+            style={{ color: '#13294B' }}
+          >
+            Log in
           </Link>
         </div>
 
@@ -53,7 +63,10 @@ export default async function PatientSignupPage({ searchParams }: Props) {
           <PatientSignupForm invitation={invitation} token={token ?? null} />
         </div>
 
-        <p className="mt-6 text-center text-xs text-gray-400">
+        {/* Footer duplicate — the visible-without-scrolling link lives
+            in the header above. This bottom row is still useful for
+            long-form completers who reach the end. */}
+        <p className="mt-6 text-center text-sm text-gray-500">
           Already have an account?{' '}
           <Link href="/login" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
             Sign in

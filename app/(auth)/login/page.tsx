@@ -187,9 +187,19 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                  Password
+                </label>
+                <Link
+                  href="/forgot-password"
+                  data-testid="login-forgot-password"
+                  className="text-xs font-semibold underline underline-offset-2"
+                  style={{ color: '#13294B' }}
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 id="password"
                 type="password"
@@ -211,20 +221,54 @@ export default function LoginPage() {
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+        </div>
 
-          <p className="mt-6 text-center text-sm text-gray-500">
-            Don&apos;t have an account?{' '}
-            <Link href="/" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
-              Sign up
-            </Link>
+        {/* ── Prominent signup CTAs ────────────────────────────────────
+            Previously buried as small grey footer links + a "Sign up"
+            text link pointing at the homepage. New visitors need a
+            clear one-glance path in — this section makes both patient
+            and practice signup visible as bordered cards with distinct
+            purpose. Mobile-first: cards stack vertically. */}
+        <section
+          aria-label="New to BetterNow"
+          className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6"
+        >
+          <p className="text-sm font-semibold text-center mb-4" style={{ color: '#13294B' }}>
+            New to BetterNow?
           </p>
-        </div>
-
-        <div className="mt-6 flex justify-center gap-6 text-xs text-gray-400">
-          <Link href="/signup/practice" className="hover:text-gray-600 transition-colors">Practice sign-up</Link>
-          <span>·</span>
-          <Link href="/signup/patient" className="hover:text-gray-600 transition-colors">Patient sign-up</Link>
-        </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Link
+              href="/signup/patient"
+              data-testid="login-signup-patient"
+              className="group rounded-xl border border-[rgba(19,41,75,.12)] bg-white px-4 py-3 hover:shadow-md transition-shadow"
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+                Patient
+              </p>
+              <p className="mt-1 font-semibold" style={{ color: '#13294B' }}>
+                Sign up as a patient
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                Pay medical bills in interest-free instalments.
+              </p>
+            </Link>
+            <Link
+              href="/signup/practice"
+              data-testid="login-signup-practice"
+              className="group rounded-xl border border-[rgba(19,41,75,.12)] bg-white px-4 py-3 hover:shadow-md transition-shadow"
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+                Practice
+              </p>
+              <p className="mt-1 font-semibold" style={{ color: '#13294B' }}>
+                Register your practice
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                Offer BetterNow to your patients.
+              </p>
+            </Link>
+          </div>
+        </section>
 
         {/* PWA install callout — placed, persistent, secondary visual
             weight so it doesn't compete with Sign in. Hidden when the
