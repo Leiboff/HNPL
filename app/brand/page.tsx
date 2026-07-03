@@ -1,6 +1,9 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { computeRevenue, type RevenuePlan, type RevenuePractice } from '@/lib/brand/revenue';
+import { buildMonthlySeries, type PlanForTrend, type MonthPoint } from '@/lib/brand/monthlyRevenue';
+import GroupDashboard, { type BrandInfo, type BranchInfo } from './GroupDashboard';
 
 // ─── Brand-admin dashboard ──────────────────────────────────────────────
 //
@@ -9,23 +12,30 @@ import { createClient } from '@/lib/supabase/server';
 // product as "my practice", not "my brand with one practice in it".
 // This page enforces that rule:
 //
-//   n = 0  → /practice/setup (no membership at all — shouldn't happen
-//            in practice but we redirect rather than blank-page)
-//   n = 1  → /practice (the brand layer is invisible; their one
-//            practice IS their experience)
-//   n >= 2 → render the brand index — every practice in their brand
-//            with a status pill, plus "Add another practice".
+//   n = 0  → /practice/setup (no membership at all)
+//   n = 1  → /practice       (brand invisible; their one practice IS
+//                              their experience)
+//   n >= 2 → render the group dashboard — hero + trend + per-branch
+//            performance strip with drill-down. Doctor management
+//            lives on the branch detail page (screen 2).
 //
-// The brand row name is shown only when n>=2 (so a solo who ever
-// stumbles here doesn't see "Brand X" wording when they're meant to
-// see just their own practice).
+// Data flow: this server component aggregates by-branch revenue on
+// the request (service-role queries scoped to the caller's group_ids,
+// gated by the practice_group_members guard) and hands pre-aggregated
+// arrays to the client GroupDashboard. The client component owns the
+// gross/net toggle state.
 
-type GroupRow  = { id: string; name: string };
-type BranchRow = {
-  id: string; name: string; status: string;
-  city: string | null; suburb: string | null;
-  group_id: string;
-};
+export const dynamic = 'force-dynamic';
+
+function svc() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+}
+
+type PlanRow = RevenuePlan & { created_at: string };
 
 export default async function BrandDashboardPage() {
   const supabase = await createClient();
@@ -33,134 +43,108 @@ export default async function BrandDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // Brand memberships — typically just one (their own auto-created
-  // brand from signup) but a user could be brand_admin of multiple
-  // brands in theory.
-  const { data: memberships } = await supabase
+  // Brand memberships — session client so RLS scopes to the caller's
+  // own rows. A tampered ?group=<other> would never enter this list.
+  const { data: rawMemberships } = await supabase
     .from('practice_group_members')
     .select('group_id, active')
     .eq('user_id', user.id)
     .eq('active', true);
 
-  if (!memberships || memberships.length === 0) {
-    // No brand_admin row — fall back to their per-practice dashboard.
-    redirect('/practice');
-  }
+  const memberships = (rawMemberships ?? []) as Array<{ group_id: string }>;
+  if (memberships.length === 0) redirect('/practice');
 
-  const groupIds = memberships.map((m) => m.group_id as string);
+  const groupIds = memberships.map((m) => m.group_id);
 
-  // All practices in their brand(s). Counting these drives the
-  // n=1-vs-n>=2 UX rule below.
-  const { data: rawBranches } = await supabase
+  // All practices in their brand(s). Service-role read so we never
+  // silently leak or hide rows against RLS drift — the guard above
+  // is the authz boundary.
+  const s = svc();
+  const { data: rawBranches } = await s
     .from('practices')
-    .select('id, name, status, city, suburb, group_id')
+    .select('id, name, status, city, suburb, group_id, fee_percent')
     .in('group_id', groupIds)
     .order('name');
-  const branches = (rawBranches ?? []) as BranchRow[];
+  const branchRows = (rawBranches ?? []) as Array<{
+    id: string; name: string; status: string;
+    city: string | null; suburb: string | null;
+    group_id: string; fee_percent: number | null;
+  }>;
 
-  if (branches.length === 0) {
-    // Brand exists but no practices yet (rare — would only happen if
-    // a practice was manually deleted). Send them to setup.
-    redirect('/practice/setup');
-  }
-  if (branches.length === 1) {
-    // Solo — keep the brand invisible. Their one practice IS their
-    // dashboard.
-    redirect(`/practice?practiceId=${branches[0].id}`);
-  }
+  if (branchRows.length === 0) redirect('/practice/setup');
+  if (branchRows.length === 1) redirect(`/practice?practiceId=${branchRows[0].id}`);
 
-  const { data: rawGroups } = await supabase
+  const practiceIds = branchRows.map((b) => b.id);
+
+  // Brand row(s) for logo + name.
+  const { data: rawBrands } = await s
     .from('practice_groups')
-    .select('id, name')
+    .select('id, name, logo_url')
     .in('id', groupIds);
-  const groups = (rawGroups ?? []) as GroupRow[];
+  const brands: BrandInfo[] = (rawBrands ?? []).map((g) => ({
+    id:      g.id as string,
+    name:    (g.name as string) ?? '—',
+    logoUrl: (g.logo_url as string | null) ?? null,
+  }));
+
+  // Plans across those practices — same columns computeRevenue needs,
+  // plus created_at for the monthly series. NO payment / collection
+  // state (mirrors the /brand/revenue page's discipline).
+  const { data: rawPlans } = await s
+    .from('plans')
+    .select('id, practice_id, provider_id, total_amount, status, created_at')
+    .in('practice_id', practiceIds)
+    .limit(5000);
+  const plans = (rawPlans ?? []) as PlanRow[];
+
+  // fee_percent lookup used by both totals and the monthly trend.
+  const feeByPractice = new Map<string, number>();
+  for (const b of branchRows) feeByPractice.set(b.id, Number(b.fee_percent ?? 0));
+
+  const revenuePractices: RevenuePractice[] = branchRows.map((b) => ({
+    id: b.id, name: b.name, fee_percent: Number(b.fee_percent ?? 0),
+  }));
+
+  // Group-level totals + per-branch slices in ONE pass (computeRevenue
+  // does both). byPractice rows are keyed by practice_id.
+  const groupSummary = computeRevenue(plans, revenuePractices, [], {});
+
+  const perBranchTotals = new Map<string, { gross: number; net: number; count: number }>();
+  for (const row of groupSummary.byPractice) {
+    perBranchTotals.set(row.id, { gross: row.gross, net: row.net, count: row.count });
+  }
+
+  // Group-level 12-month series.
+  const plansForTrend = plans as PlanForTrend[];
+  const groupMonthly: MonthPoint[] = buildMonthlySeries(plansForTrend, feeByPractice);
+
+  // Per-branch 12-month series. Same helper, plans scoped by branch.
+  const branches: BranchInfo[] = branchRows.map((b) => {
+    const branchPlans = plansForTrend.filter((p) => p.practice_id === b.id);
+    const monthly = buildMonthlySeries(branchPlans, feeByPractice);
+    const t = perBranchTotals.get(b.id) ?? { gross: 0, net: 0, count: 0 };
+    return {
+      id:              b.id,
+      name:            b.name,
+      status:          b.status,
+      suburb:          b.suburb,
+      city:            b.city,
+      groupId:         b.group_id,
+      gross:           t.gross,
+      net:             t.net,
+      activePlanCount: t.count,
+      monthly,
+    };
+  });
 
   return (
-    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10 space-y-8">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>My practices</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage every practice you&apos;ve added. New practices go pending — BetterNow approves them before they can trade.
-          </p>
-        </div>
-      </header>
-
-      {/* Quick links — surface the brand-admin's three management
-          surfaces: revenue (the new dashboard), brand settings, and
-          add-a-practice. Tile layout so each is one tap on mobile. */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Link
-          href="/brand/revenue"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Revenue</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Group dashboard</p>
-        </Link>
-        <Link
-          href="/brand/group"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Brand</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Settings &amp; logo</p>
-        </Link>
-        <Link
-          href="/brand/new-practice"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Add</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>+ Add a practice</p>
-        </Link>
-      </div>
-
-      {groups.map((g) => {
-        const groupBranches = branches.filter((b) => b.group_id === g.id);
-        return (
-          <section key={g.id} className="space-y-3">
-            <h2 className="text-lg font-semibold text-gray-900">{g.name}</h2>
-
-            <div className="space-y-2">
-              {groupBranches.map((b) => (
-                <div
-                  key={b.id}
-                  className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 truncate">{b.name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{[b.suburb, b.city].filter(Boolean).join(', ') || '—'}</p>
-                    </div>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      b.status === 'approved'  ? 'bg-green-100 text-green-700' :
-                      b.status === 'pending'   ? 'bg-amber-100 text-amber-700' :
-                      b.status === 'suspended' ? 'bg-red-100 text-red-700' :
-                                                 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {b.status}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-                    <Link
-                      href={`/practice?practiceId=${b.id}`}
-                      className="font-semibold underline underline-offset-2"
-                      style={{ color: '#13294B' }}
-                    >
-                      Open dashboard →
-                    </Link>
-                    <Link
-                      href={`/brand/branch/${b.id}`}
-                      className="font-semibold underline underline-offset-2"
-                      style={{ color: '#13294B' }}
-                    >
-                      Edit details
-                    </Link>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        );
-      })}
-    </div>
+    <GroupDashboard
+      brands={brands}
+      branches={branches}
+      totalGross={groupSummary.totalGross}
+      totalNet={groupSummary.totalNet}
+      totalActive={groupSummary.totalCount}
+      monthly={groupMonthly}
+    />
   );
 }

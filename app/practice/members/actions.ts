@@ -2,10 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
-import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { encryptId } from '@/lib/idEncryption';
-import { isValidEmail, validateSaId } from '@/lib/validation';
+import { validateSaId } from '@/lib/validation';
 import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
+import { inviteMemberIntoPractice } from '@/lib/brand/inviteMember';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -195,127 +195,50 @@ export async function enableMember(memberId: string): Promise<ActionResult> {
 
 // ─── Action 4: addMember ──────────────────────────────────────────────────────
 
+// The practice-admin path for inviting a new member into their own
+// practice. Guards via guardManager() (must have can_manage_practice
+// on their active membership) and delegates the invite mechanics to
+// the shared inviteMemberIntoPractice helper. The practice-admin form
+// requires SA ID (existing posture, unchanged) so we validate it here
+// BEFORE calling the helper — the helper accepts SA ID as optional
+// because the brand-admin path defers ID capture to /provider/setup.
+
 export async function addMember(input: NewMemberInput): Promise<ActionResult> {
   const guard = await guardManager();
   if (!guard.ok) return { error: guard.error };
   const { practiceId } = guard;
 
-  const supabase = await createClient();
-
-  // Validate
-  if (!input.firstName.trim())  return { error: 'First name is required.' };
-  if (!input.lastName.trim())   return { error: 'Last name is required.' };
-  if (!isValidEmail(input.email)) return { error: 'Enter a valid email address.' };
+  // Practice-admin path: SA ID is required here (has always been).
+  // The shared helper treats SA ID as optional, so we validate the
+  // required-ness at this caller layer before delegating.
   const saIdResult = validateSaId(input.saIdNumber);
   if (!saIdResult.valid) return { error: 'SA ID number is invalid — please check what was typed.' };
-  if (input.memberRole === 'provider' && !input.specialty) return { error: 'Specialty is required for practitioners.' };
 
-  // Light HPCSA format validation when an HPCSA number is supplied
-  // for a provider. We do NOT make HPCSA mandatory here (the historic
-  // flow allowed it to be missing) but if SOMETHING is typed, it
-  // must pass the same shape check used by the practitioner
-  // discovery layer's grouping key. This stops malformed entries
-  // ("DP12345 / DP67890") from being captured and polluting the
-  // grouping key downstream.
-  if (input.memberRole === 'provider' && input.hpcsaNumber && input.hpcsaNumber.trim().length > 0) {
-    const hpcsaCheck = checkHpcsa(input.hpcsaNumber);
-    if (!hpcsaCheck.ok) return { error: HPCSA_ERROR_MESSAGE[hpcsaCheck.reason] };
-  }
+  const result = await inviteMemberIntoPractice({
+    practiceId,
+    memberRole:             input.memberRole,
+    firstName:              input.firstName,
+    lastName:               input.lastName,
+    email:                  input.email,
+    saIdNumber:             input.saIdNumber,
+    canCreateBills:         input.canCreateBills,
+    canManagePractice:      input.canManagePractice,
+    specialty:              input.specialty,
+    hpcsaNumber:            input.hpcsaNumber,
+    payoutDestination:      input.payoutDestination,
+    personalBankName:       input.personalBankName,
+    personalAccountHolder:  input.personalAccountHolder,
+    personalAccountNumber:  input.personalAccountNumber,
+    personalBranchCode:     input.personalBranchCode,
+    personalAccountType:    input.personalAccountType,
+  });
 
-  const svc = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  );
+  if (result.error) return { error: result.error };
 
-  // Check if email already belongs to an active or disabled member of this practice
-  const { data: existingProfile } = await svc
-    .from('profiles')
-    .select('id')
-    .eq('email', input.email.trim().toLowerCase())
-    .maybeSingle();
-
-  if (existingProfile) {
-    const { data: existingMember } = await supabase
-      .from('practice_members')
-      .select('id, active')
-      .eq('practice_id', practiceId)
-      .eq('user_id', existingProfile.id)
-      .maybeSingle();
-
-    if (existingMember) {
-      return {
-        error: `This email already belongs to ${existingMember.active ? 'an active' : 'a disabled'} member of this practice.`,
-      };
-    }
-  }
-
-  const isProvider    = input.memberRole === 'provider';
-  const authRole      = isProvider ? 'practice_provider' : 'practice_admin';
-  const encryptedSaId = encryptId(input.saIdNumber.trim());
-  const appUrl        = process.env.NEXT_PUBLIC_APP_URL ?? '';
-
-  try {
-    const { data: inviteData, error: inviteErr } = await svc.auth.admin.inviteUserByEmail(
-      input.email.trim().toLowerCase(),
-      {
-        redirectTo: `${appUrl}${isProvider ? '/provider/setup' : '/practice'}`,
-        data: {
-          role:                 authRole,
-          first_name:           input.firstName.trim(),
-          last_name:            input.lastName.trim(),
-          sa_id_number:         encryptedSaId,
-          hpcsa_number:         isProvider ? (input.hpcsaNumber?.trim() || null) : null,
-          must_change_password: true,
-        },
-      },
-    );
-
-    if (inviteErr || !inviteData.user) {
-      return { error: inviteErr?.message ?? 'Failed to send invitation.' };
-    }
-
-    const newUserId = inviteData.user.id;
-
-    const memberRow: Record<string, unknown> = {
-      practice_id:         practiceId,
-      user_id:             newUserId,
-      role:                isProvider ? 'provider' : 'admin',
-      active:              true,
-      can_create_bills:    input.canCreateBills,
-      can_manage_practice: input.canManagePractice,
-      sa_id_number:        encryptedSaId,
-      specialty:           isProvider ? (input.specialty   || null) : null,
-      hpcsa_number:        isProvider ? (input.hpcsaNumber?.trim() || null) : null,
-      payout_destination:  isProvider ? input.payoutDestination : 'practice',
-    };
-
-    if (isProvider && input.payoutDestination === 'provider') {
-      memberRow.personal_bank_name      = input.personalBankName       || null;
-      memberRow.personal_account_holder = input.personalAccountHolder  || null;
-      memberRow.personal_account_number = input.personalAccountNumber  || null;
-      memberRow.personal_branch_code    = input.personalBranchCode     || null;
-      memberRow.personal_account_type   = input.personalAccountType    || null;
-    }
-
-    const { error: memberErr } = await svc.from('practice_members').insert(memberRow);
-
-    if (memberErr) {
-      // Invite succeeded but membership insert failed — log clearly for manual recovery
-      console.error(
-        '[addMember] INVITE SUCCEEDED but practice_members insert FAILED.',
-        'userId:', newUserId, 'email:', input.email,
-        'error:', memberErr.message,
-      );
-      return { error: `Invitation sent but failed to create membership record: ${memberErr.message}` };
-    }
-
-    return { error: null };
-
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
-    return { error: msg };
-  }
+  revalidatePath('/practice/members');
+  return { error: null };
 }
+
 
 // ─── Action 5: becomeProvider (self-elect) ───────────────────────────────────
 //

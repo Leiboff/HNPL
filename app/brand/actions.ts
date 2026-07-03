@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isWithinSouthAfrica } from '@/lib/maps/saBounds';
+import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
+import { inviteMemberIntoPractice } from '@/lib/brand/inviteMember';
 
 // ─── Brand-admin server actions ────────────────────────────────────────
 //
@@ -290,6 +292,240 @@ export async function updateBranchDetails(input: UpdateBranchDetailsInput): Prom
 
   revalidatePath('/brand');
   revalidatePath(`/brand/branch/${input.practiceId}`);
+  return { error: null };
+}
+
+// ─── Doctor management (brand-admin) ───────────────────────────────────
+//
+// Brand-admins can manage the practitioner roster on any branch in
+// their group WITHOUT going through a per-practice login. All four
+// actions below take a memberId (or practiceId + email for the
+// invite), resolve to a practice via service-role, then check the
+// caller is an active brand_admin of THAT practice's group. This is
+// guardBrandAdminOfPractice — the same guard used by branch details/
+// banking edits.
+//
+// Scope:
+//   • addDoctor:        invites a new practitioner into a branch.
+//                       Uses inviteMemberIntoPractice (shared with
+//                       the practice-admin addMember flow — no fork).
+//   • updateDoctor:     edits membership fields (specialty, HPCSA)
+//                       on an existing practice_members row. Never
+//                       touches the profile / user account.
+//   • deactivateDoctor: flips practice_members.active → false. Drops
+//                       the doctor from patient discovery (the safe
+//                       directory view filters active=TRUE) and from
+//                       the add-bill provider dropdown. Past bills/
+//                       plans STAY attributed — no delete, no
+//                       reattribution.
+//   • reactivateDoctor: reverses deactivate.
+//
+// Explicitly OUT OF SCOPE — brand-admins get no access to the doctor's
+// user account itself (email/password/profile). This is a membership
+// surface, not an identity one.
+
+// Small guard variant: resolve memberId → practice_id + group_id via
+// service-role, then check the caller is an active brand-admin of
+// that group. Returns the resolved practiceId so callers can use it
+// without a second resolve.
+type MemberGuardOk  = { ok: true;  userId: string; practiceId: string };
+type MemberGuardErr = { ok: false; error: string };
+
+async function guardBrandAdminOfMember(memberId: string): Promise<MemberGuardOk | MemberGuardErr> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Not authenticated.' };
+
+  // Service-role read of the member row → practice → group. Never
+  // uses session-client because a brand-admin of group B might not
+  // even be able to SEE group A's practice_members under RLS, and
+  // the guard needs to distinguish "wrong group" from "no such
+  // member" — both must fail before any read/write.
+  const { data: member } = await svc()
+    .from('practice_members')
+    .select('practice_id, practices!inner ( group_id )')
+    .eq('id', memberId)
+    .maybeSingle();
+
+  if (!member?.practice_id) return { ok: false, error: 'Unauthorized.' };
+
+  const practicesJoined = member.practices as unknown as { group_id: string | null } | { group_id: string | null }[] | null;
+  const first = Array.isArray(practicesJoined) ? practicesJoined[0] : practicesJoined;
+  const groupId = first?.group_id ?? null;
+  if (!groupId) return { ok: false, error: 'Unauthorized.' };
+
+  const { data: membership } = await supabase
+    .from('practice_group_members')
+    .select('user_id')
+    .eq('group_id', groupId)
+    .eq('user_id', user.id)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (!membership) return { ok: false, error: 'Unauthorized.' };
+
+  return { ok: true, userId: user.id, practiceId: member.practice_id as string };
+}
+
+// ─── addDoctor ─────────────────────────────────────────────────────────
+//
+// Brand-admin invites a new practitioner onto one of their branches.
+// Guards on the TARGET practice (not just any practice in the caller's
+// groups) via guardBrandAdminOfPractice. Delegates the invite to the
+// shared helper — same invite semantics as the practice-admin flow.
+
+export type AddDoctorInput = {
+  practiceId:    string;
+  firstName:     string;
+  lastName:      string;
+  email:         string;
+  specialty:     string;
+  hpcsaNumber:   string;
+};
+
+export async function addDoctor(input: AddDoctorInput): Promise<{ memberId: string | null; error: string | null }> {
+  const guard = await guardBrandAdminOfPractice(input.practiceId);
+  if (!guard.ok) return { memberId: null, error: guard.error };
+
+  const result = await inviteMemberIntoPractice({
+    practiceId:  input.practiceId,
+    memberRole:  'provider',
+    firstName:   input.firstName,
+    lastName:    input.lastName,
+    email:       input.email,
+    specialty:   input.specialty,
+    hpcsaNumber: input.hpcsaNumber,
+    // Brand-admin does NOT hand out manage/bill-create powers by
+    // default; the practitioner completes payout details at
+    // /provider/setup. SA ID captured there too.
+  });
+
+  if (result.error) return { memberId: null, error: result.error };
+
+  revalidatePath('/brand');
+  revalidatePath(`/brand/branch/${input.practiceId}`);
+  return { memberId: result.memberId, error: null };
+}
+
+// ─── updateDoctor ──────────────────────────────────────────────────────
+//
+// Brand-admin edits the membership-row fields of a practitioner on a
+// branch in their group. Only touches specialty + HPCSA — payout
+// settings and capability flags stay on the practice-admin surface
+// and the doctor's own /provider/setup. HPCSA is validated for shape
+// (same validator as the invite path); changing HPCSA affects the
+// discovery grouping key on next view read (grouping key is
+// computed from md5(HPCSA) at view time — no stored column to
+// migrate).
+//
+// LOCKED — not in the allowlist and never in the payload:
+//   • profile fields (email, first/last name) — identity surface
+//   • can_manage_practice, can_create_bills — practice-admin domain
+//   • payout_destination + personal_bank_* — provider's own /provider/setup
+//   • sa_id_number — captured only via the initial invite/setup flow
+
+export type UpdateDoctorInput = {
+  memberId:    string;
+  specialty:   string | null;
+  hpcsaNumber: string | null;
+};
+
+export async function updateDoctor(input: UpdateDoctorInput): Promise<{ error: string | null }> {
+  const guard = await guardBrandAdminOfMember(input.memberId);
+  if (!guard.ok) return { error: guard.error };
+
+  const trimmedHpcsa = input.hpcsaNumber?.trim() || '';
+  if (trimmedHpcsa.length > 0) {
+    const check = checkHpcsa(trimmedHpcsa);
+    if (!check.ok) return { error: HPCSA_ERROR_MESSAGE[check.reason] };
+  }
+
+  const { error } = await svc()
+    .from('practice_members')
+    .update({
+      specialty:    input.specialty?.trim() || null,
+      hpcsa_number: trimmedHpcsa || null,
+    })
+    .eq('id', input.memberId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/brand');
+  revalidatePath(`/brand/branch/${guard.practiceId}`);
+  return { error: null };
+}
+
+// ─── deactivateDoctor ──────────────────────────────────────────────────
+//
+// Flip practice_members.active → false. Past plans stay attributed
+// (no delete, no reattribution). The practitioner disappears from:
+//   • patient discovery (the safe directory view filters active=TRUE)
+//   • add-bill provider dropdown (query filters active=TRUE)
+//   • practice discovery card doctor lists
+//
+// We deliberately do NOT let a brand-admin deactivate the last
+// manager of a branch through this action — this action is scoped to
+// providers/doctors. Members whose can_manage_practice=TRUE need to
+// be re-scoped by the practice-admin path first (last-manager
+// guardrail lives there).
+
+export async function deactivateDoctor(memberId: string): Promise<{ error: string | null }> {
+  const guard = await guardBrandAdminOfMember(memberId);
+  if (!guard.ok) return { error: guard.error };
+
+  // Read the target row via service-role to check role + manager
+  // status BEFORE flipping active. The action is scoped to
+  // providers; deactivating an admin/staff row would silently break
+  // the branch's management surface, so refuse.
+  const { data: target } = await svc()
+    .from('practice_members')
+    .select('id, role, can_manage_practice')
+    .eq('id', memberId)
+    .maybeSingle();
+
+  if (!target) return { error: 'Practitioner not found.' };
+  if (target.role !== 'provider') {
+    return { error: 'Only practitioners can be deactivated from this surface. Use the practice-admin members page for admin/staff.' };
+  }
+
+  const { error } = await svc()
+    .from('practice_members')
+    .update({ active: false })
+    .eq('id', memberId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/brand');
+  revalidatePath(`/brand/branch/${guard.practiceId}`);
+  return { error: null };
+}
+
+// ─── reactivateDoctor ──────────────────────────────────────────────────
+
+export async function reactivateDoctor(memberId: string): Promise<{ error: string | null }> {
+  const guard = await guardBrandAdminOfMember(memberId);
+  if (!guard.ok) return { error: guard.error };
+
+  const { data: target } = await svc()
+    .from('practice_members')
+    .select('id, role')
+    .eq('id', memberId)
+    .maybeSingle();
+
+  if (!target) return { error: 'Practitioner not found.' };
+  if (target.role !== 'provider') {
+    return { error: 'Only practitioners can be reactivated from this surface.' };
+  }
+
+  const { error } = await svc()
+    .from('practice_members')
+    .update({ active: true })
+    .eq('id', memberId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/brand');
+  revalidatePath(`/brand/branch/${guard.practiceId}`);
   return { error: null };
 }
 

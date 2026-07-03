@@ -2,26 +2,33 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
+import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
 import {
   updateBranchDetails,
   updateBranchBanking,
+  addDoctor,
+  updateDoctor,
+  deactivateDoctor,
+  reactivateDoctor,
 } from '@/app/brand/actions';
 import BranchDetailsForm from './BranchDetailsForm';
 import BranchBankingForm from './BranchBankingForm';
+import BranchPerformance from './BranchPerformance';
+import DoctorsSection from './DoctorsSection';
 
-// ─── Brand-admin: edit a branch in their group ─────────────────────────
+// ─── Brand-admin: branch detail (restructured) ─────────────────────────
 //
-// Two edit-mode forms on one page:
-//   1. Descriptive details (name, phone, address+coords via Places).
-//   2. Banking (separate so it's discrete + audit-traceable).
+// Three sections, top to bottom:
+//   1. Performance — hero (branch revenue in selected mode) + 12-month
+//      trend + per-doctor breakdown.
+//   2. Doctors — add / edit / deactivate practitioners on this branch.
+//   3. Practice details + banking — the existing edit-mode cards
+//      (unchanged; relocated into this structure).
 //
-// LOCKED columns are never exposed by either form:
-//   status, approved_at, approved_by, fee_percent, owner_id,
-//   group_id, created_at, email.
-// The brand-admin sees `status` and `fee_percent` as READ-ONLY for
-// awareness (you'd want to know your branch is still pending or what
-// your commission is) but they cannot be edited from here. The
-// platform-admin actions remain the only writers.
+// LOCKED columns stay READ-ONLY at the header (status, fee_percent).
+// Locked columns never enter any UPDATE payload — see the source-text
+// pins in app/brand/brand-management.test.ts + app/brand/brand-dashboard.test.ts.
 
 export const dynamic = 'force-dynamic';
 
@@ -44,11 +51,11 @@ export default async function BrandBranchEditPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // Resolve the practice's group via service-role (not RLS-coupled
-  // to the caller) so we can authoritatively check brand-admin
-  // membership without conflating "wrong group" with "no such
-  // practice".
-  const { data: practice } = await svc()
+  // Resolve the practice via service-role, then verify the caller is
+  // an active brand-admin of THAT practice's group. Cross-group
+  // isolation lives here and in every server action below.
+  const s = svc();
+  const { data: practice } = await s
     .from('practices')
     .select(`
       id, name, status, group_id,
@@ -71,8 +78,71 @@ export default async function BrandBranchEditPage({
     .maybeSingle();
   if (!membership) notFound();  // 404 rather than 403 — same shape as a stranger asking
 
+  // Plans on this branch (scoped, service-role).
+  const { data: rawPlans } = await s
+    .from('plans')
+    .select('id, practice_id, provider_id, total_amount, status, created_at')
+    .eq('practice_id', practiceId)
+    .limit(5000);
+  const plans = (rawPlans ?? []) as Array<RevenuePlan & { created_at: string }>;
+
+  // Doctors — every provider-role member on this practice, active or
+  // deactivated. Include profiles for display names + email.
+  const { data: rawMembers } = await s
+    .from('practice_members')
+    .select('id, active, role, specialty, hpcsa_number, user_id, profiles ( first_name, last_name, email )')
+    .eq('practice_id', practiceId)
+    .eq('role', 'provider');
+  const memberRows = (rawMembers ?? []) as Array<{
+    id: string; active: boolean; role: string;
+    specialty: string | null; hpcsa_number: string | null;
+    user_id: string;
+    profiles: { first_name: string | null; last_name: string | null; email: string | null } |
+              { first_name: string | null; last_name: string | null; email: string | null }[] | null;
+  }>;
+
+  const doctors = memberRows.map((m) => {
+    const profile = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+    return {
+      memberId:    m.id,
+      firstName:   profile?.first_name ?? '',
+      lastName:    profile?.last_name  ?? '',
+      email:       profile?.email      ?? null,
+      specialty:   m.specialty,
+      hpcsaNumber: m.hpcsa_number,
+      active:      m.active,
+      userId:      m.user_id,
+    };
+  });
+
+  // Per-doctor revenue breakdown — reuse computeRevenue.byProvider,
+  // scoped to this branch. We need provider names for the rows; pull
+  // from the doctors we already have.
+  const providerRefs: RevenueProvider[] = doctors.map((d) => ({
+    id:       d.userId,
+    fullName: `${d.firstName} ${d.lastName}`.trim() || '—',
+  }));
+  const revenuePractices: RevenuePractice[] = [{
+    id:          practiceId,
+    name:        practice.name as string,
+    fee_percent: Number(practice.fee_percent ?? 0),
+  }];
+  const branchSummary = computeRevenue(plans, revenuePractices, providerRefs, {});
+
+  const doctorRows = branchSummary.byProvider.map((r) => ({
+    providerId: r.id,
+    fullName:   r.label,
+    count:      r.count,
+    gross:      r.gross,
+    net:        r.net,
+  }));
+
+  // Branch 12-month series.
+  const feeByPractice = new Map<string, number>([[practiceId, Number(practice.fee_percent ?? 0)]]);
+  const monthly = buildMonthlySeries(plans as PlanForTrend[], feeByPractice);
+
   return (
-    <div className="mx-auto max-w-xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
       <header>
         <Link href="/brand" className="text-xs text-gray-500 hover:underline">← Back to my practices</Link>
         <h1 className="text-2xl font-semibold mt-1" style={{ color: '#13294B' }}>{practice.name as string}</h1>
@@ -92,6 +162,32 @@ export default async function BrandBranchEditPage({
         </p>
       </header>
 
+      {/* Section 1 — Performance (revenue + trend + per-doctor breakdown) */}
+      <BranchPerformance
+        branchName={practice.name as string}
+        totalGross={branchSummary.totalGross}
+        totalNet={branchSummary.totalNet}
+        activePlanCount={branchSummary.totalCount}
+        monthly={monthly}
+        doctorRows={doctorRows}
+      />
+
+      {/* Section 2 — Doctors */}
+      <DoctorsSection
+        practiceId={practiceId}
+        doctors={doctors.map((d) => ({
+          memberId:    d.memberId,
+          firstName:   d.firstName,
+          lastName:    d.lastName,
+          email:       d.email,
+          specialty:   d.specialty,
+          hpcsaNumber: d.hpcsaNumber,
+          active:      d.active,
+        }))}
+        actions={{ addDoctor, updateDoctor, deactivateDoctor, reactivateDoctor }}
+      />
+
+      {/* Section 3 — Practice details + banking (existing edit cards) */}
       <BranchDetailsForm
         practiceId={practiceId}
         initial={{
