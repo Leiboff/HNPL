@@ -26,11 +26,17 @@ function shortAmt(v: number): string {
 
 type Props = {
   points: MonthPoint[];
-  mode:   'gross' | 'net';
+  /**
+   * Optional. Defaults to 'net' — the whole brand surface is net-only.
+   * Kept as a prop because the practice-side chart delegates here with
+   * mode='net' explicitly; if a future surface needs gross, it can
+   * pass it. All brand callers omit the prop.
+   */
+  mode?:  'gross' | 'net';
   title?: string;
 };
 
-export default function BrandMonthlyChart({ points, mode, title }: Props) {
+export default function BrandMonthlyChart({ points, mode = 'net', title }: Props) {
   const values = useMemo(() => points.map((p) => (mode === 'gross' ? p.gross : p.net)), [points, mode]);
   const yMax   = niceMax(Math.max(...values, 0));
   const N_TICK = 4;

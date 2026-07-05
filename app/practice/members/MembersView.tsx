@@ -7,6 +7,7 @@ import {
   type MemberUpdates, type NewMemberInput,
 } from './actions';
 import SelfAsProviderCard from './SelfAsProviderCard';
+import AddMemberForm, { SPECIALTIES, BANKS } from './AddMemberForm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,24 +44,6 @@ type EditDraft = {
   personal_account_type:   string;
 };
 
-type AddDraft = {
-  memberRole:             'provider' | 'manager';
-  firstName:              string;
-  lastName:               string;
-  email:                  string;
-  saIdNumber:             string;
-  canCreateBills:         boolean;
-  canManagePractice:      boolean;
-  specialty:              string;
-  hpcsaNumber:            string;
-  payoutDestination:      'practice' | 'provider';
-  personalBankName:       string;
-  personalAccountHolder:  string;
-  personalAccountNumber:  string;
-  personalBranchCode:     string;
-  personalAccountType:    string;
-};
-
 type Props = {
   members:       MemberRow[];
   currentUserId: string;
@@ -68,35 +51,9 @@ type Props = {
   practiceName:  string;
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const SPECIALTIES = [
-  'General Practice', 'Dentistry', 'Physiotherapy', 'Optometry',
-  'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
-];
-
-const BANKS = [
-  'ABSA', 'Capitec', 'FNB', 'Nedbank', 'Standard Bank',
-  'African Bank', 'Investec', 'TymeBank', 'Discovery Bank', 'Other',
-];
-
-const BLANK_ADD: AddDraft = {
-  memberRole:             'provider',
-  firstName:              '',
-  lastName:               '',
-  email:                  '',
-  saIdNumber:             '',
-  canCreateBills:         false,
-  canManagePractice:      false,
-  specialty:              '',
-  hpcsaNumber:            '',
-  payoutDestination:      'practice',
-  personalBankName:       '',
-  personalAccountHolder:  '',
-  personalAccountNumber:  '',
-  personalBranchCode:     '',
-  personalAccountType:    '',
-};
+// SPECIALTIES + BANKS live in AddMemberForm (shared with the brand
+// surface). Re-exported here as imports so the edit-mode dropdowns
+// below use the same lists.
 
 // ─── Primitive UI helpers ─────────────────────────────────────────────────────
 
@@ -192,9 +149,6 @@ export default function MembersView({ members: initialMembers, currentUserId, is
   const [editLoading,  setEditLoading]  = useState(false);
 
   const [showAdd,      setShowAdd]      = useState(false);
-  const [addDraft,     setAddDraft]     = useState<AddDraft>(BLANK_ADD);
-  const [addError,     setAddError]     = useState<string | null>(null);
-  const [addLoading,   setAddLoading]   = useState(false);
 
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [actionLoading,setActionLoading]= useState(false);
@@ -330,37 +284,15 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     }
   }
 
-  // ── Add member handler ─────────────────────────────────────────────────────
-  async function handleAddMember() {
-    setAddLoading(true);
-    setAddError(null);
-    const input: NewMemberInput = {
-      memberRole:             addDraft.memberRole,
-      firstName:              addDraft.firstName,
-      lastName:               addDraft.lastName,
-      email:                  addDraft.email,
-      saIdNumber:             addDraft.saIdNumber,
-      canCreateBills:         addDraft.canCreateBills,
-      canManagePractice:      addDraft.canManagePractice,
-      specialty:              addDraft.specialty              || undefined,
-      hpcsaNumber:            addDraft.hpcsaNumber            || undefined,
-      payoutDestination:      addDraft.payoutDestination,
-      personalBankName:       addDraft.personalBankName       || undefined,
-      personalAccountHolder:  addDraft.personalAccountHolder  || undefined,
-      personalAccountNumber:  addDraft.personalAccountNumber  || undefined,
-      personalBranchCode:     addDraft.personalBranchCode     || undefined,
-      personalAccountType:    addDraft.personalAccountType    || undefined,
-    };
+  // ── Add member submit — delegates to the shared AddMemberForm ─────────────
+  async function handleAddMember(input: NewMemberInput): Promise<{ error: string | null }> {
     const result = await addMember(input);
-    setAddLoading(false);
-    if (result.error) {
-      setAddError(result.error);
-    } else {
+    if (!result.error) {
       setShowAdd(false);
-      setAddDraft(BLANK_ADD);
-      flash(`Invitation sent to ${addDraft.email}. The new member will appear below once processed.`);
+      flash(`Invitation sent to ${input.email}. The new member will appear below once processed.`);
       router.refresh();
     }
+    return result;
   }
 
   // ── Card sub-render ────────────────────────────────────────────────────────
@@ -614,165 +546,6 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     );
   }
 
-  // ── Add member form ────────────────────────────────────────────────────────
-  function renderAddForm() {
-    const isProvider = addDraft.memberRole === 'provider';
-
-    return (
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-6 mb-6">
-
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-gray-900">Add team member</h2>
-          <button
-            onClick={() => { setShowAdd(false); setAddDraft(BLANK_ADD); setAddError(null); }}
-            className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            × Cancel
-          </button>
-        </div>
-
-        {/* Role selector */}
-        <div>
-          <SectionLabel>Role</SectionLabel>
-          <div className="grid grid-cols-2 gap-3">
-            {([
-              { value: 'provider' as const, label: 'Doctor / Practitioner', sub: 'Sees patients, has clinical details' },
-              { value: 'manager' as const,  label: 'Admin staff',        sub: 'Manages billing and/or the practice' },
-            ]).map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setAddDraft(d => ({ ...d, memberRole: opt.value }))}
-                className={`rounded-xl border p-4 text-left transition-colors ${
-                  addDraft.memberRole === opt.value
-                    ? 'border-[#13294B] bg-[#13294B]/5'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <p className={`text-sm font-semibold ${addDraft.memberRole === opt.value ? 'text-[#13294B]' : 'text-gray-800'}`}>{opt.label}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{opt.sub}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Personal details */}
-        <div className="space-y-3">
-          <SectionLabel>Personal details</SectionLabel>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="First name">
-              <input type="text" value={addDraft.firstName} onChange={e => setAddDraft(d => ({ ...d, firstName: e.target.value }))} className={INPUT_CLS} />
-            </FormField>
-            <FormField label="Last name">
-              <input type="text" value={addDraft.lastName} onChange={e => setAddDraft(d => ({ ...d, lastName: e.target.value }))} className={INPUT_CLS} />
-            </FormField>
-          </div>
-          <FormField label="Email address">
-            <input type="email" value={addDraft.email} onChange={e => setAddDraft(d => ({ ...d, email: e.target.value }))} className={INPUT_CLS} placeholder="they@example.com" />
-          </FormField>
-          <FormField label="SA ID number">
-            <input type="text" value={addDraft.saIdNumber} onChange={e => setAddDraft(d => ({ ...d, saIdNumber: e.target.value }))} className={INPUT_CLS} placeholder="13-digit ID number" maxLength={13} />
-          </FormField>
-        </div>
-
-        {/* Permissions */}
-        <div className="space-y-3">
-          <SectionLabel>Permissions</SectionLabel>
-          <FieldRow label="Can create bills">
-            <YesNoToggle value={addDraft.canCreateBills} onChange={v => setAddDraft(d => ({ ...d, canCreateBills: v }))} />
-          </FieldRow>
-          <FieldRow label="Admin access">
-            <YesNoToggle value={addDraft.canManagePractice} onChange={v => setAddDraft(d => ({ ...d, canManagePractice: v }))} />
-          </FieldRow>
-        </div>
-
-        {/* Provider-only: clinical + payout */}
-        {isProvider && (
-          <>
-            <div className="space-y-3 pt-2 border-t border-gray-100">
-              <SectionLabel>Clinical details</SectionLabel>
-              <FormField label="Specialty">
-                <select value={addDraft.specialty} onChange={e => setAddDraft(d => ({ ...d, specialty: e.target.value }))} className={SELECT_CLS}>
-                  <option value="">Select specialty</option>
-                  {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </FormField>
-              <FormField label="HPCSA number (optional)">
-                <input type="text" value={addDraft.hpcsaNumber} onChange={e => setAddDraft(d => ({ ...d, hpcsaNumber: e.target.value }))} className={INPUT_CLS} placeholder="e.g. MP0123456" />
-              </FormField>
-            </div>
-
-            <div className="space-y-3 pt-2 border-t border-gray-100">
-              <SectionLabel>Payout destination</SectionLabel>
-              <div className="flex gap-3">
-                {(['practice', 'provider'] as const).map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setAddDraft(d => ({ ...d, payoutDestination: opt }))}
-                    className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors ${
-                      addDraft.payoutDestination === opt
-                        ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
-                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                    }`}
-                  >
-                    {opt === 'practice' ? 'Practice account' : "Provider's own account"}
-                  </button>
-                ))}
-              </div>
-
-              {addDraft.payoutDestination === 'provider' && (
-                <div className="space-y-3 pt-1">
-                  <SectionLabel>Personal banking details</SectionLabel>
-                  <FormField label="Bank">
-                    <select value={addDraft.personalBankName} onChange={e => setAddDraft(d => ({ ...d, personalBankName: e.target.value }))} className={SELECT_CLS}>
-                      <option value="">Select bank</option>
-                      {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-                    </select>
-                  </FormField>
-                  <FormField label="Account holder">
-                    <input type="text" value={addDraft.personalAccountHolder} onChange={e => setAddDraft(d => ({ ...d, personalAccountHolder: e.target.value }))} className={INPUT_CLS} />
-                  </FormField>
-                  <FormField label="Account number">
-                    <input type="text" value={addDraft.personalAccountNumber} onChange={e => setAddDraft(d => ({ ...d, personalAccountNumber: e.target.value }))} className={INPUT_CLS} />
-                  </FormField>
-                  <div className="grid grid-cols-2 gap-3">
-                    <FormField label="Branch code">
-                      <input type="text" value={addDraft.personalBranchCode} onChange={e => setAddDraft(d => ({ ...d, personalBranchCode: e.target.value }))} className={INPUT_CLS} />
-                    </FormField>
-                    <FormField label="Account type">
-                      <select value={addDraft.personalAccountType} onChange={e => setAddDraft(d => ({ ...d, personalAccountType: e.target.value }))} className={SELECT_CLS}>
-                        <option value="">Select</option>
-                        <option value="current">Current</option>
-                        <option value="savings">Savings</option>
-                      </select>
-                    </FormField>
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {addError && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            {addError}
-          </p>
-        )}
-
-        <button
-          onClick={handleAddMember}
-          disabled={addLoading}
-          className="w-full py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-all hover:shadow-lg"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-        >
-          {addLoading ? 'Sending invitation…' : 'Invite & add to practice'}
-        </button>
-      </div>
-    );
-  }
-
   // ── Main render ────────────────────────────────────────────────────────────
   return (
     <div>
@@ -821,8 +594,15 @@ export default function MembersView({ members: initialMembers, currentUserId, is
         </div>
       )}
 
-      {/* Add form */}
-      {showAdd && renderAddForm()}
+      {/* Add form — shared component (mirrored on the brand-branch team view) */}
+      {showAdd && (
+        <AddMemberForm
+          saIdRequired={true}
+          showPayoutFields={true}
+          onSubmit={handleAddMember}
+          onCancel={() => setShowAdd(false)}
+        />
+      )}
 
       {/* ── Section: Providers ── */}
       {activeProviders.length > 0 && (

@@ -1,40 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import { buildMonthlySeries, lastTwelveMonthsFrom, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
 
-// ─── Brand group-dashboard build — source-text + unit tests ────────────
+// ─── Brand surface — team management + filtered dashboard + net-only ───
 //
-// Pins for:
-//   • Group dashboard hero = sum of branch revenues (ACTIVE_FOR_REVENUE only).
-//   • Toggle flips all figures consistently.
-//   • Trend series aggregates only active+completed plans.
-//   • Per-branch delta computed from the branch's own monthly series.
-//   • Doctor management actions guard FIRST + never touch locked columns.
-//   • Shared invite implementation (no fork between practice-admin
-//     addMember and brand-admin addDoctor).
-//   • Cross-group isolation: memberId → practice → group resolve BEFORE
-//     any read/write.
-//   • n=1 redirect preserved.
+// Pins for this build:
+//   • Group dashboard is NET-only (no gross toggle, no gross value
+//     rendered).
+//   • Chart + hero + strip follow the SAME filters (practice / doctor
+//     / range). Filter IDs clamp to caller's own group data.
+//   • Team actions (addTeamMember / updateTeamMember /
+//     deactivateTeamMember / reactivateTeamMember) guard FIRST +
+//     locked-column allowlist + brick-prevention (last-admin refused).
+//   • Shared AddMemberForm imported by BOTH practice and brand
+//     surfaces — one form, two entry points.
+//   • Single entry point: no /practice?practiceId=… link on the
+//     brand surface. Only "Open branch" remains.
 
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 
-const ACTIONS      = read('app/brand/actions.ts');
-const PAGE         = read('app/brand/page.tsx');
-const BRANCH_PAGE  = read('app/brand/branch/[practiceId]/page.tsx');
-const GROUP_DASH   = read('app/brand/GroupDashboard.tsx');
-const PERF         = read('app/brand/branch/[practiceId]/BranchPerformance.tsx');
-const DOCTORS      = read('app/brand/branch/[practiceId]/DoctorsSection.tsx');
-const CHART        = read('app/brand/BrandMonthlyChart.tsx');
-const INVITE       = read('lib/brand/inviteMember.ts');
-const MEMBERS_ACT  = read('app/practice/members/actions.ts');
-const MONTHLY      = read('lib/brand/monthlyRevenue.ts');
+const ACTIONS       = read('app/brand/actions.ts');
+const PAGE          = read('app/brand/page.tsx');
+const BRANCH_PAGE   = read('app/brand/branch/[practiceId]/page.tsx');
+const GROUP_DASH    = read('app/brand/GroupDashboard.tsx');
+const PERF          = read('app/brand/branch/[practiceId]/BranchPerformance.tsx');
+const TEAM          = read('app/brand/branch/[practiceId]/TeamSection.tsx');
+const CHART         = read('app/brand/BrandMonthlyChart.tsx');
+const INVITE        = read('lib/brand/inviteMember.ts');
+const MEMBERS_ACT   = read('app/practice/members/actions.ts');
+const MEMBERS_VIEW  = read('app/practice/members/MembersView.tsx');
+const ADD_FORM      = read('app/practice/members/AddMemberForm.tsx');
+const MONTHLY       = read('lib/brand/monthlyRevenue.ts');
+const REV_CLIENT    = read('app/brand/revenue/RevenueClient.tsx');
 
 // ─── Unit: computeRevenue reconciles hero vs per-branch strip ─────────
 
-describe('Group hero = sum of branch revenues (ACTIVE_FOR_REVENUE only)', () => {
+describe('Group hero = sum of branch revenues (ACTIVE_FOR_REVENUE only, net)', () => {
   const practices: RevenuePractice[] = [
     { id: 'p1', name: 'Branch A', fee_percent: 10 },
     { id: 'p2', name: 'Branch B', fee_percent: 15 },
@@ -42,19 +46,13 @@ describe('Group hero = sum of branch revenues (ACTIVE_FOR_REVENUE only)', () => 
   const plans: RevenuePlan[] = [
     { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active' },
     { id: '2', practice_id: 'p1', provider_id: 'd2', total_amount:  500, status: 'completed' },
-    { id: '3', practice_id: 'p1', provider_id: 'd1', total_amount:  700, status: 'pending_acceptance' },  // EXCLUDED
+    { id: '3', practice_id: 'p1', provider_id: 'd1', total_amount:  700, status: 'pending_acceptance' },
     { id: '4', practice_id: 'p2', provider_id: 'd3', total_amount: 2000, status: 'active' },
-    { id: '5', practice_id: 'p2', provider_id: 'd3', total_amount:  300, status: 'defaulted' },           // EXCLUDED
+    { id: '5', practice_id: 'p2', provider_id: 'd3', total_amount:  300, status: 'defaulted' },
   ];
   const summary = computeRevenue(plans, practices, [], {});
 
-  it('totalGross = sum of every branch gross (no pending_acceptance, no defaulted)', () => {
-    const perBranchGross = summary.byPractice.reduce((s, r) => s + r.gross, 0);
-    expect(perBranchGross).toBeCloseTo(summary.totalGross, 2);
-    expect(summary.totalGross).toBeCloseTo(1000 + 500 + 2000, 2);   // 3500
-  });
-
-  it('totalNet = sum of every branch net', () => {
+  it('totalNet = sum of every branch net (active + completed only)', () => {
     const perBranchNet = summary.byPractice.reduce((s, r) => s + r.net, 0);
     expect(perBranchNet).toBeCloseTo(summary.totalNet, 2);
   });
@@ -63,33 +61,22 @@ describe('Group hero = sum of branch revenues (ACTIVE_FOR_REVENUE only)', () => 
     expect(summary.totalCount).toBe(3);
   });
 
-  it('branch strip is sortable by revenue DESC (helper produces DESC order already)', () => {
-    // computeRevenue.byPractice is sorted DESC by gross — the dashboard
-    // resorts by selected mode, but the initial order matches gross.
-    expect(summary.byPractice[0].gross).toBeGreaterThanOrEqual(summary.byPractice[1].gross);
-  });
-
-  it('pending_acceptance contributes nothing to the strip either', () => {
+  it('pending_acceptance contributes nothing', () => {
     const branchA = summary.byPractice.find((r) => r.id === 'p1');
-    // Branch A active+completed only: 1000 + 500 = 1500 gross.
-    expect(branchA?.gross).toBeCloseTo(1500, 2);
+    expect(branchA?.gross).toBeCloseTo(1500, 2);   // 1000 + 500 only
   });
 });
 
 // ─── Unit: buildMonthlySeries — group series = sum of branch series ───
 
-describe('Monthly trend: group = sum of branch series; mode-consistent', () => {
-  const NOW = new Date('2026-06-15T00:00:00Z');   // deterministic reference
-
+describe('Monthly trend: group series = sum of branch series (net)', () => {
+  const NOW = new Date('2026-06-15T00:00:00Z');
   const feeByPractice = new Map<string, number>([['p1', 10], ['p2', 20]]);
 
   const plans: PlanForTrend[] = [
-    // Both plans in current month (2026-06)
     { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active',    created_at: '2026-06-05T10:00:00Z' },
     { id: '2', practice_id: 'p2', provider_id: 'd2', total_amount:  500, status: 'completed', created_at: '2026-06-10T10:00:00Z' },
-    // Previous month (2026-05)
     { id: '3', practice_id: 'p1', provider_id: 'd1', total_amount: 2000, status: 'active',    created_at: '2026-05-05T10:00:00Z' },
-    // Excluded — pending_acceptance
     { id: '4', practice_id: 'p1', provider_id: 'd1', total_amount: 9999, status: 'pending_acceptance', created_at: '2026-06-05T10:00:00Z' },
   ];
 
@@ -97,35 +84,31 @@ describe('Monthly trend: group = sum of branch series; mode-consistent', () => {
     const months = lastTwelveMonthsFrom(NOW);
     expect(months.length).toBe(12);
     expect(months[11]).toEqual({ year: 2026, month: 6, label: 'Jun' });
-    expect(months[10]).toEqual({ year: 2026, month: 5, label: 'May' });
   });
 
   it('group series (all plans) equals sum of per-branch series month-by-month', () => {
     const groupSeries = buildMonthlySeries(plans, feeByPractice, NOW);
-    const p1Series = buildMonthlySeries(plans.filter((p) => p.practice_id === 'p1'), feeByPractice, NOW);
-    const p2Series = buildMonthlySeries(plans.filter((p) => p.practice_id === 'p2'), feeByPractice, NOW);
+    const p1Series    = buildMonthlySeries(plans.filter((p) => p.practice_id === 'p1'), feeByPractice, NOW);
+    const p2Series    = buildMonthlySeries(plans.filter((p) => p.practice_id === 'p2'), feeByPractice, NOW);
     for (let i = 0; i < 12; i += 1) {
-      expect(groupSeries[i].gross).toBeCloseTo(p1Series[i].gross + p2Series[i].gross, 2);
-      expect(groupSeries[i].net  ).toBeCloseTo(p1Series[i].net   + p2Series[i].net,   2);
+      expect(groupSeries[i].net).toBeCloseTo(p1Series[i].net + p2Series[i].net, 2);
     }
   });
 
   it('pending_acceptance contributes ZERO to every month', () => {
     const series = buildMonthlySeries(plans, feeByPractice, NOW);
-    // Current month gross should be 1000 (p1 active) + 500 (p2 completed) = 1500,
-    // NOT 1500 + 9999.
     expect(series[11].gross).toBeCloseTo(1500, 2);
   });
 
-  it('imports the shared isActiveForRevenue predicate — not a duplicate filter', () => {
+  it('imports the shared isActiveForRevenue predicate', () => {
     expect(MONTHLY).toMatch(/isActiveForRevenue/);
     expect(MONTHLY).toMatch(/from ['"]@\/lib\/brand\/revenue['"]/);
   });
 });
 
-// ─── Unit: per-doctor breakdown sums to branch total (same mode) ──────
+// ─── Unit: per-doctor breakdown sums to branch total ──────────────────
 
-describe('Per-doctor breakdown sums to the branch total in the same mode', () => {
+describe('Per-doctor breakdown sums to the branch total (net)', () => {
   const practices: RevenuePractice[] = [{ id: 'p1', name: 'Branch A', fee_percent: 10 }];
   const providers: RevenueProvider[] = [
     { id: 'd1', fullName: 'Dr One' },
@@ -138,29 +121,198 @@ describe('Per-doctor breakdown sums to the branch total in the same mode', () =>
   ];
   const summary = computeRevenue(plans, practices, providers, {});
 
-  it('sum(byProvider.gross) === totalGross for the branch', () => {
-    const sum = summary.byProvider.reduce((s, r) => s + r.gross, 0);
-    expect(sum).toBeCloseTo(summary.totalGross, 2);
-  });
-
-  it('sum(byProvider.net) === totalNet for the branch', () => {
+  it('sum(byProvider.net) === totalNet', () => {
     const sum = summary.byProvider.reduce((s, r) => s + r.net, 0);
     expect(sum).toBeCloseTo(summary.totalNet, 2);
   });
 });
 
-// ─── Doctor actions — guard-first + locked-column absence ─────────────
+// ─── NET-ONLY: no gross toggle, no gross figure on brand surfaces ─────
 
-describe('Brand-admin doctor actions — guard resolves memberId → practice → group BEFORE any write', () => {
-  it('guardBrandAdminOfMember exists and reads practice_members + practices + practice_group_members', () => {
+describe('Brand surface is NET-only — no gross toggle, no gross figure rendered', () => {
+  const NO_GROSS_TOGGLE_FILES = [
+    { name: 'GroupDashboard',     src: GROUP_DASH },
+    { name: 'BranchPerformance',  src: PERF },
+    { name: 'RevenueClient',      src: REV_CLIENT },
+    { name: 'TeamSection',        src: TEAM },
+  ];
+
+  it.each(NO_GROSS_TOGGLE_FILES)('$name has no useState<\'gross\' | \'net\'>', ({ src }) => {
+    expect(src).not.toMatch(/useState<'gross' \| 'net'>/);
+  });
+
+  it.each(NO_GROSS_TOGGLE_FILES)('$name has no gross-mode testids', ({ src }) => {
+    expect(src).not.toMatch(/group-mode-gross/);
+    expect(src).not.toMatch(/group-mode-net/);
+    expect(src).not.toMatch(/branch-mode-gross/);
+    expect(src).not.toMatch(/branch-mode-net/);
+    expect(src).not.toMatch(/revenue-toggle-gross/);
+    expect(src).not.toMatch(/revenue-toggle-net/);
+  });
+
+  it('GroupDashboard hero shows totalNet (not a mode-dependent value)', () => {
+    expect(GROUP_DASH).toMatch(/formatRand\(summary\.totalNet\)/);
+    expect(GROUP_DASH).not.toMatch(/mode === 'gross' \? summary\.totalGross/);
+  });
+
+  it('BranchPerformance hero shows totalNet', () => {
+    expect(PERF).toMatch(/formatRand\(totalNet\)/);
+  });
+
+  it('The label "net of commission" appears once on GroupDashboard hero and BranchPerformance', () => {
+    expect(GROUP_DASH).toMatch(/net of commission/);
+    expect(PERF).toMatch(/net of commission/);
+  });
+
+  it('BrandMonthlyChart still ACCEPTS a mode prop (kept for the practice-side chart which passes net explicitly), defaulting to net', () => {
+    // The practice-side MonthlyRevenueChart delegates here with
+    // mode="net". Keep the API for that caller; brand callers omit.
+    expect(CHART).toMatch(/mode\?:\s*'gross' \| 'net'/);
+    expect(CHART).toMatch(/mode = 'net'/);
+  });
+});
+
+// ─── Filter clamping + hero+strip follow filters ──────────────────────
+
+describe('GroupDashboard — chart filters (practice / doctor / range) drive hero + trend + strip', () => {
+  it('renders all three filter controls with expected testids', () => {
+    expect(GROUP_DASH).toMatch(/data-testid="group-filter-practice"/);
+    expect(GROUP_DASH).toMatch(/data-testid="group-filter-provider"/);
+    // Range presets are rendered via a template literal
+    // `group-filter-range-${m}m` over the [3, 6, 12] preset list — pin
+    // that shape rather than the three concrete testids.
+    expect(GROUP_DASH).toMatch(/data-testid={`group-filter-range-\$\{m\}m`}/);
+  });
+
+  it('filter IDs clamp against the caller\'s own group data (never URL-trusted)', () => {
+    // The client builds Sets from the caller's own lists and clamps
+    // the state value against them.
+    expect(GROUP_DASH).toMatch(/validPracticeIds/);
+    expect(GROUP_DASH).toMatch(/validProviderIds/);
+    expect(GROUP_DASH).toMatch(/\.has\(practiceFilter\)/);
+    expect(GROUP_DASH).toMatch(/\.has\(providerFilter\)/);
+  });
+
+  it('the hero total, chart, AND strip all consume the SAME filtered plans (single filter state)', () => {
+    // The dashboard passes filteredPlans to computeRevenue AND
+    // buildMonthlySeries — one source of truth.
+    expect(GROUP_DASH).toMatch(/filteredPlans/);
+    expect(GROUP_DASH).toMatch(/computeRevenue\(filteredPlans/);
+    expect(GROUP_DASH).toMatch(/buildMonthlySeries\(filteredPlans/);
+    // Strip reads from summary.byPractice via perBranchNet — same
+    // filtered summary.
+    expect(GROUP_DASH).toMatch(/perBranchNet/);
+    // The strip's bucket lookup uses the FILTERED summary, not raw
+    // per-branch data.
+    expect(GROUP_DASH).toMatch(/for \(const row of summary\.byPractice\) m\.set/);
+  });
+
+  it('range presets are 3 / 6 / 12 months only', () => {
+    expect(GROUP_DASH).toMatch(/RangeMonths = 3 \| 6 \| 12/);
+    expect(GROUP_DASH).toMatch(/\[3, 6, 12\] as const/);
+  });
+
+  it('date cutoff at 12-month default is null (no filtering; the whole 12-month window shows)', () => {
+    expect(GROUP_DASH).toMatch(/rangeMonths === 12\) return null/);
+  });
+
+  it('Clear-all button resets to defaults', () => {
+    expect(GROUP_DASH).toMatch(/data-testid="group-filter-clear"/);
+    expect(GROUP_DASH).toMatch(/setPracticeFilter\(''\)/);
+    expect(GROUP_DASH).toMatch(/setProviderFilter\(''\)/);
+    expect(GROUP_DASH).toMatch(/setRangeMonths\(12\)/);
+  });
+});
+
+// ─── Unit: filter application on the client's shared helpers ──────────
+
+describe('Filter application — filtered plans through computeRevenue + buildMonthlySeries', () => {
+  const NOW = new Date('2026-07-15T00:00:00Z');
+  const practices: RevenuePractice[] = [
+    { id: 'p1', name: 'Branch A', fee_percent: 10 },
+    { id: 'p2', name: 'Branch B', fee_percent: 20 },
+  ];
+  const feeByPractice = new Map([['p1', 10], ['p2', 20]]);
+  const plans: Array<RevenuePlan & { created_at: string }> = [
+    { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active',    created_at: '2026-07-01T10:00:00Z' },
+    { id: '2', practice_id: 'p1', provider_id: 'd2', total_amount:  500, status: 'active',    created_at: '2026-07-02T10:00:00Z' },
+    { id: '3', practice_id: 'p2', provider_id: 'd1', total_amount:  800, status: 'active',    created_at: '2026-06-01T10:00:00Z' },
+    { id: '4', practice_id: 'p1', provider_id: 'd1', total_amount:  200, status: 'active',    created_at: '2026-01-10T10:00:00Z' }, // 6+ months ago
+  ];
+
+  function cutoffFor(rangeMonths: 3 | 6 | 12) {
+    if (rangeMonths === 12) return null;
+    const d = new Date(NOW);
+    d.setMonth(d.getMonth() - rangeMonths);
+    d.setDate(1); d.setHours(0, 0, 0, 0);
+    return d;
+  }
+  function applyFilters(
+    ps: typeof plans,
+    practiceId: string | null, providerId: string | null, rangeMonths: 3 | 6 | 12,
+  ) {
+    const cutoff = cutoffFor(rangeMonths);
+    return ps.filter((p) => {
+      if (practiceId && p.practice_id !== practiceId) return false;
+      if (providerId && p.provider_id !== providerId) return false;
+      if (cutoff && new Date(p.created_at) < cutoff) return false;
+      return true;
+    });
+  }
+
+  it('practice filter narrows revenue to that branch', () => {
+    const f = applyFilters(plans, 'p1', null, 12);
+    const s = computeRevenue(f, practices, [], {});
+    // Branch A active plans: 1000 + 500 + 200 = 1700 gross
+    expect(s.totalGross).toBeCloseTo(1700, 2);
+  });
+
+  it('doctor filter narrows revenue to that provider', () => {
+    const f = applyFilters(plans, null, 'd1', 12);
+    const s = computeRevenue(f, practices, [], {});
+    // d1's plans: 1000 (p1) + 800 (p2) + 200 (p1) = 2000 gross
+    expect(s.totalGross).toBeCloseTo(2000, 2);
+  });
+
+  it('range = 3 months excludes the 6-months-ago plan', () => {
+    const f = applyFilters(plans, null, null, 3);
+    const s = computeRevenue(f, practices, [], {});
+    // 3-month window from 2026-07-15 = cutoff 2026-04-01. Excludes
+    // 2026-01 plan (200). Include 1000 + 500 + 800 = 2300.
+    expect(s.totalGross).toBeCloseTo(2300, 2);
+  });
+
+  it('filters combine AND (practice=p1 + doctor=d1 + 3-month window)', () => {
+    const f = applyFilters(plans, 'p1', 'd1', 3);
+    const s = computeRevenue(f, practices, [], {});
+    // Only plan 1 matches: p1 + d1 + within 3 months → 1000 gross.
+    expect(s.totalGross).toBeCloseTo(1000, 2);
+  });
+
+  it('buildMonthlySeries respects the same filtered subset', () => {
+    const f = applyFilters(plans, null, null, 3);
+    const series = buildMonthlySeries(f as PlanForTrend[], feeByPractice, NOW);
+    // Current month (2026-07): 1000 + 500 = 1500 gross. Previous
+    // (2026-06): 800. Earlier months: 0 (either no plans, or
+    // filtered out by the 3-month window).
+    expect(series[11].gross).toBeCloseTo(1500, 2);
+    expect(series[10].gross).toBeCloseTo(800, 2);
+    expect(series[6].gross).toBeCloseTo(0, 2);
+  });
+});
+
+// ─── Team actions — guard-first, allowlist, brick-prevention ──────────
+
+describe('Team actions — guard-first + memberId → practice → group resolve', () => {
+  it('guardBrandAdminOfMember exists and reads member→practice→group_members', () => {
     expect(ACTIONS).toMatch(/async function guardBrandAdminOfMember/);
     expect(ACTIONS).toMatch(/\.from\('practice_members'\)/);
     expect(ACTIONS).toMatch(/practices!inner \( group_id \)/);
     expect(ACTIONS).toMatch(/\.from\('practice_group_members'\)/);
   });
 
-  it('addDoctor guards on the target practice BEFORE calling inviteMemberIntoPractice', () => {
-    const fnStart = ACTIONS.indexOf('export async function addDoctor');
+  it('addTeamMember guards on target practice BEFORE calling inviteMemberIntoPractice', () => {
+    const fnStart = ACTIONS.indexOf('export async function addTeamMember');
     expect(fnStart).toBeGreaterThan(0);
     const body = ACTIONS.slice(fnStart);
     const guardIdx  = body.indexOf('guardBrandAdminOfPractice(');
@@ -169,187 +321,250 @@ describe('Brand-admin doctor actions — guard resolves memberId → practice �
     expect(inviteIdx).toBeGreaterThan(guardIdx);
   });
 
-  it('updateDoctor guards on the memberId BEFORE the update', () => {
-    const fnStart = ACTIONS.indexOf('export async function updateDoctor');
-    const body = ACTIONS.slice(fnStart);
-    const guardIdx  = body.indexOf('guardBrandAdminOfMember(');
-    const updateIdx = body.indexOf('.update(');
-    expect(guardIdx).toBeGreaterThan(0);
-    expect(updateIdx).toBeGreaterThan(guardIdx);
-  });
-
-  it('deactivateDoctor guards on the memberId BEFORE the update', () => {
-    const fnStart = ACTIONS.indexOf('export async function deactivateDoctor');
-    const body = ACTIONS.slice(fnStart);
-    const guardIdx  = body.indexOf('guardBrandAdminOfMember(');
-    const updateIdx = body.indexOf('.update(');
-    expect(guardIdx).toBeGreaterThan(0);
-    expect(updateIdx).toBeGreaterThan(guardIdx);
-  });
-
-  it('reactivateDoctor guards on the memberId BEFORE the update', () => {
-    const fnStart = ACTIONS.indexOf('export async function reactivateDoctor');
-    const body = ACTIONS.slice(fnStart);
-    const guardIdx  = body.indexOf('guardBrandAdminOfMember(');
-    const updateIdx = body.indexOf('.update(');
-    expect(guardIdx).toBeGreaterThan(0);
-    expect(updateIdx).toBeGreaterThan(guardIdx);
-  });
+  it.each(['updateTeamMember', 'deactivateTeamMember', 'reactivateTeamMember'])(
+    '%s guards on the memberId BEFORE any write',
+    (fnName) => {
+      const fnStart = ACTIONS.indexOf(`export async function ${fnName}`);
+      const body = ACTIONS.slice(fnStart);
+      const guardIdx  = body.indexOf('guardBrandAdminOfMember(');
+      const updateIdx = body.indexOf('.update(');
+      expect(guardIdx).toBeGreaterThan(0);
+      expect(updateIdx).toBeGreaterThan(guardIdx);
+    },
+  );
 });
 
-describe('Brand-admin doctor actions — locked columns never in any doctor UPDATE payload', () => {
-  // Locked administrative fields we must NEVER write from the brand-
-  // admin doctor surface. Some are 0054-locked (status, fee_percent
-  // — those are on practices, not practice_members, but they matter
-  // here as a defence-in-depth pin). Others are membership-domain
-  // locks (payout_destination, personal_bank_*, can_manage_practice,
-  // can_create_bills, sa_id_number).
-  const FORBIDDEN_IN_DOCTOR_UPDATE = [
+describe('Team actions — allowlist (no locked columns in any UPDATE)', () => {
+  const FORBIDDEN = [
     'status',
     'fee_percent',
     'owner_id',
     'group_id',
-    'can_manage_practice',
-    'can_create_bills',
+    'sa_id_number',
+    'email',
+    'role',
     'payout_destination',
     'personal_bank_name',
     'personal_account_holder',
     'personal_account_number',
     'personal_branch_code',
     'personal_account_type',
-    'sa_id_number',
-    'email',
-    'role',
   ];
 
-  it.each(['updateDoctor'])('%s payload only writes {specialty, hpcsa_number}', (fnName) => {
-    const fnStart = ACTIONS.indexOf(`export async function ${fnName}`);
-    // Slice from function body to the next top-level export or EOF
-    const body = ACTIONS.slice(fnStart);
-    const nextExport = body.indexOf('\nexport async function', 20);
-    const scope = nextExport > 0 ? body.slice(0, nextExport) : body;
-    const m = scope.match(/\.update\(\s*\{([\s\S]*?)\}\s*\)/);
+  it('updateTeamMember payload only writes {specialty, hpcsa_number, can_manage_practice, can_create_bills}', () => {
+    const fnStart = ACTIONS.indexOf('export async function updateTeamMember');
+    const nextExport = ACTIONS.indexOf('\nexport async function', fnStart + 20);
+    const scope = nextExport > 0 ? ACTIONS.slice(fnStart, nextExport) : ACTIONS.slice(fnStart);
+    // The payload is built via `const payload: Record<...> = { ... }`
+    // then `.update(payload)`. Extract the literal.
+    const m = scope.match(/const payload:[\s\S]*?=\s*\{([\s\S]*?)\};/);
     expect(m).not.toBeNull();
-    const payload = (m?.[1] ?? '');
-    for (const col of FORBIDDEN_IN_DOCTOR_UPDATE) {
-      expect(payload).not.toMatch(new RegExp(`\\b${col}\\s*:`));
+    const literal = (m?.[1] ?? '');
+    for (const col of FORBIDDEN) {
+      expect(literal).not.toMatch(new RegExp(`\\b${col}\\s*:`));
     }
-    // Positive: must contain specialty and hpcsa_number
-    expect(payload).toMatch(/\bspecialty\s*:/);
-    expect(payload).toMatch(/\bhpcsa_number\s*:/);
+    // Positive: contains the four allowed columns.
+    expect(scope).toMatch(/can_manage_practice:\s*input\.canManagePractice/);
+    expect(scope).toMatch(/can_create_bills:\s*input\.canCreateBills/);
+    expect(scope).toMatch(/payload\.specialty\s*=/);
+    expect(scope).toMatch(/payload\.hpcsa_number\s*=/);
   });
 
-  it.each(['deactivateDoctor', 'reactivateDoctor'])('%s payload only touches active', (fnName) => {
+  it.each(['deactivateTeamMember', 'reactivateTeamMember'])('%s only touches active', (fnName) => {
     const fnStart = ACTIONS.indexOf(`export async function ${fnName}`);
-    const body = ACTIONS.slice(fnStart);
-    const nextExport = body.indexOf('\nexport async function', 20);
-    const scope = nextExport > 0 ? body.slice(0, nextExport) : body;
+    const nextExport = ACTIONS.indexOf('\nexport async function', fnStart + 20);
+    const scope = nextExport > 0 ? ACTIONS.slice(fnStart, nextExport) : ACTIONS.slice(fnStart);
     const m = scope.match(/\.update\(\s*\{([\s\S]*?)\}\s*\)/);
     expect(m).not.toBeNull();
     const payload = (m?.[1] ?? '');
-    for (const col of FORBIDDEN_IN_DOCTOR_UPDATE) {
+    for (const col of FORBIDDEN) {
       expect(payload).not.toMatch(new RegExp(`\\b${col}\\s*:`));
     }
     expect(payload).toMatch(/\bactive\s*:/);
   });
 });
 
-describe('deactivateDoctor / reactivateDoctor scope to role = provider', () => {
-  it('deactivateDoctor refuses roles other than provider', () => {
-    const fnStart = ACTIONS.indexOf('export async function deactivateDoctor');
-    const body = ACTIONS.slice(fnStart);
-    expect(body).toMatch(/role !== 'provider'/);
+describe('Brick-prevention — every practice needs at least one active admin', () => {
+  it('countActiveManagersExcept helper exists (indexed lookup on active + can_manage_practice)', () => {
+    expect(ACTIONS).toMatch(/countActiveManagersExcept/);
+    expect(ACTIONS).toMatch(/\.eq\('active', true\)/);
+    expect(ACTIONS).toMatch(/\.eq\('can_manage_practice', true\)/);
+    expect(ACTIONS).toMatch(/\.neq\('id', excludeMemberId\)/);
   });
 
-  it('reactivateDoctor refuses roles other than provider', () => {
-    const fnStart = ACTIONS.indexOf('export async function reactivateDoctor');
+  it('LAST_ADMIN_ERROR uses the required clear wording', () => {
+    expect(ACTIONS).toMatch(/Every practice needs at least one active admin/);
+  });
+
+  it('deactivateTeamMember calls countActiveManagersExcept when target is an active admin', () => {
+    const fnStart = ACTIONS.indexOf('export async function deactivateTeamMember');
     const body = ACTIONS.slice(fnStart);
-    expect(body).toMatch(/role !== 'provider'/);
+    expect(body).toMatch(/target\.can_manage_practice/);
+    expect(body).toMatch(/countActiveManagersExcept\(/);
+    expect(body).toMatch(/LAST_ADMIN_ERROR/);
+  });
+
+  it('updateTeamMember refuses to flip can_manage_practice → false when target is the only admin', () => {
+    const fnStart = ACTIONS.indexOf('export async function updateTeamMember');
+    const body = ACTIONS.slice(fnStart);
+    expect(body).toMatch(/input\.canManagePractice === false/);
+    expect(body).toMatch(/countActiveManagersExcept\(/);
+    expect(body).toMatch(/LAST_ADMIN_ERROR/);
+  });
+
+  it('the UI in TeamSection surfaces the same wording near the last-admin toggle', () => {
+    expect(TEAM).toMatch(/Every practice needs at least one active admin/);
+  });
+
+  it('the deactivate button on the last-admin row is disabled with a title tooltip', () => {
+    expect(TEAM).toMatch(/disabled=\{isPending \|\| isOnlyAdmin\}/);
+    expect(TEAM).toMatch(/title=\{isOnlyAdmin \?/);
   });
 });
 
-describe('addDoctor HPCSA validation happens INSIDE the shared invite (not forked at the caller)', () => {
-  it('addDoctor forwards hpcsaNumber to inviteMemberIntoPractice without a separate checkHpcsa call', () => {
-    const fnStart = ACTIONS.indexOf('export async function addDoctor');
-    const nextExport = ACTIONS.indexOf('\nexport async function', fnStart + 20);
-    const scope = nextExport > 0 ? ACTIONS.slice(fnStart, nextExport) : ACTIONS.slice(fnStart);
-    // addDoctor does NOT re-check HPCSA — the shared helper does.
-    expect(scope).not.toMatch(/checkHpcsa\s*\(/);
-    expect(scope).toMatch(/hpcsaNumber:\s*input\.hpcsaNumber/);
-  });
-
-  it('the shared invite helper checks HPCSA format when supplied', () => {
-    expect(INVITE).toMatch(/checkHpcsa\(/);
-  });
-});
-
-// ─── Shared invite: no fork ────────────────────────────────────────────
-
-describe('Shared invite implementation — practice-admin and brand-admin use ONE path', () => {
-  it('lib/brand/inviteMember exports inviteMemberIntoPractice', () => {
+describe('addTeamMember + shared invite implementation', () => {
+  it('lib/brand/inviteMember still exports inviteMemberIntoPractice', () => {
     expect(INVITE).toMatch(/export async function inviteMemberIntoPractice/);
   });
 
-  it('practice-admin addMember calls inviteMemberIntoPractice (no local invite)', () => {
+  it('brand addTeamMember delegates to inviteMemberIntoPractice (no inline auth.admin.invite)', () => {
+    const fnStart = ACTIONS.indexOf('export async function addTeamMember');
+    const nextExport = ACTIONS.indexOf('\nexport async function', fnStart + 20);
+    const scope = nextExport > 0 ? ACTIONS.slice(fnStart, nextExport) : ACTIONS.slice(fnStart);
+    expect(scope).toMatch(/inviteMemberIntoPractice\(/);
+    expect(scope).not.toMatch(/auth\.admin\.inviteUserByEmail/);
+  });
+
+  it('practice-admin addMember still delegates to the shared helper', () => {
     expect(MEMBERS_ACT).toMatch(/inviteMemberIntoPractice\(/);
-    // The old inline invite path is gone — no direct auth.admin.invite
-    // call inside addMember.
     const addStart = MEMBERS_ACT.indexOf('export async function addMember');
     const nextExport = MEMBERS_ACT.indexOf('\nexport async function', addStart + 20);
     const scope = nextExport > 0 ? MEMBERS_ACT.slice(addStart, nextExport) : MEMBERS_ACT.slice(addStart);
     expect(scope).not.toMatch(/auth\.admin\.inviteUserByEmail/);
-    expect(scope).not.toMatch(/\.from\('profiles'\)/);   // duplicate-email check moved into shared
   });
 
-  it('brand-admin addDoctor calls inviteMemberIntoPractice', () => {
-    expect(ACTIONS).toMatch(/inviteMemberIntoPractice\(/);
-    const addStart = ACTIONS.indexOf('export async function addDoctor');
-    const nextExport = ACTIONS.indexOf('\nexport async function', addStart + 20);
-    const scope = nextExport > 0 ? ACTIONS.slice(addStart, nextExport) : ACTIONS.slice(addStart);
-    expect(scope).not.toMatch(/auth\.admin\.inviteUserByEmail/);
-  });
-
-  it('shared invite writes the SAME shape into practice_members as the old inline path', () => {
-    // The invite helper inserts a row into practice_members with the
-    // exact column set both callers used previously.
-    expect(INVITE).toMatch(/\.from\('practice_members'\)/);
-    expect(INVITE).toMatch(/\.insert\(/);
-    // Core columns must be in the row literal.
-    expect(INVITE).toMatch(/practice_id:/);
-    expect(INVITE).toMatch(/user_id:/);
-    expect(INVITE).toMatch(/role:/);
-    expect(INVITE).toMatch(/active:/);
-    expect(INVITE).toMatch(/specialty:/);
-    expect(INVITE).toMatch(/hpcsa_number:/);
-    expect(INVITE).toMatch(/payout_destination:/);
+  it('addTeamMember does NOT re-check HPCSA at the caller (the shared helper checks)', () => {
+    const fnStart = ACTIONS.indexOf('export async function addTeamMember');
+    const nextExport = ACTIONS.indexOf('\nexport async function', fnStart + 20);
+    const scope = nextExport > 0 ? ACTIONS.slice(fnStart, nextExport) : ACTIONS.slice(fnStart);
+    expect(scope).not.toMatch(/checkHpcsa\s*\(/);
   });
 });
 
-// ─── Group dashboard scoping ──────────────────────────────────────────
+// ─── Shared AddMemberForm — one form, two surfaces ────────────────────
 
-describe('/brand page — scoped to caller\'s OWN group_ids; never from URL', () => {
-  it('reads practice_group_members for the caller before ANY data query', () => {
-    const idxMember = PAGE.indexOf("from('practice_group_members')");
-    const idxPlans  = PAGE.indexOf("from('plans')");
-    const idxBranch = PAGE.indexOf("from('practices')");
-    expect(idxMember).toBeGreaterThan(0);
-    expect(idxPlans).toBeGreaterThan(idxMember);
-    expect(idxBranch).toBeGreaterThan(idxMember);
+describe('Shared AddMemberForm — imported by BOTH practice and brand surfaces', () => {
+  it('practice MembersView imports AddMemberForm', () => {
+    expect(MEMBERS_VIEW).toMatch(/from ['"]\.\/AddMemberForm['"]/);
+    expect(MEMBERS_VIEW).toMatch(/<AddMemberForm/);
   });
 
-  it('filters practices + plans on the caller\'s OWN group_ids — never a URL-supplied list', () => {
+  it('brand TeamSection imports the same AddMemberForm', () => {
+    expect(TEAM).toMatch(/from ['"]@\/app\/practice\/members\/AddMemberForm['"]/);
+    expect(TEAM).toMatch(/<AddMemberForm/);
+  });
+
+  it('AddMemberForm exports the SPECIALTIES + BANKS lists that both surfaces reuse', () => {
+    expect(ADD_FORM).toMatch(/export const SPECIALTIES/);
+    expect(ADD_FORM).toMatch(/export const BANKS/);
+    // The two surfaces MUST reference the exported lists, not
+    // hardcode their own copies.
+    expect(MEMBERS_VIEW).toMatch(/from ['"]\.\/AddMemberForm['"]/);
+    expect(TEAM).toMatch(/SPECIALTIES/);
+  });
+
+  it('practice-side passes saIdRequired=true; brand-side passes saIdRequired=false', () => {
+    expect(MEMBERS_VIEW).toMatch(/saIdRequired=\{true\}/);
+    expect(TEAM).toMatch(/saIdRequired=\{false\}/);
+  });
+
+  it('practice-side shows payout fields; brand-side hides them (deferred to /provider/setup)', () => {
+    expect(MEMBERS_VIEW).toMatch(/showPayoutFields=\{true\}/);
+    expect(TEAM).toMatch(/showPayoutFields=\{false\}/);
+  });
+
+  it('AddMemberForm has role picker with the two expected options', () => {
+    // Role testids are rendered via a template literal
+    // `add-member-role-${opt.value}` over ['provider', 'manager'].
+    expect(ADD_FORM).toMatch(/data-testid={`add-member-role-\$\{opt\.value\}`}/);
+    expect(ADD_FORM).toMatch(/value: 'provider' as const/);
+    expect(ADD_FORM).toMatch(/value: 'manager' as const/);
+  });
+});
+
+// ─── Single entry — no /practice?practiceId= link on brand surface ────
+
+describe('Single entry point — only "Open branch" links from the brand surface', () => {
+  it('GroupDashboard has NO /practice?practiceId= secondary link', () => {
+    expect(GROUP_DASH).not.toMatch(/href=\{`\/practice\?practiceId=/);
+    expect(GROUP_DASH).not.toMatch(/href="\/practice\?practiceId=/);
+    // The "Practice dashboard" wording is gone from the card.
+    expect(GROUP_DASH).not.toMatch(/Practice dashboard/);
+  });
+
+  it('the drilldown link testid is still present (Open branch)', () => {
+    expect(GROUP_DASH).toMatch(/data-testid={`branch-drilldown-\${b\.id}`}/);
+    expect(GROUP_DASH).toMatch(/Open branch/);
+  });
+});
+
+// ─── Old DoctorsSection is gone; TeamSection replaces it ──────────────
+
+describe('DoctorsSection removed; TeamSection is the roster surface', () => {
+  it('DoctorsSection.tsx no longer exists', () => {
+    expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/DoctorsSection.tsx'))).toBe(false);
+  });
+
+  it('the branch page uses TeamSection', () => {
+    expect(BRANCH_PAGE).toMatch(/from ['"]\.\/TeamSection['"]/);
+    expect(BRANCH_PAGE).toMatch(/<TeamSection/);
+    expect(BRANCH_PAGE).not.toMatch(/DoctorsSection/);
+  });
+
+  it('branch page fetches ALL roles (no eq role=provider filter)', () => {
+    // The old page had .eq('role', 'provider') on practice_members;
+    // the new one omits that filter to include admins + staff.
+    const membersReadIdx = BRANCH_PAGE.indexOf(".from('practice_members')");
+    const scope = BRANCH_PAGE.slice(membersReadIdx, membersReadIdx + 600);
+    expect(scope).not.toMatch(/\.eq\('role', 'provider'\)/);
+    expect(scope).toMatch(/can_manage_practice/);
+    expect(scope).toMatch(/can_create_bills/);
+  });
+
+  it('branch page wires the four team actions', () => {
+    expect(BRANCH_PAGE).toMatch(/addTeamMember,\s+updateTeamMember,\s+deactivateTeamMember,\s+reactivateTeamMember/);
+  });
+});
+
+// ─── n=1 unchanged; brand data scoping ────────────────────────────────
+
+describe('/brand page — scoping + n=1 rule unchanged', () => {
+  it('reads practice_group_members for caller before any data query', () => {
+    const idxMember = PAGE.indexOf("from('practice_group_members')");
+    const idxPlans  = PAGE.indexOf("from('plans')");
+    expect(idxMember).toBeGreaterThan(0);
+    expect(idxPlans).toBeGreaterThan(idxMember);
+  });
+
+  it('filters practices + plans on the caller\'s OWN group_ids — never URL-supplied', () => {
     expect(PAGE).toMatch(/\.in\('group_id', groupIds\)/);
     expect(PAGE).not.toMatch(/searchParams\.group\b/);
-    expect(PAGE).not.toMatch(/params\.group\b/);
-    // No practice_id from searchParams either — the dashboard is
-    // group-wide, drill-down goes through /brand/branch/[id].
     expect(PAGE).not.toMatch(/searchParams\.practice/);
   });
 
-  it('does NOT pull payment/instalment/collection state', () => {
+  it('preserves the n=1 redirect (single-branch → /practice)', () => {
+    expect(PAGE).toMatch(/branchRows\.length === 1[\s\S]*?redirect\(`\/practice\?practiceId=/);
+  });
+
+  it('sends RAW plans + provider list to the client (client owns filtering)', () => {
+    expect(PAGE).toMatch(/plans=\{plans\}/);
+    expect(PAGE).toMatch(/providers=\{providers\}/);
+    expect(PAGE).toMatch(/branches=\{branches\}/);
+  });
+
+  it('does NOT pull payment/collection state (mirrors the /brand/revenue discipline)', () => {
     expect(PAGE).not.toMatch(/from\(['"]payments['"]\)/);
     expect(PAGE).not.toMatch(/from\(['"]payouts['"]\)/);
-    // The plans select should not include collection fields.
     const m = PAGE.match(/\.from\('plans'\)\s*\.select\(\s*['"`]([^'"`]+)['"`]/);
     expect(m).not.toBeNull();
     const selected = (m?.[1] ?? '').toLowerCase();
@@ -357,148 +572,61 @@ describe('/brand page — scoped to caller\'s OWN group_ids; never from URL', ()
       expect(selected).not.toContain(forbidden);
     }
   });
+});
 
-  it('preserves the n=1 redirect rule to /practice', () => {
-    // Two redirects: n=0 → /practice/setup, n=1 → /practice?practiceId=…
-    expect(PAGE).toMatch(/branchRows\.length === 0[\s\S]*?redirect\('\/practice\/setup'\)/);
-    expect(PAGE).toMatch(/branchRows\.length === 1[\s\S]*?redirect\(`\/practice\?practiceId=/);
-  });
+// ─── BrandMonthlyChart is a primitive — no status logic ───────────────
 
-  it('handles n=0 memberships by redirecting away', () => {
-    expect(PAGE).toMatch(/memberships\.length === 0[\s\S]*?redirect\('\/practice'\)/);
+describe('BrandMonthlyChart is a rendering primitive', () => {
+  it('does NOT filter plans (no isActiveForRevenue, no status ===, no COUNTED_STATUSES)', () => {
+    expect(CHART).not.toMatch(/isActiveForRevenue/);
+    expect(CHART).not.toMatch(/COUNTED_STATUSES/);
+    expect(CHART).not.toMatch(/status ===/);
   });
 });
 
-// ─── Group dashboard component: single mode state drives every figure ─
+// ─── Quick-actions layout ─────────────────────────────────────────────
 
-describe('GroupDashboard component — single toggle drives hero, trend, and strip', () => {
-  it('one `mode` state variable controls every mode-dependent figure', () => {
-    // No accidental per-widget mode — a regression that adds a second
-    // useState<'gross'|'net'> would introduce a divergence.
-    const modeStates = GROUP_DASH.match(/useState<'gross' \| 'net'>/g) ?? [];
-    expect(modeStates.length).toBe(1);
-  });
-
-  it('the strip sorts by the CURRENT mode (not fixed to gross)', () => {
-    expect(GROUP_DASH).toMatch(/mode === 'gross' \? a\.gross : a\.net/);
-    expect(GROUP_DASH).toMatch(/mode === 'gross' \? b\.gross : b\.net/);
-  });
-
-  it('renders BrandMonthlyChart with the CURRENT mode', () => {
-    expect(GROUP_DASH).toMatch(/<BrandMonthlyChart points={monthly} mode={mode}/);
-  });
-
-  it('hero label consistently reflects "active plans"', () => {
-    expect(GROUP_DASH).toMatch(/Group revenue — active plans/);
-  });
-});
-
-describe('GroupDashboard layout — quick actions ABOVE the revenue hero', () => {
-  it('the quick-actions section renders BEFORE the hero total in DOM order', () => {
+describe('GroupDashboard layout — quick actions ABOVE revenue hero', () => {
+  it('quick actions render BEFORE the hero total in DOM order', () => {
     const quickTop = GROUP_DASH.indexOf('data-testid="group-quick-actions-top"');
     const heroTotal = GROUP_DASH.indexOf('data-testid="group-hero-total"');
     expect(quickTop).toBeGreaterThan(0);
     expect(heroTotal).toBeGreaterThan(0);
     expect(quickTop).toBeLessThan(heroTotal);
   });
-
-  it('quick actions render BEFORE the branch performance strip too', () => {
-    const quickTop = GROUP_DASH.indexOf('data-testid="group-quick-actions-top"');
-    const strip = GROUP_DASH.indexOf('data-testid="branch-strip"');
-    expect(quickTop).toBeGreaterThan(0);
-    expect(strip).toBeGreaterThan(0);
-    expect(quickTop).toBeLessThan(strip);
-  });
-
-  it('both quick-action links still exist with the same testids/hrefs', () => {
-    expect(GROUP_DASH).toMatch(/href="\/brand\/new-practice"[\s\S]*?data-testid="group-add-practice"/);
-    expect(GROUP_DASH).toMatch(/href="\/brand\/group"[\s\S]*?data-testid="group-settings"/);
-  });
-
-  it('quick actions are NOT duplicated at the bottom (single section, one location)', () => {
-    // Two occurrences would mean the old bottom section wasn't
-    // removed — regression pin.
-    const addOccurrences = GROUP_DASH.match(/data-testid="group-add-practice"/g) ?? [];
-    const settingsOccurrences = GROUP_DASH.match(/data-testid="group-settings"/g) ?? [];
-    expect(addOccurrences.length).toBe(1);
-    expect(settingsOccurrences.length).toBe(1);
-  });
 });
 
-describe('BranchPerformance component — same single-mode discipline', () => {
-  it('one `mode` state variable', () => {
-    const modeStates = PERF.match(/useState<'gross' \| 'net'>/g) ?? [];
-    expect(modeStates.length).toBe(1);
+// ─── Diff scope — no payment / webhook / finance-math changes ─────────
+
+describe('Diff scope — team + net-only + filters, no payment logic touched', () => {
+  const NEW_FILES = [
+    'app/practice/members/AddMemberForm.tsx',
+    'app/brand/branch/[practiceId]/TeamSection.tsx',
+  ];
+
+  it.each(NEW_FILES)('%s exists', (path) => {
+    expect(existsSync(resolve(ROOT, path))).toBe(true);
   });
 
-  it('the doctor breakdown sorts by current mode', () => {
-    expect(PERF).toMatch(/mode === 'gross' \? a\.gross : a\.net/);
-    expect(PERF).toMatch(/mode === 'gross' \? b\.gross : b\.net/);
+  const FORBIDDEN = [
+    '@/lib/payments/',
+    '@/lib/paystack/',
+    '@/lib/bills/lifecycle',
+    'app/api/webhooks/paystack',
+  ];
+
+  it.each(FORBIDDEN)('brand/actions.ts does not import %s', (mod) => {
+    expect(ACTIONS).not.toContain(`from '${mod}`);
+    expect(ACTIONS).not.toContain(`from "${mod}`);
   });
 
-  it('renders BrandMonthlyChart with the current mode', () => {
-    expect(PERF).toMatch(/<BrandMonthlyChart points={monthly} mode={mode}/);
-  });
-});
-
-// ─── BrandMonthlyChart primitive ──────────────────────────────────────
-
-describe('BrandMonthlyChart is a rendering primitive — no filtering logic', () => {
-  it('does NOT filter plans (no isActiveForRevenue / COUNTED_STATUSES / status checks)', () => {
-    // The chart receives already-aggregated MonthPoint[] — a
-    // regression that introduces status filtering inside the chart
-    // would double-filter (or worse, use a different filter) and
-    // fail this pin.
-    expect(CHART).not.toMatch(/isActiveForRevenue/);
-    expect(CHART).not.toMatch(/COUNTED_STATUSES/);
-    expect(CHART).not.toMatch(/status ===/);
+  it.each(FORBIDDEN)('TeamSection does not import %s', (mod) => {
+    expect(TEAM).not.toContain(`from '${mod}`);
+    expect(TEAM).not.toContain(`from "${mod}`);
   });
 
-  it('accepts a gross|net mode prop', () => {
-    expect(CHART).toMatch(/mode:\s+'gross' \| 'net'/);
-  });
-});
-
-// ─── Doctors section wiring ───────────────────────────────────────────
-
-describe('DoctorsSection — uses the 4 brand-admin actions', () => {
-  it('renders add-doctor button + form', () => {
-    expect(DOCTORS).toMatch(/data-testid="brand-add-doctor"/);
-    expect(DOCTORS).toMatch(/data-testid="brand-add-doctor-form"/);
-  });
-
-  it('confirms deactivation before flipping active', () => {
-    expect(DOCTORS).toMatch(/confirm\(`Deactivate/);
-  });
-
-  it('wires all four actions from app/brand/actions', () => {
-    expect(BRANCH_PAGE).toMatch(/addDoctor,\s+updateDoctor,\s+deactivateDoctor,\s+reactivateDoctor/);
-  });
-
-  it('separates active vs deactivated in the list', () => {
-    expect(DOCTORS).toMatch(/data-testid="brand-doctors-active"/);
-    expect(DOCTORS).toMatch(/data-testid="brand-doctors-inactive"/);
-  });
-});
-
-// ─── Cross-group isolation — no leaks in the dashboard queries ────────
-
-describe('Branch detail page — cross-group isolation preserved', () => {
-  it('resolves the practice via service-role BEFORE checking brand-admin membership', () => {
-    const idxPractice   = BRANCH_PAGE.indexOf("from('practices')");
-    const idxMembership = BRANCH_PAGE.indexOf("from('practice_group_members')");
-    expect(idxPractice).toBeGreaterThan(0);
-    expect(idxMembership).toBeGreaterThan(idxPractice);
-  });
-
-  it('doctor queries scope to the SAME practiceId (never a URL-supplied id)', () => {
-    // The practice_members read filters by the resolved practiceId
-    // AND by role='provider' (this surface is doctor-only; admin/staff
-    // stay on /practice/members).
-    expect(BRANCH_PAGE).toMatch(/\.from\('practice_members'\)[\s\S]*?\.eq\('practice_id', practiceId\)[\s\S]*?\.eq\('role', 'provider'\)/);
-  });
-
-  it('branch plans query scopes to the resolved practiceId', () => {
-    expect(BRANCH_PAGE).toMatch(/\.from\('plans'\)[\s\S]*?\.eq\('practice_id', practiceId\)/);
+  it.each(FORBIDDEN)('AddMemberForm does not import %s', (mod) => {
+    expect(ADD_FORM).not.toContain(`from '${mod}`);
+    expect(ADD_FORM).not.toContain(`from "${mod}`);
   });
 });

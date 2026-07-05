@@ -295,39 +295,35 @@ export async function updateBranchDetails(input: UpdateBranchDetailsInput): Prom
   return { error: null };
 }
 
-// ─── Doctor management (brand-admin) ───────────────────────────────────
+// ─── Team management (brand-admin) ─────────────────────────────────────
 //
-// Brand-admins can manage the practitioner roster on any branch in
-// their group WITHOUT going through a per-practice login. All four
-// actions below take a memberId (or practiceId + email for the
-// invite), resolve to a practice via service-role, then check the
-// caller is an active brand_admin of THAT practice's group. This is
-// guardBrandAdminOfPractice — the same guard used by branch details/
-// banking edits.
+// Brand-admins manage the FULL team roster (admins + practitioners)
+// on any branch in their group. All four actions guard on the target
+// practice/member FIRST via guardBrandAdmin*, then delegate mechanics
+// to the shared helpers.
 //
-// Scope:
-//   • addDoctor:        invites a new practitioner into a branch.
-//                       Uses inviteMemberIntoPractice (shared with
-//                       the practice-admin addMember flow — no fork).
-//   • updateDoctor:     edits membership fields (specialty, HPCSA)
-//                       on an existing practice_members row. Never
-//                       touches the profile / user account.
-//   • deactivateDoctor: flips practice_members.active → false. Drops
-//                       the doctor from patient discovery (the safe
-//                       directory view filters active=TRUE) and from
-//                       the add-bill provider dropdown. Past bills/
-//                       plans STAY attributed — no delete, no
-//                       reattribution.
-//   • reactivateDoctor: reverses deactivate.
+// Actions:
+//   • addTeamMember       — invites a new admin OR practitioner into
+//                           a branch. Same shared invite helper as
+//                           the practice-admin flow (no fork).
+//   • updateTeamMember    — allowlisted update: specialty + HPCSA
+//                           (provider-only) + can_manage_practice +
+//                           can_create_bills. Never banking / SA-ID /
+//                           email / role / 0054-locked columns.
+//   • deactivateTeamMember — flips practice_members.active → false.
+//                            BRICK-PREVENTION: refuses to deactivate
+//                            the last active admin (can_manage_practice
+//                            = true) on a practice.
+//   • reactivateTeamMember — flips active → true (any role).
 //
-// Explicitly OUT OF SCOPE — brand-admins get no access to the doctor's
-// user account itself (email/password/profile). This is a membership
-// surface, not an identity one.
+// Explicitly OUT OF SCOPE — brand-admins get no access to the
+// member's user account itself (email/password/profile). This is a
+// membership surface, not an identity one.
 
-// Small guard variant: resolve memberId → practice_id + group_id via
-// service-role, then check the caller is an active brand-admin of
-// that group. Returns the resolved practiceId so callers can use it
-// without a second resolve.
+// Resolve memberId → practice_id + group_id via service-role, then
+// check the caller is an active brand-admin of that group. Returns
+// practiceId for downstream reuse. Handles ANY role (admin, provider,
+// staff) — the caller's own scope decisions live at the action layer.
 type MemberGuardOk  = { ok: true;  userId: string; practiceId: string };
 type MemberGuardErr = { ok: false; error: string };
 
@@ -336,11 +332,6 @@ async function guardBrandAdminOfMember(memberId: string): Promise<MemberGuardOk 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'Not authenticated.' };
 
-  // Service-role read of the member row → practice → group. Never
-  // uses session-client because a brand-admin of group B might not
-  // even be able to SEE group A's practice_members under RLS, and
-  // the guard needs to distinguish "wrong group" from "no such
-  // member" — both must fail before any read/write.
   const { data: member } = await svc()
     .from('practice_members')
     .select('practice_id, practices!inner ( group_id )')
@@ -367,37 +358,63 @@ async function guardBrandAdminOfMember(memberId: string): Promise<MemberGuardOk 
   return { ok: true, userId: user.id, practiceId: member.practice_id as string };
 }
 
-// ─── addDoctor ─────────────────────────────────────────────────────────
-//
-// Brand-admin invites a new practitioner onto one of their branches.
-// Guards on the TARGET practice (not just any practice in the caller's
-// groups) via guardBrandAdminOfPractice. Delegates the invite to the
-// shared helper — same invite semantics as the practice-admin flow.
+// Brick-prevention check — after any UPDATE that could remove the
+// last active admin from a practice, count remaining active admins.
+// If zero, the operation is refused with a clear error. Applied to:
+//   • deactivateTeamMember (target is/was an active admin)
+//   • updateTeamMember     (target is the only admin AND we're
+//                            flipping can_manage_practice → false)
+async function countActiveManagersExcept(
+  practiceId: string,
+  excludeMemberId: string,
+): Promise<number> {
+  const { count } = await svc()
+    .from('practice_members')
+    .select('*', { count: 'exact', head: true })
+    .eq('practice_id', practiceId)
+    .eq('active', true)
+    .eq('can_manage_practice', true)
+    .neq('id', excludeMemberId);
+  return count ?? 0;
+}
 
-export type AddDoctorInput = {
-  practiceId:    string;
-  firstName:     string;
-  lastName:      string;
-  email:         string;
-  specialty:     string;
-  hpcsaNumber:   string;
+const LAST_ADMIN_ERROR =
+  'Every practice needs at least one active admin. Grant admin access to another member first.';
+
+// ─── addTeamMember ─────────────────────────────────────────────────────
+//
+// Brand-admin invites a new practitioner OR admin onto a branch.
+// Guards on the target practice via guardBrandAdminOfPractice.
+// Delegates to the shared invite helper — same semantics as the
+// practice-admin addMember flow.
+
+export type AddTeamMemberInput = {
+  practiceId:        string;
+  memberRole:        'provider' | 'manager';
+  firstName:         string;
+  lastName:          string;
+  email:             string;
+  canCreateBills:    boolean;
+  canManagePractice: boolean;
+  specialty?:        string;
+  hpcsaNumber?:      string;
 };
 
-export async function addDoctor(input: AddDoctorInput): Promise<{ memberId: string | null; error: string | null }> {
+export async function addTeamMember(input: AddTeamMemberInput): Promise<{ memberId: string | null; error: string | null }> {
   const guard = await guardBrandAdminOfPractice(input.practiceId);
   if (!guard.ok) return { memberId: null, error: guard.error };
 
   const result = await inviteMemberIntoPractice({
-    practiceId:  input.practiceId,
-    memberRole:  'provider',
-    firstName:   input.firstName,
-    lastName:    input.lastName,
-    email:       input.email,
-    specialty:   input.specialty,
-    hpcsaNumber: input.hpcsaNumber,
-    // Brand-admin does NOT hand out manage/bill-create powers by
-    // default; the practitioner completes payout details at
-    // /provider/setup. SA ID captured there too.
+    practiceId:        input.practiceId,
+    memberRole:        input.memberRole,
+    firstName:         input.firstName,
+    lastName:          input.lastName,
+    email:             input.email,
+    canCreateBills:    input.canCreateBills,
+    canManagePractice: input.canManagePractice,
+    specialty:         input.specialty,
+    hpcsaNumber:       input.hpcsaNumber,
+    // SA ID + banking captured by the invitee on /provider/setup.
   });
 
   if (result.error) return { memberId: null, error: result.error };
@@ -407,30 +424,31 @@ export async function addDoctor(input: AddDoctorInput): Promise<{ memberId: stri
   return { memberId: result.memberId, error: null };
 }
 
-// ─── updateDoctor ──────────────────────────────────────────────────────
+// ─── updateTeamMember ──────────────────────────────────────────────────
 //
-// Brand-admin edits the membership-row fields of a practitioner on a
-// branch in their group. Only touches specialty + HPCSA — payout
-// settings and capability flags stay on the practice-admin surface
-// and the doctor's own /provider/setup. HPCSA is validated for shape
-// (same validator as the invite path); changing HPCSA affects the
-// discovery grouping key on next view read (grouping key is
-// computed from md5(HPCSA) at view time — no stored column to
-// migrate).
+// Allowlisted update. Payload columns pinned by test:
+//   • specialty          (nullable, provider-only — validated shape)
+//   • hpcsa_number       (nullable, provider-only — validated shape)
+//   • can_manage_practice (boolean)
+//   • can_create_bills    (boolean)
 //
-// LOCKED — not in the allowlist and never in the payload:
-//   • profile fields (email, first/last name) — identity surface
-//   • can_manage_practice, can_create_bills — practice-admin domain
-//   • payout_destination + personal_bank_* — provider's own /provider/setup
-//   • sa_id_number — captured only via the initial invite/setup flow
+// LOCKED — never in the payload:
+//   • role, active, email, sa_id_number
+//   • payout_destination, personal_bank_*
+//   • 0054-locked practice columns
+//
+// Brick-prevention: if the target is currently the only active admin
+// and the update flips can_manage_practice → false, refuse.
 
-export type UpdateDoctorInput = {
-  memberId:    string;
-  specialty:   string | null;
-  hpcsaNumber: string | null;
+export type UpdateTeamMemberInput = {
+  memberId:          string;
+  specialty?:        string | null;
+  hpcsaNumber?:      string | null;
+  canManagePractice: boolean;
+  canCreateBills:    boolean;
 };
 
-export async function updateDoctor(input: UpdateDoctorInput): Promise<{ error: string | null }> {
+export async function updateTeamMember(input: UpdateTeamMemberInput): Promise<{ error: string | null }> {
   const guard = await guardBrandAdminOfMember(input.memberId);
   if (!guard.ok) return { error: guard.error };
 
@@ -440,12 +458,36 @@ export async function updateDoctor(input: UpdateDoctorInput): Promise<{ error: s
     if (!check.ok) return { error: HPCSA_ERROR_MESSAGE[check.reason] };
   }
 
+  // Read the target row (service-role) to know its current role +
+  // manager status. Provider-only fields (specialty, HPCSA) are
+  // stripped from the payload for admin/staff rows so a caller can't
+  // sneak clinical fields onto a non-provider row.
+  const { data: target } = await svc()
+    .from('practice_members')
+    .select('id, role, active, can_manage_practice, practice_id')
+    .eq('id', input.memberId)
+    .maybeSingle();
+
+  if (!target) return { error: 'Member not found.' };
+
+  // Brick-prevention: demoting the last active admin.
+  if (target.active && target.can_manage_practice && input.canManagePractice === false) {
+    const remaining = await countActiveManagersExcept(guard.practiceId, input.memberId);
+    if (remaining === 0) return { error: LAST_ADMIN_ERROR };
+  }
+
+  const payload: Record<string, unknown> = {
+    can_manage_practice: input.canManagePractice,
+    can_create_bills:    input.canCreateBills,
+  };
+  if (target.role === 'provider') {
+    payload.specialty    = input.specialty?.trim() || null;
+    payload.hpcsa_number = trimmedHpcsa || null;
+  }
+
   const { error } = await svc()
     .from('practice_members')
-    .update({
-      specialty:    input.specialty?.trim() || null,
-      hpcsa_number: trimmedHpcsa || null,
-    })
+    .update(payload)
     .eq('id', input.memberId);
 
   if (error) return { error: error.message };
@@ -455,37 +497,34 @@ export async function updateDoctor(input: UpdateDoctorInput): Promise<{ error: s
   return { error: null };
 }
 
-// ─── deactivateDoctor ──────────────────────────────────────────────────
+// ─── deactivateTeamMember ──────────────────────────────────────────────
 //
 // Flip practice_members.active → false. Past plans stay attributed
-// (no delete, no reattribution). The practitioner disappears from:
-//   • patient discovery (the safe directory view filters active=TRUE)
-//   • add-bill provider dropdown (query filters active=TRUE)
-//   • practice discovery card doctor lists
+// (no delete, no reattribution).
 //
-// We deliberately do NOT let a brand-admin deactivate the last
-// manager of a branch through this action — this action is scoped to
-// providers/doctors. Members whose can_manage_practice=TRUE need to
-// be re-scoped by the practice-admin path first (last-manager
-// guardrail lives there).
+// Effects:
+//   • provider → disappears from patient discovery + add-bill dropdown
+//   • admin    → loses management access; brick-prevention kicks in
+//                when they're the last active admin.
 
-export async function deactivateDoctor(memberId: string): Promise<{ error: string | null }> {
+export async function deactivateTeamMember(memberId: string): Promise<{ error: string | null }> {
   const guard = await guardBrandAdminOfMember(memberId);
   if (!guard.ok) return { error: guard.error };
 
-  // Read the target row via service-role to check role + manager
-  // status BEFORE flipping active. The action is scoped to
-  // providers; deactivating an admin/staff row would silently break
-  // the branch's management surface, so refuse.
   const { data: target } = await svc()
     .from('practice_members')
-    .select('id, role, can_manage_practice')
+    .select('id, role, active, can_manage_practice')
     .eq('id', memberId)
     .maybeSingle();
 
-  if (!target) return { error: 'Practitioner not found.' };
-  if (target.role !== 'provider') {
-    return { error: 'Only practitioners can be deactivated from this surface. Use the practice-admin members page for admin/staff.' };
+  if (!target) return { error: 'Member not found.' };
+  if (!target.active) return { error: 'Member is already deactivated.' };
+
+  // Brick-prevention: an active admin being deactivated must have at
+  // least one other active admin remaining.
+  if (target.can_manage_practice) {
+    const remaining = await countActiveManagersExcept(guard.practiceId, memberId);
+    if (remaining === 0) return { error: LAST_ADMIN_ERROR };
   }
 
   const { error } = await svc()
@@ -500,22 +539,20 @@ export async function deactivateDoctor(memberId: string): Promise<{ error: strin
   return { error: null };
 }
 
-// ─── reactivateDoctor ──────────────────────────────────────────────────
+// ─── reactivateTeamMember ──────────────────────────────────────────────
 
-export async function reactivateDoctor(memberId: string): Promise<{ error: string | null }> {
+export async function reactivateTeamMember(memberId: string): Promise<{ error: string | null }> {
   const guard = await guardBrandAdminOfMember(memberId);
   if (!guard.ok) return { error: guard.error };
 
   const { data: target } = await svc()
     .from('practice_members')
-    .select('id, role')
+    .select('id, active')
     .eq('id', memberId)
     .maybeSingle();
 
-  if (!target) return { error: 'Practitioner not found.' };
-  if (target.role !== 'provider') {
-    return { error: 'Only practitioners can be reactivated from this surface.' };
-  }
+  if (!target) return { error: 'Member not found.' };
+  if (target.active) return { error: 'Member is already active.' };
 
   const { error } = await svc()
     .from('practice_members')

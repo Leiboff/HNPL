@@ -7,28 +7,25 @@ import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenu
 import {
   updateBranchDetails,
   updateBranchBanking,
-  addDoctor,
-  updateDoctor,
-  deactivateDoctor,
-  reactivateDoctor,
+  addTeamMember,
+  updateTeamMember,
+  deactivateTeamMember,
+  reactivateTeamMember,
 } from '@/app/brand/actions';
 import BranchDetailsForm from './BranchDetailsForm';
 import BranchBankingForm from './BranchBankingForm';
 import BranchPerformance from './BranchPerformance';
-import DoctorsSection from './DoctorsSection';
+import TeamSection, { type TeamMemberRow } from './TeamSection';
 
-// ─── Brand-admin: branch detail (restructured) ─────────────────────────
+// ─── Brand-admin: branch detail (Team + performance + details) ─────────
 //
-// Three sections, top to bottom:
-//   1. Performance — hero (branch revenue in selected mode) + 12-month
-//      trend + per-doctor breakdown.
-//   2. Doctors — add / edit / deactivate practitioners on this branch.
-//   3. Practice details + banking — the existing edit-mode cards
-//      (unchanged; relocated into this structure).
+// Three sections top to bottom:
+//   1. Performance — net-only branch revenue, 12-month trend, per-doctor breakdown.
+//   2. Team — full membership roster (admins + providers), add / edit /
+//      deactivate / reactivate. Brick-prevention on last admin.
+//   3. Practice details + banking — the existing edit-mode cards.
 //
 // LOCKED columns stay READ-ONLY at the header (status, fee_percent).
-// Locked columns never enter any UPDATE payload — see the source-text
-// pins in app/brand/brand-management.test.ts + app/brand/brand-dashboard.test.ts.
 
 export const dynamic = 'force-dynamic';
 
@@ -51,9 +48,6 @@ export default async function BrandBranchEditPage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // Resolve the practice via service-role, then verify the caller is
-  // an active brand-admin of THAT practice's group. Cross-group
-  // isolation lives here and in every server action below.
   const s = svc();
   const { data: practice } = await s
     .from('practices')
@@ -76,7 +70,7 @@ export default async function BrandBranchEditPage({
     .eq('user_id', user.id)
     .eq('active', true)
     .maybeSingle();
-  if (!membership) notFound();  // 404 rather than 403 — same shape as a stranger asking
+  if (!membership) notFound();
 
   // Plans on this branch (scoped, service-role).
   const { data: rawPlans } = await s
@@ -86,48 +80,67 @@ export default async function BrandBranchEditPage({
     .limit(5000);
   const plans = (rawPlans ?? []) as Array<RevenuePlan & { created_at: string }>;
 
-  // Doctors — every provider-role member on this practice, active or
-  // deactivated. Include profiles for display names + email.
+  // Team — ALL members on this practice (any role), active or not.
+  // Previously scoped to role='provider'; the Team surface now
+  // surfaces admins too.
   const { data: rawMembers } = await s
     .from('practice_members')
-    .select('id, active, role, specialty, hpcsa_number, user_id, profiles ( first_name, last_name, email )')
-    .eq('practice_id', practiceId)
-    .eq('role', 'provider');
+    .select(`
+      id, active, role, specialty, hpcsa_number,
+      can_manage_practice, can_create_bills, user_id,
+      profiles ( first_name, last_name, email )
+    `)
+    .eq('practice_id', practiceId);
   const memberRows = (rawMembers ?? []) as Array<{
     id: string; active: boolean; role: string;
     specialty: string | null; hpcsa_number: string | null;
+    can_manage_practice: boolean; can_create_bills: boolean;
     user_id: string;
     profiles: { first_name: string | null; last_name: string | null; email: string | null } |
               { first_name: string | null; last_name: string | null; email: string | null }[] | null;
   }>;
 
-  const doctors = memberRows.map((m) => {
+  const teamMembers: TeamMemberRow[] = memberRows.map((m) => {
     const profile = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
     return {
-      memberId:    m.id,
-      firstName:   profile?.first_name ?? '',
-      lastName:    profile?.last_name  ?? '',
-      email:       profile?.email      ?? null,
-      specialty:   m.specialty,
-      hpcsaNumber: m.hpcsa_number,
-      active:      m.active,
-      userId:      m.user_id,
+      memberId:          m.id,
+      firstName:         profile?.first_name ?? '',
+      lastName:          profile?.last_name  ?? '',
+      email:             profile?.email      ?? null,
+      role:              (m.role as 'admin' | 'provider' | 'staff'),
+      active:            m.active,
+      canManagePractice: m.can_manage_practice,
+      canCreateBills:    m.can_create_bills,
+      specialty:         m.specialty,
+      hpcsaNumber:       m.hpcsa_number,
     };
   });
 
-  // Per-doctor revenue breakdown — reuse computeRevenue.byProvider,
-  // scoped to this branch. We need provider names for the rows; pull
-  // from the doctors we already have.
-  const providerRefs: RevenueProvider[] = doctors.map((d) => ({
-    id:       d.userId,
+  // Per-doctor revenue breakdown scoped to providers on this branch.
+  const providers = teamMembers.filter((m) => m.role === 'provider');
+  const providerRefs: RevenueProvider[] = providers.map((d) => ({
+    id:       d.memberId,   // placeholder — we key byProvider on user_id below
     fullName: `${d.firstName} ${d.lastName}`.trim() || '—',
   }));
+  // computeRevenue's byProvider keys off plan.provider_id which is a
+  // user_id, not a membership id. Build the ref list from user_id.
+  const providerRefsByUserId: RevenueProvider[] = memberRows
+    .filter((m) => m.role === 'provider')
+    .map((m) => {
+      const profile = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles;
+      return {
+        id: m.user_id,
+        fullName: `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || '—',
+      };
+    });
+  void providerRefs;
+
   const revenuePractices: RevenuePractice[] = [{
     id:          practiceId,
     name:        practice.name as string,
     fee_percent: Number(practice.fee_percent ?? 0),
   }];
-  const branchSummary = computeRevenue(plans, revenuePractices, providerRefs, {});
+  const branchSummary = computeRevenue(plans, revenuePractices, providerRefsByUserId, {});
 
   const doctorRows = branchSummary.byProvider.map((r) => ({
     providerId: r.id,
@@ -137,7 +150,6 @@ export default async function BrandBranchEditPage({
     net:        r.net,
   }));
 
-  // Branch 12-month series.
   const feeByPractice = new Map<string, number>([[practiceId, Number(practice.fee_percent ?? 0)]]);
   const monthly = buildMonthlySeries(plans as PlanForTrend[], feeByPractice);
 
@@ -162,29 +174,20 @@ export default async function BrandBranchEditPage({
         </p>
       </header>
 
-      {/* Section 1 — Performance (revenue + trend + per-doctor breakdown) */}
+      {/* Section 1 — Performance (net-only revenue + trend + per-doctor breakdown) */}
       <BranchPerformance
         branchName={practice.name as string}
-        totalGross={branchSummary.totalGross}
         totalNet={branchSummary.totalNet}
         activePlanCount={branchSummary.totalCount}
         monthly={monthly}
         doctorRows={doctorRows}
       />
 
-      {/* Section 2 — Doctors */}
-      <DoctorsSection
+      {/* Section 2 — Team (admins + providers) */}
+      <TeamSection
         practiceId={practiceId}
-        doctors={doctors.map((d) => ({
-          memberId:    d.memberId,
-          firstName:   d.firstName,
-          lastName:    d.lastName,
-          email:       d.email,
-          specialty:   d.specialty,
-          hpcsaNumber: d.hpcsaNumber,
-          active:      d.active,
-        }))}
-        actions={{ addDoctor, updateDoctor, deactivateDoctor, reactivateDoctor }}
+        members={teamMembers}
+        actions={{ addTeamMember, updateTeamMember, deactivateTeamMember, reactivateTeamMember }}
       />
 
       {/* Section 3 — Practice details + banking (existing edit cards) */}

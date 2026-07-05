@@ -2,24 +2,26 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { MonthPoint } from '@/lib/brand/monthlyRevenue';
 import BrandMonthlyChart from './BrandMonthlyChart';
+import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
+import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
 
 // ─── Group dashboard (n>=2 brand experience) ─────────────────────────
 //
-// Replaces the tile menu. One page, three sections, one gross/net
-// toggle that flips every figure at once:
-//   1. Hero — group revenue total in the selected mode.
-//   2. Trend — 12-month bar chart in the selected mode.
-//   3. Practice performance strip — one card per branch with revenue
-//      in the selected mode, active-plan count, and a delta vs
-//      previous month (cheap-to-compute from the same monthly data;
-//      shown only when previous-month data exists). Sorted by
-//      selected-mode revenue DESC.
+// Net-only. The whole brand surface renders the practice's own take
+// after BetterNow's commission. Gross is a book-keeping detail on the
+// server but never surfaced on this screen. The subtitle labels the
+// figure "net of commission" once, no toggle.
 //
-// The gross/net toggle is client state — it does not survive a page
-// refresh. That's intentional; the whole page renders in <150ms from
-// pre-aggregated inputs, so no URL param is needed.
+// Filters (client-state; not URL-persisted — the dropdown options are
+// generated from the caller's own group data, so filter IDs are
+// inherently clamped to the caller's own scope):
+//   • practice  — one branch, or all
+//   • doctor    — one provider, or all
+//   • range     — 3 / 6 / 12 months (last-N windows)
+// Filters combine (AND). The hero, trend chart, AND performance strip
+// all follow the same filter state — one consistent read across the
+// whole page.
 
 function formatRand(v: number): string {
   const [integer, decimal] = v.toFixed(2).split('.');
@@ -32,60 +34,122 @@ export type BrandInfo = {
   logoUrl: string | null;
 };
 
-export type BranchInfo = {
-  id:               string;
-  name:             string;
-  status:           string;
-  suburb:           string | null;
-  city:             string | null;
-  groupId:          string;
-  gross:            number;   // this branch's total gross (ACTIVE_FOR_REVENUE only)
-  net:              number;   // this branch's total net
-  activePlanCount:  number;
-  monthly:          MonthPoint[];  // this branch's own 12-month series
+export type BranchOption = {
+  id:       string;
+  name:     string;
+  status:   string;
+  suburb:   string | null;
+  city:     string | null;
+  groupId:  string;
+  feePct:   number;
+};
+
+export type ProviderOption = {
+  id:       string;   // user_id
+  fullName: string;
 };
 
 export type GroupDashboardProps = {
-  brands:      BrandInfo[];
-  branches:    BranchInfo[];
-  totalGross:  number;
-  totalNet:    number;
-  totalActive: number;
-  monthly:     MonthPoint[];  // group-level 12-month series (sum of branches')
+  brands:    BrandInfo[];
+  branches:  BranchOption[];
+  providers: ProviderOption[];
+  /** Raw plans for the whole group; the client computes filtered
+   *  revenue via computeRevenue + buildMonthlySeries. No collection
+   *  fields — see server-side scoping guardrails. */
+  plans:     Array<RevenuePlan & { created_at: string }>;
 };
+
+type RangeMonths = 3 | 6 | 12;
 
 export default function GroupDashboard({
   brands,
   branches,
-  totalGross,
-  totalNet,
-  totalActive,
-  monthly,
+  providers,
+  plans,
 }: GroupDashboardProps) {
-  const [mode, setMode] = useState<'gross' | 'net'>('gross');
+  const [practiceFilter, setPracticeFilter] = useState<string>('');   // '' = all
+  const [providerFilter, setProviderFilter] = useState<string>('');
+  const [rangeMonths,    setRangeMonths]    = useState<RangeMonths>(12);
 
-  const totalForMode = mode === 'gross' ? totalGross : totalNet;
+  // Filter clamp — dropdown values are read from the caller's own
+  // lists, but if a stale value ever ended up in state we defensively
+  // fall back to "all" rather than allowing an unmatched ID through.
+  const validPracticeIds = useMemo(() => new Set(branches.map((b) => b.id)), [branches]);
+  const validProviderIds = useMemo(() => new Set(providers.map((p) => p.id)), [providers]);
+  const clampedPracticeId = practiceFilter && validPracticeIds.has(practiceFilter) ? practiceFilter : null;
+  const clampedProviderId = providerFilter && validProviderIds.has(providerFilter) ? providerFilter : null;
 
-  // Sort branches by selected-mode revenue DESC. Recompute on mode
-  // flip so the strip stays intuitive.
+  // Date window — plans.created_at >= (now − rangeMonths months). The
+  // MonthPoint series still renders 12 slots (buildMonthlySeries
+  // always produces 12) but plans outside the window are excluded from
+  // BOTH the hero total and the chart, so the earlier months read as
+  // zero for 3-month/6-month selections. This is intentional — the
+  // strip stays a 12-month cumulative comparison unless the range
+  // narrows.
+  const cutoff = useMemo(() => {
+    if (rangeMonths === 12) return null;   // no cutoff for the default view
+    const d = new Date();
+    d.setMonth(d.getMonth() - rangeMonths);
+    d.setDate(1); d.setHours(0, 0, 0, 0);
+    return d;
+  }, [rangeMonths]);
+
+  const filteredPlans = useMemo(() => {
+    return plans.filter((p) => {
+      if (clampedPracticeId && p.practice_id !== clampedPracticeId) return false;
+      if (clampedProviderId && p.provider_id !== clampedProviderId) return false;
+      if (cutoff) {
+        const d = new Date(p.created_at);
+        if (d < cutoff) return false;
+      }
+      return true;
+    });
+  }, [plans, clampedPracticeId, clampedProviderId, cutoff]);
+
+  // Pure helpers — same as the server's aggregation, just applied to
+  // the filtered subset.
+  const feeByPractice = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of branches) m.set(b.id, b.feePct);
+    return m;
+  }, [branches]);
+
+  const revenuePractices: RevenuePractice[] = useMemo(
+    () => branches.map((b) => ({ id: b.id, name: b.name, fee_percent: b.feePct })),
+    [branches],
+  );
+  const revenueProviders: RevenueProvider[] = useMemo(
+    () => providers.map((p) => ({ id: p.id, fullName: p.fullName })),
+    [providers],
+  );
+
+  const summary = useMemo(
+    () => computeRevenue(filteredPlans, revenuePractices, revenueProviders, {}),
+    [filteredPlans, revenuePractices, revenueProviders],
+  );
+
+  const monthly = useMemo(
+    () => buildMonthlySeries(filteredPlans as PlanForTrend[], feeByPractice),
+    [filteredPlans, feeByPractice],
+  );
+
+  // Strip follows the same filters. Each branch card recomputes from
+  // filteredPlans — a branch with zero matching plans shows R0 but
+  // stays in the strip (so a "no revenue" branch remains visible,
+  // which is useful data).
+  const perBranchNet = useMemo(() => {
+    const m = new Map<string, { net: number; count: number }>();
+    for (const row of summary.byPractice) m.set(row.id, { net: row.net, count: row.count });
+    return m;
+  }, [summary]);
+
   const sortedBranches = useMemo(() => {
     return [...branches].sort((a, b) => {
-      const av = mode === 'gross' ? a.gross : a.net;
-      const bv = mode === 'gross' ? b.gross : b.net;
+      const av = perBranchNet.get(a.id)?.net ?? 0;
+      const bv = perBranchNet.get(b.id)?.net ?? 0;
       return bv - av;
     });
-  }, [branches, mode]);
-
-  // Cheap delta: compare the two most-recent months of each branch's
-  // own monthly series. `monthly.length` is always 12; the last two
-  // entries are current month and previous month.
-  function deltaPct(points: MonthPoint[], m: 'gross' | 'net'): number | null {
-    if (points.length < 2) return null;
-    const curr = m === 'gross' ? points[11].gross : points[11].net;
-    const prev = m === 'gross' ? points[10].gross : points[10].net;
-    if (prev <= 0) return null;
-    return ((curr - prev) / prev) * 100;
-  }
+  }, [branches, perBranchNet]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
@@ -98,9 +162,7 @@ export default function GroupDashboard({
         </div>
       </header>
 
-      {/* Quick actions — surfaced at the TOP so the two brand-owner
-          maintenance tasks (+ Add a practice, Brand settings) are the
-          first tap-target under the header, above the revenue read-out. */}
+      {/* Quick actions (top) */}
       <section aria-label="Quick actions" className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="group-quick-actions-top">
         <Link
           href="/brand/new-practice"
@@ -120,64 +182,103 @@ export default function GroupDashboard({
         </Link>
       </section>
 
-      {/* Hero — total revenue + gross/net toggle */}
+      {/* Hero — net total */}
       <section
         aria-labelledby="group-revenue-hero"
         className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm p-6"
       >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p
-              id="group-revenue-hero"
-              className="text-xs font-semibold uppercase tracking-widest"
-              style={{ color: '#13294B', opacity: 0.55 }}
+        <p
+          id="group-revenue-hero"
+          className="text-xs font-semibold uppercase tracking-widest"
+          style={{ color: '#13294B', opacity: 0.55 }}
+        >
+          Group revenue — active plans
+        </p>
+        <p className="text-3xl font-semibold mt-2" style={{ color: '#13294B' }} data-testid="group-hero-total">
+          {formatRand(summary.totalNet)}
+        </p>
+        <p className="text-xs text-gray-500 mt-1">
+          {summary.totalCount} active {summary.totalCount === 1 ? 'plan' : 'plans'} · net of commission
+        </p>
+      </section>
+
+      {/* Filters */}
+      <section
+        aria-labelledby="group-filters"
+        className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm p-4"
+        data-testid="group-filters"
+      >
+        <p id="group-filters" className="sr-only">Filters</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">Practice</label>
+            <select
+              value={practiceFilter}
+              onChange={(e) => setPracticeFilter(e.target.value)}
+              data-testid="group-filter-practice"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-900"
             >
-              Group revenue — active plans
-            </p>
-            <p className="text-3xl font-semibold mt-2" style={{ color: '#13294B' }} data-testid="group-hero-total">
-              {formatRand(totalForMode)}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              {totalActive} active {totalActive === 1 ? 'plan' : 'plans'} across your group.
-            </p>
+              <option value="">All practices</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
           </div>
-          <div className="inline-flex rounded-lg border border-gray-200 p-0.5" role="tablist" aria-label="Gross or net">
+
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">Doctor</label>
+            <select
+              value={providerFilter}
+              onChange={(e) => setProviderFilter(e.target.value)}
+              data-testid="group-filter-provider"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-900"
+            >
+              <option value="">All doctors</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>{p.fullName}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">Range</label>
+            <div className="inline-flex rounded-lg border border-gray-200 p-0.5" role="tablist" aria-label="Date range">
+              {([3, 6, 12] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={rangeMonths === m}
+                  onClick={() => setRangeMonths(m)}
+                  data-testid={`group-filter-range-${m}m`}
+                  className={`px-3 py-1 text-xs font-semibold rounded-md ${
+                    rangeMonths === m ? 'text-white' : 'text-gray-500'
+                  }`}
+                  style={rangeMonths === m
+                    ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }
+                    : {}}
+                >
+                  {m}m
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {(clampedPracticeId || clampedProviderId || rangeMonths !== 12) && (
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === 'gross'}
-              onClick={() => setMode('gross')}
-              data-testid="group-mode-gross"
-              className={`px-3 py-1 text-xs font-semibold rounded-md ${
-                mode === 'gross' ? 'text-white' : 'text-gray-500'
-              }`}
-              style={mode === 'gross'
-                ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }
-                : {}}
+              onClick={() => { setPracticeFilter(''); setProviderFilter(''); setRangeMonths(12); }}
+              data-testid="group-filter-clear"
+              className="text-xs text-gray-500 hover:underline ml-auto"
             >
-              Gross
+              Clear all
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'net'}
-              onClick={() => setMode('net')}
-              data-testid="group-mode-net"
-              className={`px-3 py-1 text-xs font-semibold rounded-md ${
-                mode === 'net' ? 'text-white' : 'text-gray-500'
-              }`}
-              style={mode === 'net'
-                ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }
-                : {}}
-            >
-              Net
-            </button>
-          </div>
+          )}
         </div>
       </section>
 
-      {/* Trend — 12-month chart in the selected mode */}
-      <BrandMonthlyChart points={monthly} mode={mode} />
+      {/* Trend */}
+      <BrandMonthlyChart points={monthly} />
 
       {/* Practice performance strip */}
       <section aria-labelledby="branches-heading" className="space-y-3">
@@ -192,8 +293,7 @@ export default function GroupDashboard({
 
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="branch-strip">
           {sortedBranches.map((b) => {
-            const value = mode === 'gross' ? b.gross : b.net;
-            const delta = deltaPct(b.monthly, mode);
+            const bucket = perBranchNet.get(b.id) ?? { net: 0, count: 0 };
             const brand = brands.find((g) => g.id === b.groupId);
             return (
               <li key={b.id} className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm p-4">
@@ -217,22 +317,14 @@ export default function GroupDashboard({
                   </span>
                 </div>
 
-                <div className="mt-3 flex items-baseline gap-2">
-                  <p className="text-2xl font-semibold" style={{ color: '#13294B' }} data-testid={`branch-value-${b.id}`}>
-                    {formatRand(value)}
-                  </p>
-                  {delta !== null && (
-                    <span className={`text-xs font-semibold ${
-                      delta > 0 ? 'text-emerald-700' : delta < 0 ? 'text-red-700' : 'text-gray-500'
-                    }`}>
-                      {delta > 0 ? '↑' : delta < 0 ? '↓' : ''} {Math.abs(delta).toFixed(0)}%
-                    </span>
-                  )}
-                </div>
+                <p className="mt-3 text-2xl font-semibold" style={{ color: '#13294B' }} data-testid={`branch-value-${b.id}`}>
+                  {formatRand(bucket.net)}
+                </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  {b.activePlanCount} active {b.activePlanCount === 1 ? 'plan' : 'plans'} · {mode === 'gross' ? 'gross' : 'net'}
+                  {bucket.count} active {bucket.count === 1 ? 'plan' : 'plans'} · net
                 </p>
 
+                {/* Single entry point — the branch page is the ONE way in. */}
                 <div className="mt-3 flex flex-wrap gap-3 text-xs">
                   <Link
                     href={`/brand/branch/${b.id}`}
@@ -241,12 +333,6 @@ export default function GroupDashboard({
                     data-testid={`branch-drilldown-${b.id}`}
                   >
                     Open branch →
-                  </Link>
-                  <Link
-                    href={`/practice?practiceId=${b.id}`}
-                    className="text-gray-500 hover:underline"
-                  >
-                    Practice dashboard
                   </Link>
                 </div>
               </li>
