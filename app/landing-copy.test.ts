@@ -31,7 +31,7 @@ const LANDING = readFileSync(resolve(ROOT, 'app/LandingPage.tsx'), 'utf8');
 
 describe('Forbidden card-preauth / card-limit / no-check strings — all absent', () => {
   const FORBIDDEN = [
-    // Old model card-hold framing
+    // Old model card-hold / preauth framing (must never come back)
     'on your credit card',
     'on their credit card',
     'reserve the bill amount',
@@ -44,13 +44,12 @@ describe('Forbidden card-preauth / card-limit / no-check strings — all absent'
     // Old model card-limit / no-new-debt framing
     'available limit',
     'existing credit card',
-    'Visa or Mastercard',
     'No new debt',
     'no new debt',
     // Old model no-credit-check claim
     'no applications and no credit checks',
     'no credit checks',
-    // Old FAQ heads
+    // Old FAQ heads (deleted)
     'How does it work on my card',
     'Have I been charged the full amount',
     'Will I see the hold on my statement',
@@ -58,6 +57,13 @@ describe('Forbidden card-preauth / card-limit / no-check strings — all absent'
     'Your own credit, used smarter',
     'If your card has the available limit',
     'Approved on the spot',
+    // Prior debit-order rail wording (from c870f18, now corrected —
+    // collection is tokenised card charges, not debit orders).
+    'debit order',
+    'DebiCheck',
+    'A South African bank account',
+    'no card required',
+    'a bank account (so we can collect',
   ];
 
   for (const bad of FORBIDDEN) {
@@ -255,13 +261,17 @@ describe('Honest allowance + credit-check framing present', () => {
     expect(LANDING).toMatch(/interest-free healthcare allowance[\s\S]*?spending limit/);
   });
 
-  it('the "When are instalments collected?" FAQ names DebiCheck / debit order', () => {
+  it('the "When are instalments collected?" FAQ describes card-charge collection (no debit order)', () => {
     expect(LANDING).toMatch(/When are instalments collected\?/);
-    expect(LANDING).toMatch(/DebiCheck debit order/);
+    expect(LANDING).toMatch(/Automatically charged to your saved card on the salary dates you choose/);
   });
 
-  it('the "What do I need to use betternow?" FAQ names bank account + ID + affordability check', () => {
-    expect(LANDING).toMatch(/A South African bank account[\s\S]*?debit order[\s\S]*?ID[\s\S]*?affordability check/);
+  it('the "What do I need to use betternow?" FAQ names eligibility (18+, good credit) + debit or credit card + ID', () => {
+    expect(LANDING).toMatch(/What do I need to use betternow\?/);
+    expect(LANDING).toMatch(/18 or older with a good credit record/);
+    expect(LANDING).toMatch(/debit or credit card \(Visa or Mastercard\)/);
+    expect(LANDING).toMatch(/your ID for a quick verification/);
+    expect(LANDING).toMatch(/credit and affordability check/);
   });
 
   it('the trust pillar reframed to "Checked for affordability"', () => {
@@ -269,12 +279,30 @@ describe('Honest allowance + credit-check framing present', () => {
     expect(LANDING).toMatch(/quick affordability check at signup/);
   });
 
-  it('the getting-started pillars are SA-bank-account + a-couple-of-minutes (no card requirement)', () => {
-    expect(LANDING).toMatch(/<h4>A South African bank account<\/h4>/);
+  it('the getting-started pillars are "A debit or credit card" + "A couple of minutes"', () => {
+    expect(LANDING).toMatch(/<h4>A debit or credit card<\/h4>/);
     expect(LANDING).toMatch(/<h4>A couple of minutes<\/h4>/);
-    // The old "A credit card" and "30 seconds" pillars are gone.
+    // Pillar 1 body describes tokenised card charges — no bank-account
+    // / debit-order fallback.
+    expect(LANDING).toMatch(/charged automatically to your Visa or Mastercard/);
+    // Pillar 2 body states eligibility (18+ / good credit record).
+    expect(LANDING).toMatch(/18 or older with a good credit record/);
+    // Old pillars (both the c870f18 bank-account version and the
+    // pre-c870f18 "A credit card" version + "30 seconds") are all gone.
+    expect(LANDING).not.toMatch(/<h4>A South African bank account<\/h4>/);
     expect(LANDING).not.toMatch(/<h4>A credit card<\/h4>/);
     expect(LANDING).not.toMatch(/<h4>30 seconds<\/h4>/);
+  });
+
+  it('patient Step 2 and Step 3 describe card charges (no debit order language)', () => {
+    // Steps live inside the patient section .steps container. Pin the
+    // card-charge phrases the copy pass installed.
+    expect(LANDING).toMatch(/charged automatically to your card on your next paydays/);
+    expect(LANDING).toMatch(/Each instalment is charged to your saved card automatically on the date you chose/);
+  });
+
+  it('practice Step 2 describes card charges (no debit order)', () => {
+    expect(LANDING).toMatch(/interest-free instalments charged automatically to their card, timed to their salary dates/);
   });
 });
 

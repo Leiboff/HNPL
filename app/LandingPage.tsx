@@ -144,13 +144,13 @@ export default function LandingPage() {
               <div className="num">STEP 2</div>
               <div className="ic"><CalendarIcon /></div>
               <h3>Choose Pay in 2 or Pay in 3</h3>
-              <p>Split your bill into 2 or 3 equal, interest-free instalments timed to your salary dates. Pay the first today, the rest by debit order on your next paydays.</p>
+              <p>Split your bill into 2 or 3 equal, interest-free instalments timed to your salary dates. Pay the first today, the rest charged automatically to your card on your next paydays.</p>
             </div>
             <div className="step reveal">
               <div className="num">STEP 3</div>
               <div className="ic"><CheckIcon /></div>
               <h3>Pay over your paydays</h3>
-              <p>Each instalment comes off automatically by debit order on the date you chose. The price never changes — you pay your bill, never a cent more. Pay early any time, free.</p>
+              <p>Each instalment is charged to your saved card automatically on the date you chose. The price never changes — you pay your bill, never a cent more. Pay early any time, free.</p>
             </div>
           </div>
 
@@ -188,14 +188,14 @@ export default function LandingPage() {
           </div>
           <div className="reqs">
             <div className="pillar reveal">
-              <div className="ic"><CashIcon /></div>
-              <h4>A South African bank account</h4>
-              <p>Instalments come off by debit order on the salary dates you choose. No new loan, no card required.</p>
+              <div className="ic"><CardIcon /></div>
+              <h4>A debit or credit card</h4>
+              <p>Your instalments are charged automatically to your Visa or Mastercard — debit or credit.</p>
             </div>
             <div className="pillar reveal">
               <div className="ic"><ClockIcon /></div>
               <h4>A couple of minutes</h4>
-              <p>Sign up, have your ID handy for a quick verification, and complete an affordability check — all online.</p>
+              <p>Sign up, have your ID handy, and complete a quick credit + affordability check — all online. You&apos;ll need to be 18 or older with a good credit record.</p>
             </div>
           </div>
         </div>
@@ -221,7 +221,7 @@ export default function LandingPage() {
               <div className="num">STEP 2</div>
               <div className="ic"><ClockIcon /></div>
               <h3>Patient pays in 2 or 3</h3>
-              <p>They split it into interest-free instalments by debit order, timed to their salary dates. No lengthy approvals.</p>
+              <p>They split it into interest-free instalments charged automatically to their card, timed to their salary dates. No lengthy approvals.</p>
             </div>
             <div className="step reveal">
               <div className="num">STEP 3</div>
@@ -309,8 +309,8 @@ export default function LandingPage() {
             <details className="q reveal"><summary>Is it really interest-free?<span className="pm" /></summary><div className="a">Yes. You repay exactly your bill amount, split into 2 or 3 instalments. No interest, no fees added to your plan.</div></details>
             <details className="q reveal"><summary>How does my allowance work?<span className="pm" /></summary><div className="a">Once you&apos;re approved, you get an interest-free healthcare allowance — a spending limit you can use at any betternow practice. Bills get split into 2 or 3 instalments against your allowance, and your available balance reflects what you&apos;ve repaid.</div></details>
             <details className="q reveal"><summary>Is there a credit check?<span className="pm" /></summary><div className="a">Yes — a quick credit and affordability check when you sign up, done once, to set your allowance responsibly. It takes a couple of minutes online.</div></details>
-            <details className="q reveal"><summary>What do I need to use betternow?<span className="pm" /></summary><div className="a">A South African bank account (so we can collect instalments by debit order), your ID for a quick verification, and a couple of minutes to complete the credit and affordability check.</div></details>
-            <details className="q reveal"><summary>When are instalments collected?<span className="pm" /></summary><div className="a">Automatically, by DebiCheck debit order on the salary dates you choose. Pay early any time, free of charge.</div></details>
+            <details className="q reveal"><summary>What do I need to use betternow?<span className="pm" /></summary><div className="a">You&apos;ll need to be 18 or older with a good credit record. On the practical side: a debit or credit card (Visa or Mastercard) for us to charge instalments to, your ID for a quick verification, and a couple of minutes to complete the credit and affordability check.</div></details>
+            <details className="q reveal"><summary>When are instalments collected?<span className="pm" /></summary><div className="a">Automatically charged to your saved card on the salary dates you choose. Pay early any time, free of charge.</div></details>
             <details className="q reveal"><summary>What does it cost my practice?<span className="pm" /></summary><div className="a">You receive the bill upfront, less a small percentage we keep as our fee for running collection and carrying the process. The exact fee depends on your practice — get in touch and we&apos;ll walk you through your terms.</div></details>
             <details className="q reveal"><summary>Is my information safe?<span className="pm" /></summary><div className="a">Your data is encrypted, processed over secure rails, and handled in line with POPIA. We never sell your information.</div></details>
           </div>
@@ -409,6 +409,10 @@ function ShieldIcon({ size = 22 }: { size?: number }) {
 
 function ShieldCheckIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></svg>;
+}
+
+function CardIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /></svg>;
 }
 
 function PeopleIcon() {
