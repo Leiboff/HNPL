@@ -51,7 +51,7 @@ export default function PracticeHeader({ practiceName }: { practiceName: string 
 
         {/* Desktop: logout */}
         <button
-          onClick={logoutAndRedirect}
+          onClick={() => logoutAndRedirect()}
           className="hidden md:inline-flex rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
         >
           Log out
@@ -100,7 +100,7 @@ export default function PracticeHeader({ practiceName }: { practiceName: string 
           <div className="pt-1 border-t border-gray-100 mt-1">
             <button
               type="button"
-              onClick={logoutAndRedirect}
+              onClick={() => logoutAndRedirect()}
               className="flex w-full px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             >
               Sign out

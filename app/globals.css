@@ -1,7 +1,30 @@
 @import "tailwindcss";
 
+/* ─── Light-mode forced globally ─────────────────────────────────────────
+ *
+ * The app has no dark theme. We used to switch --background to #0a0a0a
+ * inside a prefers-color-scheme: dark media query — which flipped any
+ * screen that relied on the body's background (brand dashboard, some
+ * practice sub-routes) to black on phones with OS dark mode. Rather
+ * than patch every affected surface, force light globally:
+ *
+ *   • color-scheme: light         — tells the UA to render form
+ *                                    controls, scrollbars, and canvas
+ *                                    in light mode regardless of OS.
+ *   • :root vars pinned to light  — no @media (prefers-color-scheme: dark)
+ *                                    override, so any component that
+ *                                    reads var(--background) or
+ *                                    var(--foreground) stays light.
+ *   • body { background }         — a concrete fallback so a route
+ *                                    that fails to declare its own bg
+ *                                    still renders the app's standard
+ *                                    light teal-white surface. This
+ *                                    matches PracticeShell, patient
+ *                                    layout, login/signup. */
+
 :root {
-  --background: #ffffff;
+  color-scheme: light;
+  --background: #f7fbfb;
   --foreground: #171717;
 }
 
@@ -10,13 +33,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

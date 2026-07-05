@@ -221,7 +221,7 @@ export default function SettingsSheet({ firstName, lastName, email, phone, open:
 
               {/* Sign out */}
               <button
-                onClick={logoutAndRedirect}
+                onClick={() => logoutAndRedirect()}
                 className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-red-600 hover:bg-red-50 transition-colors"
               >
                 <LogOutIcon />

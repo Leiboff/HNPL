@@ -4,6 +4,7 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import AdminNav from './AdminNav';
 import AdminBottomNav from './AdminBottomNav';
+import InactivityGuard from '@/lib/auth/InactivityGuard';
 
 // Persistent shell for every /admin/* route — mirrors the patient
 // portal: sticky top bar with brand + logout, desktop left sidebar,
@@ -94,6 +95,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
       {/* ── Mobile bottom nav ─────────────────────────────────────── */}
       <AdminBottomNav counts={counts} />
+
+      {/* Inactivity auto-logout — admin tuning: warn at 10 min idle,
+          log out 10 min later (20 min total). */}
+      <InactivityGuard minutesIdle={10} minutesWarn={10} />
     </div>
   );
 }

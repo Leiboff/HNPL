@@ -5,7 +5,7 @@ import { logoutAndRedirect } from '@/lib/auth/logout';
 export default function LogoutButton() {
   return (
     <button
-      onClick={logoutAndRedirect}
+      onClick={() => logoutAndRedirect()}
       className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
     >
       Log out

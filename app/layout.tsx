@@ -56,6 +56,10 @@ export const viewport: Viewport = {
   // user can pinch-zoom on small text. maximumScale=5 is the safe
   // default for that.
   maximumScale: 5,
+  // Force light rendering of UA-owned chrome (form controls, scrollbars,
+  // the canvas colour used before hydration). Paired with :root {
+  // color-scheme: light } in globals.css and an explicit body background.
+  colorScheme: "light",
 };
 
 export default function RootLayout({
@@ -67,8 +71,16 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${poppins.variable} h-full antialiased`}
+      style={{ colorScheme: 'light' }}
     >
-      <body className="min-h-full flex flex-col">
+      <head>
+        {/* Belt-and-braces: some UAs (older iOS Safari) honour the meta
+            tag but ignore the CSS declaration until after the first
+            paint. Declaring both ensures the canvas is light BEFORE
+            hydration on every browser we care about. */}
+        <meta name="color-scheme" content="light" />
+      </head>
+      <body className="min-h-full flex flex-col bg-[#f7fbfb]">
         {children}
         {/* Service-worker registration is a no-op when the runtime
             doesn't support it (older browsers); see SwRegister for

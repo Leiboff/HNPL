@@ -5,6 +5,7 @@ import PatientBottomNav from './PatientBottomNav';
 import LogoutButton from './LogoutButton';
 import InstallPrompt from '@/app/_pwa/InstallPrompt';
 import PostLoginPasskeyPrompt from './PostLoginPasskeyPrompt';
+import InactivityGuard from '@/lib/auth/InactivityGuard';
 
 export default async function PatientLayout({
   children,
@@ -82,6 +83,10 @@ export default async function PatientLayout({
           frequency-capped. Client component self-hides when the user
           already has a passkey. */}
       <PostLoginPasskeyPrompt serverAllows={serverAllowsPasskeyPrompt} />
+
+      {/* Inactivity auto-logout — patient tuning: warn at 5 min idle,
+          log out 5 min later (10 min total). */}
+      <InactivityGuard minutesIdle={5} minutesWarn={5} />
     </div>
   );
 }

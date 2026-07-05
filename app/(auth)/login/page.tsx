@@ -32,6 +32,13 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     const msg = params.get('message');
     if (msg) setNotice(decodeURIComponent(msg));
+    // Inactivity auto-logout landing — informational, not an error.
+    // Set once here; the general `?message=` handler wouldn't add any
+    // useful specificity for this particular reason code.
+    const reason = params.get('reason');
+    if (reason === 'inactivity') {
+      setNotice('You were signed out due to inactivity.');
+    }
   }, []);
 
   // Surface passkey hook errors in the existing error region. user_cancelled

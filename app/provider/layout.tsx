@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
+import InactivityGuard from '@/lib/auth/InactivityGuard';
 
 export default async function ProviderLayout({ children }: { children: React.ReactNode }) {
   // Defense-in-depth: bounce to /login when no session, /verify-email when
@@ -56,6 +57,10 @@ export default async function ProviderLayout({ children }: { children: React.Rea
 
         <main className="flex-1 min-w-0">{children}</main>
       </div>
+
+      {/* Inactivity auto-logout — provider tuning: warn at 10 min idle,
+          log out 10 min later (20 min total). */}
+      <InactivityGuard minutesIdle={10} minutesWarn={10} />
     </div>
   );
 }

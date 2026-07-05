@@ -25,7 +25,7 @@ import { createClient } from '@/lib/supabase/client';
 // One source of truth for the three logout button shapes in the app
 // (dashboard, patient, settings sheet).
 
-export async function logoutAndRedirect(): Promise<void> {
+export async function logoutAndRedirect(target: string = '/login'): Promise<void> {
   const supabase = createClient();
   try {
     await supabase.auth.signOut({ scope: 'local' });
@@ -37,7 +37,13 @@ export async function logoutAndRedirect(): Promise<void> {
     // window.location.assign forces a full navigation (vs the SPA
     // soft-navigation Link / router.push would do). A full nav re-runs
     // middleware against the (now-cleared) cookies, so the unauthenticated
-    // state is what /login renders against.
-    window.location.assign('/login');
+    // state is what the landing page renders against.
+    //
+    // `target` defaults to '/login' so every existing caller
+    // (dashboard, patient, settings sheet) is unchanged. The
+    // InactivityGuard passes `/login?reason=inactivity` so the login
+    // page can render the informational "signed out due to inactivity"
+    // notice.
+    window.location.assign(target);
   }
 }
