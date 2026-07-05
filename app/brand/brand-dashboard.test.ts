@@ -393,6 +393,38 @@ describe('GroupDashboard component — single toggle drives hero, trend, and str
   });
 });
 
+describe('GroupDashboard layout — quick actions ABOVE the revenue hero', () => {
+  it('the quick-actions section renders BEFORE the hero total in DOM order', () => {
+    const quickTop = GROUP_DASH.indexOf('data-testid="group-quick-actions-top"');
+    const heroTotal = GROUP_DASH.indexOf('data-testid="group-hero-total"');
+    expect(quickTop).toBeGreaterThan(0);
+    expect(heroTotal).toBeGreaterThan(0);
+    expect(quickTop).toBeLessThan(heroTotal);
+  });
+
+  it('quick actions render BEFORE the branch performance strip too', () => {
+    const quickTop = GROUP_DASH.indexOf('data-testid="group-quick-actions-top"');
+    const strip = GROUP_DASH.indexOf('data-testid="branch-strip"');
+    expect(quickTop).toBeGreaterThan(0);
+    expect(strip).toBeGreaterThan(0);
+    expect(quickTop).toBeLessThan(strip);
+  });
+
+  it('both quick-action links still exist with the same testids/hrefs', () => {
+    expect(GROUP_DASH).toMatch(/href="\/brand\/new-practice"[\s\S]*?data-testid="group-add-practice"/);
+    expect(GROUP_DASH).toMatch(/href="\/brand\/group"[\s\S]*?data-testid="group-settings"/);
+  });
+
+  it('quick actions are NOT duplicated at the bottom (single section, one location)', () => {
+    // Two occurrences would mean the old bottom section wasn't
+    // removed — regression pin.
+    const addOccurrences = GROUP_DASH.match(/data-testid="group-add-practice"/g) ?? [];
+    const settingsOccurrences = GROUP_DASH.match(/data-testid="group-settings"/g) ?? [];
+    expect(addOccurrences.length).toBe(1);
+    expect(settingsOccurrences.length).toBe(1);
+  });
+});
+
 describe('BranchPerformance component — same single-mode discipline', () => {
   it('one `mode` state variable', () => {
     const modeStates = PERF.match(/useState<'gross' \| 'net'>/g) ?? [];

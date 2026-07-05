@@ -98,6 +98,28 @@ export default function GroupDashboard({
         </div>
       </header>
 
+      {/* Quick actions — surfaced at the TOP so the two brand-owner
+          maintenance tasks (+ Add a practice, Brand settings) are the
+          first tap-target under the header, above the revenue read-out. */}
+      <section aria-label="Quick actions" className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="group-quick-actions-top">
+        <Link
+          href="/brand/new-practice"
+          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+          data-testid="group-add-practice"
+        >
+          <p className="text-xs uppercase tracking-widest text-gray-500">Add</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>+ Add a practice</p>
+        </Link>
+        <Link
+          href="/brand/group"
+          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+          data-testid="group-settings"
+        >
+          <p className="text-xs uppercase tracking-widest text-gray-500">Brand</p>
+          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Settings &amp; logo</p>
+        </Link>
+      </section>
+
       {/* Hero — total revenue + gross/net toggle */}
       <section
         aria-labelledby="group-revenue-hero"
@@ -233,25 +255,6 @@ export default function GroupDashboard({
         </ul>
       </section>
 
-      {/* Quick actions — secondary affordances (add practice + brand settings) */}
-      <section aria-label="Quick actions" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Link
-          href="/brand/new-practice"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-          data-testid="group-add-practice"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Add</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>+ Add a practice</p>
-        </Link>
-        <Link
-          href="/brand/group"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-          data-testid="group-settings"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Brand</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Settings &amp; logo</p>
-        </Link>
-      </section>
     </div>
   );
 }
