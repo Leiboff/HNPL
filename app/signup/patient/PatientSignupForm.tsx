@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { signUpPatient } from './actions';
 import SalaryDayPicker from '@/components/SalaryDayPicker';
+import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import {
   isValidEmail,
   normalizePhoneZA,
@@ -188,6 +189,20 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           <p className="mt-0.5 text-sm text-gray-600">Register to view and accept it.</p>
         </div>
       )}
+
+      {/* Continue with Google — patient signup shortcut. Google users
+          skip the email + password step; every OTHER onboarding step
+          (email confirmed via Google, ID + phone + salary date + credit
+          + affordability check) still applies via the standard patient
+          surfaces after they land in /patient. */}
+      <div className="mb-5 space-y-3" data-testid="patient-signup-google-block">
+        <ContinueWithGoogleButton label="Continue with Google" />
+        <div className="relative flex items-center">
+          <div className="grow border-t border-gray-200" />
+          <span className="mx-3 text-xs text-gray-400">or with email</span>
+          <div className="grow border-t border-gray-200" />
+        </div>
+      </div>
 
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <div className="grid grid-cols-2 gap-3">

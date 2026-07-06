@@ -1,0 +1,224 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// ─── Google OAuth (patients) — source-text pins ────────────────────────
+//
+// Additive Google sign-in for patients only. Shape:
+//
+//   1. Button renders on /login (with "For patients" caption) and on
+//      /signup/patient. NOT on /signup/practice (staff invite-only).
+//   2. signInWithOAuth('google') with a redirectTo that reuses the
+//      existing /auth/callback and a hardcoded ?next=/dashboard so
+//      the callback's safeNext clamp cannot be tampered with.
+//   3. /auth/callback exchanges the code (unchanged) AND runs an
+//      OAuth profile-sync fixup that fills in first_name/last_name
+//      from user_metadata (Google emits given_name/family_name) —
+//      idempotent, never overwrites role, defensive against the
+//      profile trigger missing.
+//   4. Dispatcher (/dashboard) still routes by profile.role; Google
+//      sign-ins funnel through it just like email/password.
+
+const ROOT = resolve(process.cwd());
+const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
+
+const BUTTON      = read('app/_components/ContinueWithGoogleButton.tsx');
+const CALLBACK    = read('app/auth/callback/route.ts');
+const LOGIN       = read('app/(auth)/login/page.tsx');
+const PT_SIGNUP_F = read('app/signup/patient/PatientSignupForm.tsx');
+const PR_SIGNUP   = read('app/signup/practice/page.tsx');
+const DISPATCHER  = read('app/dashboard/page.tsx');
+
+// ─── Button component ────────────────────────────────────────────────
+
+describe('ContinueWithGoogleButton — Google OAuth initiation', () => {
+  it('calls supabase.auth.signInWithOAuth with provider: google', () => {
+    expect(BUTTON).toMatch(/signInWithOAuth\(\s*\{[\s\S]*?provider:\s*['"]google['"]/);
+  });
+
+  it('sends the user back through /auth/callback with a hardcoded next=/dashboard', () => {
+    // origin-derived at click time (`${origin}/auth/callback?next=/dashboard`).
+    expect(BUTTON).toMatch(/\/auth\/callback\?next=\/dashboard/);
+    // The `next` value in the button is NEVER user-tampered — it's a
+    // literal so a click cannot smuggle an open-redirect target.
+    expect(BUTTON).not.toMatch(/searchParams|new URLSearchParams/);
+  });
+
+  it('uses the SSR browser client', () => {
+    expect(BUTTON).toMatch(/from ['"]@\/lib\/supabase\/client['"]/);
+  });
+
+  it('honours Google branding — white background, uncoloured "G" glyph, standard label', () => {
+    // No brand-navy/teal gradient on the button surface.
+    expect(BUTTON).not.toMatch(/linear-gradient\(135deg,\s*#13294B/);
+    // The label defaults to Google's approved wording.
+    expect(BUTTON).toMatch(/label = ['"]Continue with Google['"]/);
+    // 4-colour "G" glyph — pin the Google colours are all present.
+    expect(BUTTON).toMatch(/#4285F4/);
+    expect(BUTTON).toMatch(/#34A853/);
+    expect(BUTTON).toMatch(/#FBBC05/);
+    expect(BUTTON).toMatch(/#EA4335/);
+  });
+
+  it('exposes a stable testid for wiring pins', () => {
+    expect(BUTTON).toMatch(/data-testid="continue-with-google"/);
+  });
+});
+
+// ─── Placement (patient-only) ────────────────────────────────────────
+
+describe('Placement — patient surfaces only', () => {
+  it('/login renders the Google block with "For patients" caption', () => {
+    expect(LOGIN).toMatch(/from ['"]@\/app\/_components\/ContinueWithGoogleButton['"]/);
+    expect(LOGIN).toMatch(/<ContinueWithGoogleButton\b/);
+    expect(LOGIN).toMatch(/data-testid="login-google-block"/);
+    expect(LOGIN).toMatch(/For patients/);
+  });
+
+  it('/signup/patient renders the Google block above the email form', () => {
+    expect(PT_SIGNUP_F).toMatch(/from ['"]@\/app\/_components\/ContinueWithGoogleButton['"]/);
+    expect(PT_SIGNUP_F).toMatch(/<ContinueWithGoogleButton\b/);
+    expect(PT_SIGNUP_F).toMatch(/data-testid="patient-signup-google-block"/);
+
+    // The Google block MUST render before the email/password form so
+    // it's the first visible option. Pin DOM order via string index.
+    const googleIdx = PT_SIGNUP_F.indexOf('data-testid="patient-signup-google-block"');
+    const formIdx   = PT_SIGNUP_F.indexOf('<form onSubmit={handleSubmit}');
+    expect(googleIdx).toBeGreaterThan(0);
+    expect(formIdx).toBeGreaterThan(googleIdx);
+  });
+
+  it('/signup/practice does NOT render the Google button (staff = email/password)', () => {
+    expect(PR_SIGNUP).not.toMatch(/ContinueWithGoogleButton/);
+    expect(PR_SIGNUP).not.toMatch(/signInWithOAuth/);
+  });
+});
+
+// ─── /auth/callback: OAuth handling + profile sync ────────────────────
+
+describe('/auth/callback — reuses PKCE exchange; adds OAuth profile-sync', () => {
+  it('still calls exchangeCodeForSession and honours safeNext', () => {
+    expect(CALLBACK).toMatch(/exchangeCodeForSession\(code\)/);
+    expect(CALLBACK).toMatch(/function safeNext/);
+    // A raw `next` value that starts with `//` (protocol-relative) is
+    // rejected — pin the guard.
+    expect(CALLBACK).toMatch(/raw\.startsWith\(['"`]\/\/['"`]\)/);
+  });
+
+  it('defines ensureOAuthProfileSynced and calls it only for OAuth users', () => {
+    expect(CALLBACK).toMatch(/async function ensureOAuthProfileSynced/);
+    // The check that gates the sync — user has at least one non-email
+    // identity (i.e. OAuth provider).
+    expect(CALLBACK).toMatch(/identities\.some\(\(i\)\s*=>\s*i\.provider\s*!==\s*['"]email['"]\)/);
+    // ensureOAuthProfileSynced is invoked from the callback after the
+    // exchange succeeds — pin the CALL site (which uses `await` and
+    // passes user.id), not the function definition higher in the file.
+    const exchangeIdx = CALLBACK.indexOf('exchangeCodeForSession(code)');
+    const syncIdx     = CALLBACK.indexOf('await ensureOAuthProfileSynced(');
+    expect(exchangeIdx).toBeGreaterThan(0);
+    expect(syncIdx).toBeGreaterThan(exchangeIdx);
+  });
+
+  it('extractOAuthName reads given_name/family_name (Google) with sensible fallbacks', () => {
+    expect(CALLBACK).toMatch(/md\.given_name/);
+    expect(CALLBACK).toMatch(/md\.family_name/);
+    // Fallbacks: first_name/last_name (other providers), then
+    // full_name/name split on first space.
+    expect(CALLBACK).toMatch(/md\.first_name/);
+    expect(CALLBACK).toMatch(/md\.last_name/);
+    expect(CALLBACK).toMatch(/md\.full_name/);
+  });
+
+  it('never overwrites existing role or non-empty name fields (idempotent)', () => {
+    // The sync only fills name fields WHEN THEY'RE CURRENTLY EMPTY.
+    expect(CALLBACK).toMatch(/if\s*\(!profile\.first_name\s*&&\s*names\.first\)/);
+    expect(CALLBACK).toMatch(/if\s*\(!profile\.last_name\s*&&\s*names\.last\)/);
+    // No `role:` in the UPDATE payload — a Google sign-in never
+    // demotes an existing staff account.
+    const scope = CALLBACK.slice(CALLBACK.indexOf('async function ensureOAuthProfileSynced'));
+    const updateMatch = scope.match(/\.update\(\s*(updates|\{[\s\S]*?\})\s*\)/);
+    expect(updateMatch).not.toBeNull();
+    // The updates object only ever gets first_name / last_name keys —
+    // pin that no other column ever ends up in it.
+    const allSetsInScope = scope.match(/updates\.\w+/g) ?? [];
+    for (const setter of allSetsInScope) {
+      const col = setter.replace('updates.', '');
+      expect(['first_name', 'last_name']).toContain(col);
+    }
+  });
+
+  it('provisions a defensive profile row (role=patient) if the trigger somehow missed', () => {
+    // The insert branch handles the "trigger didn't fire" edge case.
+    // Ensure the fallback insert defaults role='patient'.
+    expect(CALLBACK).toMatch(/role:\s*['"]patient['"]/);
+    // Uses service-role for the write (session client can't
+    // insert into another user's row under standard RLS).
+    expect(CALLBACK).toMatch(/createServiceClient/);
+  });
+
+  it('sync failures are non-blocking — the user still redirects to /dashboard', () => {
+    // The try/catch wraps ensureOAuthProfileSynced so a fixup error
+    // never strands the user on the callback.
+    const scope = CALLBACK.slice(CALLBACK.indexOf('exchangeCodeForSession(code)'));
+    expect(scope).toMatch(/try\s*\{[\s\S]*?ensureOAuthProfileSynced\([\s\S]*?\}\s*catch/);
+    expect(scope).toMatch(/non-blocking/);
+  });
+});
+
+// ─── Dispatcher unchanged (Google funnels through /dashboard) ─────────
+
+describe('Dispatcher — Google sign-ins funnel through the same role router', () => {
+  it('/dashboard still routes on profile.role → /patient / /brand / /practice / /provider / /admin', () => {
+    expect(DISPATCHER).toMatch(/case ['"]patient['"]:/);
+    expect(DISPATCHER).toMatch(/case ['"]practice_admin['"]:/);
+    expect(DISPATCHER).toMatch(/case ['"]practice_provider['"]:/);
+    expect(DISPATCHER).toMatch(/case ['"]admin['"]:/);
+  });
+});
+
+// ─── Diff scope — auth surfaces + callback only ───────────────────────
+
+describe('Diff scope — no payment / RLS / passkey action changes', () => {
+  it('the button does not import payment / webhook / finance modules', () => {
+    const FORBIDDEN = [
+      '@/lib/payments/',
+      '@/lib/paystack/',
+      '@/lib/bills/lifecycle',
+      'app/api/webhooks/paystack',
+      '@/lib/finance',
+    ];
+    for (const mod of FORBIDDEN) {
+      expect(BUTTON).not.toContain(`from '${mod}`);
+      expect(BUTTON).not.toContain(`from "${mod}`);
+    }
+  });
+
+  it('the callback does not touch payment / passkey / KYC modules', () => {
+    expect(CALLBACK).not.toMatch(/from ['"].*paystack/);
+    expect(CALLBACK).not.toMatch(/from ['"].*passkey/);
+    expect(CALLBACK).not.toMatch(/from ['"]@\/lib\/finance['"]/);
+  });
+
+  it('the callback\'s ONLY table access is profiles (no plans/payments/bills)', () => {
+    const tableAccesses = CALLBACK.match(/\.from\(['"](\w+)['"]\)/g) ?? [];
+    const tables = tableAccesses.map((s) => s.replace(/\.from\(['"](\w+)['"]\)/, '$1'));
+    for (const t of tables) {
+      expect(t).toBe('profiles');
+    }
+  });
+});
+
+// ─── Regression: existing sign-in surfaces untouched ──────────────────
+
+describe('Regression — email/password + passkey still supported on /login', () => {
+  it('email + password fields still render', () => {
+    expect(LOGIN).toMatch(/id="email"/);
+    expect(LOGIN).toMatch(/id="password"/);
+    expect(LOGIN).toMatch(/signInWithPassword/);
+  });
+
+  it('passkey sign-in still gated on browser support', () => {
+    expect(LOGIN).toMatch(/passkeySupport\s*&&/);
+    expect(LOGIN).toMatch(/Sign in with a passkey/);
+  });
+});

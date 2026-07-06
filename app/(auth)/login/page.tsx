@@ -8,6 +8,7 @@ import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
 import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
 import { recordLoginLanding } from '@/app/patient/passkey-actions';
 import InstallCallout from '@/app/_pwa/InstallCallout';
+import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 
 export default function LoginPage() {
   const [email,    setEmail]    = useState('');
@@ -151,7 +152,7 @@ export default function LoginPage() {
           )}
 
           {passkeySupport && (
-            <div className="mb-5 space-y-3">
+            <div className="mb-3">
               <button
                 type="button"
                 onClick={handlePasskeySignIn}
@@ -164,13 +165,28 @@ export default function LoginPage() {
                 </svg>
                 {passkeyLoading ? 'Authenticating…' : 'Sign in with a passkey'}
               </button>
-              <div className="relative flex items-center">
-                <div className="grow border-t border-gray-200" />
-                <span className="mx-3 text-xs text-gray-400">or with password</span>
-                <div className="grow border-t border-gray-200" />
-              </div>
             </div>
           )}
+
+          {/* Continue with Google — patient-context option. Staff
+              accounts (practice / brand / admin) are provisioned via
+              invitation emails and sign in with email + password; the
+              "For patients" caption below the button makes the intent
+              clear. A staff email whose Google identity is linked in
+              Supabase Auth will still land correctly on their own role
+              via the dispatcher — see /auth/callback for the profile
+              belt-and-braces + role-preservation logic. */}
+          <div className="mb-5 space-y-2" data-testid="login-google-block">
+            <ContinueWithGoogleButton label="Sign in with Google" />
+            <p className="text-center text-[11px] text-gray-400">
+              For patients
+            </p>
+            <div className="relative flex items-center pt-2">
+              <div className="grow border-t border-gray-200" />
+              <span className="mx-3 text-xs text-gray-400">or with password</span>
+              <div className="grow border-t border-gray-200" />
+            </div>
+          </div>
 
           <form onSubmit={handleSubmit} noValidate className="space-y-5">
             <div>
