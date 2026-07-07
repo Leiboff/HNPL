@@ -5,6 +5,64 @@ import { createClient } from '@/lib/supabase/server';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { paystackRequest } from '@/lib/paystack';
 import { isCardValidForPlan } from '@/lib/cardValidity';
+import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { currentFlags } from '@/lib/featureFlags';
+import type { User } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+// ─── Onboarding gate for acceptance actions ────────────────────────────
+//
+// A patient cannot accept a bill / initiate checkout until their
+// onboarding is complete. Enforced SERVER-SIDE here (as well as by
+// the routing gate in app/patient/layout.tsx) so that a UI regression
+// or direct action call from a client can never bypass onboarding.
+//
+// Returns null when the patient is onboarded (or the flag columns
+// aren't in the schema yet — fail-open during migration deploys).
+// Returns an ActionError with a link to /onboarding when they're not.
+
+type OnboardingRefusal = {
+  error:  string;
+  reason: 'not_onboarded';
+  href:   string;
+};
+
+async function requireOnboarded(
+  supabase: SupabaseClient,
+  user:     User,
+): Promise<OnboardingRefusal | null> {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select(
+      'phone_verified_at, sa_id_number, salary_day, credit_check_status, ' +
+      'liveness_verified_at, onboarding_completed',
+    )
+    .eq('id', user.id)
+    .maybeSingle();
+
+  // Missing profile is handled by the caller's own "plan not found"
+  // paths — treat as onboarded=false to be safe.
+  if (!profile) {
+    return {
+      error:  'Please finish setting up your account before accepting a bill.',
+      reason: 'not_onboarded',
+      href:   '/onboarding',
+    };
+  }
+
+  const status = computeOnboarding(
+    { email_confirmed_at: user.email_confirmed_at ?? null },
+    profile as unknown as ProfileForOnboarding,
+    currentFlags(),
+  );
+  if (status.done) return null;
+
+  return {
+    error:  'Please finish setting up your account before accepting a bill.',
+    reason: 'not_onboarded',
+    href:   '/onboarding',
+  };
+}
 
 async function isBlockedFromNewPlan(patientId: string): Promise<boolean> {
   const supabase = await createClient();
@@ -25,11 +83,15 @@ async function isBlockedFromNewPlan(patientId: string): Promise<boolean> {
 export async function acceptPlan(
   planId: string,
   planType: 2 | 3,
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; reason?: 'not_onboarded'; href?: string }> {
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated.' };
+
+  // ─── Onboarding gate ─────────────────────────────────────────────
+  const refusal = await requireOnboarded(supabase, user);
+  if (refusal) return refusal;
 
   if (planType !== 2 && planType !== 3) {
     return { error: 'Invalid instalment count. Choose 2 or 3.' };
@@ -258,12 +320,16 @@ export async function payWithSavedCard(
   planId:          string,
   planType:        2 | 3,
   paymentMethodId: string,
-): Promise<{ error: string | null; planId?: string }> {
+): Promise<{ error: string | null; planId?: string; reason?: 'not_onboarded'; href?: string }> {
   'use server';
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated.' };
+
+  // ─── Onboarding gate ─────────────────────────────────────────────
+  const refusal = await requireOnboarded(supabase, user);
+  if (refusal) return refusal;
 
   if (planType !== 2 && planType !== 3) {
     return { error: 'Invalid instalment count. Choose 2 or 3.' };

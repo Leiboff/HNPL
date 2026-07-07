@@ -6,6 +6,8 @@ import LogoutButton from './LogoutButton';
 import InstallPrompt from '@/app/_pwa/InstallPrompt';
 import PostLoginPasskeyPrompt from './PostLoginPasskeyPrompt';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
+import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { currentFlags } from '@/lib/featureFlags';
 
 export default async function PatientLayout({
   children,
@@ -20,7 +22,9 @@ export default async function PatientLayout({
     .from('profiles')
     .select(`
       role, first_name, last_name, email, phone,
-      login_count, passkey_prompt_next_show_at_login, passkey_prompt_permanent_dismiss
+      login_count, passkey_prompt_next_show_at_login, passkey_prompt_permanent_dismiss,
+      phone_verified_at, sa_id_number, salary_day,
+      credit_check_status, liveness_verified_at, onboarding_completed
     `)
     .eq('id', user.id)
     .single();
@@ -33,6 +37,25 @@ export default async function PatientLayout({
     } else {
       redirect('/login');
     }
+  }
+
+  // ─── Routing gate: incomplete patients get sent to /onboarding ─────
+  //
+  // The router at /onboarding computes the first unfinished step and
+  // forwards. This layout only decides "onboarding or main app?" —
+  // never "which step next?". Google users landing here for the first
+  // time (no phone, no ID) hit this branch and get sent to phone step.
+  //
+  // email_confirmed_at is guaranteed non-null by requireConfirmedUser()
+  // above — we synthesise a truthy sentinel so the state model treats
+  // the verify-email step as satisfied.
+  const onboardingStatus = computeOnboarding(
+    { email_confirmed_at: 'confirmed' },
+    profile as unknown as ProfileForOnboarding,
+    currentFlags(),
+  );
+  if (!onboardingStatus.done) {
+    redirect('/onboarding');
   }
 
   // Post-login passkey prompt frequency cap (0065). The client
