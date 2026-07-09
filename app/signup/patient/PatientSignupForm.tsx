@@ -3,13 +3,8 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { signUpPatient } from './actions';
-import SalaryDayPicker from '@/components/SalaryDayPicker';
-import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import {
   isValidEmail,
-  normalizePhoneZA,
-  validateSaId,
-  saIdAge,
   checkPassword,
 } from '@/lib/validation';
 import {
@@ -17,6 +12,20 @@ import {
   focusAndScrollTo,
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
+import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
+
+// ─── PatientSignupForm — account-only ─────────────────────────────────
+//
+// After the stepped-onboarding pass, this form collects ONLY the
+// fields needed to create the auth user. Phone, SA ID, and salary
+// date now belong to the /onboarding flow — captured with a progress
+// bar, resumable, gated server-side. Google users skip this form
+// entirely and land in /onboarding directly.
+//
+// The invitation banner + hnpl_invite_token cookie handoff are
+// unchanged: a patient arriving here via a practice's checkout link
+// still gets their invitation cookie set and processed by the
+// middleware after they finish onboarding.
 
 type Invitation = {
   email:        string;
@@ -28,9 +37,6 @@ type Props = {
   token?:      string | null;
 };
 
-const MIN_AGE = 18;
-const SA_ID_LEN = 13;
-
 const INPUT_BASE = 'w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:ring-2';
 const INPUT_OK   = 'border-gray-300 focus:border-[#15A89E] focus:ring-[#15A89E]/20';
 const INPUT_ERR  = 'border-red-400 focus:border-red-500 focus:ring-red-200';
@@ -39,15 +45,6 @@ const LABEL_CLS  = 'block text-sm font-medium text-gray-700 mb-1';
 function inputClass(hasError: boolean) {
   return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
 }
-
-// SA ID surface rule: the validator's typed reason codes (length / format /
-// date / citizenship / checksum) stay internal. The user sees a single
-// generic message regardless of which check failed. The age gate uses its
-// own message because "you're too young" is a separate concern from
-// "your ID number is malformed".
-const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
-
-// ─── Field helper ────────────────────────────────────────────────────────────
 
 function FieldLabel({ label, required }: { label: string; required?: boolean }) {
   return (
@@ -58,17 +55,12 @@ function FieldLabel({ label, required }: { label: string; required?: boolean }) 
   );
 }
 
-// ─── Form ───────────────────────────────────────────────────────────────────
-
 const BLANK = {
-  firstName:  '',
-  lastName:   '',
-  email:      '',
-  password:   '',
-  confirm:    '',
-  phone:      '',
-  saIdNumber: '',
-  salaryDay:  '',   // string-of-int; '' = unselected
+  firstName:     '',
+  lastName:      '',
+  email:         '',
+  password:      '',
+  confirm:       '',
   termsAccepted: false,
 };
 
@@ -85,7 +77,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
   // Field declaration order = focus-on-submit order.
   const schema = useMemo<FieldsSchema<Fields>>(() => ({
     firstName: { validate: (v) => v.firstName.trim() ? null : 'First name is required.' },
-    lastName:  { validate: (v) => v.lastName.trim() ? null : 'Last name is required.' },
+    lastName:  { validate: (v) => v.lastName.trim()  ? null : 'Last name is required.' },
     email:     { validate: (v) => isValidEmail(v.email) ? null : 'Enter a valid email address.' },
     password:  {
       validate: (v) => {
@@ -99,37 +91,13 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         return null;
       },
     },
-    confirm:   { validate: (v) => v.password !== v.confirm ? 'Passwords don\'t match.' : null },
-    phone:     {
-      validate: (v) =>
-        normalizePhoneZA(v.phone) ? null : 'Enter a valid South African cellphone number.',
-    },
-    saIdNumber: {
-      validate: (v) => {
-        const r = validateSaId(v.saIdNumber);
-        if (!r.valid) return SA_ID_GENERIC_ERROR;
-        const age = saIdAge(v.saIdNumber);
-        if (age === null || age < MIN_AGE) {
-          return `You must be ${MIN_AGE} or older to create a BetterNow account.`;
-        }
-        return null;
-      },
-      // No suppressLive: errors are gated only by "field has been blurred".
-      // The generic single-message rule means we can show on blur regardless
-      // of how many digits are typed — the user never sees length/format/
-      // date/citizenship/checksum specifics anyway.
-    },
-    salaryDay: {
-      validate: (v) => v.salaryDay ? null : 'Please choose when your salary is paid.',
-    },
-    termsAccepted: {
-      validate: (v) => v.termsAccepted ? null : 'Please accept the betternow terms to continue.',
-    },
+    confirm:       { validate: (v) => v.password !== v.confirm ? 'Passwords don\'t match.' : null },
+    termsAccepted: { validate: (v) => v.termsAccepted ? null : 'Please accept the betternow terms to continue.' },
   }), []);
 
   const { errors, handleBlur, validateAll } = useFieldValidation(fields, schema);
 
-  function setText(key: Exclude<keyof Fields, 'salaryDay' | 'termsAccepted'>) {
+  function setText(key: Exclude<keyof Fields, 'termsAccepted'>) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
       setFields(f => ({ ...f, [key]: e.target.value }));
   }
@@ -152,14 +120,11 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     setLoading(true);
     const emailTrimmed = fields.email.trim();
     const result = await signUpPatient({
-      firstName:  fields.firstName.trim(),
-      lastName:   fields.lastName.trim(),
-      email:      emailTrimmed,
-      password:   fields.password,
-      phone:      fields.phone.trim(),
-      saIdNumber: fields.saIdNumber.trim(),
-      salaryDay:  parseInt(fields.salaryDay, 10),
-      token:      token ?? undefined,
+      firstName: fields.firstName.trim(),
+      lastName:  fields.lastName.trim(),
+      email:     emailTrimmed,
+      password:  fields.password,
+      token:     token ?? undefined,
     });
     setLoading(false);
 
@@ -168,13 +133,14 @@ export default function PatientSignupForm({ invitation, token }: Props) {
       return;
     }
 
-    // Hand off to /verify-email for the 6-digit OTP. After verifyOtp
-    // succeeds, the user lands on /verify-phone (the new phone-OTP
-    // gate added in 0053), and on phone-verify success there hard-
-    // navigates to /patient (which reads the existing
-    // hnpl_invite_token cookie to associate the invitation).
-    const phoneStep = '/verify-phone?next=' + encodeURIComponent('/patient');
-    window.location.href = '/verify-email?email=' + encodeURIComponent(emailTrimmed) + '&next=' + encodeURIComponent(phoneStep);
+    // Hand off to the onboarding tree. /onboarding/verify-email is
+    // reachable pre-session (reads email from ?email= param). After
+    // verifyOtp succeeds there, the form hard-navigates to /onboarding,
+    // which forwards to the next unfinished step (phone). Every
+    // subsequent step lives inside the /onboarding tree with the
+    // shared progress bar.
+    window.location.href =
+      '/onboarding/verify-email?email=' + encodeURIComponent(emailTrimmed);
   }
 
   return (
@@ -286,49 +252,6 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           {errors.confirm && <p className="mt-1 text-xs text-red-600">{errors.confirm}</p>}
         </div>
 
-        <div>
-          <FieldLabel label="Cell number" required />
-          <input
-            id="patient-phone"
-            type="tel"
-            value={fields.phone}
-            onChange={setText('phone')}
-            onBlur={onBlur('phone')}
-            aria-invalid={!!errors.phone}
-            placeholder="082 000 0000"
-            className={inputClass(!!errors.phone)}
-          />
-          {errors.phone && <p className="mt-1 text-xs text-red-600">{errors.phone}</p>}
-        </div>
-
-        <div>
-          <FieldLabel label="SA ID number" required />
-          <input
-            id="patient-saIdNumber"
-            type="text"
-            maxLength={SA_ID_LEN}
-            inputMode="numeric"
-            value={fields.saIdNumber}
-            onChange={setText('saIdNumber')}
-            onBlur={onBlur('saIdNumber')}
-            aria-invalid={!!errors.saIdNumber}
-            placeholder="13-digit ID number"
-            className={inputClass(!!errors.saIdNumber)}
-          />
-          {errors.saIdNumber && <p className="mt-1 text-xs text-red-600">{errors.saIdNumber}</p>}
-        </div>
-
-        <div id="patient-salaryDay">
-          <SalaryDayPicker
-            value={fields.salaryDay === '' ? null : parseInt(fields.salaryDay, 10)}
-            onChange={(d) => {
-              setFields(f => ({ ...f, salaryDay: String(d) }));
-              handleBlur('salaryDay');
-            }}
-          />
-          {errors.salaryDay && <p className="mt-2 text-xs text-red-600">{errors.salaryDay}</p>}
-        </div>
-
         {/* ── Terms ───────────────────────────────────────────── */}
         <div>
           <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
@@ -362,7 +285,6 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           )}
         </div>
 
-        {/* ── Submit-time headline ───────────────────────────── */}
         {submitError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {submitError}

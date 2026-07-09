@@ -133,20 +133,24 @@ describe('signup forms — redirect to /verify-email after signup', () => {
     expect(src).toMatch(/next=.*\/practice|practice.*next/);
   });
 
-  it('patient form redirects to /verify-email with email + next=/patient', () => {
+  it('patient form redirects post-signup into /onboarding/verify-email with the email as a query param', () => {
+    // Post the "slim signup" pass, the patient form no longer chains
+    // /verify-email → /verify-phone → /patient. The account-only form
+    // hands off to /onboarding/verify-email?email=<address>, which is
+    // reachable pre-session (Supabase's signUp with email confirmation
+    // returns no session) and is the entry into the shared /onboarding
+    // tree. Every subsequent step (phone, identity) renders inside the
+    // shared progress-bar shell.
     const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
-    expect(src).toContain('/verify-email');
-    expect(src).toMatch(/next=.*\/patient|patient.*next/);
+    expect(src).toMatch(/\/onboarding\/verify-email\?email=/);
   });
 
-  it('patient form routes the post-email-OTP next= through /verify-phone (the new phone gate)', () => {
-    // Added with migration 0053. The chain is /verify-email → /verify-
-    // phone → /patient: email OTP succeeds, lands on /verify-phone,
-    // phone OTP succeeds, lands on /patient. Practice signup is
-    // intentionally NOT routed through /verify-phone (phone gate is
-    // a patient-only feature today).
+  it('patient form no longer routes signups through /verify-phone (moved into the /onboarding tree)', () => {
+    // /verify-phone the ROUTE still exists (nothing in this build
+    // deletes it), but the signup flow must not send new patients
+    // there — the phone step lives at /onboarding/phone now.
     const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
-    expect(src).toContain('/verify-phone');
+    expect(src).not.toContain('/verify-phone');
   });
 
   it('practice form is NOT routed through /verify-phone (regression — patient-only feature)', () => {

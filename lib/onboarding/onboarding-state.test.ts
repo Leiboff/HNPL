@@ -401,9 +401,14 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
     }
   });
 
-  it('onboarding layout is auth-required + patient-only', () => {
-    expect(ONB_LAYOUT).toMatch(/requireConfirmedUser/);
-    expect(ONB_LAYOUT).toMatch(/profile\?\.role[\s\S]*?!==\s*'patient'/);
+  it('onboarding layout is a bare wrapper (auth checks live on each step page — /onboarding/verify-email must be reachable pre-session)', () => {
+    // Post the "slim signup" pass, the layout deliberately does NOT
+    // require auth or a patient-role check — those live on each step
+    // page. This makes /onboarding/verify-email reachable pre-session
+    // for fresh email signups (Supabase returns no session until
+    // verifyOtp succeeds).
+    const codeOnly = ONB_LAYOUT.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(codeOnly).not.toMatch(/requireConfirmedUser\(/);
   });
 
   it('router forwards to the first unfinished step (or /patient if done)', () => {
@@ -481,6 +486,96 @@ describe('Onboarding OTP unification — canonical OtpInput on both steps', () =
     // /onboarding after every step — not going straight into /patient.
     expect(EMAIL_STEP).toMatch(/next="\/onboarding"/);
     expect(PHONE_STEP).toMatch(/window\.location\.href\s*=\s*['"]\/onboarding['"]/);
+  });
+});
+
+// ─── Slim signup — email path lands in /onboarding/verify-email ─────
+
+describe('Slim patient signup — account-only + hand-off to /onboarding', () => {
+  const SIGNUP_FORM   = readFileSync(resolve(ROOT, 'app/signup/patient/PatientSignupForm.tsx'),   'utf8');
+  const SIGNUP_ACTION = readFileSync(resolve(ROOT, 'app/signup/patient/actions.ts'),              'utf8');
+
+  it('signup input type has no phone / saIdNumber / salaryDay fields', () => {
+    expect(SIGNUP_ACTION).not.toMatch(/\bphone\s*:\s*string/);
+    expect(SIGNUP_ACTION).not.toMatch(/\bsaIdNumber\s*:\s*string/);
+    expect(SIGNUP_ACTION).not.toMatch(/\bsalaryDay\s*:\s*number/);
+  });
+
+  it('signup action does not import the identity-step helpers', () => {
+    // These live at the identity step now — the signup action should
+    // not import them. A regression that re-adds phone/SA-ID/salary
+    // capture at signup will trip this.
+    expect(SIGNUP_ACTION).not.toMatch(/from ['"]@\/lib\/idEncryption['"]/);
+    expect(SIGNUP_ACTION).not.toMatch(/normalizePhoneZA/);
+    expect(SIGNUP_ACTION).not.toMatch(/validateSaId/);
+    expect(SIGNUP_ACTION).not.toMatch(/isAllowedSalaryDay/);
+  });
+
+  it('signup action writes only role + first_name + last_name to raw_user_meta_data', () => {
+    // The auth.users trigger reads these on insert. We deliberately
+    // leave phone / sa_id_number / salary_day null so the state model
+    // routes the new user through the phone + identity steps.
+    const dataMatch = SIGNUP_ACTION.match(/options:\s*\{[\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}\s*,?\s*\}\s*\)/);
+    expect(dataMatch).not.toBeNull();
+    const dataLiteral = dataMatch?.[1] ?? '';
+    expect(dataLiteral).toMatch(/role:\s*['"]patient['"]/);
+    expect(dataLiteral).toMatch(/first_name:/);
+    expect(dataLiteral).toMatch(/last_name:/);
+    // Explicitly NOT present:
+    expect(dataLiteral).not.toMatch(/\bphone\s*:/);
+    expect(dataLiteral).not.toMatch(/sa_id_number/);
+    expect(dataLiteral).not.toMatch(/salary_day/);
+  });
+
+  it('signup form has NO phone / SA-ID / salary-day fields', () => {
+    expect(SIGNUP_FORM).not.toMatch(/id="patient-phone"/);
+    expect(SIGNUP_FORM).not.toMatch(/id="patient-saIdNumber"/);
+    expect(SIGNUP_FORM).not.toMatch(/SalaryDayPicker/);
+    // The BLANK draft no longer has these keys either.
+    expect(SIGNUP_FORM).not.toMatch(/saIdNumber:\s*''/);
+    expect(SIGNUP_FORM).not.toMatch(/salaryDay:\s*''/);
+    expect(SIGNUP_FORM).not.toMatch(/phone:\s*''/);
+  });
+
+  it('signup form redirects into /onboarding/verify-email?email=<addr>', () => {
+    expect(SIGNUP_FORM).toMatch(/\/onboarding\/verify-email\?email=/);
+    // Old chain must be gone.
+    expect(SIGNUP_FORM).not.toMatch(/\/verify-phone/);
+    expect(SIGNUP_FORM).not.toMatch(/\/verify-email\?email=.*next=/);
+  });
+});
+
+describe('/onboarding/verify-email — reachable pre-session via ?email= param', () => {
+  const VE_PAGE   = readFileSync(resolve(ROOT, 'app/onboarding/verify-email/page.tsx'), 'utf8');
+  const ONB_LAY   = readFileSync(resolve(ROOT, 'app/onboarding/layout.tsx'),           'utf8');
+
+  it('onboarding layout does NOT require an authenticated session', () => {
+    // Auth checks live on the individual step pages (which need
+    // /onboarding/verify-email to work pre-session for fresh email
+    // signups). A regression that re-adds requireConfirmedUser as an
+    // actual CALL in the layout would break the email OTP landing —
+    // strip comments before checking so the prose here doesn't count.
+    const codeOnly = ONB_LAY.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(codeOnly).not.toMatch(/requireConfirmedUser\(/);
+  });
+
+  it('verify-email page reads email from ?email= search param when unauthenticated', () => {
+    expect(VE_PAGE).toMatch(/searchParams/);
+    expect(VE_PAGE).toMatch(/params\.email/);
+  });
+
+  it('verify-email page hardcodes the email-path total (base 3 + flag-on steps) when pre-session', () => {
+    expect(VE_PAGE).toMatch(/totalSteps\s*=\s*3\s*\+\s*\(flags\.creditCheck/);
+    // Pre-session index is 1 (email OTP is the first step of the
+    // email-signup flow).
+    expect(VE_PAGE).toMatch(/currentIndex=\{1\}/);
+  });
+
+  it('verify-email page still handles the authenticated edge case (redirect if done)', () => {
+    // A user who somehow reaches /onboarding/verify-email while
+    // already email-confirmed gets forwarded to /onboarding (which
+    // routes to the next unfinished step). Pin the redirect exists.
+    expect(VE_PAGE).toMatch(/status\.done \|\| status\.step !== 'verify-email'/);
   });
 });
 

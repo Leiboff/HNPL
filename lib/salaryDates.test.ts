@@ -114,16 +114,15 @@ describe('clampSalaryDateForMonth', () => {
 // If a future contributor pastes [1, 15, 20, 25, ...] inline, this fails.
 
 describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
-  // Post-0065 the patient dashboard no longer contains a salary-day
-  // form — the responsibility moved to the profile as an edit-toggle
-  // section (SalaryDaySection). page.tsx also no longer imports the
-  // canonical set (nothing on the dashboard needs it). Signup +
-  // profile are the two remaining places.
+  // Post the "slim signup" pass, salary-day capture moved OUT of the
+  // signup form + action and INTO the /onboarding/identity step. The
+  // signup surfaces here reflect the current model — every place that
+  // renders or writes a salary_day must depend on the canonical set.
   const surfaces = [
     'app/patient/profile/SalaryDaySection.tsx',
     'app/patient/profile/page.tsx',
-    'app/signup/patient/PatientSignupForm.tsx',
-    'app/signup/patient/actions.ts',
+    'app/onboarding/identity/IdentityStepClient.tsx',
+    'lib/onboarding/actions.ts',
   ];
 
   it.each(surfaces)('%s depends on the canonical source (lib/salaryDates or the shared picker)', (rel) => {

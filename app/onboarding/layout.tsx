@@ -1,40 +1,25 @@
-import { redirect } from 'next/navigation';
-import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-
-// ─── Onboarding layout — authenticated patients only ──────────────────
+// ─── Onboarding layout — no-auth wrapper ───────────────────────────────
 //
-// Intentionally does NOT enforce the onboarding-complete gate itself
-// (that would loop forever — the routes UNDER this layout ARE the
-// completion path). Every /onboarding/* page runs on top of:
-//   • a confirmed auth session (bounces to /login / /verify-email
-//     otherwise);
-//   • profile.role === 'patient' (staff / admins are dispatched away
-//     from onboarding — they're never in this flow).
+// This layout deliberately does NOT require authentication. Reason:
+// /onboarding/verify-email must be reachable pre-session — Supabase's
+// email-confirmation flow returns no session until verifyOtp succeeds,
+// so the OTP page has to render for an anonymous browser holding just
+// an ?email=<address> query param.
 //
-// The routing decision to SEND a patient here lives in the patient
-// layout ([app/patient/layout.tsx]) — this file just makes the flow
-// safe to land in.
+// Every step page under /onboarding/**/page.tsx runs its own
+// requireConfirmedUser (or an equivalent no-session-required check
+// for verify-email) so security stays at the route level, not the
+// layout. The layout's job is only to give the tree a consistent
+// light background so route-level redirects don't flash on top of
+// the wrong bg.
 
 export const dynamic = 'force-dynamic';
 
-export default async function OnboardingLayout({
+export default function OnboardingLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, supabase } = await requireConfirmedUser({ next: '/onboarding' });
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  // Non-patients don't have an onboarding flow; dispatch them.
-  if (profile?.role && profile.role !== 'patient') {
-    redirect('/dashboard');
-  }
-
   return (
     <div className="min-h-screen bg-[#f7fbfb] flex flex-col">
       {children}
