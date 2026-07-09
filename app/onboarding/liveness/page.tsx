@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { computeOnboarding, stepsFor, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
-import OnboardingShell from '../_components/OnboardingShell';
+import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import LivenessStepClient from './LivenessStepClient';
 
 // ─── Step (SEAM): liveness verification ────────────────────────────────

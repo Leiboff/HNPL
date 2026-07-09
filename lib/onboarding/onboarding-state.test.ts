@@ -387,6 +387,20 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
     expect(existsSync(resolve(ROOT, 'app/onboarding/liveness/page.tsx'))).toBe(true);
   });
 
+  it('the shared onboarding shell lives at components/onboarding/OnboardingShell.tsx', () => {
+    // Moved out of app/onboarding/_components/ during the unification
+    // pass so it lives with other shared UI (SalaryDayPicker, OtpInput).
+    expect(existsSync(resolve(ROOT, 'components/onboarding/OnboardingShell.tsx'))).toBe(true);
+    expect(existsSync(resolve(ROOT, 'app/onboarding/_components/OnboardingShell.tsx'))).toBe(false);
+  });
+
+  it('every step page imports the shared shell from components/onboarding', () => {
+    for (const step of ['verify-email', 'phone', 'identity', 'credit-check', 'liveness']) {
+      const src = readFileSync(resolve(ROOT, `app/onboarding/${step}/page.tsx`), 'utf8');
+      expect(src).toMatch(/from ['"]@\/components\/onboarding\/OnboardingShell['"]/);
+    }
+  });
+
   it('onboarding layout is auth-required + patient-only', () => {
     expect(ONB_LAYOUT).toMatch(/requireConfirmedUser/);
     expect(ONB_LAYOUT).toMatch(/profile\?\.role[\s\S]*?!==\s*'patient'/);
@@ -413,6 +427,85 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
   it('credit-check + liveness pages redirect out when their flag is off', () => {
     expect(ONB_CREDIT).toMatch(/if \(!flags\.creditCheck\) redirect/);
     expect(ONB_LIVENESS).toMatch(/if \(!flags\.liveness\) redirect/);
+  });
+});
+
+// ─── UI unification — canonical OtpInput used on both OTP steps ──────
+
+describe('Onboarding OTP unification — canonical OtpInput on both steps', () => {
+  const EMAIL_STEP = readFileSync(resolve(ROOT, 'app/onboarding/verify-email/VerifyEmailStepClient.tsx'), 'utf8');
+  const PHONE_STEP = readFileSync(resolve(ROOT, 'app/onboarding/phone/PhoneStepClient.tsx'), 'utf8');
+  const OLD_EMAIL_FORM = readFileSync(resolve(ROOT, 'app/verify-email/VerifyEmailForm.tsx'), 'utf8');
+  const PHONE_OTP_STEP = readFileSync(resolve(ROOT, 'app/_otp/PhoneOtpStep.tsx'), 'utf8');
+
+  it('email step delegates to the canonical VerifyEmailForm (which uses OtpInput)', () => {
+    expect(EMAIL_STEP).toMatch(/from ['"]@\/app\/verify-email\/VerifyEmailForm['"]/);
+    expect(EMAIL_STEP).toMatch(/<VerifyEmailForm[\s\S]*?next="\/onboarding"/);
+  });
+
+  it('phone step delegates to the canonical PhoneOtpStep (which uses OtpInput)', () => {
+    expect(PHONE_STEP).toMatch(/from ['"]@\/app\/_otp\/PhoneOtpStep['"]/);
+    expect(PHONE_STEP).toMatch(/<PhoneOtpStep\b/);
+  });
+
+  it('both canonical components import OtpInput from @/components/OtpInput', () => {
+    expect(OLD_EMAIL_FORM).toMatch(/from ['"]@\/components\/OtpInput['"]/);
+    expect(PHONE_OTP_STEP).toMatch(/from ['"]@\/components\/OtpInput['"]/);
+  });
+
+  it('phone step keeps the phone-entry sub-stage for Google users (no captured phone)', () => {
+    // The two-stage flow is onboarding-specific — Google users need to
+    // enter a phone number before the OTP round-trip. That sub-stage
+    // stays in PhoneStepClient; only the OTP sub-stage delegates.
+    expect(PHONE_STEP).toMatch(/Stage = 'phone-entry' \| 'otp'/);
+    expect(PHONE_STEP).toMatch(/setPhoneForOnboarding/);
+  });
+
+  it('email step client has NO inline OTP input (canonical component owns it)', () => {
+    // The inline single-input pattern from the pre-unification build is
+    // gone. A regression that re-inlines an OTP input would trip here.
+    expect(EMAIL_STEP).not.toMatch(/tracking-\[0\.5em\]/);
+    expect(EMAIL_STEP).not.toMatch(/maxLength=\{6\}/);
+  });
+
+  it('phone step client has NO inline OTP input (canonical component owns it)', () => {
+    // The two-stage flow still has a phone-number input, but the OTP
+    // input itself is delegated to PhoneOtpStep.
+    // A regression that re-inlines a 6-digit OTP input would trip here.
+    expect(PHONE_STEP).not.toMatch(/data-testid="onboarding-phone-otp"/);
+    expect(PHONE_STEP).not.toMatch(/maxLength=\{6\}/);
+  });
+
+  it('on-success behaviour redirects to /onboarding (router recomputes state)', () => {
+    // Server actions + resume behaviour rely on landing back on
+    // /onboarding after every step — not going straight into /patient.
+    expect(EMAIL_STEP).toMatch(/next="\/onboarding"/);
+    expect(PHONE_STEP).toMatch(/window\.location\.href\s*=\s*['"]\/onboarding['"]/);
+  });
+});
+
+// ─── Grep guard — no stale imports of the pre-unification locations ──
+
+describe('No orphan imports of the pre-unification component locations', () => {
+  it('nothing imports the old shell path (app/onboarding/_components)', () => {
+    // Simple sweep: recurse app/ + lib/ + components/ for the removed path.
+    // Anything found means we missed an import in the move.
+    const paths = [
+      'app/onboarding/verify-email/page.tsx',
+      'app/onboarding/phone/page.tsx',
+      'app/onboarding/identity/page.tsx',
+      'app/onboarding/credit-check/page.tsx',
+      'app/onboarding/liveness/page.tsx',
+      'app/onboarding/verify-email/VerifyEmailStepClient.tsx',
+      'app/onboarding/phone/PhoneStepClient.tsx',
+      'app/onboarding/identity/IdentityStepClient.tsx',
+      'app/onboarding/credit-check/CreditCheckStepClient.tsx',
+      'app/onboarding/liveness/LivenessStepClient.tsx',
+    ];
+    for (const p of paths) {
+      const src = readFileSync(resolve(ROOT, p), 'utf8');
+      expect(src).not.toMatch(/from ['"][^'"]*_components\/OnboardingShell['"]/);
+    }
   });
 });
 

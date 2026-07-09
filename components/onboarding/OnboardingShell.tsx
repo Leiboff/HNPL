@@ -1,11 +1,18 @@
 import Link from 'next/link';
 
-// ─── Onboarding shell + progress indicator ─────────────────────────────
+// ─── Shared onboarding progress-bar shell ──────────────────────────────
 //
-// Rendered by every step page. Header with the brand + progress bar
-// ("Step 2 of 3") + the step's title + the caller-supplied body.
-// The count uses the CURRENT user's step list from stepsFor() — a
-// Google user's total excludes 'verify-email', flag-off steps excluded.
+// The single wrapper used by every /onboarding/* step page — both the
+// email-signup and the Google-signup paths render inside this shell.
+// Only the progress bar is "new"; the card + step body inside it use
+// the same look-and-feel as the pre-existing /verify-email + /verify-
+// phone screens (canonical OtpInput, gradient primary buttons,
+// gray-200/80 border card).
+//
+// Step counts are per-user + per-flag: the caller (each step page)
+// computes `currentIndex` and `total` from stepsFor(user, flags) so
+// Google patients see "Step 1 of 2" (no permanently-skipped verify-
+// email slot) and email patients see "Step 1 of 3".
 
 type Props = {
   currentIndex: number;
