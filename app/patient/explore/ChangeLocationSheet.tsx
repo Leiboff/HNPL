@@ -22,6 +22,35 @@ import type { SharedLocation } from '@/lib/patient/sharedLocation';
 // sessionStorage + closes. No commit happens without an explicit tap
 // on Confirm — matching the brief's radio/confirm semantics.
 
+// Bound the "Resolving suburb…" state so a hung / non-2xx / null-result
+// reverse-geocode can't strand the sheet. Coords are already valid at
+// this point — the label is cosmetic; downstream ordering + persistence
+// work fine without a real suburb string.
+const REVERSE_GEOCODE_TIMEOUT_MS = 5_000;
+const GPS_FALLBACK_LABEL = 'Current location';
+
+async function resolveGpsLabel(latitude: number, longitude: number): Promise<string> {
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeoutPromise = new Promise<null>((resolve) => {
+      timerId = setTimeout(() => {
+        console.warn('[change-location] reverse-geocode timed out after ' + REVERSE_GEOCODE_TIMEOUT_MS + 'ms — falling back to generic label');
+        resolve(null);
+      }, REVERSE_GEOCODE_TIMEOUT_MS);
+    });
+    const label = await Promise.race([
+      reverseGeocodeSuburb(latitude, longitude).catch((err: unknown) => {
+        console.warn('[change-location] reverse-geocode rejected', err);
+        return null;
+      }),
+      timeoutPromise,
+    ]);
+    return label ?? GPS_FALLBACK_LABEL;
+  } finally {
+    if (timerId !== undefined) clearTimeout(timerId);
+  }
+}
+
 type Draft =
   | { kind: 'none' }
   | { kind: 'suburb'; latitude: number; longitude: number; label: string }
@@ -68,12 +97,20 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
       (pos) => {
         const latitude  = pos.coords.latitude;
         const longitude = pos.coords.longitude;
-        // Show the coords immediately with a null label; reverse-
-        // geocode fills the label in-place when it resolves. The
-        // Confirm button is enabled either way — a coord is a
-        // coord, ordering doesn't need the label.
+        // Show the coords immediately with a null label; the resolver
+        // below fills the label in-place. Coord validity — not the
+        // label — is what makes the draft committable, so Confirm is
+        // enabled the moment we're in `gps` state.
         setDraft({ kind: 'gps', latitude, longitude, label: null });
-        reverseGeocodeSuburb(latitude, longitude).then((label) => {
+
+        // Exit-guaranteed resolver: races the reverse-geocode against
+        // a 5s timeout AND catches rejections. Any of (reject /
+        // timeout / null) → 'Current location' fallback so the
+        // "Resolving suburb…" text can't stay on screen forever.
+        // reverseGeocodeSuburb itself never rejects (returns null on
+        // every failure path), but the .catch defends against a
+        // future refactor of that helper.
+        resolveGpsLabel(latitude, longitude).then((label) => {
           setDraft((prev) => {
             if (prev.kind !== 'gps') return prev;
             if (prev.latitude !== latitude || prev.longitude !== longitude) return prev;

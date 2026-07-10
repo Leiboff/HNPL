@@ -48,6 +48,29 @@ describe('LocationRow — the tap target', () => {
   });
 });
 
+describe('ChangeLocationSheet — reverse-geocode is exit-guaranteed', () => {
+  it('races the reverse-geocode against a bounded timeout', () => {
+    // A hung / rejecting / null-returning reverseGeocodeSuburb must
+    // NOT leave the sheet stranded on "Resolving suburb…". The
+    // constant is spelled out so a well-meaning refactor can't
+    // silently shrink it to 30s or delete the race.
+    expect(SHEET).toMatch(/REVERSE_GEOCODE_TIMEOUT_MS\s*=\s*5_?000/);
+    expect(SHEET).toMatch(/Promise\.race/);
+  });
+  it('rejections are caught (never leak out of the resolver)', () => {
+    expect(SHEET).toMatch(/reverseGeocodeSuburb\([^)]*\)\.catch/);
+  });
+  it('the "Current location" fallback label is used on timeout / reject / null', () => {
+    expect(SHEET).toMatch(/GPS_FALLBACK_LABEL\s*=\s*'Current location'/);
+    expect(SHEET).toMatch(/label \?\? GPS_FALLBACK_LABEL/);
+  });
+  it('warns via console.warn so ops can diagnose the failure mode', () => {
+    // Both the timeout branch and the reject branch must log.
+    expect(SHEET).toMatch(/console\.warn\(.*timed out/);
+    expect(SHEET).toMatch(/console\.warn\(.*rejected/);
+  });
+});
+
 describe('ChangeLocationSheet — reuses SettingsSheet overlay pattern', () => {
   it('bottom sheet on mobile, centered modal on desktop', () => {
     // items-end for mobile bottom sheet; md:items-center for desktop modal.

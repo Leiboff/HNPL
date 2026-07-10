@@ -324,6 +324,85 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
     expect(screen.getByTestId('location-row-value').textContent).not.toMatch(/Choose location/);
   });
 
+  // ── reverse-geocode exit-guarantee (three failure modes) ──────────
+  //
+  // The sheet used to strand at "Location captured. Resolving suburb…"
+  // whenever reverseGeocodeSuburb (a) returned null, (b) rejected, or
+  // (c) never settled. All three now converge on the same "Current
+  // location" fallback within ≤5s so Confirm is always reachable.
+
+  it('reverse-geocode rejects → sheet falls back to "Current location" (no stuck state)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    reverseGeocodeMock.mockRejectedValueOnce(new Error('boom'));
+    render(<ExploreView rows={[r()]} />);
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      // Flush the microtask queue so Promise.race + .then land.
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The sheet is no longer stuck on "Resolving suburb…".
+    expect(screen.getByTestId('change-location-use-current-detail').textContent).not.toMatch(/Resolving/i);
+    // Commit + assert the row picked up the fallback.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Current location/);
+    warnSpy.mockRestore();
+  });
+
+  it('reverse-geocode returns null → sheet falls back to "Current location"', async () => {
+    reverseGeocodeMock.mockResolvedValueOnce(null);
+    render(<ExploreView rows={[r()]} />);
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('change-location-use-current-detail').textContent).not.toMatch(/Resolving/i);
+    act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Current location/);
+  });
+
+  it('reverse-geocode hangs → 5s timeout fires → sheet falls back to "Current location"', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    try {
+      // Promise that never settles.
+      reverseGeocodeMock.mockImplementation(() => new Promise(() => {}));
+      render(<ExploreView rows={[r()]} />);
+      act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+      act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
+      act(() => {
+        const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+        ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      });
+      // Before the timer fires: sheet reports the resolving state.
+      expect(screen.getByTestId('change-location-use-current-detail').textContent).toMatch(/Resolving/i);
+      // Advance past the 5s timeout and flush the .then.
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // Now the resolving state is gone.
+      expect(screen.getByTestId('change-location-use-current-detail').textContent).not.toMatch(/Resolving/i);
+      // Confirm commits the fallback.
+      act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+      expect(screen.getByTestId('location-row-value').textContent).toMatch(/Current location/);
+    } finally {
+      vi.useRealTimers();
+      warnSpy.mockRestore();
+    }
+  });
+
   it('persistence: stored location hydrates on mount — still no browser prompt', () => {
     // Pre-populate storage BEFORE mount.
     window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
