@@ -157,7 +157,13 @@ describe('DetailView — grouping unchanged (one card per HPCSA group)', () => {
 
 describe('DetailView — geo: re-prompt on mount + retry on denial', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => { geo = buildGeolocationStub(); installGeolocation(geo); });
+  beforeEach(() => {
+    // Clear shared-location storage so this suite tests the
+    // no-hydration path (auto-prompt on mount).
+    window.sessionStorage.clear();
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
   afterEach(() => { removeGeolocation(); });
 
   it('fires getCurrentPosition on first mount', () => {
@@ -174,6 +180,36 @@ describe('DetailView — geo: re-prompt on mount + retry on denial', () => {
     const btn = screen.getByTestId('detail-try-location');
     act(() => { fireEvent.click(btn); });
     expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('DetailView — shared sessionStorage location', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
+  afterEach(() => {
+    removeGeolocation();
+    window.sessionStorage.clear();
+  });
+
+  it('hydrates the shared location from sessionStorage — no browser prompt on mount', () => {
+    // A location was set on /patient/explore in this session. The
+    // detail page must NOT re-prompt for permission.
+    window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
+      latitude: -26.10, longitude: 28.05, label: 'Sandton, Johannesburg', source: 'suburb',
+    }));
+    render(<DetailView rows={[r({
+      practice_id: 'pA',
+      practice_latitude: -26.10,
+      practice_longitude: 28.05,
+    })]} />);
+    // No prompt fired.
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    // Distance computed from shared coords (same lat/lng ⇒ 0 km).
+    expect(screen.getByTestId('detail-primary-directions')).toBeTruthy();
   });
 });
 

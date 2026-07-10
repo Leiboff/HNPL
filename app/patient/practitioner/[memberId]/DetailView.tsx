@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
+import { readStoredLocation } from '@/lib/patient/sharedLocation';
 import {
   decorateWithDistance,
   groupIntoCards,
@@ -37,12 +38,26 @@ type GeoState =
   | { kind: 'denied' };
 
 export default function DetailView({ rows }: Props) {
-  const [geo, setGeo] = useState<GeoState>(() => {
+  // Hydrate from the shared sessionStorage location (set on
+  // /patient/explore). If present, we skip the on-mount geo prompt.
+  // If absent, we auto-request GPS on mount (unchanged behaviour for
+  // patients who land on the detail page directly).
+  const initialFromShared: GeoState = (() => {
+    if (typeof window === 'undefined') return { kind: 'requesting' };
+    const shared = readStoredLocation();
+    if (shared) {
+      return {
+        kind:     'granted',
+        location: { latitude: shared.latitude, longitude: shared.longitude },
+      };
+    }
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       return { kind: 'denied' };
     }
     return { kind: 'requesting' };
-  });
+  })();
+
+  const [geo, setGeo] = useState<GeoState>(initialFromShared);
 
   const [attemptId, setAttemptId] = useState(0);
   const livenessRef = useRef({ cancelled: false });
@@ -55,6 +70,11 @@ export default function DetailView({ rows }: Props) {
   }, []);
 
   useEffect(() => {
+    // Only fire the browser geolocation prompt when we're in the
+    // `requesting` state. If we hydrated from sessionStorage we're
+    // already `granted` — skip the prompt entirely so the user isn't
+    // re-nagged for permission on every page load.
+    if (geo.kind !== 'requesting') return;
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
     livenessRef.current = { cancelled: false };
@@ -76,7 +96,9 @@ export default function DetailView({ rows }: Props) {
     );
 
     return () => { liveness.cancelled = true; };
-  }, [attemptId]);
+    // attemptId is the trigger for the retry button; geo.kind is what
+    // gates the fetch. Both are correct deps here.
+  }, [attemptId, geo.kind]);
 
   const userLocation = geo.kind === 'granted' ? geo.location : null;
 

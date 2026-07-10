@@ -8,23 +8,44 @@ import type { DirectoryRow } from '@/lib/practitioner/grouping';
 //   • No params → Landing (data-driven categories + search + "See all").
 //   • ?view=results OR ?specialty=X OR ?q=X → Results list.
 //
-// We drive the URL params via a mockable useSearchParams stub. The
-// Landing test file (Landing.test.tsx) covers the category grid;
-// this file covers the orchestrator + the Results view.
+// We drive the URL params via a mockable useSearchParams stub.
 //
-// PlacesAutocomplete is mocked out — no external HTTP.
+// PlacesAutocomplete is mocked in two ways depending on the test:
+//   • The default mock is a passive no-op (renders null).
+//   • The sheet interaction tests override it with a mock exposing a
+//     testable "pick" button that fires onSelect with a canned
+//     PlaceDetails payload.
+
+const placesOnSelectRef: { current: ((p: {
+  latitude: number; longitude: number; formattedAddress: string;
+  addressComponents: Array<{ longText: string; shortText: string; types: string[] }>;
+}) => void) | null } = { current: null };
 
 vi.mock('@/app/_components/PlacesAutocomplete', () => ({
-  default: () => null,
+  default: (props: {
+    onSelect: (p: {
+      latitude: number; longitude: number; formattedAddress: string;
+      addressComponents: Array<{ longText: string; shortText: string; types: string[] }>;
+    }) => void;
+    inputId?: string;
+    placeholder?: string;
+  }) => {
+    placesOnSelectRef.current = props.onSelect;
+    return null;
+  },
 }));
 
 // Reverse-geocode is best-effort — tests inject the return value so we
 // can prove both the success path (suburb label appears) AND the
-// fallback path (null → generic "Near your current location").
+// fallback path (null → generic "Locating…" fallback).
 const reverseGeocodeMock = vi.fn<(latitude: number, longitude: number) => Promise<string | null>>();
-vi.mock('@/lib/maps/reverseGeocode', () => ({
-  reverseGeocodeSuburb: (latitude: number, longitude: number) => reverseGeocodeMock(latitude, longitude),
-}));
+vi.mock('@/lib/maps/reverseGeocode', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/maps/reverseGeocode')>('@/lib/maps/reverseGeocode');
+  return {
+    ...actual,
+    reverseGeocodeSuburb: (latitude: number, longitude: number) => reverseGeocodeMock(latitude, longitude),
+  };
+});
 
 // Mockable useSearchParams — each test sets the params it needs.
 const currentParams = new URLSearchParams();
@@ -42,12 +63,15 @@ function setParams(params: Record<string, string>) {
   for (const [k, v] of Object.entries(params)) currentParams.set(k, v);
 }
 
-// Default the reverse-geocode mock to a resolved null (falls back to
-// "Near your current location"). Individual tests override it via
-// reverseGeocodeMock.mockResolvedValueOnce(...) or similar.
+// Default the reverse-geocode mock to a resolved null. Individual
+// tests override it via reverseGeocodeMock.mockResolvedValueOnce(...).
 beforeEach(() => {
   reverseGeocodeMock.mockReset();
   reverseGeocodeMock.mockResolvedValue(null);
+  placesOnSelectRef.current = null;
+  // Location persists via sessionStorage across the SPA — tests must
+  // start from a clean slate to avoid cross-test leakage.
+  window.sessionStorage.clear();
 });
 
 import ExploreView from './ExploreView';
@@ -151,15 +175,6 @@ describe('ExploreView — landing is the default view', () => {
     expect(physio.textContent).toMatch(/1 practitioner\b/);
   });
 
-  it('Landing has a "Use my location" button that re-triggers geolocation', () => {
-    render(<ExploreView rows={[r()]} />);
-    // The initial mount call has already happened (from useEffect).
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
-    const btn = screen.getByTestId('use-my-location');
-    act(() => { fireEvent.click(btn); });
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
-  });
-
   it('the See-all tile links to ?view=results (no specialty filter)', () => {
     render(<ExploreView rows={[r()]} />);
     const seeAll = screen.getByTestId('landing-see-all') as HTMLAnchorElement;
@@ -170,6 +185,210 @@ describe('ExploreView — landing is the default view', () => {
     render(<ExploreView rows={[r({ specialty: 'Dentistry' })]} />);
     const tile = screen.getByTestId('landing-category-Dentistry') as HTMLAnchorElement;
     expect(tile.getAttribute('href')).toBe('/patient/explore?view=results&specialty=Dentistry');
+  });
+});
+
+// ─── Location row (Discovery-Health-style) — replaces "Use my location" pill ─
+
+describe('ExploreView — Location row (replaces the pill / caption)', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => {
+    setParams({});
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
+  afterEach(() => { removeGeolocation(); });
+
+  it('renders LocationRow with "Choose location" when no location is set', () => {
+    render(<ExploreView rows={[r()]} />);
+    // Simulate the browser denying the auto-prompt so the row
+    // settles into its "nothing chosen" state.
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    const row = screen.getByTestId('location-row');
+    expect(row).toBeTruthy();
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Choose location/);
+  });
+
+  it('renders LocationRow with "Suburb, City" once a location is resolved via reverse-geocode', async () => {
+    reverseGeocodeMock.mockResolvedValueOnce('Glenhazel, Johannesburg');
+    render(<ExploreView rows={[r()]} />);
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
+      // Flush reverse-geocode microtask
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Glenhazel, Johannesburg/);
+  });
+
+  it('the OLD "Use my location" pill and "Near your current location" caption are removed', () => {
+    render(<ExploreView rows={[r()]} />);
+    expect(screen.queryByTestId('use-my-location')).toBeNull();
+    expect(screen.queryByText(/Near your current location/i)).toBeNull();
+    // "Optional — helps show nearest first." caption is gone.
+    expect(screen.queryByText(/Optional — helps show/i)).toBeNull();
+  });
+
+  it('tapping the LocationRow opens the ChangeLocationSheet', () => {
+    render(<ExploreView rows={[r()]} />);
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    // Sheet is closed to start with.
+    expect(screen.queryByTestId('change-location-sheet')).toBeNull();
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    expect(screen.getByTestId('change-location-sheet')).toBeTruthy();
+    // Close button dismisses.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-close')); });
+    expect(screen.queryByTestId('change-location-sheet')).toBeNull();
+  });
+
+  it('picking a suburb via autocomplete updates the LocationRow and persists to sessionStorage', () => {
+    render(<ExploreView rows={[r()]} />);
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    // Open sheet
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    // The autocomplete's onSelect is captured on mount via the module mock.
+    expect(placesOnSelectRef.current).not.toBeNull();
+    // Simulate picking a place.
+    act(() => {
+      placesOnSelectRef.current!({
+        latitude:         -26.14,
+        longitude:         28.04,
+        formattedAddress: 'Rosebank, Johannesburg, South Africa',
+        addressComponents: [
+          { longText: 'Rosebank',      shortText: 'Rosebank', types: ['sublocality', 'sublocality_level_1'] },
+          { longText: 'Johannesburg',  shortText: 'JHB',      types: ['locality'] },
+        ],
+      });
+    });
+    // Draft summary is visible with the resolved label.
+    expect(screen.getByTestId('change-location-draft-suburb').textContent).toMatch(/Rosebank, Johannesburg/);
+    // Confirm.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+    // Sheet closes.
+    expect(screen.queryByTestId('change-location-sheet')).toBeNull();
+    // Row shows the new label.
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Rosebank, Johannesburg/);
+    // sessionStorage now has the entry.
+    const stored = JSON.parse(window.sessionStorage.getItem('hnpl:patient-location:v1') ?? 'null');
+    expect(stored).toMatchObject({
+      latitude:  -26.14,
+      longitude:  28.04,
+      label:     'Rosebank, Johannesburg',
+      source:    'suburb',
+    });
+  });
+
+  it('"Use current location" inside the sheet: geolocation grant → reverse-geocode → row updates', async () => {
+    reverseGeocodeMock.mockResolvedValueOnce('Melville, Johannesburg');
+    render(<ExploreView rows={[r()]} />);
+    // Deny the initial auto-prompt so the sheet path is clean.
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    // Open sheet
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    // Sheet-level Use-current-location tap → fires geolocation again.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
+    // The sheet made a fresh call to getCurrentPosition (call 2).
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      const [ok] = geo.getCurrentPosition.mock.calls[1]!;
+      ok?.({ coords: { latitude: -26.18, longitude: 28.02 } } as GeolocationPosition);
+      // Flush reverse-geocode
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Confirm.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+    // Row shows the resolved suburb label.
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Melville, Johannesburg/);
+  });
+
+  it('"Use current location" DENIED inside the sheet: sheet stays usable, autocomplete still works', () => {
+    render(<ExploreView rows={[r()]} />);
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    // Open sheet.
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    // Tap use-current → geolocation error callback fires immediately.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
+    act(() => {
+      const [, err] = geo.getCurrentPosition.mock.calls[1]!;
+      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
+    });
+    // Sheet is still open, no crash, sensible message.
+    expect(screen.getByTestId('change-location-sheet')).toBeTruthy();
+    expect(screen.getByTestId('change-location-use-current-detail').textContent).toMatch(/blocked|denied|Location blocked/i);
+    // Autocomplete still works — the shared onSelect ref is still bound.
+    expect(placesOnSelectRef.current).not.toBeNull();
+    // Confirm is disabled (no draft committed).
+    const confirm = screen.getByTestId('change-location-confirm') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+  });
+
+  it('persistence: stored location hydrates on mount — no re-prompt', () => {
+    // Pre-populate storage BEFORE mount.
+    window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
+      latitude: -26.20, longitude: 28.10, label: 'Sandhurst, Johannesburg', source: 'suburb',
+    }));
+    render(<ExploreView rows={[r()]} />);
+    // Since a stored location was found, we do NOT auto-prompt.
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    // Row shows the hydrated label.
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Sandhurst, Johannesburg/);
+  });
+
+  it('ordering re-sorts when a new location is picked (nearest-first from the new coords)', () => {
+    setParams({ view: 'results' });
+    // Two practitioners ~11 km apart, coords chosen so BOTH stay
+    // within the default 25 km radius from either pick location.
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'n', hpcsa_group_key: 'hn', first_name: 'N', last_name: 'North', practice_latitude: -26.10, practice_longitude: 28.05 }),
+      r({ member_id: 's', hpcsa_group_key: 'hs', first_name: 'S', last_name: 'South', practice_latitude: -26.20, practice_longitude: 28.05 }),
+    ];
+    window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
+      latitude: -26.19, longitude: 28.05, label: 'Southern, JHB', source: 'suburb',
+    }));
+    const { rerender } = render(<ExploreView rows={rows} />);
+    // South is nearest to (-26.19, 28.05) → South card is rendered first.
+    let text = document.body.textContent ?? '';
+    let sIdx = text.indexOf('S South');
+    let nIdx = text.indexOf('N North');
+    expect(sIdx).toBeGreaterThanOrEqual(0);
+    expect(nIdx).toBeGreaterThanOrEqual(0);
+    expect(sIdx).toBeLessThan(nIdx);
+
+    // Now pick a north-biased location via the sheet.
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    act(() => {
+      placesOnSelectRef.current!({
+        latitude:  -26.09, longitude: 28.05,
+        formattedAddress: 'Northern, JHB',
+        addressComponents: [{ longText: 'Northern', shortText: 'N', types: ['sublocality'] }, { longText: 'Johannesburg', shortText: 'JHB', types: ['locality'] }],
+      });
+    });
+    act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+    rerender(<ExploreView rows={rows} />);
+    // North is now nearest → North card is rendered first.
+    text = document.body.textContent ?? '';
+    sIdx = text.indexOf('S South');
+    nIdx = text.indexOf('N North');
+    expect(sIdx).toBeGreaterThanOrEqual(0);
+    expect(nIdx).toBeGreaterThanOrEqual(0);
+    expect(nIdx).toBeLessThan(sIdx);
   });
 });
 
@@ -217,15 +436,13 @@ describe('ExploreView — results view when URL params are present', () => {
     expect(screen.getByText('No Coords')).toBeTruthy();
   });
 
-  it('"Use my location" button on results re-triggers geolocation when denied', () => {
+  it('LocationRow lives under the search bar on the results view too', () => {
     render(<ExploreView rows={[r()]} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
-    const btn = screen.getByTestId('use-my-location');
-    act(() => { fireEvent.click(btn); });
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+    // The row must render in results mode.
+    expect(screen.getByTestId('location-row')).toBeTruthy();
+    // Old pill / caption remain removed.
+    expect(screen.queryByTestId('use-my-location')).toBeNull();
+    expect(screen.queryByText(/Near your current location/i)).toBeNull();
   });
 });
 
@@ -385,71 +602,6 @@ describe('ExploreView — BetterNow tone: no medical-aid-network language, no Ve
     expect(screen.queryByText(/^A\s*[·|]\s*B\s*[·|]/)).toBeNull();
     expect(screen.queryByText(/Alphabetical/i)).toBeNull();
     expect(screen.queryByText(/Browse\s+A[-–]Z/i)).toBeNull();
-  });
-});
-
-// ─── Fix 1 — reverse-geocode ───────────────────────────────────────────
-
-describe('ExploreView — reverse-geocode label on GPS grant (Fix 1)', () => {
-  let geo: ReturnType<typeof buildGeolocationStub>;
-  beforeEach(() => {
-    setParams({});
-    geo = buildGeolocationStub();
-    installGeolocation(geo);
-  });
-  afterEach(() => { removeGeolocation(); });
-
-  it('shows "Near <Suburb, City>" when reverse-geocode resolves a label', async () => {
-    reverseGeocodeMock.mockResolvedValueOnce('Glenhazel, Johannesburg');
-    render(<ExploreView rows={[r()]} />);
-    await act(async () => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-      // Flush the reverse-geocode microtask.
-      await Promise.resolve();
-    });
-    expect(reverseGeocodeMock).toHaveBeenCalledWith(-26.10, 28.05);
-    expect(screen.getByText(/Near Glenhazel, Johannesburg/)).toBeTruthy();
-  });
-
-  it('falls back to "Near your current location" when reverse-geocode returns null', async () => {
-    reverseGeocodeMock.mockResolvedValueOnce(null);
-    render(<ExploreView rows={[r()]} />);
-    await act(async () => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-      await Promise.resolve();
-    });
-    expect(screen.getByText(/Near your current location/)).toBeTruthy();
-  });
-
-  it('reverse-geocode is called ONCE per resolution — not on every render', async () => {
-    reverseGeocodeMock.mockResolvedValueOnce('Glenhazel, Johannesburg');
-    const { rerender } = render(<ExploreView rows={[r()]} />);
-    await act(async () => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-      await Promise.resolve();
-    });
-    expect(reverseGeocodeMock).toHaveBeenCalledTimes(1);
-    // Force a re-render with a different rows array — the resolved
-    // label should stick, and reverse-geocode should NOT re-fire.
-    rerender(<ExploreView rows={[r({ member_id: 'm-other' })]} />);
-    expect(reverseGeocodeMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByText(/Near Glenhazel, Johannesburg/)).toBeTruthy();
-  });
-
-  it('does NOT reverse-geocode for suburb-picked locations (the user already chose a label)', async () => {
-    render(<ExploreView rows={[r()]} />);
-    // Deny GPS, then pick a suburb (through the fallback picker).
-    await act(async () => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-      await Promise.resolve();
-    });
-    // Suburb-pick path never calls reverseGeocode — the picker
-    // returned the label directly.
-    expect(reverseGeocodeMock).not.toHaveBeenCalled();
   });
 });
 

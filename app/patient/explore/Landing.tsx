@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import type { CategoryCount } from '@/lib/practitioner/categories';
 
 // ─── Landing — "Browse by specialty" ───────────────────────────────────
@@ -19,6 +18,9 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 //   • No hard-coded Doctor / Dentist / Pharmacy / Hospital / Vet grid.
 //   • No A-Z alphabetical specialty screen.
 //   • No medical-aid-network language.
+//   • No "Use my location" pill / "Near your current location" caption —
+//     replaced by the LocationRow the parent renders below the search
+//     bar, which drives the shared ChangeLocationSheet.
 //
 // Interaction:
 //   • Tap a specialty tile → parent switches to results, filtered to
@@ -27,26 +29,15 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 //     no specialty filter (all).
 //   • Search input → typing anything switches to results with the
 //     search text pre-populated.
-//   • "Use my location" — always visible, on-demand geolocation
-//     re-trigger. Parent owns the geo state machine.
 
 type Props = {
-  categories:       CategoryCount[];
+  categories:         CategoryCount[];
   totalPractitioners: number;
-  locationHint:     string | null;   // "Near Rosebank" / "Near your current location" / null
-  hasLocation:      boolean;
-  onUseMyLocation:  () => void;
-  onSuburbPicked:   (lat: number, lng: number, label: string) => void;
+  /** LocationRow rendered by the orchestrator; sits directly under the search bar. */
+  locationRow:        React.ReactNode;
 };
 
-export default function Landing({
-  categories,
-  totalPractitioners,
-  locationHint,
-  hasLocation,
-  onUseMyLocation,
-  onSuburbPicked,
-}: Props) {
+export default function Landing({ categories, totalPractitioners, locationRow }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
 
@@ -69,7 +60,7 @@ export default function Landing({
         </p>
       </header>
 
-      {/* Search + Use-my-location */}
+      {/* Search + Location row */}
       <form onSubmit={submitSearch} className="space-y-3">
         <div className="relative">
           <svg
@@ -90,45 +81,8 @@ export default function Landing({
           />
         </div>
 
-        {/* Location context + always-visible Use-my-location button */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={onUseMyLocation}
-            data-testid="use-my-location"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-[rgba(19,41,75,.12)] bg-white px-3 py-2 text-xs font-semibold hover:bg-gray-50"
-            style={{ color: '#13294B' }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 3v2M12 19v2M3 12h2M19 12h2" strokeLinecap="round" />
-              <circle cx="12" cy="12" r="9" />
-            </svg>
-            Use my location
-          </button>
-          {locationHint && (
-            <span className="text-xs text-gray-500 truncate">{locationHint}</span>
-          )}
-          {!hasLocation && (
-            <span className="text-xs text-gray-400">Optional — helps show nearest first.</span>
-          )}
-        </div>
-
-        {/* Suburb fallback — always available for patients who blocked
-            geolocation at the browser level. Picking a suburb sets
-            geo via onSuburbPicked. */}
-        {!hasLocation && (
-          <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 mb-1.5">
-              Or search by suburb
-            </p>
-            <PlacesAutocomplete
-              variant="locality"
-              placeholder="e.g. Rosebank"
-              onSelect={(place) => onSuburbPicked(place.latitude, place.longitude, place.formattedAddress)}
-            />
-          </div>
-        )}
+        {/* Location row — directly under the practitioner search bar */}
+        {locationRow}
       </form>
 
       {/* Categories */}
