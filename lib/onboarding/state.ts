@@ -2,14 +2,27 @@ import type { OnboardingFlags } from '@/lib/featureFlags';
 
 // ─── Onboarding state model (pure) ─────────────────────────────────────
 //
-// Given (user, profile, flags), returns either { done: true } or the
-// FIRST unfinished step for this user. Google users have
-// email_confirmed_at set from the moment their identity is provisioned,
-// so the 'verify-email' step naturally falls off their step list.
+// Path-fixed step list + first-unfinished-step computation.
+//
+// Two concerns kept separate:
+//
+//   • stepListFor(user, flags) — the FULL ordered list of steps for
+//     this user's PATH. Stable across the journey: an email-signup
+//     user's list stays [verify-email, phone, identity, ...] even
+//     after email OTP is done. Whether verify-email is IN the list is
+//     determined by the user's auth IDENTITIES ('email' vs 'google'),
+//     NOT by email_confirmed_at (which is truthy for Google users too).
+//
+//   • computeOnboarding(user, profile, flags) — returns the FIRST
+//     UNFINISHED step (or {done:true}). The routing target. Never
+//     changes step counts; only decides where to send the user next.
+//
+// This separation fixes the "Step 1 of 3 → Step 1 of 2" shrinking-total
+// defect. The list length is per-path, not per-remaining-work.
 //
 // Cached-flag invariant: profiles.onboarding_completed is write-once-
-// TRUE. Once it's set, this function short-circuits to `{done: true}`
-// without re-evaluating the underlying step conditions. That is what
+// TRUE. Once it's set, computeOnboarding short-circuits to `{done:
+// true}` without re-evaluating the underlying step conditions. That
 // stops a flag flip (ENABLE_CREDIT_CHECK / ENABLE_LIVENESS ON later)
 // from retro-locking a patient who finished under the old flag set.
 //
@@ -42,6 +55,14 @@ export const STEP_TITLE: Record<OnboardingStep, string> = {
 
 export type UserForOnboarding = {
   email_confirmed_at: string | null;
+  /**
+   * The auth identity providers linked to this user. Values are the
+   * Supabase identity `provider` strings — 'email' for email/password,
+   * 'google' for Google OAuth, etc. Determines PATH (email vs Google
+   * only). email-only signups have 'email'; Google-only signups have
+   * only 'google'; an account with both linked has both.
+   */
+  identity_providers: readonly string[];
 };
 
 export type ProfileForOnboarding = {
@@ -58,28 +79,41 @@ export type OnboardingStatus =
   | {
       done:  false;
       step:  OnboardingStep;
-      /** 1-based position of the CURRENT step among the steps this user will see. */
+      /** 1-based position of the CURRENT step within stepListFor(user, flags). */
       index: number;
-      /** Total steps this user will see (Google skips verify-email; flag-off steps excluded). */
+      /** Length of stepListFor(user, flags) — stable across the journey. */
       total: number;
       /** Convenience: STEP_PATH[step]. */
       path:  string;
     };
 
 /**
- * Ordered list of steps that apply to this specific user given the
- * current flag configuration. The order matches the flow: email OTP
- * → phone → ID+salary → credit-check → liveness. Steps that don't
- * apply (email already confirmed; flags off) are omitted.
+ * Path-fixed ordered list of steps this user will see.
+ *
+ * The list length is STABLE across the whole journey — a completed
+ * step stays in the list, it just isn't the current step any more.
+ * The verify-email inclusion is driven by identity providers, NOT by
+ * email_confirmed_at, because Google users have email_confirmed_at
+ * set at OAuth link time and would otherwise appear to "have a
+ * completed email OTP step in their path".
  */
-export function stepsFor(user: UserForOnboarding, flags: OnboardingFlags): OnboardingStep[] {
+export function stepListFor(user: UserForOnboarding, flags: OnboardingFlags): OnboardingStep[] {
   const steps: OnboardingStep[] = [];
-  if (!user.email_confirmed_at) steps.push('verify-email');
+  if (user.identity_providers.includes('email')) steps.push('verify-email');
   steps.push('phone');
   steps.push('identity');
   if (flags.creditCheck) steps.push('credit-check');
   if (flags.liveness)    steps.push('liveness');
   return steps;
+}
+
+/**
+ * @deprecated Alias kept for callers still importing the pre-fix name.
+ * The old semantics (which dropped completed steps from the list) are
+ * gone; this now returns the same value as `stepListFor`.
+ */
+export function stepsFor(user: UserForOnboarding, flags: OnboardingFlags): OnboardingStep[] {
+  return stepListFor(user, flags);
 }
 
 function stepIsSatisfied(
@@ -106,12 +140,9 @@ export function computeOnboarding(
   profile: ProfileForOnboarding,
   flags:   OnboardingFlags,
 ): OnboardingStatus {
-  // Cached-true short-circuit. A patient who already finished under a
-  // previous flag set stays done. Never re-evaluate the underlying
-  // conditions once this flag is TRUE.
   if (profile.onboarding_completed) return { done: true };
 
-  const steps = stepsFor(user, flags);
+  const steps = stepListFor(user, flags);
   for (let i = 0; i < steps.length; i += 1) {
     const step = steps[i];
     if (!stepIsSatisfied(step, user, profile)) {

@@ -1,16 +1,16 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { computeOnboarding, stepsFor, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import PhoneStepClient from './PhoneStepClient';
 
 // ─── Step: cell number + phone OTP ────────────────────────────────────
 //
-// Applies to every patient. Email patients already have profiles.phone
-// set from the signup form — the client jumps straight to OTP entry.
-// Google patients have no phone on their profile — the client collects
-// it, writes via setPhoneForOnboarding, then falls into OTP entry.
+// Applies to every patient. Email patients (post-slim signup) have no
+// captured phone yet — the client renders phone-entry first. Google
+// patients also have no phone — same starting point. The client owns
+// the two-stage phone-entry → OTP flow.
 
 export const dynamic = 'force-dynamic';
 
@@ -28,20 +28,22 @@ export default async function PhoneStep() {
 
   const p = profile as ProfileForOnboarding & { phone: string | null };
   const flags = currentFlags();
-  const userForState = { email_confirmed_at: user.email_confirmed_at ?? null };
+  const userForState: UserForOnboarding = {
+    email_confirmed_at: user.email_confirmed_at ?? null,
+    identity_providers: (user.identities ?? []).map((i) => i.provider),
+  };
   const status = computeOnboarding(userForState, p, flags);
 
   if (status.done || status.step !== 'phone') {
     redirect('/onboarding');
   }
 
-  const steps = stepsFor(userForState, flags);
-  const currentIndex = steps.indexOf('phone') + 1;
+  const steps = stepListFor(userForState, flags);
 
   return (
     <OnboardingShell
-      currentIndex={currentIndex}
-      total={steps.length}
+      steps={steps}
+      currentStep="phone"
       title="Add your cell number"
       description="We'll send a code to confirm it's really you. Standard SMS rates apply."
     >

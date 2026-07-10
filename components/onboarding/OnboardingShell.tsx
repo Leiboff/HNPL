@@ -1,35 +1,42 @@
 import Link from 'next/link';
+import type { OnboardingStep } from '@/lib/onboarding/state';
 
 // ─── Shared onboarding progress-bar shell ──────────────────────────────
 //
-// The single wrapper used by every /onboarding/* step page — both the
-// email-signup and the Google-signup paths render inside this shell.
-// Only the progress bar is "new"; the card + step body inside it use
-// the same look-and-feel as the pre-existing /verify-email + /verify-
-// phone screens (canonical OtpInput, gradient primary buttons,
-// gray-200/80 border card).
+// Receives the FULL step list for this user's path + the CURRENT step,
+// and computes its position + total internally. This lets the shell
+// mark earlier-list steps as done and prevents the total from
+// shrinking mid-flow (the "Step 1 of 3 → Step 1 of 2" defect).
 //
-// Step counts are per-user + per-flag: the caller (each step page)
-// computes `currentIndex` and `total` from stepsFor(user, flags) so
-// Google patients see "Step 1 of 2" (no permanently-skipped verify-
-// email slot) and email patients see "Step 1 of 3".
+// The card + step body inside use the same look-and-feel as the pre-
+// existing /verify-email + /verify-phone screens — canonical OtpInput
+// (via VerifyEmailForm / PhoneOtpStep), gradient primary buttons,
+// gray-200/80 border card.
 
 type Props = {
-  currentIndex: number;
-  total:        number;
+  /** Full path-fixed list for this user (stepListFor). Stable across the journey. */
+  steps:        readonly OnboardingStep[];
+  /** The step this page renders. Must be a member of `steps`. */
+  currentStep:  OnboardingStep;
   title:        string;
   description?: string;
   children:     React.ReactNode;
 };
 
 export default function OnboardingShell({
-  currentIndex,
-  total,
+  steps,
+  currentStep,
   title,
   description,
   children,
 }: Props) {
-  const pct = total > 0 ? Math.min(100, Math.round((currentIndex / total) * 100)) : 0;
+  const idx = steps.indexOf(currentStep);
+  // Fallback: if the caller passed a step that isn't in the list
+  // (shouldn't happen — this would be a wiring bug), treat it as
+  // position 1 so the shell still renders sensibly.
+  const currentIndex = idx >= 0 ? idx + 1 : 1;
+  const total        = steps.length;
+  const pct          = total > 0 ? Math.min(100, Math.round((currentIndex / total) * 100)) : 0;
 
   return (
     <div className="mx-auto max-w-md px-4 py-8 sm:py-14 space-y-8">

@@ -273,16 +273,13 @@ export default async function PatientDashboardPage() {
           Hi, {profile?.first_name ?? user.email?.split('@')[0] ?? 'there'} 👋
         </p>
 
-        {/* PWA push notifications — soft-ask shown only when the patient
-            has an active plan and hasn't already been prompted. */}
-        <PushSoftAsk enabled={currentCount > 0} />
+        {/* Find-care search bar (LINK to explore). Placed directly under
+            the greeting so it's the first tap-target the patient sees. */}
+        <FindCareBar />
 
         {/* Approved balance — renders ONLY when limit is set. Null →
             null render, no placeholder, no "R0 available". */}
         <ApprovedBalanceCard limit={approvedLimit} available={available} />
-
-        {/* Hero: pending bill / next instalment / all-paid-up */}
-        {hero}
 
         {/* Active plans count → tappable to /patient/orders */}
         <Link href="/patient/orders" className={`${card} block hover:shadow-md transition-shadow`}>
@@ -307,8 +304,13 @@ export default async function PatientDashboardPage() {
           )}
         </Link>
 
-        {/* Find-care search bar (LINK to explore). */}
-        <FindCareBar />
+        {/* Hero: pending bill / next instalment / all-paid-up */}
+        {hero}
+
+        {/* PWA push notifications — soft-ask shown only when the patient
+            has an active plan and hasn't already been prompted. Moved
+            to the tail so it never displaces the primary tiles. */}
+        <PushSoftAsk enabled={currentCount > 0} />
 
       </div>
     </div>

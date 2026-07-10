@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { computeOnboarding, stepsFor, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import VerifyEmailStepClient from './VerifyEmailStepClient';
@@ -14,22 +14,27 @@ import VerifyEmailStepClient from './VerifyEmailStepClient';
 //      with ?email=<address>. We render the OTP form using that email;
 //      after verifyOtp succeeds the SSR cookies get set and the form
 //      hard-navigates to /onboarding (which forwards to the next step).
+//      Path-fixed step list computed with a synthetic ['email']
+//      identity so pre-session and post-session totals match exactly.
 //
 //   2. Post-session (edge case): an already-authenticated patient who
 //      hasn't verified email lands here via the routing gate. We use
-//      their session email and route them out if verify-email is
-//      already done.
-//
-// Progress bar total: the email path always has (verify-email, phone,
-// identity) + any flag-on steps. Since we KNOW we're the email path
-// here (Google users have email_confirmed_at set at OAuth link time
-// and never see this route), we can compute the total from flags
-// without needing the user object.
+//      their real user.identities + session email and route them out
+//      if verify-email is already done.
 
 export const dynamic = 'force-dynamic';
 
 type Props = {
   searchParams: Promise<{ email?: string }>;
+};
+
+// Pre-session synthetic user: we KNOW this branch is only reachable by
+// email signups (Google users have email_confirmed_at set at OAuth link
+// time and never see this route). Hardcode ['email'] so stepListFor
+// yields the same list an authenticated email-path user would see.
+const PRE_SESSION_EMAIL_USER: UserForOnboarding = {
+  email_confirmed_at: null,
+  identity_providers: ['email'] as const,
 };
 
 export default async function VerifyEmailStep({ searchParams }: Props) {
@@ -49,19 +54,21 @@ export default async function VerifyEmailStep({ searchParams }: Props) {
     if (!profile) redirect('/dashboard');
 
     const p = profile as ProfileForOnboarding & { email: string | null };
-    const userForState = { email_confirmed_at: user.email_confirmed_at ?? null };
+    const userForState: UserForOnboarding = {
+      email_confirmed_at: user.email_confirmed_at ?? null,
+      identity_providers: (user.identities ?? []).map((i) => i.provider),
+    };
     const status = computeOnboarding(userForState, p, flags);
     if (status.done || status.step !== 'verify-email') {
       redirect('/onboarding');
     }
 
-    const steps = stepsFor(userForState, flags);
-    const currentIndex = steps.indexOf('verify-email') + 1;
+    const steps = stepListFor(userForState, flags);
 
     return (
       <OnboardingShell
-        currentIndex={currentIndex}
-        total={steps.length}
+        steps={steps}
+        currentStep="verify-email"
         title="Verify your email"
         description="We sent a 6-digit code to your email. Enter it below to continue."
       >
@@ -76,15 +83,15 @@ export default async function VerifyEmailStep({ searchParams }: Props) {
   const emailParam = params.email?.trim();
   if (!emailParam) redirect('/login');
 
-  // Email path always has these three base steps + any flag-on steps.
-  // We know the caller is on the email path (Google users have
-  // email_confirmed_at already so the router never sends them here).
-  const totalSteps = 3 + (flags.creditCheck ? 1 : 0) + (flags.liveness ? 1 : 0);
+  // Same list length as the authenticated email-path branch — the
+  // shared stepListFor + synthetic PRE_SESSION_EMAIL_USER guarantee
+  // the two totals cannot drift.
+  const steps = stepListFor(PRE_SESSION_EMAIL_USER, flags);
 
   return (
     <OnboardingShell
-      currentIndex={1}
-      total={totalSteps}
+      steps={steps}
+      currentStep="verify-email"
       title="Verify your email"
       description="We sent a 6-digit code to your email. Enter it below to continue."
     >

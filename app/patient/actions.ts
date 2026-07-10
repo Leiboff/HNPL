@@ -51,7 +51,10 @@ async function requireOnboarded(
   }
 
   const status = computeOnboarding(
-    { email_confirmed_at: user.email_confirmed_at ?? null },
+    {
+      email_confirmed_at: user.email_confirmed_at ?? null,
+      identity_providers: (user.identities ?? []).map((i) => i.provider),
+    },
     profile as unknown as ProfileForOnboarding,
     currentFlags(),
   );

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import {
   computeOnboarding,
   isOnboarded,
+  stepListFor,
   stepsFor,
   STEP_PATH,
   type ProfileForOnboarding,
@@ -28,8 +29,27 @@ import type { OnboardingFlags } from '@/lib/featureFlags';
 
 // ─── Fixtures ────────────────────────────────────────────────────────
 
-const EMAIL_USER: UserForOnboarding  = { email_confirmed_at: null };
-const GOOGLE_USER: UserForOnboarding = { email_confirmed_at: '2026-07-06T10:00:00Z' };
+// EMAIL_USER — signed up with email+password (identity_providers=['email']).
+// Pre-email-OTP: email_confirmed_at is null.
+const EMAIL_USER: UserForOnboarding = {
+  email_confirmed_at: null,
+  identity_providers: ['email'],
+};
+
+// EMAIL_USER_CONFIRMED — same account after email OTP succeeded. The
+// list length MUST stay the same as EMAIL_USER (this is the shrinking-
+// total defect that path-fixed step lists fix).
+const EMAIL_USER_CONFIRMED: UserForOnboarding = {
+  email_confirmed_at: '2026-07-06T10:00:00Z',
+  identity_providers: ['email'],
+};
+
+// GOOGLE_USER — Google OAuth only. email_confirmed_at is set at OAuth
+// link time. verify-email is never in this user's step list.
+const GOOGLE_USER: UserForOnboarding = {
+  email_confirmed_at: '2026-07-06T10:00:00Z',
+  identity_providers: ['google'],
+};
 
 const BLANK_PROFILE: ProfileForOnboarding = {
   phone_verified_at:    null,
@@ -43,27 +63,61 @@ const BLANK_PROFILE: ProfileForOnboarding = {
 const FLAGS_OFF: OnboardingFlags = { creditCheck: false, liveness: false };
 const FLAGS_ON:  OnboardingFlags = { creditCheck: true,  liveness: true };
 
-// ─── stepsFor — the visible step count per user + flag combo ─────────
+// ─── stepListFor — path-fixed step list ──────────────────────────────
 
-describe('stepsFor — Google skips verify-email; flags include/exclude their steps', () => {
-  it('email user, flags off → 3 steps (email OTP, phone, identity)', () => {
-    expect(stepsFor(EMAIL_USER, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'identity']);
+describe('stepListFor — path is stable across the journey; keyed on identity providers', () => {
+  it('email user (pre email-OTP) — 3 steps: [verify-email, phone, identity]', () => {
+    expect(stepListFor(EMAIL_USER, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'identity']);
   });
 
-  it('Google user, flags off → 2 steps (phone, identity) — email OTP skipped', () => {
-    expect(stepsFor(GOOGLE_USER, FLAGS_OFF)).toEqual(['phone', 'identity']);
+  it('email user AFTER email OTP — SAME 3 steps (verify-email still in list, now completed)', () => {
+    // The regression pin for the shrinking-total defect. Same account,
+    // same identity_providers=['email'], only email_confirmed_at
+    // changed. List length must NOT shrink.
+    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'identity']);
+    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF).length).toBe(3);
+  });
+
+  it('Google-only user — 2 steps: [phone, identity]; verify-email never appears', () => {
+    expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).toEqual(['phone', 'identity']);
+    expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).not.toContain('verify-email');
+  });
+
+  it('Path decision is driven by identity_providers, NOT by email_confirmed_at', () => {
+    // Two users with the SAME email_confirmed_at value produce
+    // DIFFERENT step lists based on identity providers. This is the
+    // heart of the fix.
+    const emailPath  = stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF);
+    const googlePath = stepListFor(GOOGLE_USER,          FLAGS_OFF);
+    expect(emailPath.length).toBe(3);
+    expect(googlePath.length).toBe(2);
+    expect(emailPath[0]).toBe('verify-email');
+    expect(googlePath[0]).toBe('phone');
+  });
+
+  it('An account linked to BOTH providers includes verify-email (email identity present)', () => {
+    const both: UserForOnboarding = {
+      email_confirmed_at: '2026-07-06T10:00:00Z',
+      identity_providers: ['email', 'google'],
+    };
+    expect(stepListFor(both, FLAGS_OFF)).toContain('verify-email');
   });
 
   it('email user, flags on → 5 steps (all of them)', () => {
-    expect(stepsFor(EMAIL_USER, FLAGS_ON)).toEqual([
+    expect(stepListFor(EMAIL_USER, FLAGS_ON)).toEqual([
       'verify-email', 'phone', 'identity', 'credit-check', 'liveness',
     ]);
   });
 
   it('Google user, flags on → 4 steps (no verify-email)', () => {
-    expect(stepsFor(GOOGLE_USER, FLAGS_ON)).toEqual([
+    expect(stepListFor(GOOGLE_USER, FLAGS_ON)).toEqual([
       'phone', 'identity', 'credit-check', 'liveness',
     ]);
+  });
+
+  it('deprecated stepsFor alias returns the SAME list (backwards compat)', () => {
+    expect(stepsFor(EMAIL_USER, FLAGS_OFF)).toEqual(stepListFor(EMAIL_USER, FLAGS_OFF));
+    expect(stepsFor(GOOGLE_USER, FLAGS_OFF)).toEqual(stepListFor(GOOGLE_USER, FLAGS_OFF));
   });
 });
 
@@ -91,17 +145,47 @@ describe('computeOnboarding — flags off (launch shape)', () => {
     }
   });
 
-  it('email user, email confirmed only → step=phone, 2 of 3', () => {
-    const s = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
-    // (same as above; sanity confirms Google is equivalent to email-confirmed)
+  it('email user, email confirmed only → step=phone, 2 of 3 (list length stays 3)', () => {
+    // This is the key regression pin for the shrinking-total defect.
+    // BEFORE the fix, this returned total=2 (verify-email dropped
+    // because it was completed). AFTER the fix, the list is fixed
+    // per PATH — total stays 3, index advances to 2.
+    const s = computeOnboarding(EMAIL_USER_CONFIRMED, BLANK_PROFILE, FLAGS_OFF);
     expect(s.done).toBe(false);
+    if (!s.done) {
+      expect(s.step).toBe('phone');
+      expect(s.index).toBe(2);
+      expect(s.total).toBe(3);
+    }
   });
 
   it('email user, email+phone → step=identity, 3 of 3', () => {
     const p = { ...BLANK_PROFILE, phone_verified_at: '2026-07-06T10:00:00Z' };
-    const s = computeOnboarding(GOOGLE_USER, p, FLAGS_OFF);
+    const s = computeOnboarding(EMAIL_USER_CONFIRMED, p, FLAGS_OFF);
     expect(s.done).toBe(false);
-    if (!s.done) expect(s.step).toBe('identity');
+    if (!s.done) {
+      expect(s.step).toBe('identity');
+      expect(s.index).toBe(3);
+      expect(s.total).toBe(3);
+    }
+  });
+
+  it('Google user progression: blank → phone (1 of 2); phone verified → identity (2 of 2)', () => {
+    // Google-only user's list is length 2 at every stage — verify-email
+    // is never in their path.
+    const s1 = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
+    if (!s1.done) {
+      expect(s1.total).toBe(2);
+      expect(s1.index).toBe(1);
+      expect(s1.step).toBe('phone');
+    }
+    const p2 = { ...BLANK_PROFILE, phone_verified_at: '2026-07-06T10:00:00Z' };
+    const s2 = computeOnboarding(GOOGLE_USER, p2, FLAGS_OFF);
+    if (!s2.done) {
+      expect(s2.total).toBe(2);
+      expect(s2.index).toBe(2);
+      expect(s2.step).toBe('identity');
+    }
   });
 
   it('everything satisfied, flags off → done', () => {
@@ -190,15 +274,17 @@ describe('resume behaviour — abandonment mid-flow returns them to the same ste
     if (!s2.done) expect(s2.step).toBe('phone');
   });
 
-  it('email user abandons after email OTP → resumes at phone', () => {
-    // After email OTP the auth.users.email_confirmed_at is set.
-    const s = computeOnboarding(
-      { email_confirmed_at: '2026-07-06T10:00:00Z' },
-      BLANK_PROFILE,
-      FLAGS_OFF,
-    );
+  it('email user abandons after email OTP → resumes at phone with list length UNCHANGED', () => {
+    // After email OTP the auth.users.email_confirmed_at is set, but
+    // the step list must still be length 3 (verify-email stays in the
+    // list, now completed). Resume lands on phone as step 2 of 3.
+    const s = computeOnboarding(EMAIL_USER_CONFIRMED, BLANK_PROFILE, FLAGS_OFF);
     expect(s.done).toBe(false);
-    if (!s.done) expect(s.step).toBe('phone');
+    if (!s.done) {
+      expect(s.step).toBe('phone');
+      expect(s.index).toBe(2);
+      expect(s.total).toBe(3);
+    }
   });
 });
 
@@ -282,10 +368,15 @@ describe('Onboarding state module — cached-true short-circuit', () => {
     expect(STATE_TS).toMatch(/if \(profile\.onboarding_completed\) return \{ done: true \}/);
   });
 
-  it('stepsFor computes visible step count per user + flags', () => {
-    expect(STATE_TS).toMatch(/if \(!user\.email_confirmed_at\) steps\.push\('verify-email'\)/);
+  it('stepListFor is keyed on identity_providers (path-fixed, not on email_confirmed_at)', () => {
+    // The critical fix: verify-email membership is decided by IDENTITY,
+    // not by whether email has been confirmed. Google users never see
+    // it; email-signup users see it throughout the journey.
+    expect(STATE_TS).toMatch(/if \(user\.identity_providers\.includes\('email'\)\) steps\.push\('verify-email'\)/);
     expect(STATE_TS).toMatch(/if \(flags\.creditCheck\)\s*steps\.push\('credit-check'\)/);
     expect(STATE_TS).toMatch(/if \(flags\.liveness\)\s*steps\.push\('liveness'\)/);
+    // Explicitly gone — the pre-fix implementation.
+    expect(STATE_TS).not.toMatch(/if \(!user\.email_confirmed_at\) steps\.push\('verify-email'\)/);
   });
 });
 
@@ -564,11 +655,16 @@ describe('/onboarding/verify-email — reachable pre-session via ?email= param',
     expect(VE_PAGE).toMatch(/params\.email/);
   });
 
-  it('verify-email page hardcodes the email-path total (base 3 + flag-on steps) when pre-session', () => {
-    expect(VE_PAGE).toMatch(/totalSteps\s*=\s*3\s*\+\s*\(flags\.creditCheck/);
-    // Pre-session index is 1 (email OTP is the first step of the
-    // email-signup flow).
-    expect(VE_PAGE).toMatch(/currentIndex=\{1\}/);
+  it('verify-email page derives pre-session total from stepListFor with a synthetic [\'email\'] identity', () => {
+    // The pre-session branch uses PRE_SESSION_EMAIL_USER (a synthetic
+    // UserForOnboarding with identity_providers: ['email']) so its
+    // step list is IDENTICAL to what an authenticated email-path user
+    // would see. Same source function = totals cannot drift.
+    expect(VE_PAGE).toMatch(/PRE_SESSION_EMAIL_USER/);
+    expect(VE_PAGE).toMatch(/identity_providers:\s*\['email'\]/);
+    expect(VE_PAGE).toMatch(/stepListFor\(PRE_SESSION_EMAIL_USER/);
+    // Shell receives {steps, currentStep} — position derived internally.
+    expect(VE_PAGE).toMatch(/currentStep="verify-email"/);
   });
 
   it('verify-email page still handles the authenticated edge case (redirect if done)', () => {
@@ -576,6 +672,77 @@ describe('/onboarding/verify-email — reachable pre-session via ?email= param',
     // already email-confirmed gets forwarded to /onboarding (which
     // routes to the next unfinished step). Pin the redirect exists.
     expect(VE_PAGE).toMatch(/status\.done \|\| status\.step !== 'verify-email'/);
+  });
+});
+
+// ─── Shell + requireConfirmedUser wiring ──────────────────────────────
+
+describe('OnboardingShell API — receives (steps, currentStep), computes position internally', () => {
+  const SHELL = readFileSync(resolve(ROOT, 'components/onboarding/OnboardingShell.tsx'), 'utf8');
+
+  it('shell props are steps + currentStep — not currentIndex/total', () => {
+    expect(SHELL).toMatch(/steps:\s*readonly OnboardingStep\[\]/);
+    expect(SHELL).toMatch(/currentStep:\s*OnboardingStep/);
+    // Old currentIndex+total prop API is gone.
+    expect(SHELL).not.toMatch(/currentIndex:\s*number/);
+    expect(SHELL).not.toMatch(/total:\s*number/);
+  });
+
+  it('shell computes position as steps.indexOf(currentStep) + 1', () => {
+    expect(SHELL).toMatch(/const idx\s*=\s*steps\.indexOf\(currentStep\)/);
+    expect(SHELL).toMatch(/const currentIndex\s*=\s*idx >= 0 \?\s*idx \+ 1/);
+    expect(SHELL).toMatch(/const total\s*=\s*steps\.length/);
+  });
+
+  it('every step page passes steps + currentStep (not the old prop API)', () => {
+    for (const step of ['verify-email', 'phone', 'identity', 'credit-check', 'liveness']) {
+      const src = readFileSync(resolve(ROOT, `app/onboarding/${step}/page.tsx`), 'utf8');
+      expect(src).toMatch(/steps=\{steps\}/);
+      expect(src).toMatch(new RegExp(`currentStep="${step}"`));
+      // No stale prop pass-through.
+      expect(src).not.toMatch(/currentIndex=\{/);
+      expect(src).not.toMatch(/total=\{steps\.length\}/);
+    }
+  });
+});
+
+describe('requireConfirmedUser exposes identity_providers + email_confirmed_at', () => {
+  const HELPER = readFileSync(resolve(ROOT, 'lib/auth/requireConfirmedUser.ts'), 'utf8');
+
+  it('return type has identity_providers (readonly string[])', () => {
+    expect(HELPER).toMatch(/identity_providers:\s*readonly string\[\]/);
+  });
+
+  it('return type has email_confirmed_at (string, non-null on the return path)', () => {
+    expect(HELPER).toMatch(/email_confirmed_at:\s*string/);
+    // Must NOT be typed as nullable — helper redirects unconfirmed
+    // users, so callers get a guaranteed non-null value.
+    expect(HELPER).not.toMatch(/email_confirmed_at:\s*string \| null/);
+  });
+
+  it('helper extracts providers from user.identities and freezes the array', () => {
+    expect(HELPER).toMatch(/user\.identities \?\? \[\]/);
+    expect(HELPER).toMatch(/\.map\(\(i\) => i\.provider\)/);
+    expect(HELPER).toMatch(/Object\.freeze/);
+  });
+});
+
+describe('Consumers of computeOnboarding pass identity_providers', () => {
+  const layouts = [
+    'app/patient/layout.tsx',
+    'app/patient/actions.ts',
+    'app/onboarding/page.tsx',
+    'app/onboarding/phone/page.tsx',
+    'app/onboarding/identity/page.tsx',
+    'app/onboarding/credit-check/page.tsx',
+    'app/onboarding/liveness/page.tsx',
+    'app/onboarding/verify-email/page.tsx',
+    'lib/onboarding/actions.ts',
+  ];
+
+  it.each(layouts)('%s passes identity_providers when constructing UserForOnboarding', (rel) => {
+    const src = readFileSync(resolve(ROOT, rel), 'utf8');
+    expect(src).toMatch(/identity_providers:/);
   });
 });
 

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { computeOnboarding, stepsFor, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import LivenessStepClient from './LivenessStepClient';
@@ -9,10 +9,6 @@ import LivenessStepClient from './LivenessStepClient';
 //
 // Flag-off (ENABLE_LIVENESS false) — the step isn't in the user's list;
 // the router never sends them here. Direct-URL bounces to /onboarding.
-//
-// Flag-on — renders a stub that calls runLiveness() (a placeholder
-// pass today). The real vendor integration (Yoti, iProov, etc.)
-// slots into runLiveness() without changing the route or the state model.
 
 export const dynamic = 'force-dynamic';
 
@@ -32,20 +28,22 @@ export default async function LivenessStep() {
   if (!profile) redirect('/dashboard');
 
   const p = profile as ProfileForOnboarding;
-  const userForState = { email_confirmed_at: user.email_confirmed_at ?? null };
+  const userForState: UserForOnboarding = {
+    email_confirmed_at: user.email_confirmed_at ?? null,
+    identity_providers: (user.identities ?? []).map((i) => i.provider),
+  };
   const status = computeOnboarding(userForState, p, flags);
 
   if (status.done || status.step !== 'liveness') {
     redirect('/onboarding');
   }
 
-  const steps = stepsFor(userForState, flags);
-  const currentIndex = steps.indexOf('liveness') + 1;
+  const steps = stepListFor(userForState, flags);
 
   return (
     <OnboardingShell
-      currentIndex={currentIndex}
-      total={steps.length}
+      steps={steps}
+      currentStep="liveness"
       title="Verify it's really you"
       description="A short face-camera check to confirm you're the ID holder. About 20 seconds."
     >

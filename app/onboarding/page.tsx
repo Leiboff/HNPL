@@ -42,7 +42,10 @@ export default async function OnboardingRouter() {
 
   const p = profile as ProfileForOnboarding;
   const status = computeOnboarding(
-    { email_confirmed_at: user.email_confirmed_at ?? null },
+    {
+      email_confirmed_at: user.email_confirmed_at ?? null,
+      identity_providers: (user.identities ?? []).map((i) => i.provider),
+    },
     p,
     currentFlags(),
   );

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { computeOnboarding, stepsFor, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import IdentityStepClient from './IdentityStepClient';
@@ -34,20 +34,22 @@ export default async function IdentityStep() {
 
   const p = profile as ProfileForOnboarding;
   const flags = currentFlags();
-  const userForState = { email_confirmed_at: user.email_confirmed_at ?? null };
+  const userForState: UserForOnboarding = {
+    email_confirmed_at: user.email_confirmed_at ?? null,
+    identity_providers: (user.identities ?? []).map((i) => i.provider),
+  };
   const status = computeOnboarding(userForState, p, flags);
 
   if (status.done || status.step !== 'identity') {
     redirect('/onboarding');
   }
 
-  const steps = stepsFor(userForState, flags);
-  const currentIndex = steps.indexOf('identity') + 1;
+  const steps = stepListFor(userForState, flags);
 
   return (
     <OnboardingShell
-      currentIndex={currentIndex}
-      total={steps.length}
+      steps={steps}
+      currentStep="identity"
       title="Your ID and salary date"
       description="We use your SA ID to run a quick affordability check and time instalments to your salary."
     >

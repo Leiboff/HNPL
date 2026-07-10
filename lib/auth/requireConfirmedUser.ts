@@ -42,8 +42,17 @@ export type RequireConfirmedUserResult = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any, 'public', any>;
   user: {
-    id:    string;
-    email: string | null;
+    id:                 string;
+    email:              string | null;
+    /** Non-null because the helper redirects unconfirmed users. */
+    email_confirmed_at: string;
+    /**
+     * Providers on this auth user, extracted from user.identities.
+     * 'email' for email/password, 'google' for Google OAuth, etc.
+     * The onboarding step list keys off this to decide whether the
+     * verify-email step is part of the user's PATH.
+     */
+    identity_providers: readonly string[];
   };
 };
 
@@ -67,8 +76,20 @@ export async function requireConfirmedUser(
     redirect(`/verify-email?${params.toString()}`);
   }
 
+  // Identities → provider string list. Supabase types `identities` as
+  // `UserIdentity[] | undefined`; each entry has a required `provider`
+  // string. We freeze the array so downstream consumers can't mutate it.
+  const identityProviders: readonly string[] = Object.freeze(
+    (user.identities ?? []).map((i) => i.provider),
+  );
+
   return {
     supabase,
-    user: { id: user.id, email: user.email ?? null },
+    user: {
+      id:                 user.id,
+      email:              user.email ?? null,
+      email_confirmed_at: user.email_confirmed_at,
+      identity_providers: identityProviders,
+    },
   };
 }

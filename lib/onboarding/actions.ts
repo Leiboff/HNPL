@@ -7,7 +7,7 @@ import { encryptId } from '@/lib/idEncryption';
 import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { currentFlags } from '@/lib/featureFlags';
-import { computeOnboarding, type ProfileForOnboarding } from './state';
+import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -56,7 +56,10 @@ async function loadUserAndProfile() {
   return {
     ok:      true as const,
     userId:  user.id,
-    user:    { email_confirmed_at: user.email_confirmed_at ?? null },
+    user:    {
+      email_confirmed_at: user.email_confirmed_at ?? null,
+      identity_providers: (user.identities ?? []).map((i) => i.provider),
+    },
     profile: {
       phone_verified_at:    profile.phone_verified_at    as string | null,
       sa_id_number:         profile.sa_id_number         as string | null,
@@ -73,7 +76,7 @@ async function loadUserAndProfile() {
 // auto-passes due to a flag being off still lets us reach a done state.
 async function maybeFinalize(
   userId: string,
-  user:   { email_confirmed_at: string | null },
+  user:   UserForOnboarding,
   profile: ProfileForOnboarding,
 ): Promise<{ done: boolean; nextPath: string }> {
   const status = computeOnboarding(user, profile, currentFlags());

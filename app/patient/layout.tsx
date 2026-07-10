@@ -46,11 +46,14 @@ export default async function PatientLayout({
   // never "which step next?". Google users landing here for the first
   // time (no phone, no ID) hit this branch and get sent to phone step.
   //
-  // email_confirmed_at is guaranteed non-null by requireConfirmedUser()
-  // above — we synthesise a truthy sentinel so the state model treats
-  // the verify-email step as satisfied.
+  // requireConfirmedUser exposes both email_confirmed_at (guaranteed
+  // non-null on this code path) and identity_providers (drives the
+  // step-list path decision — email vs Google-only).
   const onboardingStatus = computeOnboarding(
-    { email_confirmed_at: 'confirmed' },
+    {
+      email_confirmed_at: user.email_confirmed_at,
+      identity_providers: user.identity_providers,
+    },
     profile as unknown as ProfileForOnboarding,
     currentFlags(),
   );

@@ -169,6 +169,33 @@ describe('Part 3 — home dashboard', () => {
     expect(bar).not.toMatch(/<input/);
   });
 
+  it('layout order: greeting → FindCareBar → ApprovedBalanceCard → active plans → hero', () => {
+    // The find-care bar is the FIRST element under the greeting so
+    // it's the primary tap-target on the home dashboard. Approved
+    // balance still respects its own null-guard (renders nothing
+    // when the limit is unset).
+    const greeting  = HOME.indexOf('Hi, {profile?.first_name');
+    const findCare  = HOME.indexOf('<FindCareBar />');
+    const balance   = HOME.indexOf('<ApprovedBalanceCard');
+    const plans     = HOME.indexOf('data-testid="dashboard-active-plans-count"');
+    const hero      = HOME.indexOf('{hero}');
+    expect(greeting).toBeGreaterThan(-1);
+    expect(findCare).toBeGreaterThan(greeting);
+    expect(balance).toBeGreaterThan(findCare);
+    expect(plans).toBeGreaterThan(balance);
+    expect(hero).toBeGreaterThan(plans);
+  });
+
+  it('ApprovedBalanceCard visibility rule unchanged (still gated on approved_credit_limit)', () => {
+    // The page-level guard: approvedLimit is null → the card renders
+    // null internally. Pin that the page still passes the raw limit
+    // (not a fallback) so a regression that adds a defaulting shim
+    // fails here.
+    expect(HOME).toMatch(/approvedLimit:\s*number \| null/);
+    expect(HOME).toMatch(/\(profile\?\.approved_credit_limit as number \| null\) \?\? null/);
+    expect(HOME).toMatch(/<ApprovedBalanceCard limit=\{approvedLimit\}/);
+  });
+
   it('dashboard no longer imports or renders the old passkey card', () => {
     // Header-comment narrative may reference the retired name;
     // pattern-match against CODE only.
