@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { extractSuburbLabel, reverseGeocodeSuburb } from './reverseGeocode';
 
-// ─── Tests — reverse-geocode helper (display-only suburb label) ────────
+// ─── Tests — reverse-geocode client wrapper + shared extractor ─────────
 //
-// The pure `extractSuburbLabel` is unit-tested directly against
-// Places address-components. The IO wrapper `reverseGeocodeSuburb`
-// is tested against a mocked fetch — HTTP shape, field-mask +
-// endpoint, and the always-graceful fallback contract (never throws;
-// returns null on any failure).
-
-// ─── extractSuburbLabel ────────────────────────────────────────────────
+// The Google call itself lives in the server route
+// (app/api/reverse-geocode/route.ts) — this file only tests the
+// browser-side wrapper's contract:
+//   • Passes coords to the internal route via query params.
+//   • Reads `label` off the JSON response.
+//   • Never throws — every failure path returns null so the sheet's
+//     'Current location' fallback takes over.
+//
+// The pure `extractSuburbLabel` is unit-tested against Places-New
+// addressComponent shape. The route normalizes legacy Geocoding shape
+// (long_name / short_name) → Places-New shape (longText / shortText)
+// before calling this helper, so it only ever sees one shape.
 
 describe('extractSuburbLabel — pure address-component extraction', () => {
   it('combines sublocality + locality into "Suburb, City"', () => {
@@ -70,94 +75,64 @@ describe('extractSuburbLabel — pure address-component extraction', () => {
   });
 });
 
-// ─── reverseGeocodeSuburb — HTTP wrapper w/ mocked fetch ───────────────
+// ─── reverseGeocodeSuburb — HTTP wrapper over the internal route ──────
 
-describe('reverseGeocodeSuburb — HTTP wrapper + graceful fallback', () => {
-  const OLD_ENV = process.env.NEXT_PUBLIC_GOOGLE_PLACES_KEY;
+describe('reverseGeocodeSuburb — talks to /api/reverse-geocode', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
-  beforeEach(() => {
-    process.env.NEXT_PUBLIC_GOOGLE_PLACES_KEY = 'test-key';
-    vi.restoreAllMocks();
-  });
-  afterEach(() => {
-    process.env.NEXT_PUBLIC_GOOGLE_PLACES_KEY = OLD_ENV;
-    vi.restoreAllMocks();
-  });
-
-  it('returns null when the API key is missing (no fetch call)', async () => {
-    delete process.env.NEXT_PUBLIC_GOOGLE_PLACES_KEY;
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const result = await reverseGeocodeSuburb(-26.10, 28.05);
-    expect(result).toBeNull();
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it('returns null when lat or lng is not finite', async () => {
+  it('returns null when lat or lng is not finite (no fetch call)', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     expect(await reverseGeocodeSuburb(NaN, 28.05)).toBeNull();
     expect(await reverseGeocodeSuburb(-26.10, Infinity)).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('POSTs to places:searchNearby with the correct headers + body shape', async () => {
+  it('GETs /api/reverse-geocode with lat/lng in the query string', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({
-        places: [{
-          addressComponents: [
-            { longText: 'Glenhazel',    shortText: 'Glenhazel',    types: ['sublocality'] },
-            { longText: 'Johannesburg', shortText: 'Johannesburg', types: ['locality']    },
-          ],
-        }],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      new Response(JSON.stringify({ label: 'Glenhazel, Johannesburg' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
     );
-
     const label = await reverseGeocodeSuburb(-26.10, 28.05);
     expect(label).toBe('Glenhazel, Johannesburg');
-
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0]!;
-    expect(String(url)).toBe('https://places.googleapis.com/v1/places:searchNearby');
-    expect(init?.method).toBe('POST');
-    // Essentials-only field mask; sublocality lookup only.
-    const headers = init?.headers as Record<string, string>;
-    expect(headers['X-Goog-Api-Key']).toBe('test-key');
-    expect(headers['X-Goog-FieldMask']).toBe('places.addressComponents,places.formattedAddress');
-    // Body contains a searchNearby-shaped payload.
-    const body = JSON.parse((init?.body as string) ?? '{}');
-    expect(body.locationRestriction.circle.center).toEqual({ latitude: -26.10, longitude: 28.05 });
-    expect(body.locationRestriction.circle.radius).toBe(500);
-    expect(body.maxResultCount).toBe(1);
+    const [url] = fetchSpy.mock.calls[0]!;
+    expect(String(url)).toContain('/api/reverse-geocode');
+    expect(String(url)).toContain('lat=-26.1');
+    expect(String(url)).toContain('lng=28.05');
   });
 
-  it('returns null when the response is non-2xx', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('nope', { status: 403 }),
-    );
+  it('returns null when the route responds with non-2xx (401 / 429 / 5xx all degrade the same way)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 429 }));
     expect(await reverseGeocodeSuburb(-26.10, 28.05)).toBeNull();
+    warn.mockRestore();
   });
 
-  it('returns null when the response has no places', async () => {
+  it('returns null when the route responds with { label: null }', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ places: [] }), { status: 200 }),
+      new Response(JSON.stringify({ label: null }), { status: 200 }),
     );
     expect(await reverseGeocodeSuburb(-26.10, 28.05)).toBeNull();
   });
 
   it('never throws when fetch itself rejects — returns null instead', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
     expect(await reverseGeocodeSuburb(-26.10, 28.05)).toBeNull();
+    warn.mockRestore();
   });
 
-  it('returns null when address components lack sublocality AND locality', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({
-        places: [{
-          addressComponents: [
-            { longText: 'ZA', shortText: 'ZA', types: ['country'] },
-          ],
-        }],
-      }), { status: 200 }),
+  it('does NOT contact Google directly (never any maps.googleapis.com URL from the browser)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ label: 'Whatever' }), { status: 200 }),
     );
-    expect(await reverseGeocodeSuburb(-26.10, 28.05)).toBeNull();
+    await reverseGeocodeSuburb(-26.10, 28.05);
+    for (const [url] of fetchSpy.mock.calls) {
+      expect(String(url)).not.toContain('maps.googleapis.com');
+      expect(String(url)).not.toContain('places.googleapis.com');
+    }
   });
 });

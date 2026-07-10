@@ -2,18 +2,33 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
-// ─── Regression — the legacy Geocoding API integration is fully removed ─
+// ─── Regression — the legacy Geocoding API integration is confined ─────
 //
-// The "Places (New) everywhere" migration retired:
-//   • lib/maps/geocode.ts                       (server-side Geocoding wrapper)
-//   • app/patient/explore/actions.ts            (geocodeSuburb server action)
-//   • regeocodePractice action                  (admin re-geocode)
-//   • GOOGLE_MAPS_API_KEY                       (server-only Geocoding key)
+// The "Places (New) everywhere" sweep retired the free-form use of the
+// legacy Geocoding integration:
+//   • lib/maps/geocode.ts                       (server-side Geocoding wrapper) — REMOVED
+//   • app/patient/explore/actions.ts            (geocodeSuburb server action)   — REMOVED
+//   • regeocodePractice action                  (admin re-geocode)              — REMOVED
+//   • GOOGLE_MAPS_API_KEY                       (server-only Geocoding key)     — REMOVED
 //
-// These tests guard the removal. They walk the source tree directly (no
-// git grep — which would miss untracked / staged-only files), excluding
-// THIS test file from its own scan so the literal mentions of retired
-// symbols in the test comments + descriptions don't false-positive.
+// Reverse geocoding then moved to Places (New) SearchNearby, which
+// returns nothing in POI-sparse areas (most residential SA). To keep
+// the feature working we brought the Geocoding endpoint BACK on a
+// SINGLE server-only route — app/api/reverse-geocode/route.ts — using
+// a new server-only key GOOGLE_GEOCODING_SERVER_KEY. That endpoint is
+// still forbidden EVERYWHERE ELSE in the codebase, because:
+//   • Our NEXT_PUBLIC_GOOGLE_PLACES_KEY is HTTP-referrer-restricted
+//     (correctly — it's a browser key).
+//   • The Geocoding web service rejects referrer-restricted keys —
+//     any browser call to maps.googleapis.com/maps/api/geocode with
+//     that key 403s in production while passing mocked tests.
+// So the endpoint's ONLY authorised caller is the server route above.
+//
+// These tests guard both the confinement (allow-listed callers) and
+// the residual removals (old symbols still gone). They walk the source
+// tree directly, excluding THIS test file from its own scan so the
+// literal mentions of retired / confined symbols in the test comments
+// don't false-positive.
 
 const ROOT       = resolve(process.cwd());
 const SCAN_DIRS  = ['app', 'lib'];
@@ -59,28 +74,57 @@ function search(pattern: RegExp): Array<{ file: string; line: number; text: stri
   return hits;
 }
 
-describe('Geocoding API — fully removed', () => {
-  it('no source file references the Geocoding REST endpoint', () => {
-    expect(search(/maps\.googleapis\.com\/maps\/api\/geocode/)).toEqual([]);
+describe('Geocoding API — confined to the ONE server-only route', () => {
+  it('the Geocoding endpoint is referenced ONLY in app/api/reverse-geocode/{route.ts,route.test.ts}', () => {
+    const hits = search(/maps\.googleapis\.com\/maps\/api\/geocode/);
+    const files = new Set(hits.map((h) => h.file));
+    // The confinement allow-list. Any other file appearing here is
+    // an escape of the endpoint to a broader surface — including,
+    // critically, the browser (referrer-restricted key would 403).
+    const ALLOWED = new Set([
+      'app/api/reverse-geocode/route.ts',
+      'app/api/reverse-geocode/route.test.ts',
+    ]);
+    for (const f of files) {
+      expect(ALLOWED.has(f)).toBe(true);
+    }
+    // The runtime file MUST reference the endpoint (this is a
+    // presence assertion, not just an absence one).
+    expect(files.has('app/api/reverse-geocode/route.ts')).toBe(true);
   });
 
-  it('the lib/maps/geocode module no longer exists / is imported anywhere', () => {
+  it('the endpoint is NEVER called from client code (a `use client` file)', () => {
+    // A file that contains a call to the Geocoding endpoint AND
+    // has 'use client' at the top would be a runtime 403 in prod.
+    const hits = search(/maps\.googleapis\.com\/maps\/api\/geocode/);
+    for (const { file } of hits) {
+      const content = readFileSync(resolve(ROOT, file), 'utf8');
+      const firstLine = content.split(/\r?\n/, 3).join('\n');
+      expect(firstLine).not.toMatch(/^\s*['"]use client['"]/m);
+    }
+  });
+
+  it('the lib/maps/geocode module still does not exist / is not imported', () => {
     expect(search(/['"]@\/lib\/maps\/geocode['"]/)).toEqual([]);
     expect(search(/['"]\.\.?\/.*lib\/maps\/geocode['"]/)).toEqual([]);
   });
 
   it('no code imports geocodeAddress (the old wrapper symbol)', () => {
-    // Match the import-statement shape so the test's own narrative
-    // mentions ("the geocodeAddress wrapper") don't false-positive.
     expect(search(/import\s*\{[^}]*\bgeocodeAddress\b/)).toEqual([]);
   });
 
-  it('no source file READS process.env.GOOGLE_MAPS_API_KEY (retired)', () => {
-    // The server-only Geocoding key is gone. The browser-exposed
-    // Places key (NEXT_PUBLIC_GOOGLE_PLACES_KEY) is the only Google
-    // env reference now. A narrative comment mentioning the retired
-    // name is fine; what's not fine is any code actually READING it.
+  it('no source file READS process.env.GOOGLE_MAPS_API_KEY (retired name)', () => {
+    // The retired name stays retired. The NEW server-only key is
+    // GOOGLE_GEOCODING_SERVER_KEY — see the route file.
     expect(search(/process\.env\.GOOGLE_MAPS_API_KEY/)).toEqual([]);
+  });
+
+  it('the new server-only key IS read (and only from the server route file)', () => {
+    const hits = search(/process\.env\.GOOGLE_GEOCODING_SERVER_KEY/);
+    const files = new Set(hits.map((h) => h.file));
+    expect(files.has('app/api/reverse-geocode/route.ts')).toBe(true);
+    // No NEXT_PUBLIC prefix (would leak the key into the bundle).
+    expect(search(/NEXT_PUBLIC_GOOGLE_GEOCODING/)).toEqual([]);
   });
 
   it('the regeocodePractice admin action no longer exists', () => {
@@ -96,15 +140,14 @@ describe('Places API (New) — wired in the right places, no server-side key lea
   it('the Places (New) endpoints are only referenced in the Places wrapper modules + their tests', () => {
     const hits = search(/places\.googleapis\.com/);
     const files = new Set(hits.map((h) => h.file));
-    // Runtime modules and their test companions are the only
-    // acceptable owners of the Places (New) URL. The forward-lookup
-    // wrapper (places.ts) + the reverse-geocode wrapper
-    // (reverseGeocode.ts) are the two modules; both may be
-    // referenced by their `.test` companions.
+    // Runtime module + test companion for the browser-side
+    // autocomplete / place-details wrapper. `reverseGeocode.test.ts`
+    // may reference the URL only inside a negative-assertion string
+    // ("never any places.googleapis.com URL from the browser") — the
+    // scan can't distinguish literal-in-string from a call.
     const ALLOWED = new Set([
       'lib/maps/places.ts',
       'lib/maps/places.test.ts',
-      'lib/maps/reverseGeocode.ts',
       'lib/maps/reverseGeocode.test.ts',
     ]);
     for (const f of files) {
