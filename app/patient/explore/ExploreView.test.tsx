@@ -199,30 +199,14 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
   });
   afterEach(() => { removeGeolocation(); });
 
-  it('renders LocationRow with "Choose location" when no location is set', () => {
+  it('does NOT call getCurrentPosition on mount (gesture-gated only)', () => {
     render(<ExploreView rows={[r()]} />);
-    // Simulate the browser denying the auto-prompt so the row
-    // settles into its "nothing chosen" state.
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
-    const row = screen.getByTestId('location-row');
-    expect(row).toBeTruthy();
+    // The whole point of the refactor: no on-mount permission prompt.
+    // The browser only sees getCurrentPosition when the user taps
+    // "Use current location" inside ChangeLocationSheet.
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
+    // Empty state: row reads "Choose location".
     expect(screen.getByTestId('location-row-value').textContent).toMatch(/Choose location/);
-  });
-
-  it('renders LocationRow with "Suburb, City" once a location is resolved via reverse-geocode', async () => {
-    reverseGeocodeMock.mockResolvedValueOnce('Glenhazel, Johannesburg');
-    render(<ExploreView rows={[r()]} />);
-    await act(async () => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-      // Flush reverse-geocode microtask
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Glenhazel, Johannesburg/);
   });
 
   it('the OLD "Use my location" pill and "Near your current location" caption are removed', () => {
@@ -235,10 +219,6 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
 
   it('tapping the LocationRow opens the ChangeLocationSheet', () => {
     render(<ExploreView rows={[r()]} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
     // Sheet is closed to start with.
     expect(screen.queryByTestId('change-location-sheet')).toBeNull();
     act(() => { fireEvent.click(screen.getByTestId('location-row')); });
@@ -250,10 +230,6 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
 
   it('picking a suburb via autocomplete updates the LocationRow and persists to sessionStorage', () => {
     render(<ExploreView rows={[r()]} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
     // Open sheet
     act(() => { fireEvent.click(screen.getByTestId('location-row')); });
     // The autocomplete's onSelect is captured on mount via the module mock.
@@ -288,22 +264,18 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
     });
   });
 
-  it('"Use current location" inside the sheet: geolocation grant → reverse-geocode → row updates', async () => {
+  it('"Use current location" inside the sheet: geolocation grant → reverse-geocode → row updates (the ONLY getCurrentPosition call)', async () => {
     reverseGeocodeMock.mockResolvedValueOnce('Melville, Johannesburg');
     render(<ExploreView rows={[r()]} />);
-    // Deny the initial auto-prompt so the sheet path is clean.
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
+    // No on-mount call.
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
     // Open sheet
     act(() => { fireEvent.click(screen.getByTestId('location-row')); });
-    // Sheet-level Use-current-location tap → fires geolocation again.
+    // Sheet-level Use-current-location tap → fires geolocation for the first time.
     act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
-    // The sheet made a fresh call to getCurrentPosition (call 2).
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
     await act(async () => {
-      const [ok] = geo.getCurrentPosition.mock.calls[1]!;
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
       ok?.({ coords: { latitude: -26.18, longitude: 28.02 } } as GeolocationPosition);
       // Flush reverse-geocode
       await Promise.resolve();
@@ -317,16 +289,12 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
 
   it('"Use current location" DENIED inside the sheet: sheet stays usable, autocomplete still works', () => {
     render(<ExploreView rows={[r()]} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
     // Open sheet.
     act(() => { fireEvent.click(screen.getByTestId('location-row')); });
     // Tap use-current → geolocation error callback fires immediately.
     act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
     act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[1]!;
+      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
       err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
     });
     // Sheet is still open, no crash, sensible message.
@@ -339,13 +307,31 @@ describe('ExploreView — Location row (replaces the pill / caption)', () => {
     expect(confirm.disabled).toBe(true);
   });
 
-  it('persistence: stored location hydrates on mount — no re-prompt', () => {
+  it('confirming a GPS draft BEFORE reverse-geocode resolves falls back to a generic "Current location" label', () => {
+    // reverseGeocode never resolves in this test (default mock)
+    reverseGeocodeMock.mockImplementation(() => new Promise(() => {}));
+    render(<ExploreView rows={[r()]} />);
+    act(() => { fireEvent.click(screen.getByTestId('location-row')); });
+    act(() => { fireEvent.click(screen.getByTestId('change-location-use-current')); });
+    act(() => {
+      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
+      ok?.({ coords: { latitude: -26.18, longitude: 28.02 } } as GeolocationPosition);
+    });
+    // Confirm without waiting for reverse-geocode.
+    act(() => { fireEvent.click(screen.getByTestId('change-location-confirm')); });
+    // Row shows a graceful fallback — never "Choose location".
+    expect(screen.getByTestId('location-row-value').textContent).toMatch(/Current location/);
+    expect(screen.getByTestId('location-row-value').textContent).not.toMatch(/Choose location/);
+  });
+
+  it('persistence: stored location hydrates on mount — still no browser prompt', () => {
     // Pre-populate storage BEFORE mount.
     window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
       latitude: -26.20, longitude: 28.10, label: 'Sandhurst, Johannesburg', source: 'suburb',
     }));
     render(<ExploreView rows={[r()]} />);
-    // Since a stored location was found, we do NOT auto-prompt.
+    // The browser prompt is never fired — hydration is a plain
+    // sessionStorage read.
     expect(geo.getCurrentPosition).not.toHaveBeenCalled();
     // Row shows the hydrated label.
     expect(screen.getByTestId('location-row-value').textContent).toMatch(/Sandhurst, Johannesburg/);
@@ -423,15 +409,16 @@ describe('ExploreView — results view when URL params are present', () => {
   });
 
   it('no-location still shows every practitioner (the no-location contract)', () => {
+    // No sessionStorage entry → no browser prompt → row shows
+    // "Choose location" → the pipeline runs with userLocation=null
+    // and the bucketer's no-location branch keeps every practitioner
+    // visible.
     const rows: DirectoryRow[] = [
       r({ member_id: 'co', hpcsa_group_key: 'hco', first_name: 'Has',  last_name: 'Coords',  practice_latitude: -26.10, practice_longitude: 28.05 }),
       r({ member_id: 'nc', hpcsa_group_key: 'hnc', first_name: 'No',   last_name: 'Coords',  practice_latitude: null,    practice_longitude: null }),
     ];
     render(<ExploreView rows={rows} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
     expect(screen.getByText('Has Coords')).toBeTruthy();
     expect(screen.getByText('No Coords')).toBeTruthy();
   });
@@ -470,16 +457,17 @@ describe('ExploreView — simplified list card', () => {
   });
 
   it('card location line is STACKED — suburb on one row, "N km away" beneath (Fix 3)', () => {
+    // Pre-populate a shared location so distances render — the page
+    // never auto-prompts for permission.
+    window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
+      latitude: -26.10, longitude: 28.05, label: 'Glenhazel, JHB', source: 'suburb',
+    }));
     render(<ExploreView rows={[r({
       member_id: 'm1', hpcsa_group_key: 'hh',
       practice_name: 'Sandton Rooms',
       practice_suburb: 'Glenhazel', practice_city: 'Johannesburg',
       practice_latitude: -26.10, practice_longitude: 28.05,
     })]} />);
-    act(() => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-    });
 
     // Suburb-only line contains the suburb but NOT the "km" fragment.
     const area = screen.getByTestId('practitioner-card-hh-area');
@@ -498,16 +486,13 @@ describe('ExploreView — simplified list card', () => {
   });
 
   it('card location shows ONLY the suburb line (no empty "km away") when there is no user location', () => {
+    // No sessionStorage → no location → no distance line.
     render(<ExploreView rows={[r({
       member_id: 'm1', hpcsa_group_key: 'hh',
       practice_name: 'Sandton Rooms',
       practice_suburb: 'Glenhazel', practice_city: 'Johannesburg',
     })]} />);
-    // Deny geo → no distance → distance line should NOT render.
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
     expect(screen.getByTestId('practitioner-card-hh-area').textContent).toMatch(/Glenhazel, Johannesburg/);
     expect(screen.queryByTestId('practitioner-card-hh-distance')).toBeNull();
   });
@@ -617,17 +602,17 @@ describe('ExploreView — Fix 4: one continuous results list', () => {
   afterEach(() => { removeGeolocation(); });
 
   it('does NOT render the "Other practitioners" subheading, even when there are coord-less cards', () => {
-    // Grant location so the bucketing splits into near vs other:
-    // "near" = has coords + within radius; "other" = coord-less.
+    // Pre-populate a shared location so the bucketing splits into
+    // near vs other: "near" = has coords + within radius;
+    // "other" = coord-less.
+    window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
+      latitude: -26.10, longitude: 28.05, label: 'Sandton, JHB', source: 'suburb',
+    }));
     const rows: DirectoryRow[] = [
       r({ member_id: 'has', hpcsa_group_key: 'h1', first_name: 'Coord',   last_name: 'Has', practice_latitude: -26.10, practice_longitude: 28.05 }),
       r({ member_id: 'no',  hpcsa_group_key: 'h2', first_name: 'Coord',   last_name: 'No',  practice_latitude: null,    practice_longitude: null }),
     ];
     render(<ExploreView rows={rows} />);
-    act(() => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-    });
 
     // Both cards render.
     expect(screen.getByText('Coord Has')).toBeTruthy();
@@ -637,15 +622,14 @@ describe('ExploreView — Fix 4: one continuous results list', () => {
   });
 
   it('no-location state still shows every practitioner (unchanged contract) and NO subheading', () => {
+    // No sessionStorage entry → no prompt → no location → the
+    // bucketer's no-location branch keeps everyone visible.
     const rows: DirectoryRow[] = [
       r({ member_id: 'a', hpcsa_group_key: 'ha', first_name: 'A', last_name: 'A' }),
       r({ member_id: 'b', hpcsa_group_key: 'hb', first_name: 'B', last_name: 'B' }),
     ];
     render(<ExploreView rows={rows} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
     expect(screen.getByText('A A')).toBeTruthy();
     expect(screen.getByText('B B')).toBeTruthy();
     expect(screen.queryByText(/Other practitioners/i)).toBeNull();

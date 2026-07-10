@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
 import { readStoredLocation } from '@/lib/patient/sharedLocation';
 import {
@@ -14,93 +14,44 @@ import {
 // ─── Practitioner detail screen — client ──────────────────────────────
 //
 // Builds a single PractitionerCard from the (1 or more) view rows the
-// server fetched, applies client-side haversine if geolocation is
-// granted, and renders:
+// server fetched, applies client-side haversine when a location is
+// already in the shared session store, and renders:
 //   • Hero header — large avatar, name, specialty.
 //   • Facilities/Locations section — full list of practices with
 //     Call to book + Directions per row, sorted nearest-first.
 //   • Sticky bottom action bar — Call to book + Directions for the
 //     practitioner's nearest location.
 //
+// Location handling — NO on-mount browser prompt. We only render
+// distances / nearest-first ordering when the user has already set a
+// location via /patient/explore's change-location sheet (persisted in
+// sessionStorage). If nothing is stored, distances are hidden but
+// every location's "Directions" link still works from the practice's
+// stored coords / address string, and Call to book is unchanged. That
+// keeps the page usable without ever triggering a gesture-less
+// permission prompt.
+//
 // No medical-aid / network / HPCSA badge content here either — same
-// rules as the list. The optional "Payment plans available here"
-// subtitle is the only BetterNow-specific note we add; it's honest
-// (every listed practice DOES offer BetterNow) and on-brand.
+// rules as the list.
 
 type Props = {
   rows: DirectoryRow[];
 };
 
-type GeoState =
-  | { kind: 'idle' }
-  | { kind: 'requesting' }
-  | { kind: 'granted'; location: LatLng }
-  | { kind: 'denied' };
-
 export default function DetailView({ rows }: Props) {
-  // Hydrate from the shared sessionStorage location (set on
-  // /patient/explore). If present, we skip the on-mount geo prompt.
-  // If absent, we auto-request GPS on mount (unchanged behaviour for
-  // patients who land on the detail page directly).
-  const initialFromShared: GeoState = (() => {
-    if (typeof window === 'undefined') return { kind: 'requesting' };
-    const shared = readStoredLocation();
-    if (shared) {
-      return {
-        kind:     'granted',
-        location: { latitude: shared.latitude, longitude: shared.longitude },
-      };
-    }
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      return { kind: 'denied' };
-    }
-    return { kind: 'requesting' };
-  })();
-
-  const [geo, setGeo] = useState<GeoState>(initialFromShared);
-
-  const [attemptId, setAttemptId] = useState(0);
-  const livenessRef = useRef({ cancelled: false });
-
-  const tryLocate = useCallback(() => {
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      setGeo({ kind: 'requesting' });
-    }
-    setAttemptId((n) => n + 1);
-  }, []);
+  // Hydrate the shared location from sessionStorage once. Never fires
+  // navigator.geolocation.getCurrentPosition — see the comment above.
+  const [userLocation, setUserLocation] = useState<LatLng | null>(null);
 
   useEffect(() => {
-    // Only fire the browser geolocation prompt when we're in the
-    // `requesting` state. If we hydrated from sessionStorage we're
-    // already `granted` — skip the prompt entirely so the user isn't
-    // re-nagged for permission on every page load.
-    if (geo.kind !== 'requesting') return;
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
-
-    livenessRef.current = { cancelled: false };
-    const liveness = livenessRef.current;
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (liveness.cancelled) return;
-        setGeo({
-          kind:     'granted',
-          location: { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
-        });
-      },
-      () => {
-        if (liveness.cancelled) return;
-        setGeo({ kind: 'denied' });
-      },
-      { enableHighAccuracy: false, timeout: 8_000, maximumAge: 60_000 },
-    );
-
-    return () => { liveness.cancelled = true; };
-    // attemptId is the trigger for the retry button; geo.kind is what
-    // gates the fetch. Both are correct deps here.
-  }, [attemptId, geo.kind]);
-
-  const userLocation = geo.kind === 'granted' ? geo.location : null;
+    let cancelled = false;
+    void (async () => {
+      const shared = readStoredLocation();
+      if (cancelled || !shared) return;
+      setUserLocation({ latitude: shared.latitude, longitude: shared.longitude });
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Build the same PractitionerCard the list builds — the detail page
   // is just "the same card, more space". groupIntoCards is the SAME
@@ -156,21 +107,6 @@ export default function DetailView({ rows }: Props) {
           </div>
         </div>
       </header>
-
-      {/* Geolocation pill — gentle nudge, not a blocker. */}
-      {geo.kind === 'denied' && (
-        <div className="rounded-xl bg-[rgba(21,168,158,.06)] border border-[rgba(21,168,158,.2)] px-4 py-2.5 text-xs text-[#0A6F68] flex items-center justify-between gap-3">
-          <span>Allow location to see distance to each practice.</span>
-          <button
-            type="button"
-            onClick={tryLocate}
-            data-testid="detail-try-location"
-            className="shrink-0 rounded-md border border-[#15A89E]/30 bg-white px-2.5 py-1 text-xs font-semibold text-[#13294B] hover:bg-[#15A89E]/5"
-          >
-            Try location
-          </button>
-        </div>
-      )}
 
       {/* Locations */}
       <section className="space-y-3">

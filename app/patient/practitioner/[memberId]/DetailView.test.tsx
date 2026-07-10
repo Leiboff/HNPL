@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import type { DirectoryRow } from '@/lib/practitioner/grouping';
 
 // ─── Tests — practitioner detail screen ────────────────────────────────
@@ -113,6 +113,12 @@ describe('DetailView — hero + locations list', () => {
   });
 
   it('sticky bottom bar exposes Call to book + Directions for the nearest location', () => {
+    // A location was already set on /patient/explore this session,
+    // so distances render immediately. No browser prompt is ever
+    // fired on this page (gesture-gated discipline).
+    window.sessionStorage.setItem('hnpl:patient-location:v1', JSON.stringify({
+      latitude: -26.10, longitude: 28.05, label: 'Sandton, Johannesburg', source: 'suburb',
+    }));
     const rows: DirectoryRow[] = [r({
       practice_id: 'pA',
       practice_phone: '+27 11 555 0001',
@@ -120,12 +126,10 @@ describe('DetailView — hero + locations list', () => {
       practice_longitude: 28.05,
     })];
     render(<DetailView rows={rows} />);
-    act(() => {
-      const [ok] = geo.getCurrentPosition.mock.calls[0]!;
-      ok?.({ coords: { latitude: -26.10, longitude: 28.05 } } as GeolocationPosition);
-    });
     expect(screen.getByTestId('detail-primary-call')).toBeTruthy();
     expect(screen.getByTestId('detail-primary-directions')).toBeTruthy();
+    // The prompt was never fired.
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
   });
 });
 
@@ -155,31 +159,47 @@ describe('DetailView — grouping unchanged (one card per HPCSA group)', () => {
   });
 });
 
-describe('DetailView — geo: re-prompt on mount + retry on denial', () => {
+describe('DetailView — never auto-prompts for geolocation (gesture-gated only)', () => {
   let geo: ReturnType<typeof buildGeolocationStub>;
   beforeEach(() => {
-    // Clear shared-location storage so this suite tests the
-    // no-hydration path (auto-prompt on mount).
+    // Clear shared-location storage so nothing hydrates.
     window.sessionStorage.clear();
     geo = buildGeolocationStub();
     installGeolocation(geo);
   });
   afterEach(() => { removeGeolocation(); });
 
-  it('fires getCurrentPosition on first mount', () => {
+  it('does NOT call getCurrentPosition on mount when no location is stored', () => {
     render(<DetailView rows={[r()]} />);
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(1);
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
   });
 
-  it('shows a Try-location nudge after denial; the button re-fires getCurrentPosition', () => {
-    render(<DetailView rows={[r()]} />);
-    act(() => {
-      const [, err] = geo.getCurrentPosition.mock.calls[0]!;
-      err?.({ code: 1, message: 'denied' } as GeolocationPositionError);
-    });
-    const btn = screen.getByTestId('detail-try-location');
-    act(() => { fireEvent.click(btn); });
-    expect(geo.getCurrentPosition).toHaveBeenCalledTimes(2);
+  it('renders the locations section without a "Try location" nudge — that surface is gone', () => {
+    render(<DetailView rows={[r({ practice_id: 'pA' })]} />);
+    // The nudge (and its retry button) that used to appear when the
+    // browser denied is no longer present at all — we never triggered
+    // the request in the first place.
+    expect(screen.queryByTestId('detail-try-location')).toBeNull();
+    expect(screen.queryByText(/Allow location to see distance/i)).toBeNull();
+    // The location row + Directions button still render.
+    expect(screen.getByTestId('detail-location-pA')).toBeTruthy();
+    expect(screen.getByTestId('detail-location-directions-pA')).toBeTruthy();
+  });
+
+  it('degrades gracefully with no stored coords: hides distance line but keeps Directions working', () => {
+    const rows: DirectoryRow[] = [r({
+      practice_id: 'pA',
+      practice_latitude: -26.10,
+      practice_longitude: 28.05,
+    })];
+    render(<DetailView rows={rows} />);
+    // No distance line inside the location row.
+    const row = screen.getByTestId('detail-location-pA');
+    expect(row.textContent).not.toMatch(/km\b/);
+    // Directions link still built from the practice coords.
+    const dir = screen.getByTestId('detail-location-directions-pA') as HTMLAnchorElement;
+    expect(dir.href).toContain('google.com/maps');
+    expect(dir.href).toContain('-26.1,28.05');
   });
 });
 

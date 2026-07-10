@@ -6,7 +6,6 @@
 // location" caption. One tap-target under the practitioner search bar:
 //   [Location]                     [📍 Suburb, City]  (teal)
 //   [Location]                     [📍 Choose location] (teal)
-//   [Location]                     [📍 Locating…]     (teal)
 //
 // Tapping anywhere on the row opens ChangeLocationSheet (owned by the
 // parent). Value color is always teal (#15A89E) so the row reads as
@@ -14,17 +13,12 @@
 
 type Props = {
   /** Suburb, City string (once resolved) or null when unknown. */
-  label:    string | null;
-  /** True while a background lookup (GPS + reverse-geocode) is in flight. */
-  loading?: boolean;
-  onOpen:   () => void;
+  label:  string | null;
+  onOpen: () => void;
 };
 
-export default function LocationRow({ label, loading = false, onOpen }: Props) {
-  const value =
-    label ? label :
-    loading ? 'Locating…' :
-    'Choose location';
+export default function LocationRow({ label, onOpen }: Props) {
+  const value = label ?? 'Choose location';
 
   return (
     <button

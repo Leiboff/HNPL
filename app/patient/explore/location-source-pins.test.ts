@@ -114,14 +114,32 @@ describe('Landing — the row is placed under the search bar (no pill / suburb f
   });
 });
 
-describe('DetailView — hydrates from shared location before prompting', () => {
+describe('DetailView — never auto-prompts; only hydrates from shared location', () => {
   it('imports readStoredLocation', () => {
     expect(DETAIL).toMatch(/from '@\/lib\/patient\/sharedLocation'/);
     expect(DETAIL).toMatch(/readStoredLocation/);
   });
-  it('skips getCurrentPosition when the hydration already produced a granted state', () => {
-    // The effect must gate on requesting → don't re-prompt when
-    // hydrated from storage. Look for the guard.
-    expect(DETAIL).toMatch(/if \(geo\.kind !== 'requesting'\) return/);
+  it('does NOT invoke getCurrentPosition anywhere (pin matches a CALL, not the phrase in comments)', () => {
+    // The whole permission-prompt surface is gone from DetailView.
+    // The only path to a fresh prompt is the "Use current location"
+    // tap inside ChangeLocationSheet — a user gesture.
+    expect(DETAIL).not.toMatch(/getCurrentPosition\s*\(/);
+  });
+  it('does NOT render the old "Try location" nudge (no request → no denial → no nudge)', () => {
+    expect(DETAIL).not.toMatch(/detail-try-location/);
+    expect(DETAIL).not.toMatch(/Allow location to see distance/);
+  });
+});
+
+describe('ExploreView — never auto-prompts on mount (gesture-gated only)', () => {
+  it('does NOT invoke getCurrentPosition on mount (pin matches a CALL, not the phrase in comments)', () => {
+    // ExploreView is a hydration-only surface for the shared
+    // location. The sheet is the sole path to a browser prompt.
+    expect(EXPLORE).not.toMatch(/getCurrentPosition\s*\(/);
+  });
+  it('the sheet is the sole owner of navigator.geolocation on the patient surface', () => {
+    // The ChangeLocationSheet's Use-current-location tap is the
+    // only remaining call site.
+    expect(SHEET).toMatch(/navigator\.geolocation\.getCurrentPosition\s*\(/);
   });
 });

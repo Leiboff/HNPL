@@ -2,9 +2,8 @@
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import type { LatLng } from '@/lib/maps/haversine';
-import { reverseGeocodeSuburb } from '@/lib/maps/reverseGeocode';
 import {
   readStoredLocation,
   writeStoredLocation,
@@ -32,14 +31,15 @@ import ChangeLocationSheet from './ChangeLocationSheet';
 //   • Results (?view=results OR ?specialty=X OR ?q=X) — the redesigned
 //     list with grouping + filters.
 //
-// Location state lives in THIS component and is persisted across
-// navigation via sessionStorage (see lib/patient/sharedLocation). On
-// mount:
-//   1. Hydrate from sessionStorage. If a stored location exists, use
-//      it — no browser permission prompt.
-//   2. Otherwise auto-request GPS. On grant → reverse-geocode → set +
-//      persist. On denial → the LocationRow shows "Choose location"
-//      and the user can open the sheet to pick a suburb / re-try GPS.
+// Location handling — GESTURE-GATED ONLY:
+//   • On mount we hydrate the location from sessionStorage if present;
+//     otherwise state stays null and the LocationRow reads "Choose
+//     location". We NEVER call navigator.geolocation.getCurrentPosition
+//     from this component.
+//   • The only path to a fresh browser permission prompt is the "Use
+//     current location" tap inside ChangeLocationSheet. Chrome
+//     suppresses gesture-less permission prompts, and a denial there
+//     poisons geolocation for the origin — hence the strict discipline.
 //
 // The LocationRow (renders under each screen's search bar) + the
 // ChangeLocationSheet replace the old "Use my location" pill and
@@ -62,65 +62,28 @@ export default function ExploreView({ rows }: Props) {
   const isResults = viewParam === 'results' || !!specialtyParam || !!qParam;
 
   // ── Location state ────────────────────────────────────────────────
-  //
-  // Single hook-free state so the sheet's setter (via onCommit) and
-  // the on-mount auto-request path both update the same variable.
   const [location, setLocationState] = useState<SharedLocation | null>(null);
-  const [locBusy,  setLocBusy]       = useState(false);   // true while auto-request GPS is in flight
   const [sheetOpen, setSheetOpen]    = useState(false);
 
   const commit = useCallback((loc: SharedLocation) => {
     writeStoredLocation(loc);
     setLocationState(loc);
-    setLocBusy(false);
   }, []);
 
-  // Hydrate from sessionStorage. If nothing is stored AND the browser
-  // supports geolocation, auto-request once. Never re-run.
-  //
-  // Every setState in this effect lives inside a callback (async IIFE
-  // for the hydration setState, geolocation success/error callbacks
-  // for the GPS setState calls) so react-hooks/set-state-in-effect
-  // stays green.
-  const hydratedRef = useRef(false);
+  // Hydrate from sessionStorage exactly once on mount. Never auto-
+  // requests GPS — a permission prompt without a user gesture gets
+  // suppressed by Chrome and, when denied, permanently poisons
+  // geolocation for the origin. The setState lives inside an async
+  // IIFE so react-hooks/set-state-in-effect stays green.
   useEffect(() => {
-    if (hydratedRef.current) return;
-    hydratedRef.current = true;
-
     let cancelled = false;
     void (async () => {
       const stored = readStoredLocation();
       if (cancelled) return;
-      if (stored) {
-        setLocationState(stored);
-        return;
-      }
-      if (typeof navigator === 'undefined' || !navigator.geolocation) return;
-
-      setLocBusy(true);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          if (cancelled) return;
-          const latitude  = pos.coords.latitude;
-          const longitude = pos.coords.longitude;
-          // Commit coords immediately (label null → row shows
-          // "Locating…"), then resolve the label via reverse-geocode
-          // and commit again with the label filled in.
-          commit({ latitude, longitude, label: null, source: 'gps' });
-          reverseGeocodeSuburb(latitude, longitude).then((label) => {
-            if (cancelled) return;
-            commit({ latitude, longitude, label, source: 'gps' });
-          });
-        },
-        () => {
-          if (cancelled) return;
-          setLocBusy(false);
-        },
-        { enableHighAccuracy: false, timeout: 8_000, maximumAge: 60_000 },
-      );
+      if (stored) setLocationState(stored);
     })();
     return () => { cancelled = true; };
-  }, [commit]);
+  }, []);
 
   // ── Pipeline: decorate → group → filter → bucket. ─────────────────
   // userLocation is memo-ed to keep the LatLng object identity stable
@@ -151,7 +114,6 @@ export default function ExploreView({ rows }: Props) {
           locationRow={
             <LocationRow
               label={rowLabel}
-              loading={locBusy}
               onOpen={() => setSheetOpen(true)}
             />
           }
@@ -176,7 +138,6 @@ export default function ExploreView({ rows }: Props) {
         locationRow={
           <LocationRow
             label={rowLabel}
-            loading={locBusy}
             onOpen={() => setSheetOpen(true)}
           />
         }

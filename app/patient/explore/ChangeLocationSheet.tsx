@@ -126,10 +126,14 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
       return;
     }
     if (draft.kind === 'gps') {
+      // If the user hit Confirm before reverse-geocode resolved (or
+      // it returned null), fall back to a generic label so the
+      // LocationRow renders something honest — the coords are real
+      // and drive ordering; the label is only display.
       onCommit({
         latitude:  draft.latitude,
         longitude: draft.longitude,
-        label:     draft.label,
+        label:     draft.label ?? 'Current location',
         source:    'gps',
       });
       onClose();
