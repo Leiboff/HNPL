@@ -46,6 +46,14 @@
   background: rgba(247,251,251,.82);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--line);
+  transition: box-shadow .25s ease;
+}
+
+/* Adds a subtle shadow once the page scrolls past the top — driven
+   by the IntersectionObserver on a body-prepended sentinel inside
+   SiteHeader.tsx. */
+.lp-root header.scrolled {
+  box-shadow: 0 6px 20px -12px rgba(19,41,75,.35);
 }
 
 .lp-root .nav {
@@ -103,6 +111,63 @@
   .lp-root .nav-links { display: flex; }
 }
 
+/* ── Mobile burger + slide-down menu ───────────────────────────────────────── */
+
+.lp-root .burger {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.lp-root .burger:hover { background: rgba(19,41,75,.05); }
+
+.lp-root .burger span {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background: var(--navy);
+  border-radius: 2px;
+  transition: transform .2s, opacity .2s;
+}
+
+.lp-root .burger[aria-expanded="true"] span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.lp-root .burger[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
+.lp-root .burger[aria-expanded="true"] span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+.lp-root .mobile-menu {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  background: rgba(247,251,251,.98);
+  backdrop-filter: blur(12px);
+  padding: 6px 0 14px;
+}
+
+.lp-root .mobile-menu a {
+  padding: 14px clamp(20px, 5vw, 40px);
+  color: var(--navy);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 16px;
+}
+
+.lp-root .mobile-menu a:active,
+.lp-root .mobile-menu a:hover { background: rgba(21,168,158,.06); }
+
+@media(min-width: 900px) {
+  .lp-root .burger { display: none; }
+  .lp-root .mobile-menu { display: none !important; }
+}
+
 /* ── Buttons ───────────────────────────────────────────────────────────────── */
 
 .lp-root .btn {
@@ -157,6 +222,17 @@
   position: relative;
   isolation: isolate;
   padding: clamp(40px,8vh,84px) 0 clamp(56px,9vh,96px);
+}
+
+/* Compact hero for /practices — the practices page uses the same
+   stage aesthetic but with less vertical air (it's a supporting
+   page, not the primary landing hero). */
+.lp-root .stage-compact {
+  padding: clamp(28px,6vh,56px) 0 clamp(36px,6vh,64px);
+}
+
+.lp-root .stage-compact h1 {
+  font-size: clamp(2rem, 7vw, 3.6rem);
 }
 
 .lp-root .stage::before {
@@ -550,6 +626,15 @@
 }
 
 .lp-root .feature p { color: var(--muted); font-size: .95rem; }
+
+/* WHY grid — exactly 3 cards on desktop, at a moderate width so
+   they read as prominent "reasons" rather than a dense feature
+   soup. Payflex/Happy Pay pattern. */
+.lp-root .why-grid {
+  max-width: 980px;
+  margin-left: auto;
+  margin-right: auto;
+}
 
 .lp-root .sec-cta { text-align: center; margin-top: 38px; }
 
