@@ -61,8 +61,8 @@ export default function SiteHeader() {
         </Link>
 
         <nav className="nav-links" aria-label="Primary">
-          <Link href="/#how">How it works</Link>
           <Link href="/#why">Why betternow</Link>
+          <Link href="/#how">How it works</Link>
           <Link href="/practices">For practices</Link>
           <Link href="/#faq">FAQ</Link>
         </nav>
@@ -89,8 +89,8 @@ export default function SiteHeader() {
           className="mobile-menu"
           data-testid="site-header-mobile-menu"
         >
-          <Link href="/#how"      onClick={() => setMenuOpen(false)}>How it works</Link>
           <Link href="/#why"      onClick={() => setMenuOpen(false)}>Why betternow</Link>
+          <Link href="/#how"      onClick={() => setMenuOpen(false)}>How it works</Link>
           <Link href="/practices" onClick={() => setMenuOpen(false)}>For practices</Link>
           <Link href="/#faq"      onClick={() => setMenuOpen(false)}>FAQ</Link>
         </div>

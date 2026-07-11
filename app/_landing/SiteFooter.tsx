@@ -16,8 +16,8 @@ export default function SiteFooter() {
           </div>
           <div className="col">
             <h5>Product</h5>
-            <Link href="/#how">How it works</Link>
             <Link href="/#why">Why betternow</Link>
+            <Link href="/#how">How it works</Link>
             <Link href="/practices">For practices</Link>
             <Link href="/#faq">FAQ</Link>
           </div>

@@ -34,6 +34,7 @@ import { resolve } from 'node:path';
 
 const ROOT = resolve(process.cwd());
 const LANDING = readFileSync(resolve(ROOT, 'app/LandingPage.tsx'), 'utf8');
+const HEADER  = readFileSync(resolve(ROOT, 'app/_landing/SiteHeader.tsx'), 'utf8');
 
 // ─── Forbidden card-preauth / card-limit / no-check / debit-order strings ─
 
@@ -95,7 +96,7 @@ function slice(startMarker: string, endMarker: string): string {
 }
 
 describe('Slogan 1 — hero tagline: "Get better now. Pay better later."', () => {
-  const heroScope = slice('{/* ── Hero ──', '{/* ── How it works');
+  const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
 
   it('appears in the hero section', () => {
     expect(heroScope).toContain('Get better now. Pay better later.');
@@ -130,7 +131,7 @@ describe('Slogan 2 — how-it-works heading: "Health can\'t wait. Payments can."
 });
 
 describe('Slogan 3 — R3,600 example lead line: "Take your bill in smaller doses."', () => {
-  const exampleScope = slice('className="example reveal"', '{/* ── Why betternow');
+  const exampleScope = slice('className="example reveal"', '{/* ── All you need to get started');
 
   it('appears inside the how-it-works example block', () => {
     expect(exampleScope).toMatch(/<div className="lead">Take your bill in smaller doses\.<\/div>/);
@@ -152,7 +153,7 @@ describe('Slogan 4 — allowance strapline: "Give your health some credit — it
   // reason cards. The slogan now lives as the sub-line under the
   // "All you need to get started" heading, where the credit-check
   // reality is most relevant.
-  const gettingStarted = slice('{/* ── All you need to get started', '{/* ── Trust ──');
+  const gettingStarted = slice('{/* ── All you need to get started', '{/* ── FAQ');
 
   it('appears as the "Getting started" sec-head sub-line', () => {
     expect(gettingStarted).toMatch(/<div className="kicker">Getting started<\/div>[\s\S]*?<h2>All you need to get started<\/h2>[\s\S]*?<p>Give your health some credit — it&apos;s due\.<\/p>/);
@@ -176,7 +177,9 @@ describe('Slogan 5 — hero + final CTA: "Get started" (single patient CTA)', ()
   // CTA. The old S5 line is dropped in favour of clarity.
 
   it('the hero has exactly ONE patient CTA labelled "Get started" pointing to /signup/patient', () => {
-    const heroCtas = slice('<div className="ctas">', '</div>\n        </div>\n      </div>\n\n      {/* ── How it works');
+    // Hero scope ends where the first content section begins —
+    // post-restructure that is Why betternow.
+    const heroCtas = slice('<div className="ctas">', '</div>\n        </div>\n      </div>\n\n      {/* ── Why betternow');
     expect(heroCtas).toContain('Get started');
     expect(heroCtas).toMatch(/href="\/signup\/patient"/);
     // No practice CTA in the hero.
@@ -185,22 +188,26 @@ describe('Slogan 5 — hero + final CTA: "Get started" (single patient CTA)', ()
   });
 
   it('the old dual-audience hero buttons ("I\'m a patient" / "I run a practice") are gone from the hero', () => {
-    const heroScope = slice('{/* ── Hero ──', '{/* ── How it works');
+    const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
     expect(heroScope).not.toContain('I&apos;m a patient');
     expect(heroScope).not.toContain('I run a practice');
   });
 });
 
-describe('Slogan 6 — trust section sub-line: "The best bill of health is one you can actually afford."', () => {
-  const trustScope = slice('{/* ── Trust ──', '{/* ── FAQ');
+describe('Slogan 6 — final CTA sub-line: "The best bill of health is one you can actually afford."', () => {
+  // Post-restructure S6 relocates. Its home was the trust section
+  // sub-line; the trust section is gone (its claims folded into
+  // FAQ answers). S6 now sits under "Full recovery. Zero interest."
+  // as the affordability closer — thematically the strongest fit.
+  const finalScope = slice('className="final reveal"', '<SiteFooter');
 
-  it('appears immediately under the "Built on trust." heading', () => {
-    const headIdx     = trustScope.indexOf('<h2>Built on trust.</h2>');
-    const sloganIdx   = trustScope.indexOf('The best bill of health is one you can actually afford.');
-    const pillarsIdx  = trustScope.indexOf('className="pillars"');
+  it('appears immediately under the "Full recovery. Zero interest." heading', () => {
+    const headIdx    = finalScope.indexOf('<h2>Full recovery. Zero interest.</h2>');
+    const sloganIdx  = finalScope.indexOf('The best bill of health is one you can actually afford.');
+    const ctaIdx     = finalScope.indexOf('className="ctas"');
     expect(headIdx).toBeGreaterThan(-1);
     expect(sloganIdx).toBeGreaterThan(headIdx);
-    expect(pillarsIdx).toBeGreaterThan(sloganIdx);
+    expect(ctaIdx).toBeGreaterThan(sloganIdx);
   });
 
   it('appears exactly once', () => {
@@ -242,7 +249,7 @@ describe('Reserved slogans — absent from the landing page', () => {
 // ─── The 3-card WHY grid (Payflex pattern) ────────────────────────────
 
 describe('Why betternow — EXACTLY 3 reason cards', () => {
-  const whyScope = slice('id="why"', '{/* ── All you need to get started');
+  const whyScope = slice('id="why"', '{/* ── How it works');
 
   it('the section heading is "Why betternow"', () => {
     expect(whyScope).toMatch(/<h2>Why betternow<\/h2>/);
@@ -365,7 +372,7 @@ describe('Practice content — moved to /practices, absent from landing', () => 
 // ─── Still-true claims preserved ──────────────────────────────────────
 
 describe('Still-true claims preserved', () => {
-  it('the "Always interest-free" claim is present (now as the WHY card b)', () => {
+  it('the "Always interest-free" claim is present (as the WHY card b)', () => {
     expect(LANDING).toMatch(/<h4>Always interest-free<\/h4>/);
   });
 
@@ -373,18 +380,35 @@ describe('Still-true claims preserved', () => {
     expect(LANDING).toMatch(/Interest-free\. You pay R3,600 in total — never more\./);
   });
 
-  it('the POPIA FAQ is intact', () => {
+  // The trust section is GONE — its four claims fold into FAQ answers.
+
+  it('trust claim: "Genuinely interest-free" folded into FAQ 1 (loan-that-snowballs phrasing)', () => {
+    // The FAQ "Is it really interest-free?" answer now carries the
+    // extra reassurance that lived in the trust pillar.
+    expect(LANDING).toMatch(/Is it really interest-free\?/);
+    expect(LANDING).toMatch(/Instalments, not a loan that snowballs — the total never grows beyond your original bill/);
+  });
+
+  it('trust claim: "Checked for affordability" folded into FAQ 3 (never take on more than you can manage)', () => {
+    expect(LANDING).toMatch(/Is there a credit check\?/);
+    expect(LANDING).toMatch(/you never take on more than you can manage/);
+  });
+
+  it('trust claim: "Bank-grade security" folded into the POPIA FAQ (encrypted end-to-end + secure audited rails)', () => {
     expect(LANDING).toMatch(/Is my information safe\?/);
+    expect(LANDING).toMatch(/encrypted end-to-end and processed over secure, audited rails/);
     expect(LANDING).toMatch(/handled in line with POPIA/);
   });
 
-  it('the "Genuinely interest-free" trust pillar is intact', () => {
-    expect(LANDING).toMatch(/<h4>Genuinely interest-free<\/h4>/);
-  });
-
-  it('the "Bank-grade security" and "POPIA-conscious" trust pillars are intact', () => {
-    expect(LANDING).toMatch(/<h4>Bank-grade security<\/h4>/);
-    expect(LANDING).toMatch(/<h4>POPIA-conscious<\/h4>/);
+  it('the "Built on trust." section header is GONE (folded into FAQ)', () => {
+    expect(LANDING).not.toMatch(/<h2>Built on trust\.<\/h2>/);
+    // Pillar h4s from the removed trust section are gone too.
+    expect(LANDING).not.toMatch(/<h4>Genuinely interest-free<\/h4>/);
+    expect(LANDING).not.toMatch(/<h4>Checked for affordability<\/h4>/);
+    expect(LANDING).not.toMatch(/<h4>Bank-grade security<\/h4>/);
+    expect(LANDING).not.toMatch(/<h4>POPIA-conscious<\/h4>/);
+    // The trust section's own <section id="trust"> is gone.
+    expect(LANDING).not.toMatch(/id="trust"/);
   });
 });
 
@@ -414,9 +438,11 @@ describe('Honest allowance + credit-check framing present', () => {
     expect(LANDING).toMatch(/credit and affordability check/);
   });
 
-  it('the trust pillar reframed to "Checked for affordability"', () => {
-    expect(LANDING).toMatch(/<h4>Checked for affordability<\/h4>/);
-    expect(LANDING).toMatch(/quick affordability check at signup/);
+  it('the affordability language is preserved (folded into FAQ 3, not the removed trust pillar)', () => {
+    // The old "<h4>Checked for affordability</h4>" pillar is gone;
+    // the words that mattered ("credit and affordability check")
+    // survive inside the credit-check FAQ.
+    expect(LANDING).toMatch(/credit and affordability check/);
   });
 
   it('the getting-started pillars are "A debit or credit card" + "1 minute"', () => {
@@ -452,6 +478,57 @@ describe('Header + footer wiring — "For practices" routes to /practices', () =
   it('client-side redirect from the legacy #practices anchor to /practices', () => {
     expect(LANDING).toMatch(/window\.location\.hash === '#practices'/);
     expect(LANDING).toMatch(/window\.location\.replace\('\/practices'\)/);
+  });
+});
+
+// ─── Section order (post-restructure) ─────────────────────────────────
+
+describe('Landing section order — Why → How → Getting started → FAQ', () => {
+  it('sections appear in the specified order', () => {
+    const whyIdx    = LANDING.indexOf('id="why"');
+    const howIdx    = LANDING.indexOf('id="how"');
+    const gsIdx     = LANDING.indexOf('{/* ── All you need to get started');
+    const faqIdx    = LANDING.indexOf('id="faq"');
+    const finalIdx  = LANDING.indexOf('{/* ── Final CTA');
+    expect(whyIdx).toBeGreaterThan(-1);
+    expect(howIdx).toBeGreaterThan(whyIdx);         // Why before How
+    expect(gsIdx).toBeGreaterThan(howIdx);          // How before Getting started
+    expect(faqIdx).toBeGreaterThan(gsIdx);          // Getting started before FAQ
+    expect(finalIdx).toBeGreaterThan(faqIdx);       // FAQ before Final CTA
+  });
+});
+
+// ─── Header nav order (shared component) ──────────────────────────────
+
+describe('SiteHeader — nav link order matches spec (Why / How / For practices / FAQ)', () => {
+  // The desktop nav <nav className="nav-links"> block orders the
+  // four Link components. Grab the ordered positions to enforce
+  // Why → How → For practices → FAQ.
+  function navLinkIndexes(source: string): { why: number; how: number; practices: number; faq: number } {
+    return {
+      why:       source.indexOf('href="/#why"'),
+      how:       source.indexOf('href="/#how"'),
+      practices: source.indexOf('href="/practices"'),
+      faq:       source.indexOf('href="/#faq"'),
+    };
+  }
+
+  it('desktop nav lists Why → How → For practices → FAQ', () => {
+    const idx = navLinkIndexes(HEADER);
+    expect(idx.why).toBeGreaterThan(-1);
+    expect(idx.how).toBeGreaterThan(idx.why);
+    expect(idx.practices).toBeGreaterThan(idx.how);
+    expect(idx.faq).toBeGreaterThan(idx.practices);
+  });
+
+  it('has a Sign in link and a burger button', () => {
+    expect(HEADER).toMatch(/<Link className="signin" href="\/login">Sign in<\/Link>/);
+    expect(HEADER).toMatch(/data-testid="site-header-burger"/);
+  });
+
+  it('has "For practices" pointing at /practices (not a legacy hash anchor)', () => {
+    expect(HEADER).toMatch(/href="\/practices"/);
+    expect(HEADER).not.toMatch(/href="#practices"/);
   });
 });
 

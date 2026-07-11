@@ -11,10 +11,7 @@ import {
   ClockIcon,
   EcgIcon,
   BoltIcon,
-  ShieldIcon,
   CardIcon,
-  DocCheckIcon,
-  PopiaIcon,
 } from './_landing/icons';
 import './landing.css';
 
@@ -131,8 +128,35 @@ export default function LandingPage() {
         </div>
       </div>
 
+      {/* ── Why betternow — exactly 3 reason cards (Payflex pattern) ───── */}
+      <section id="why" className="band">
+        <div className="wrap">
+          <div className="sec-head reveal">
+            <div className="kicker">Why betternow</div>
+            <h2>Why betternow</h2>
+          </div>
+          <div className="lp-grid why-grid">
+            <div className="feature reveal">
+              <div className="ic"><CalendarIcon /></div>
+              <h4>Flexible payment options</h4>
+              <p>Choose Pay in 2 or Pay in 3 — interest-free instalments timed to your salary dates. Pay early any time, free.</p>
+            </div>
+            <div className="feature reveal">
+              <div className="ic"><EcgIcon /></div>
+              <h4>Always interest-free</h4>
+              <p>You pay your bill, never a cent more. No interest, no fees on your plan.</p>
+            </div>
+            <div className="feature reveal">
+              <div className="ic"><BoltIcon /></div>
+              <h4>1-minute approval</h4>
+              <p>Get approved online in 1 minute. No paperwork, no branch visits.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── How it works ────────────────────────────────────────────────── */}
-      <section id="how" className="band">
+      <section id="how">
         <div className="wrap">
           <div className="sec-head reveal">
             <div className="kicker">How it works</div>
@@ -173,33 +197,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Why betternow — exactly 3 reason cards (Payflex pattern) ───── */}
-      <section id="why">
-        <div className="wrap">
-          <div className="sec-head reveal">
-            <div className="kicker">Why betternow</div>
-            <h2>Why betternow</h2>
-          </div>
-          <div className="lp-grid why-grid">
-            <div className="feature reveal">
-              <div className="ic"><CalendarIcon /></div>
-              <h4>Flexible payment options</h4>
-              <p>Choose Pay in 2 or Pay in 3 — interest-free instalments timed to your salary dates. Pay early any time, free.</p>
-            </div>
-            <div className="feature reveal">
-              <div className="ic"><EcgIcon /></div>
-              <h4>Always interest-free</h4>
-              <p>You pay your bill, never a cent more. No interest, no fees on your plan.</p>
-            </div>
-            <div className="feature reveal">
-              <div className="ic"><BoltIcon /></div>
-              <h4>1-minute approval</h4>
-              <p>Get approved online in 1 minute. No paperwork, no branch visits.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── All you need to get started ─────────────────────────────────── */}
       <section className="band">
         <div className="wrap">
@@ -223,37 +220,20 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Trust ────────────────────────────────────────────────────────── */}
-      <section id="trust">
-        <div className="wrap">
-          <div className="sec-head reveal">
-            <div className="kicker">Why you can trust it</div>
-            <h2>Built on trust.</h2>
-            <p>The best bill of health is one you can actually afford.</p>
-          </div>
-          <div className="pillars">
-            <div className="pillar reveal"><div className="ic"><EcgIcon size={26} /></div><h4>Genuinely interest-free</h4><p>Instalments, not a loan that snowballs. The total never grows beyond your original bill.</p></div>
-            <div className="pillar reveal"><div className="ic"><DocCheckIcon /></div><h4>Checked for affordability</h4><p>We run a quick affordability check at signup so you never take on more than you can manage.</p></div>
-            <div className="pillar reveal"><div className="ic"><ShieldIcon size={26} /></div><h4>Bank-grade security</h4><p>Payments and personal data are encrypted end-to-end and processed over secure, audited rails.</p></div>
-            <div className="pillar reveal"><div className="ic"><PopiaIcon size={26} /></div><h4>POPIA-conscious</h4><p>Your information is collected lawfully, kept secure, and never sold.</p></div>
-          </div>
-        </div>
-      </section>
-
       {/* ── FAQ (patient-only) ──────────────────────────────────────────── */}
-      <section id="faq" className="band">
+      <section id="faq">
         <div className="wrap">
           <div className="sec-head reveal">
             <div className="kicker">Questions</div>
             <h2>Good to know</h2>
           </div>
           <div className="faq">
-            <details className="q reveal"><summary>Is it really interest-free?<span className="pm" /></summary><div className="a">Yes. You repay exactly your bill amount, split into 2 or 3 instalments. No interest, no fees added to your plan.</div></details>
+            <details className="q reveal"><summary>Is it really interest-free?<span className="pm" /></summary><div className="a">Yes. You repay exactly your bill amount, split into 2 or 3 instalments. No interest, no fees added to your plan. Instalments, not a loan that snowballs — the total never grows beyond your original bill.</div></details>
             <details className="q reveal"><summary>How does my allowance work?<span className="pm" /></summary><div className="a">Once you&apos;re approved, you get an interest-free healthcare allowance — a spending limit you can use at any betternow practice. Bills get split into 2 or 3 instalments against your allowance, and your available balance reflects what you&apos;ve repaid.</div></details>
-            <details className="q reveal"><summary>Is there a credit check?<span className="pm" /></summary><div className="a">Yes — a quick credit and affordability check when you sign up, done once, to set your allowance responsibly. It takes about 1 minute online.</div></details>
+            <details className="q reveal"><summary>Is there a credit check?<span className="pm" /></summary><div className="a">Yes — a quick credit and affordability check when you sign up, done once, to set your allowance responsibly. It takes about 1 minute online, so you never take on more than you can manage.</div></details>
             <details className="q reveal"><summary>What do I need to use betternow?<span className="pm" /></summary><div className="a">You&apos;ll need to be 18 or older with a good credit record. On the practical side: a debit or credit card (Visa or Mastercard) for us to charge instalments to, your ID for a quick verification, and about 1 minute to complete the credit and affordability check.</div></details>
             <details className="q reveal"><summary>When are instalments collected?<span className="pm" /></summary><div className="a">Automatically charged to your saved card on the salary dates you choose. Pay early any time, free of charge.</div></details>
-            <details className="q reveal"><summary>Is my information safe?<span className="pm" /></summary><div className="a">Your data is encrypted, processed over secure rails, and handled in line with POPIA. We never sell your information.</div></details>
+            <details className="q reveal"><summary>Is my information safe?<span className="pm" /></summary><div className="a">Your data is encrypted end-to-end and processed over secure, audited rails, and handled in line with POPIA. We never sell your information.</div></details>
           </div>
         </div>
       </section>
@@ -263,7 +243,7 @@ export default function LandingPage() {
         <div className="wrap">
           <div className="final reveal">
             <h2>Full recovery. Zero interest.</h2>
-            <p>Split any healthcare bill into interest-free instalments, timed to your salary dates.</p>
+            <p>The best bill of health is one you can actually afford.</p>
             <div className="ctas">
               <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
             </div>
