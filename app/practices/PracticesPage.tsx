@@ -5,8 +5,6 @@ import Link from 'next/link';
 import SiteHeader from '../_landing/SiteHeader';
 import SiteFooter from '../_landing/SiteFooter';
 import {
-  PencilIcon,
-  ClockIcon,
   CashIcon,
   ShieldCheckIcon,
   PeopleIcon,
@@ -58,7 +56,7 @@ export default function PracticesPage() {
         </div>
       </div>
 
-      {/* ── How it works (dark practice band) ────────────────────────────── */}
+      {/* ── How it works — vertical timeline + R3,600 stats panel ───────── */}
       <section id="how" className="practice-band">
         <div className="wrap">
           <div className="sec-head reveal">
@@ -67,35 +65,42 @@ export default function PracticesPage() {
             <p>Record the bill. Patient chooses Pay in 2 or Pay in 3. You get paid upfront — we handle the rest.</p>
           </div>
 
-          <div className="steps">
-            <div className="step reveal">
-              <div className="num">STEP 1</div>
-              <div className="ic"><PencilIcon /></div>
-              <h3>Record the bill</h3>
-              <p>Capture the patient&apos;s shortfall in seconds. No portals to log into, no forms to file, no debtors to chase.</p>
-            </div>
-            <div className="step reveal">
-              <div className="num">STEP 2</div>
-              <div className="ic"><ClockIcon /></div>
-              <h3>Patient pays in 2 or 3</h3>
-              <p>They split it into interest-free instalments charged automatically to their card, timed to their salary dates. No lengthy approvals.</p>
-            </div>
-            <div className="step reveal">
-              <div className="num">STEP 3</div>
-              <div className="ic"><CashIcon /></div>
-              <h3>Get paid upfront</h3>
-              <p>Get paid within days — we keep a small percentage as our fee and handle everything else. We collect every instalment and run the whole process, so chasing payment is never your job again.</p>
-            </div>
-          </div>
+          <div className="how-two-col">
+            <ol className="timeline reveal">
+              <li className="tl-step">
+                <div className="tl-num">1</div>
+                <div className="tl-body">
+                  <h3>Record the bill</h3>
+                  <p>Capture the patient&apos;s shortfall in seconds. No portals to log into, no forms to file, no debtors to chase.</p>
+                </div>
+              </li>
+              <li className="tl-step">
+                <div className="tl-num">2</div>
+                <div className="tl-body">
+                  <h3>Patient pays in 2 or 3</h3>
+                  <p>They split it into interest-free instalments charged automatically to their card, timed to their salary dates. No lengthy approvals.</p>
+                </div>
+              </li>
+              <li className="tl-step">
+                <div className="tl-num">3</div>
+                <div className="tl-body">
+                  <h3>Get paid upfront</h3>
+                  <p>Get paid within days — we keep a small percentage as our fee and handle everything else. We collect every instalment and run the whole process, so chasing payment is never your job again.</p>
+                </div>
+              </li>
+            </ol>
 
-          <div className="example reveal">
-            <div className="lead">On a R3,600 shortfall</div>
-            <div className="split">
-              <div className="chip"><div className="amt">Days</div><div className="lbl">to get paid</div></div>
-              <div className="chip"><div className="amt">R0</div><div className="lbl">to chase</div></div>
-              <div className="chip"><div className="amt">0 min</div><div className="lbl">admin</div></div>
+            <div className="how-visual reveal">
+              <div className="stats-panel">
+                <div className="lead">On a R3,600 shortfall</div>
+                <div className="stats-grid">
+                  <div className="chip"><div className="amt">Days</div><div className="lbl">to get paid</div></div>
+                  <div className="chip"><div className="amt">R0</div><div className="lbl">to chase</div></div>
+                  <div className="chip"><div className="amt">0 min</div><div className="lbl">admin</div></div>
+                </div>
+                <div className="note">You receive the bill amount less a small fee. We collect all instalments after you&apos;ve been paid — collection is on us.</div>
+              </div>
             </div>
-            <div className="note">You receive the bill amount less a small fee. We collect all instalments after you&apos;ve been paid — collection is on us.</div>
           </div>
         </div>
       </section>

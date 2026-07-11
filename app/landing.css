@@ -636,6 +636,215 @@
   margin-right: auto;
 }
 
+/* ── Vertical timeline (Cherry-style) ─────────────────────────────────────── */
+/*
+   Two-column layout for the "How it works" section: LEFT column carries
+   a vertical timeline (numbered circles joined by an accent line), RIGHT
+   column holds a device mockup or a stats strip. On mobile both stack;
+   the visual companion drops below the timeline. */
+
+.lp-root .how-two-col {
+  display: grid;
+  gap: 40px;
+  grid-template-columns: 1fr;
+  align-items: center;
+}
+
+@media(min-width: 900px) {
+  .lp-root .how-two-col { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 64px; }
+}
+
+.lp-root .timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  max-width: 520px;
+}
+
+/* The vertical accent line connecting the circles. Positioned at the
+   centre of the 44px circles (22px), running from the middle of the
+   FIRST circle to the middle of the LAST. Using inset instead of full
+   height keeps the line from spilling past the endpoints. */
+.lp-root .timeline::before {
+  content: "";
+  position: absolute;
+  left: 21px;
+  top: 22px;
+  bottom: 22px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--teal), var(--navy));
+  opacity: .35;
+  border-radius: 2px;
+}
+
+.lp-root .tl-step {
+  position: relative;
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.lp-root .tl-step .tl-num {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--teal);
+  color: var(--navy);
+  font-weight: 700;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 16px -8px rgba(21,168,158,.4);
+}
+
+.lp-root .tl-step .tl-body { padding-top: 8px; min-width: 0; }
+.lp-root .tl-step .tl-body h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--navy);
+  margin-bottom: 8px;
+  letter-spacing: -.01em;
+}
+.lp-root .tl-step .tl-body p {
+  color: var(--muted);
+  font-size: .98rem;
+  max-width: 46ch;
+}
+
+/* Right-column visual slot for the "How it works" two-column pair. */
+.lp-root .how-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lp-root .how-visual .device {
+  max-width: 420px;
+  width: 70%;
+  height: auto;
+  display: block;
+}
+
+@media(min-width: 900px) {
+  .lp-root .how-visual .device { width: 100%; max-width: 400px; }
+}
+
+.lp-root .how-visual .illustration-note {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  font-weight: 600;
+  opacity: .75;
+}
+
+/* Practice-side visual slot: R3,600 shortfall stats strip. Reuses the
+   existing .example / .chip primitives but stacks them into the right
+   column instead of running full-width. */
+.lp-root .how-visual .stats-panel {
+  width: 100%;
+  max-width: 420px;
+  background: linear-gradient(135deg, #fff, #f3faf9);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.lp-root .practice-band .how-visual .stats-panel {
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.15);
+}
+
+.lp-root .how-visual .stats-panel .lead {
+  font-weight: 600;
+  color: var(--navy);
+  font-size: 1.05rem;
+}
+.lp-root .practice-band .how-visual .stats-panel .lead { color: #fff; }
+
+.lp-root .how-visual .stats-panel .stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.lp-root .how-visual .stats-panel .stats-grid .chip {
+  min-width: 0;
+}
+
+.lp-root .how-visual .stats-panel .note {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.lp-root .practice-band .how-visual .stats-panel .note { color: rgba(255,255,255,.5); }
+
+/* ── Getting-started band (Cherry-style CTA band) ─────────────────────────── */
+/*
+   Full-width soft-tinted band that carries the eligibility copy and
+   the primary CTA. Replaces the plain "reqs" pillar layout at the
+   bottom of the landing page. */
+
+.lp-root .gs-band {
+  background: linear-gradient(135deg, rgba(21,168,158,.08) 0%, rgba(21,168,158,.02) 100%);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.lp-root .gs-band .gs-content {
+  max-width: 780px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.lp-root .gs-band .gs-reqs {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;
+  max-width: 620px;
+  margin: 28px auto 0;
+}
+
+@media(min-width: 600px) {
+  .lp-root .gs-band .gs-reqs { grid-template-columns: 1fr 1fr; }
+}
+
+.lp-root .gs-band .gs-reqs .pillar {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 22px;
+  text-align: left;
+}
+
+.lp-root .gs-band .gs-cta {
+  margin-top: 32px;
+}
+
+/* ── Hero CTAs — two-button Cherry pattern ────────────────────────────────── */
+
+.lp-root .hero .ctas .btn-outline {
+  color: var(--navy);
+  background: transparent;
+  border: 1.5px solid var(--navy);
+}
+
+.lp-root .hero .ctas .btn-outline:hover {
+  background: rgba(19,41,75,.05);
+}
+
 .lp-root .sec-cta { text-align: center; margin-top: 38px; }
 
 /* ── Trust pillars ─────────────────────────────────────────────────────────── */

@@ -76,6 +76,18 @@ describe('Forbidden strings — all absent from landing', () => {
     // options we DON'T offer must never be listed as if we do.
     'Pay in 4',
     'once-off',
+    // Cherry-style landing pass — rate copy and plan lengths we
+    // deliberately do NOT offer. Marketing must not imply a
+    // "qualifying" tier, a promotional teaser rate, or a plan
+    // longer than Pay in 3.
+    'promotional rate',
+    'qualifying rate',
+    'Pay in 6',
+    'Pay in 12',
+    'Pay in 24',
+    '6 months',
+    '12 months',
+    '24 months',
   ];
 
   for (const bad of FORBIDDEN) {
@@ -113,7 +125,10 @@ describe('Slogan 1 — hero tagline: "Get better now. Pay better later."', () =>
 });
 
 describe('Slogan 2 — how-it-works heading: "Health can\'t wait. Payments can."', () => {
-  const howHead = slice('id="how"', '<div className="steps">');
+  // Section body now uses a two-column layout (timeline + mockup)
+  // instead of the old horizontal .steps grid. Slice up to that
+  // container to scope the assertions to the section header.
+  const howHead = slice('id="how"', 'className="how-two-col"');
 
   it('appears as the section h2', () => {
     expect(howHead).toMatch(/<h2>Health can&apos;t wait\. Payments can\.<\/h2>/);
@@ -169,28 +184,23 @@ describe('Slogan 4 — allowance strapline: "Give your health some credit — it
   });
 });
 
-describe('Slogan 5 — hero + final CTA: "Get started" (single patient CTA)', () => {
-  // The old S5 "Give yourself a new bill of health." lived as the
-  // patient-section CTA button — which no longer exists as a
-  // separate section CTA. The single-audience redesign uses the
-  // simpler "Get started" copy for both the hero CTA and the final
-  // CTA. The old S5 line is dropped in favour of clarity.
+describe('Hero CTAs — Cherry-style two-button pair (Get started + Sign in)', () => {
+  const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
 
-  it('the hero has exactly ONE patient CTA labelled "Get started" pointing to /signup/patient', () => {
-    // Hero scope ends where the first content section begins —
-    // post-restructure that is Why betternow.
-    const heroCtas = slice('<div className="ctas">', '</div>\n        </div>\n      </div>\n\n      {/* ── Why betternow');
-    expect(heroCtas).toContain('Get started');
-    expect(heroCtas).toMatch(/href="\/signup\/patient"/);
-    // No practice CTA in the hero.
-    expect(heroCtas).not.toContain('I run a practice');
-    expect(heroCtas).not.toMatch(/href="\/signup\/practice"/);
+  it('hero has BOTH a filled primary "Get started" and an outlined "Sign in" button', () => {
+    // Filled primary → /signup/patient.
+    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup\/patient"[^>]*>Get started<\/Link>/);
+    // Outlined secondary → /login.
+    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-outline btn-lg"[^>]*href="\/login"[^>]*>Sign in<\/Link>/);
   });
 
-  it('the old dual-audience hero buttons ("I\'m a patient" / "I run a practice") are gone from the hero', () => {
-    const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
-    expect(heroScope).not.toContain('I&apos;m a patient');
+  it('no practice CTA in the hero', () => {
     expect(heroScope).not.toContain('I run a practice');
+    expect(heroScope).not.toMatch(/href="\/signup\/practice"/);
+  });
+
+  it('the old dual-audience "I\'m a patient" / "I run a practice" pair stays gone', () => {
+    expect(heroScope).not.toContain('I&apos;m a patient');
   });
 });
 
@@ -478,6 +488,91 @@ describe('Header + footer wiring — "For practices" routes to /practices', () =
   it('client-side redirect from the legacy #practices anchor to /practices', () => {
     expect(LANDING).toMatch(/window\.location\.hash === '#practices'/);
     expect(LANDING).toMatch(/window\.location\.replace\('\/practices'\)/);
+  });
+});
+
+// ─── Cherry-style How-it-works: vertical timeline + phone mockup ──────
+
+describe('How it works — vertical timeline (Cherry pattern)', () => {
+  it('the How-it-works section uses a two-column layout on desktop', () => {
+    expect(LANDING).toMatch(/className="how-two-col"/);
+  });
+
+  it('renders an ordered timeline with numbered circles 1 → 2 → 3', () => {
+    // The <ol> carries the timeline; each tl-step has a tl-num
+    // labelled 1, 2, or 3. Order matters — the numbered circles
+    // are the visual anchor.
+    const idx1 = LANDING.indexOf('<div className="tl-num">1</div>');
+    const idx2 = LANDING.indexOf('<div className="tl-num">2</div>');
+    const idx3 = LANDING.indexOf('<div className="tl-num">3</div>');
+    expect(idx1).toBeGreaterThan(-1);
+    expect(idx2).toBeGreaterThan(idx1);
+    expect(idx3).toBeGreaterThan(idx2);
+  });
+
+  it('the three step titles ride inside the timeline (as h3s in tl-body)', () => {
+    expect(LANDING).toMatch(/<div className="tl-body">[\s\S]*?<h3>Get treated today<\/h3>/);
+    expect(LANDING).toMatch(/<div className="tl-body">[\s\S]*?<h3>Choose Pay in 2 or Pay in 3<\/h3>/);
+    expect(LANDING).toMatch(/<div className="tl-body">[\s\S]*?<h3>Pay over your paydays<\/h3>/);
+  });
+
+  it('the old horizontal .steps grid is GONE from the landing', () => {
+    // Guards against a copy-paste regression bringing the old
+    // three-card layout back.
+    expect(LANDING).not.toMatch(/<div className="steps">/);
+    expect(LANDING).not.toMatch(/<div className="num">STEP 1<\/div>/);
+  });
+
+  it('the R3,600 split visual sits BELOW the timeline+mockup pair (still inside #how)', () => {
+    const howEnd     = LANDING.indexOf('{/* ── All you need to get started');
+    const timelineIdx = LANDING.indexOf('className="timeline reveal"');
+    const exampleIdx = LANDING.indexOf('className="example reveal"');
+    expect(timelineIdx).toBeGreaterThan(-1);
+    expect(exampleIdx).toBeGreaterThan(timelineIdx);
+    expect(exampleIdx).toBeLessThan(howEnd);
+  });
+});
+
+describe('Device mockup — landing only, sourced from public/marketing/device-approved.png', () => {
+  it('landing imports next/image', () => {
+    expect(LANDING).toMatch(/from 'next\/image'/);
+  });
+
+  it('renders the device image with the exact spec\'d src, alt, and dimensions', () => {
+    // The alt text is required by the task and must be verbatim so
+    // screen-reader users hear the same product framing.
+    expect(LANDING).toMatch(/src="\/marketing\/device-approved\.png"/);
+    expect(LANDING).toMatch(/alt="betternow app showing an approved interest-free healthcare allowance"/);
+    // width / height are set to prevent CLS.
+    expect(LANDING).toMatch(/width=\{620\}/);
+    expect(LANDING).toMatch(/height=\{1276\}/);
+  });
+
+  it('carries the "Illustration" caption near the mockup (guards against implying a specific limit is guaranteed)', () => {
+    expect(LANDING).toMatch(/className="illustration-note"[^>]*>Illustration</);
+  });
+});
+
+describe('Getting-started band — Cherry-style soft-tinted band with the CTA inside', () => {
+  it('renders as a .gs-band section (not the old .band alternate)', () => {
+    expect(LANDING).toMatch(/<section className="gs-band">/);
+  });
+
+  it('the primary CTA lives inside the band', () => {
+    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
+    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
+    expect(gsBandStart).toBeGreaterThan(-1);
+    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
+    expect(bandContent).toMatch(/className="gs-cta"/);
+    expect(bandContent).toMatch(/href="\/signup\/patient"[^>]*>Get started</);
+  });
+
+  it('the two pillars ("A debit or credit card" + "1 minute") stay inside the band', () => {
+    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
+    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
+    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
+    expect(bandContent).toMatch(/<h4>A debit or credit card<\/h4>/);
+    expect(bandContent).toMatch(/<h4>1 minute<\/h4>/);
   });
 });
 

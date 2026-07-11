@@ -63,6 +63,16 @@ describe('/practices — forbidden strings absent', () => {
     // Reserved slogans (also absent here — they aren't for /practices).
     'First aid for big bills',
     'Split the bill, not your priorities',
+    // Rate + plan-length copy we do NOT offer — extended from the
+    // landing pass.
+    'promotional rate',
+    'qualifying rate',
+    'Pay in 6',
+    'Pay in 12',
+    'Pay in 24',
+    '6 months',
+    '12 months',
+    '24 months',
   ];
 
   for (const bad of FORBIDDEN) {
@@ -97,29 +107,54 @@ describe('/practices hero', () => {
   });
 });
 
-// ─── Three practice steps ─────────────────────────────────────────────
+// ─── Three practice steps — Cherry-style vertical timeline ────────────
 
-describe('/practices — three-step "how it works"', () => {
-  it('Step 1: "Record the bill"', () => {
-    expect(PRACTICES).toMatch(/<h3>Record the bill<\/h3>/);
+describe('/practices — three-step "how it works" as a vertical timeline', () => {
+  it('uses the two-column how-two-col layout', () => {
+    expect(PRACTICES).toMatch(/className="how-two-col"/);
+  });
+
+  it('renders the ordered timeline with numbered circles 1 → 2 → 3', () => {
+    const idx1 = PRACTICES.indexOf('<div className="tl-num">1</div>');
+    const idx2 = PRACTICES.indexOf('<div className="tl-num">2</div>');
+    const idx3 = PRACTICES.indexOf('<div className="tl-num">3</div>');
+    expect(idx1).toBeGreaterThan(-1);
+    expect(idx2).toBeGreaterThan(idx1);
+    expect(idx3).toBeGreaterThan(idx2);
+  });
+
+  it('Step 1: "Record the bill" — inside tl-body', () => {
+    expect(PRACTICES).toMatch(/<div className="tl-body">[\s\S]*?<h3>Record the bill<\/h3>/);
     expect(PRACTICES).toMatch(/Capture the patient&apos;s shortfall in seconds/);
   });
 
   it('Step 2: "Patient pays in 2 or 3" — card charges timed to salary dates (no debit order)', () => {
-    expect(PRACTICES).toMatch(/<h3>Patient pays in 2 or 3<\/h3>/);
+    expect(PRACTICES).toMatch(/<div className="tl-body">[\s\S]*?<h3>Patient pays in 2 or 3<\/h3>/);
     expect(PRACTICES).toMatch(/interest-free instalments charged automatically to their card, timed to their salary dates/);
   });
 
   it('Step 3: "Get paid upfront" — paid within days, collection is our job', () => {
-    expect(PRACTICES).toMatch(/<h3>Get paid upfront<\/h3>/);
+    expect(PRACTICES).toMatch(/<div className="tl-body">[\s\S]*?<h3>Get paid upfront<\/h3>/);
     expect(PRACTICES).toMatch(/paid within days/);
     expect(PRACTICES).toMatch(/collect every instalment/);
   });
+
+  it('the old horizontal .steps grid is GONE (guard against regression)', () => {
+    expect(PRACTICES).not.toMatch(/<div className="steps">/);
+    expect(PRACTICES).not.toMatch(/<div className="num">STEP 1<\/div>/);
+  });
 });
 
-// ─── R3,600 shortfall stats strip ─────────────────────────────────────
+// ─── R3,600 shortfall stats strip — now in the right column ───────────
 
-describe('/practices — R3,600 shortfall stats strip', () => {
+describe('/practices — R3,600 shortfall stats panel (right column of the timeline)', () => {
+  it('lives inside the .how-visual right column, not a full-width example strip', () => {
+    // The stats panel takes the phone-mockup slot; it's a
+    // .stats-panel inside .how-visual, not the old full-width
+    // .example block that used to sit below the horizontal steps.
+    expect(PRACTICES).toMatch(/className="how-visual reveal"[\s\S]*?className="stats-panel"/);
+  });
+
   it('lead line names the shortfall amount', () => {
     expect(PRACTICES).toMatch(/On a R3,600 shortfall/);
   });
@@ -128,7 +163,6 @@ describe('/practices — R3,600 shortfall stats strip', () => {
     expect(PRACTICES).toMatch(/<div className="lbl">to get paid<\/div>/);
     expect(PRACTICES).toMatch(/<div className="lbl">to chase<\/div>/);
     expect(PRACTICES).toMatch(/<div className="lbl">admin<\/div>/);
-    // The three amounts as-labelled.
     expect(PRACTICES).toMatch(/<div className="amt">Days<\/div>/);
     expect(PRACTICES).toMatch(/<div className="amt">R0<\/div>/);
     expect(PRACTICES).toMatch(/<div className="amt">0 min<\/div>/);
@@ -136,6 +170,22 @@ describe('/practices — R3,600 shortfall stats strip', () => {
 
   it('the "collection is on us" note is retained', () => {
     expect(PRACTICES).toMatch(/collection is on us/);
+  });
+});
+
+// ─── Device mockup — NOT on /practices ────────────────────────────────
+
+describe('/practices — no device mockup (that\'s the landing\'s asset)', () => {
+  it('does NOT reference /marketing/device-approved.png', () => {
+    expect(PRACTICES).not.toMatch(/device-approved\.png/);
+  });
+
+  it('does NOT import next/image (the /practices page has no image assets)', () => {
+    expect(PRACTICES).not.toMatch(/from 'next\/image'/);
+  });
+
+  it('carries no "Illustration" caption (only the landing mockup uses one)', () => {
+    expect(PRACTICES).not.toMatch(/className="illustration-note"/);
   });
 });
 

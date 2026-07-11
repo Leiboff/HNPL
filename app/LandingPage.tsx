@@ -2,12 +2,11 @@
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import SiteHeader from './_landing/SiteHeader';
 import SiteFooter from './_landing/SiteFooter';
 import {
-  HeartIcon,
   CalendarIcon,
-  CheckIcon,
   ClockIcon,
   EcgIcon,
   BoltIcon,
@@ -124,6 +123,7 @@ export default function LandingPage() {
           </p>
           <div className="ctas">
             <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
+            <Link className="btn btn-outline btn-lg" href="/login">Sign in</Link>
           </div>
         </div>
       </div>
@@ -155,7 +155,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── How it works ────────────────────────────────────────────────── */}
+      {/* ── How it works — vertical timeline + phone mockup ─────────────── */}
       <section id="how">
         <div className="wrap">
           <div className="sec-head reveal">
@@ -164,28 +164,47 @@ export default function LandingPage() {
             <p>Get treated now and spread the cost over interest-free instalments, timed to your salary dates.</p>
           </div>
 
-          <div className="steps">
-            <div className="step reveal">
-              <div className="num">STEP 1</div>
-              <div className="ic"><HeartIcon /></div>
-              <h3>Get treated today</h3>
-              <p>Ask for betternow at your practice, or tap the payment link they send you. No waiting for payday.</p>
-            </div>
-            <div className="step reveal">
-              <div className="num">STEP 2</div>
-              <div className="ic"><CalendarIcon /></div>
-              <h3>Choose Pay in 2 or Pay in 3</h3>
-              <p>Split your bill into 2 or 3 equal, interest-free instalments timed to your salary dates. Pay the first today, the rest charged automatically to your card on your next paydays.</p>
-            </div>
-            <div className="step reveal">
-              <div className="num">STEP 3</div>
-              <div className="ic"><CheckIcon /></div>
-              <h3>Pay over your paydays</h3>
-              <p>Each instalment is charged to your saved card automatically on the date you chose. The price never changes — you pay your bill, never a cent more. Pay early any time, free.</p>
+          <div className="how-two-col">
+            <ol className="timeline reveal">
+              <li className="tl-step">
+                <div className="tl-num">1</div>
+                <div className="tl-body">
+                  <h3>Get treated today</h3>
+                  <p>Ask for betternow at your practice, or tap the payment link they send you. No waiting for payday.</p>
+                </div>
+              </li>
+              <li className="tl-step">
+                <div className="tl-num">2</div>
+                <div className="tl-body">
+                  <h3>Choose Pay in 2 or Pay in 3</h3>
+                  <p>Split your bill into 2 or 3 equal, interest-free instalments timed to your salary dates. Pay the first today, the rest charged automatically to your card on your next paydays.</p>
+                </div>
+              </li>
+              <li className="tl-step">
+                <div className="tl-num">3</div>
+                <div className="tl-body">
+                  <h3>Pay over your paydays</h3>
+                  <p>Each instalment is charged to your saved card automatically on the date you chose. The price never changes — you pay your bill, never a cent more. Pay early any time, free.</p>
+                </div>
+              </li>
+            </ol>
+
+            <div className="how-visual reveal">
+              <div>
+                <Image
+                  className="device"
+                  src="/marketing/device-approved.png"
+                  alt="betternow app showing an approved interest-free healthcare allowance"
+                  width={620}
+                  height={1276}
+                  priority={false}
+                />
+                <p className="illustration-note">Illustration</p>
+              </div>
             </div>
           </div>
 
-          <div className="example reveal">
+          <div className="example reveal" style={{ marginTop: 42 }}>
             <div className="lead">Take your bill in smaller doses.</div>
             <div className="split">
               <div className="chip"><div className="amt">R1,200</div><div className="lbl">today</div></div>
@@ -197,24 +216,27 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── All you need to get started ─────────────────────────────────── */}
-      <section className="band">
+      {/* ── All you need to get started — soft-tinted "Get started" band ─ */}
+      <section className="gs-band">
         <div className="wrap">
-          <div className="sec-head reveal">
+          <div className="gs-content reveal">
             <div className="kicker">Getting started</div>
             <h2>All you need to get started</h2>
             <p>Give your health some credit — it&apos;s due.</p>
-          </div>
-          <div className="reqs">
-            <div className="pillar reveal">
-              <div className="ic"><CardIcon /></div>
-              <h4>A debit or credit card</h4>
-              <p>Your instalments are charged automatically to your Visa or Mastercard — debit or credit.</p>
+            <div className="gs-reqs">
+              <div className="pillar">
+                <div className="ic"><CardIcon /></div>
+                <h4>A debit or credit card</h4>
+                <p>Your instalments are charged automatically to your Visa or Mastercard — debit or credit.</p>
+              </div>
+              <div className="pillar">
+                <div className="ic"><ClockIcon /></div>
+                <h4>1 minute</h4>
+                <p>Sign up, have your ID handy, and complete a quick credit and affordability check — all online in about 1 minute. You&apos;ll need to be 18 or older with a good credit record.</p>
+              </div>
             </div>
-            <div className="pillar reveal">
-              <div className="ic"><ClockIcon /></div>
-              <h4>1 minute</h4>
-              <p>Sign up, have your ID handy, and complete a quick credit and affordability check — all online in about 1 minute. You&apos;ll need to be 18 or older with a good credit record.</p>
+            <div className="gs-cta">
+              <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
             </div>
           </div>
         </div>
