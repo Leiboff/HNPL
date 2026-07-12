@@ -175,9 +175,13 @@ describe('/practices — R3,600 shortfall stats panel (right column of the timel
 
 // ─── Device mockup — NOT on /practices ────────────────────────────────
 
-describe('/practices — no device mockup (that\'s the landing\'s asset)', () => {
+describe('/practices — no marketing mockups (both are the landing\'s assets)', () => {
   it('does NOT reference /marketing/device-approved.png', () => {
     expect(PRACTICES).not.toMatch(/device-approved\.png/);
+  });
+
+  it('does NOT reference /marketing/plan-chooser.png', () => {
+    expect(PRACTICES).not.toMatch(/plan-chooser\.png/);
   });
 
   it('does NOT import next/image (the /practices page has no image assets)', () => {

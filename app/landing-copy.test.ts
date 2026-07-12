@@ -145,20 +145,38 @@ describe('Slogan 2 — how-it-works heading: "Health can\'t wait. Payments can."
   });
 });
 
-describe('Slogan 3 — R3,600 example lead line: "Take your bill in smaller doses."', () => {
-  const exampleScope = slice('className="example reveal"', '{/* ── All you need to get started');
+describe('Slogan 3 — how-it-works sec-head sub-line: "Take your bill in smaller doses."', () => {
+  // Post-restructure the old R3,600 split visual is retired; the
+  // plan-chooser mockup does its explanatory job. S3 relocates
+  // from that visual's lead line to the How-it-works sec-head
+  // sub-line so the slogan survives the visual retirement.
+  const howHead = slice('id="how"', 'className="how-two-col"');
 
-  it('appears inside the how-it-works example block', () => {
-    expect(exampleScope).toMatch(/<div className="lead">Take your bill in smaller doses\.<\/div>/);
+  it('appears as the how-it-works sec-head sub-line under the h2', () => {
+    expect(howHead).toMatch(/<h2>Health can&apos;t wait\. Payments can\.<\/h2>[\s\S]*?<p>Take your bill in smaller doses\.<\/p>/);
+  });
+
+  it('appears exactly once on the page', () => {
+    const matches = LANDING.match(/Take your bill in smaller doses\./g) ?? [];
+    expect(matches.length).toBe(1);
   });
 
   it('the old "A R3,600 bill — Pay in 3" lead is gone', () => {
     expect(LANDING).not.toMatch(/<div className="lead">A R3,600 bill/);
   });
+});
 
-  it('the R3,600 total is preserved (chips still show R1,200 × 3)', () => {
-    expect(exampleScope).toMatch(/R1,200[\s\S]*?R1,200[\s\S]*?R1,200/);
-    expect(exampleScope).toContain('R3,600');
+describe('Old R3,600 split visual — RETIRED entirely', () => {
+  it('no R1,200 chip present anywhere on the landing', () => {
+    expect(LANDING).not.toContain('R1,200');
+  });
+
+  it('no R3,600 total present anywhere on the landing', () => {
+    expect(LANDING).not.toContain('R3,600');
+  });
+
+  it('no <div className="example reveal"> container present', () => {
+    expect(LANDING).not.toMatch(/className="example reveal"/);
   });
 });
 
@@ -386,8 +404,13 @@ describe('Still-true claims preserved', () => {
     expect(LANDING).toMatch(/<h4>Always interest-free<\/h4>/);
   });
 
-  it('the interest-free promise appears verbatim in the R3,600 example block', () => {
-    expect(LANDING).toMatch(/Interest-free\. You pay R3,600 in total — never more\./);
+  it('the interest-free promise still lives in WHY card (b) copy (the R3,600 example that used to carry it is retired)', () => {
+    // Old wording ("You pay R3,600 in total — never more.") retired
+    // with the split visual. The WHY card copy carries the same
+    // promise in the current landing.
+    expect(LANDING).toMatch(/You pay your bill, never a cent more/);
+    // And FAQ 1 covers "no interest, no fees".
+    expect(LANDING).toMatch(/No interest, no fees added to your plan/);
   });
 
   // The trust section is GONE — its four claims fold into FAQ answers.
@@ -523,48 +546,88 @@ describe('How it works — vertical timeline (Cherry pattern)', () => {
     expect(LANDING).not.toMatch(/<div className="num">STEP 1<\/div>/);
   });
 
-  it('the R3,600 split visual sits BELOW the timeline+mockup pair (still inside #how)', () => {
-    const howEnd     = LANDING.indexOf('{/* ── All you need to get started');
+  it('the timeline sits INSIDE the two-column how-two-col container (LEFT), plan-chooser image on the RIGHT', () => {
+    const twoColIdx  = LANDING.indexOf('className="how-two-col"');
     const timelineIdx = LANDING.indexOf('className="timeline reveal"');
-    const exampleIdx = LANDING.indexOf('className="example reveal"');
-    expect(timelineIdx).toBeGreaterThan(-1);
-    expect(exampleIdx).toBeGreaterThan(timelineIdx);
-    expect(exampleIdx).toBeLessThan(howEnd);
+    const visualIdx = LANDING.indexOf('className="how-visual reveal"');
+    expect(twoColIdx).toBeGreaterThan(-1);
+    expect(timelineIdx).toBeGreaterThan(twoColIdx);
+    expect(visualIdx).toBeGreaterThan(timelineIdx);
   });
 });
 
-describe('Device mockup — landing only, sourced from public/marketing/device-approved.png', () => {
+describe('Mockups — plan-chooser in How-it-works + device-approved in Getting-started band', () => {
   it('landing imports next/image', () => {
     expect(LANDING).toMatch(/from 'next\/image'/);
   });
 
-  it('renders the device image with the exact spec\'d src, alt, and dimensions', () => {
-    // The alt text is required by the task and must be verbatim so
-    // screen-reader users hear the same product framing.
+  it('How-it-works right column carries plan-chooser.png with the specified alt', () => {
+    // The alt text is required by the task and must be verbatim.
+    expect(LANDING).toMatch(/src="\/marketing\/plan-chooser\.png"/);
+    expect(LANDING).toMatch(/alt="betternow payment plan options — pay in 2 or pay in 3, interest-free"/);
+    // width/height set (any positive integers) to prevent CLS —
+    // pin the presence, not the exact numbers.
+    expect(LANDING).toMatch(/className="plan-chooser"[\s\S]{0,400}width=\{\d+\}[\s\S]{0,80}height=\{\d+\}/);
+  });
+
+  it('the plan-chooser lives inside the How-it-works section, not the Getting-started band', () => {
+    const planChooserIdx = LANDING.indexOf('/marketing/plan-chooser.png');
+    const gsBandIdx      = LANDING.indexOf('<section className="gs-band">');
+    expect(planChooserIdx).toBeGreaterThan(-1);
+    expect(gsBandIdx).toBeGreaterThan(planChooserIdx);
+  });
+
+  it('Getting-started band carries device-approved.png with the specified alt', () => {
     expect(LANDING).toMatch(/src="\/marketing\/device-approved\.png"/);
     expect(LANDING).toMatch(/alt="betternow app showing an approved interest-free healthcare allowance"/);
-    // width / height are set to prevent CLS.
-    expect(LANDING).toMatch(/width=\{620\}/);
-    expect(LANDING).toMatch(/height=\{1276\}/);
+    expect(LANDING).toMatch(/className="device"[\s\S]{0,400}width=\{\d+\}[\s\S]{0,80}height=\{\d+\}/);
   });
 
-  it('carries the "Illustration" caption near the mockup (guards against implying a specific limit is guaranteed)', () => {
-    expect(LANDING).toMatch(/className="illustration-note"[^>]*>Illustration</);
-  });
-});
-
-describe('Getting-started band — Cherry-style soft-tinted band with the CTA inside', () => {
-  it('renders as a .gs-band section (not the old .band alternate)', () => {
-    expect(LANDING).toMatch(/<section className="gs-band">/);
-  });
-
-  it('the primary CTA lives inside the band', () => {
+  it('the device-approved mockup lives INSIDE the Getting-started band', () => {
     const gsBandStart = LANDING.indexOf('<section className="gs-band">');
     const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
     expect(gsBandStart).toBeGreaterThan(-1);
     const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    expect(bandContent).toMatch(/className="gs-cta"/);
-    expect(bandContent).toMatch(/href="\/signup\/patient"[^>]*>Get started</);
+    expect(bandContent).toMatch(/src="\/marketing\/device-approved\.png"/);
+  });
+
+  it('carries the "Illustration" caption next to the device mockup (guards against implying the R15,000 figure is guaranteed)', () => {
+    // The caption stays with the device image, wherever the image
+    // ends up living on the page.
+    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
+    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
+    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
+    expect(bandContent).toMatch(/className="illustration-note"[^>]*>Illustration</);
+  });
+});
+
+describe('Getting-started band — two-column with text+CTA left, device mockup right', () => {
+  it('renders as a .gs-band section (not the old .band alternate)', () => {
+    expect(LANDING).toMatch(/<section className="gs-band">/);
+  });
+
+  it('uses the two-column layout (gs-two-col > gs-text + gs-visual)', () => {
+    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
+    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
+    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
+    expect(bandContent).toMatch(/className="gs-two-col reveal"/);
+    expect(bandContent).toMatch(/className="gs-text"/);
+    expect(bandContent).toMatch(/className="gs-visual"/);
+    // Text column comes before the visual column in DOM order.
+    const textIdx = bandContent.indexOf('className="gs-text"');
+    const visIdx  = bandContent.indexOf('className="gs-visual"');
+    expect(textIdx).toBeLessThan(visIdx);
+  });
+
+  it('the primary CTA lives inside the LEFT column (gs-text) of the band', () => {
+    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
+    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
+    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
+    const textStart = bandContent.indexOf('className="gs-text"');
+    const visStart  = bandContent.indexOf('className="gs-visual"');
+    const textCol   = bandContent.slice(textStart, visStart);
+    expect(textCol).toMatch(/className="gs-cta"/);
+    expect(textCol).toMatch(/href="\/signup\/patient"[^>]*>Get started</);
   });
 
   it('the two pillars ("A debit or credit card" + "1 minute") stay inside the band', () => {
