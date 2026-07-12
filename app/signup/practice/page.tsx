@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { createPractice } from './actions';
+import { createPractice, getPracticeInvitationByToken } from './actions';
 import { isValidEmail, normalizePhoneZA, checkPassword } from '@/lib/validation';
 import {
   useFieldValidation,
@@ -154,9 +154,35 @@ export default function PracticeSignupPage() {
   const [fields,      setFields]      = useState<Fields>(BLANK);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(false);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const [emailLocked, setEmailLocked] = useState(false);
 
   const schema = useMemo(() => SCHEMA, []);
   const { errors, handleBlur, validateAll } = useFieldValidation(fields, schema);
+
+  // If the URL has ?token=, look it up via the SECURITY DEFINER RPC and
+  // pre-fill the form. Wrap in an async IIFE so we're not calling
+  // setState directly inside the effect (matches PushSoftAsk pattern).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const token = new URLSearchParams(window.location.search).get('token');
+    if (!token) return;
+    void (async () => {
+      const pre = await getPracticeInvitationByToken(token);
+      if (!pre) return;
+      setInviteToken(token);
+      setEmailLocked(true);
+      setFields(prev => ({
+        ...prev,
+        email:         pre.email          ?? prev.email,
+        practiceName:  pre.practice_name  ?? prev.practiceName,
+        firstName:     pre.contact_first_name ?? prev.firstName,
+        lastName:      pre.contact_last_name  ?? prev.lastName,
+        phone:         pre.phone          ?? prev.phone,
+        specialty:     pre.specialty      ?? prev.specialty,
+      }));
+    })();
+  }, []);
 
   function setText(key: Exclude<keyof Fields, 'agreementAccepted'>) {
     return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -197,6 +223,7 @@ export default function PracticeSignupPage() {
       password:           fields.password,
       phone:              fields.phone,
       agreementAccepted:  fields.agreementAccepted,
+      inviteToken:        inviteToken ?? undefined,
     });
     setLoading(false);
 
@@ -382,16 +409,22 @@ export default function PracticeSignupPage() {
                 />
               </Field>
             </div>
-            <Field label="Email address" required error={errors.email ?? null}>
+            <Field
+              label="Email address"
+              required
+              error={errors.email ?? null}
+              hint={emailLocked ? 'Invited by the betternow team — email is locked to your invite.' : undefined}
+            >
               <input
                 id="practice-email"
-                className={inputClass(!!errors.email)}
+                className={inputClass(!!errors.email) + (emailLocked ? ' bg-gray-50 text-gray-600 cursor-not-allowed' : '')}
                 type="email"
                 value={fields.email}
                 onChange={setText('email')}
                 onBlur={onBlur('email')}
                 aria-invalid={!!errors.email}
                 placeholder="jane@practice.co.za"
+                readOnly={emailLocked}
               />
             </Field>
             <Field label="Password" required error={errors.password ?? null}>

@@ -14,6 +14,18 @@ export type CreatePracticeInput = {
   practiceName:       string;
   specialty:          string;
   practiceRegNumber:  string;  // BHF "Practice number (PR)" — optional
+
+  /**
+   * If the signup was reached via a CRM-generated practice invitation
+   * link (/signup/practice?token=…), the token flows through here so
+   * the server can stamp accepted_at + accepted_by_practice_id on the
+   * invite row AND link the linked CRM lead's converted_practice_id.
+   * Optional — absence means "open self-signup". Invalid / expired /
+   * already-accepted tokens are treated as absent (no failure — the
+   * practice is still created).
+   */
+  inviteToken?:       string;
+
   // Address: client posts what the Places (New) picker captured. The
   // formatted address goes into addressLine1; suburb/city/province/
   // postalCode are parsed from the place's addressComponents on the
@@ -56,6 +68,35 @@ function svcClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
+}
+
+// ─── getPracticeInvitationByToken ────────────────────────────────────
+//
+// Anonymous-safe: calls the SECURITY DEFINER RPC that returns at most
+// one row for a non-expired, unaccepted invitation. Returns null for
+// any invalid state; caller renders the form as an open signup in
+// that case.
+
+export type PrefillPayload = {
+  email:              string;
+  practice_name:      string;
+  contact_first_name: string | null;
+  contact_last_name:  string | null;
+  phone:              string | null;
+  specialty:          string | null;
+};
+
+export async function getPracticeInvitationByToken(token: string): Promise<PrefillPayload | null> {
+  if (!token || token.length < 8 || token.length > 128) return null;
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('get_practice_invitation_by_token', { p_token: token });
+  if (error) {
+    console.warn('[practice signup] get_practice_invitation_by_token error', error);
+    return null;
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  return row as PrefillPayload;
 }
 
 // ─── Server-side validation (authoritative) ──────────────────────────────────
@@ -279,6 +320,22 @@ export async function createPractice(input: CreatePracticeInput): Promise<Create
         active:   true,
       });
     if (brandMemberErr) throw new Error(`Brand member: ${brandMemberErr.message}`);
+
+    // 3c. If this signup carries a CRM invite token, stamp acceptance
+    //     on the invite AND set converted_practice_id on the linked lead.
+    //     Best-effort: a failed accept must NOT roll back the signup —
+    //     the practice exists either way. Sales can hand-link if needed.
+    if (input.inviteToken) {
+      const { error: acceptErr } = await svc.rpc('accept_practice_invitation', {
+        p_token:       input.inviteToken,
+        p_practice_id: practiceId,
+      });
+      if (acceptErr) {
+        console.warn('[practice signup] accept_practice_invitation failed', {
+          token_len: input.inviteToken.length, err: acceptErr,
+        });
+      }
+    }
 
     // 3b. Notify the platform admin so they can review the new practice.
     //     Best-effort: a failed send (missing env vars, Resend outage)

@@ -1,0 +1,222 @@
+import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { formatRand } from '@/app/admin/_lib/format';
+import { bucketFollowups } from '@/lib/crm/followups';
+import { sastDayWindows } from '@/lib/crm/timezone';
+
+// ─── /crm — My Day (default landing) ─────────────────────────────────
+//
+// Three buckets: overdue (red), today, upcoming (7 days). Also shows a
+// metrics strip: leads by stage, conversion rate, activities logged
+// this week, overdue follow-up count.
+//
+// Belt-and-braces role check per crm-routes-auth.test.ts pin (mirrors
+// admin-routes-auth.test.ts).
+
+const STAGES = [
+  'new', 'contacted', 'meeting_scheduled', 'demo_done',
+  'agreement_sent', 'signed', 'onboarded', 'lost',
+] as const;
+
+export default async function CrmHomePage() {
+  const { user, supabase } = await requireConfirmedUser({ next: '/crm' });
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  if (profile?.role !== 'sales' && profile?.role !== 'admin') {
+    if (profile?.role === 'patient')                                                  redirect('/patient');
+    else if (profile?.role === 'practice_admin' || profile?.role === 'practice_staff') redirect('/practice');
+    else if (profile?.role === 'practice_provider')                                   redirect('/provider');
+    else                                                                              redirect('/login');
+  }
+
+  const now = new Date();
+  const { upcomingEndUtc } = sastDayWindows(now);
+
+  const { data: rawLeads } = await supabase
+    .from('crm_leads')
+    .select('id, practice_name, stage, next_follow_up_at, owner_user_id, estimated_monthly_billings')
+    .not('next_follow_up_at', 'is', null)
+    .lt('next_follow_up_at', upcomingEndUtc.toISOString())
+    .order('next_follow_up_at', { ascending: true })
+    .limit(200);
+
+  const buckets = bucketFollowups(
+    (rawLeads ?? []).map(l => ({
+      id: l.id,
+      next_follow_up_at: l.next_follow_up_at,
+      stage: l.stage,
+      practice_name: l.practice_name,
+    })),
+    now,
+  );
+
+  // Metrics strip
+  const { data: allStages } = await supabase.from('crm_leads').select('id, stage, estimated_monthly_billings').limit(5000);
+  const byStage: Record<string, { count: number; value: number }> = {};
+  for (const s of STAGES) byStage[s] = { count: 0, value: 0 };
+  for (const l of allStages ?? []) {
+    if (byStage[l.stage]) {
+      byStage[l.stage].count++;
+      byStage[l.stage].value += Number(l.estimated_monthly_billings ?? 0);
+    }
+  }
+  const nonNew = (allStages ?? []).filter(l => l.stage !== 'new').length;
+  const signedOrOnboarded = (allStages ?? []).filter(l => l.stage === 'signed' || l.stage === 'onboarded').length;
+  const conversionRate = nonNew > 0 ? Math.round((signedOrOnboarded / nonNew) * 100) : 0;
+
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const { count: activitiesThisWeek } = await supabase
+    .from('crm_activities')
+    .select('id', { count: 'exact', head: true })
+    .gt('occurred_at', sevenDaysAgo.toISOString());
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">My Day</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Follow-ups queued for you. Work top to bottom — nothing under &lsquo;overdue&rsquo; is optional.
+          </p>
+        </div>
+        <Link
+          href="/crm/leads/new"
+          className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium"
+        >
+          + New lead
+        </Link>
+      </div>
+
+      {/* ── Metrics strip ────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <MetricCard label="Overdue"          value={String(buckets.overdue.length)} tone={buckets.overdue.length ? 'danger' : 'neutral'} />
+        <MetricCard label="Conversion"       value={`${conversionRate}%`}           tone="neutral" hint="signed+onboarded / non-new" />
+        <MetricCard label="Activities (7d)"  value={String(activitiesThisWeek ?? 0)} tone="neutral" />
+        <MetricCard label="Total leads"      value={String(allStages?.length ?? 0)} tone="neutral" />
+      </div>
+
+      <StageStrip byStage={byStage} />
+
+      {/* ── Buckets ─────────────────────────────────────────────── */}
+      <Bucket
+        title="Overdue"
+        tone="danger"
+        rows={buckets.overdue}
+        rawLeads={rawLeads ?? []}
+        empty="Nothing overdue — nice."
+      />
+      <Bucket
+        title="Due today"
+        tone="warn"
+        rows={buckets.today}
+        rawLeads={rawLeads ?? []}
+        empty="Nothing scheduled for today."
+      />
+      <Bucket
+        title="Next 7 days"
+        tone="neutral"
+        rows={buckets.upcoming}
+        rawLeads={rawLeads ?? []}
+        empty="Nothing scheduled for the next 7 days."
+      />
+    </div>
+  );
+}
+
+// ── UI atoms ────────────────────────────────────────────────────────
+
+type Tone = 'neutral' | 'warn' | 'danger';
+
+function MetricCard({ label, value, tone, hint }: { label: string; value: string; tone: Tone; hint?: string }) {
+  const ring =
+    tone === 'danger' ? 'border-red-200 bg-red-50 text-red-800'
+    : tone === 'warn' ? 'border-amber-200 bg-amber-50 text-amber-800'
+    : 'border-gray-200 bg-white text-gray-900';
+  return (
+    <div className={`rounded-2xl border p-4 ${ring}`}>
+      <p className="text-xs uppercase tracking-wide font-medium">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+      {hint && <p className="text-[10px] mt-0.5 opacity-70">{hint}</p>}
+    </div>
+  );
+}
+
+function StageStrip({ byStage }: { byStage: Record<string, { count: number; value: number }> }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 p-4">
+      <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Pipeline by stage</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
+        {STAGES.map(s => (
+          <div key={s} className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-1.5">
+            <div className="capitalize text-gray-500">{s.replace(/_/g, ' ')}</div>
+            <div className="font-semibold text-gray-900 tabular-nums">{byStage[s].count}</div>
+            {byStage[s].value > 0 && (
+              <div className="text-[10px] text-gray-500 tabular-nums">{formatRand(byStage[s].value)}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+type BucketRow = { id: string; practice_name: string; next_follow_up_at: string | null; stage: string };
+
+function Bucket({
+  title, tone, rows, empty, rawLeads,
+}: {
+  title: string;
+  tone: Tone;
+  rows: BucketRow[];
+  empty: string;
+  rawLeads: Array<{ id: string; practice_name: string; stage: string; next_follow_up_at: string | null }>;
+}) {
+  const chip =
+    tone === 'danger' ? 'bg-red-100 text-red-800'
+    : tone === 'warn' ? 'bg-amber-100 text-amber-800'
+    : 'bg-gray-100 text-gray-700';
+  const leadsById = new Map(rawLeads.map(l => [l.id, l]));
+
+  return (
+    <section className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${chip}`}>
+          {rows.length}
+        </span>
+      </header>
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-gray-500">{empty}</p>
+      ) : (
+        <ul className="divide-y divide-gray-100">
+          {rows.map(r => {
+            const lead = leadsById.get(r.id) ?? r;
+            const when = r.next_follow_up_at
+              ? new Date(r.next_follow_up_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' })
+              : '—';
+            return (
+              <li key={r.id}>
+                <Link
+                  href={`/crm/leads/${r.id}`}
+                  className="flex items-center justify-between px-4 py-3 hover:bg-gray-50"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-gray-900 truncate">{lead.practice_name}</div>
+                    <div className="text-xs text-gray-500 capitalize">Stage: {lead.stage.replace(/_/g, ' ')}</div>
+                  </div>
+                  <div className="text-xs text-gray-600 tabular-nums shrink-0">{when} SAST</div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}

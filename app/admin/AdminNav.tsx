@@ -24,6 +24,8 @@ const NAV_LINKS = [
   { href: '/admin/collections?chip=overdue',   label: 'Collections', countKey: 'overdueCollections'  as const                },
   { href: '/admin/payouts',                    label: 'Payouts',     countKey: 'pendingPayouts'      as const                },
   { href: '/admin/refunds',                    label: 'Refunds',     countKey: 'outstandingRefunds'  as const                },
+  { href: '/crm',                              label: 'CRM'                                                                  },
+  { href: '/admin/sales-team',                 label: 'Sales team'                                                           },
 ];
 
 export default function AdminNav({ counts }: { counts: Counts }) {
