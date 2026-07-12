@@ -129,3 +129,33 @@ describe('0069 — crm_leads + crm_activities', () => {
     expect(SRC).toMatch(/ALTER TABLE practice_invitations[\s\S]*?ADD CONSTRAINT[\s\S]*?FOREIGN KEY\s*\(lead_id\)\s*REFERENCES crm_leads\(id\)/i);
   });
 });
+
+describe('0070 — conversion hardening', () => {
+  const SRC = read('supabase/migrations/0070_crm_conversion_hardening.sql');
+
+  it('redefines accept_practice_invitation with SECURITY DEFINER + pinned search_path', () => {
+    expect(SRC).toMatch(/CREATE OR REPLACE FUNCTION accept_practice_invitation/);
+    expect(SRC).toMatch(/SECURITY DEFINER/);
+    expect(SRC).toMatch(/SET search_path\s*=\s*public/);
+  });
+
+  it('accept_practice_invitation checks caller owns p_practice_id (with service-role bypass)', () => {
+    expect(SRC).toMatch(/auth\.role\(\)\s*=\s*'service_role'/);
+    // The ownership check must consult BOTH practices.owner_id AND practice_members
+    expect(SRC).toMatch(/practices[\s\S]*?owner_id\s*=\s*auth\.uid\(\)/i);
+    expect(SRC).toMatch(/practice_members[\s\S]*?user_id\s*=\s*auth\.uid\(\)/i);
+    // And raises insufficient_privilege on failure
+    expect(SRC).toMatch(/insufficient_privilege/);
+  });
+
+  it('wraps the CRM flip in BEGIN/EXCEPTION so approval cannot be aborted', () => {
+    expect(SRC).toMatch(/CREATE OR REPLACE FUNCTION crm_flip_lead_onboarded_on_practice_approve/);
+    expect(SRC).toMatch(/EXCEPTION\s+WHEN\s+OTHERS\s+THEN/i);
+    expect(SRC).toMatch(/RAISE\s+WARNING/i);
+  });
+
+  it('trigger function still only fires on the pending → approved transition', () => {
+    expect(SRC).toMatch(/NEW\.status\s*=\s*'approved'/);
+    expect(SRC).toMatch(/OLD\.status\s+IS\s+DISTINCT\s+FROM\s+'approved'/);
+  });
+});
