@@ -591,51 +591,81 @@ describe('Mockups — plan-chooser in How-it-works + device-approved in Getting-
     expect(bandContent).toMatch(/src="\/marketing\/device-approved\.png"/);
   });
 
-  it('carries the "Illustration" caption next to the device mockup (guards against implying the R15,000 figure is guaranteed)', () => {
-    // The caption stays with the device image, wherever the image
-    // ends up living on the page.
+  it('NO "Illustration" caption anywhere near the device mockup — removed with the CTA reorder', () => {
+    // The R15,000 figure inside the phone screen must still not be
+    // read as guaranteed. The caption removal is deliberate; NO
+    // replacement copy is allowed to compensate for it, so the pin
+    // asserts absence rather than presence.
     const gsBandStart = LANDING.indexOf('<section className="gs-band">');
     const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
     const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    expect(bandContent).toMatch(/className="illustration-note"[^>]*>Illustration</);
+    expect(bandContent).not.toMatch(/className="illustration-note"/);
+    expect(bandContent).not.toContain('Illustration');
   });
 });
 
-describe('Getting-started band — two-column with text+CTA left, device mockup right', () => {
+describe('Getting-started band — narrative order: what you need → what you get → act', () => {
+  function bandContent(): string {
+    const start = LANDING.indexOf('<section className="gs-band">');
+    const end   = LANDING.indexOf('</section>', start);
+    expect(start).toBeGreaterThan(-1);
+    return LANDING.slice(start, end);
+  }
+
   it('renders as a .gs-band section (not the old .band alternate)', () => {
     expect(LANDING).toMatch(/<section className="gs-band">/);
   });
 
   it('uses the two-column layout (gs-two-col > gs-text + gs-visual)', () => {
-    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
-    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
-    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    expect(bandContent).toMatch(/className="gs-two-col reveal"/);
-    expect(bandContent).toMatch(/className="gs-text"/);
-    expect(bandContent).toMatch(/className="gs-visual"/);
+    const bc = bandContent();
+    expect(bc).toMatch(/className="gs-two-col reveal"/);
+    expect(bc).toMatch(/className="gs-text"/);
+    expect(bc).toMatch(/className="gs-visual"/);
     // Text column comes before the visual column in DOM order.
-    const textIdx = bandContent.indexOf('className="gs-text"');
-    const visIdx  = bandContent.indexOf('className="gs-visual"');
+    const textIdx = bc.indexOf('className="gs-text"');
+    const visIdx  = bc.indexOf('className="gs-visual"');
     expect(textIdx).toBeLessThan(visIdx);
   });
 
-  it('the primary CTA lives inside the LEFT column (gs-text) of the band', () => {
-    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
-    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
-    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    const textStart = bandContent.indexOf('className="gs-text"');
-    const visStart  = bandContent.indexOf('className="gs-visual"');
-    const textCol   = bandContent.slice(textStart, visStart);
-    expect(textCol).toMatch(/className="gs-cta"/);
-    expect(textCol).toMatch(/href="\/signup\/patient"[^>]*>Get started</);
+  it('DOM order is content → image → CTA (mobile stacks in that order; desktop reads content-left / image-right / CTA below)', () => {
+    // The narrative: what you need (pillars in gs-text) → what
+    // you get (approved-screen image in gs-visual) → act (CTA).
+    // On desktop the gs-cta sits OUTSIDE the two-column grid as
+    // a full-width centered row so it reads as the closing step.
+    const bc = bandContent();
+    const textIdx = bc.indexOf('className="gs-text"');
+    const visIdx  = bc.indexOf('className="gs-visual"');
+    const ctaIdx  = bc.indexOf('className="gs-cta');
+    expect(textIdx).toBeGreaterThan(-1);
+    expect(visIdx).toBeGreaterThan(textIdx);
+    expect(ctaIdx).toBeGreaterThan(visIdx);
+  });
+
+  it('the primary CTA lives OUTSIDE the two-column grid (sibling to gs-two-col, not nested in gs-text or gs-visual)', () => {
+    const bc = bandContent();
+    // The gs-two-col grid ends before the gs-cta appears.
+    const gridStart = bc.indexOf('className="gs-two-col');
+    const gridEnd   = bc.indexOf('</div>\n          </div>', gridStart);   // end of the gs-two-col wrapper
+    const ctaIdx    = bc.indexOf('className="gs-cta');
+    expect(gridStart).toBeGreaterThan(-1);
+    expect(gridEnd).toBeGreaterThan(gridStart);
+    expect(ctaIdx).toBeGreaterThan(gridEnd);
+    // The CTA still targets patient signup.
+    expect(bc).toMatch(/className="gs-cta[^"]*"[\s\S]{0,200}href="\/signup\/patient"[^>]*>Get started</);
   });
 
   it('the two pillars ("A debit or credit card" + "1 minute") stay inside the band', () => {
-    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
-    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
-    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    expect(bandContent).toMatch(/<h4>A debit or credit card<\/h4>/);
-    expect(bandContent).toMatch(/<h4>1 minute<\/h4>/);
+    const bc = bandContent();
+    expect(bc).toMatch(/<h4>A debit or credit card<\/h4>/);
+    expect(bc).toMatch(/<h4>1 minute<\/h4>/);
+  });
+
+  it('NO "Illustration" caption anywhere in the band (removed with the CTA reorder)', () => {
+    const bc = bandContent();
+    // The task requires the caption to be gone entirely, and no
+    // replacement copy anywhere near the image.
+    expect(bc).not.toContain('Illustration');
+    expect(bc).not.toMatch(/className="illustration-note"/);
   });
 });
 

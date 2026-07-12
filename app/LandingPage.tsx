@@ -224,9 +224,6 @@ export default function LandingPage() {
                   <p>Sign up, have your ID handy, and complete a quick credit and affordability check — all online in about 1 minute. You&apos;ll need to be 18 or older with a good credit record.</p>
                 </div>
               </div>
-              <div className="gs-cta">
-                <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
-              </div>
             </div>
             <div className="gs-visual">
               <Image
@@ -237,8 +234,13 @@ export default function LandingPage() {
                 height={1290}
                 priority={false}
               />
-              <p className="illustration-note">Illustration</p>
             </div>
+          </div>
+          {/* CTA lives OUTSIDE the two-column grid so the read order is
+              content → image → CTA on both mobile (stacked) and desktop
+              (centered row below both columns). */}
+          <div className="gs-cta reveal">
+            <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
           </div>
         </div>
       </section>

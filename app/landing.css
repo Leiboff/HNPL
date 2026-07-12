@@ -853,8 +853,12 @@
   text-align: left;
 }
 
+/* Full-width CTA row that lives BELOW the two-column grid (content
+   left, phone right). Centered on both mobile and desktop so the
+   button reads as the closing "act" step of the narrative. */
 .lp-root .gs-band .gs-cta {
   margin-top: 32px;
+  text-align: center;
 }
 
 /* Visual (device-approved.png) — right column on desktop, centered
