@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PatientNav from './PatientNav';
 import PatientBottomNav from './PatientBottomNav';
-import LogoutButton from './LogoutButton';
+import ActionCentreBell from './ActionCentreBell';
 import InstallPrompt from '@/app/_pwa/InstallPrompt';
 import PostLoginPasskeyPrompt from './PostLoginPasskeyPrompt';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
@@ -84,7 +84,7 @@ export default async function PatientLayout({
             <span style={{ color: '#13294B' }}>better</span>
             <span style={{ color: '#15A89E' }}>now</span>
           </span>
-          <LogoutButton />
+          <ActionCentreBell />
         </div>
       </header>
 

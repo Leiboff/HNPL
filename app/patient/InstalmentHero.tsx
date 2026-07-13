@@ -110,6 +110,41 @@ export default function InstalmentHero({
         </p>
 
         {dueLine}
+
+        {/* Per-plan components — inline only when there is more than one
+            plan contributing to the total. For single-plan users the
+            headline already tells the whole story (practice implicit,
+            amount + due date shown above); repeating "Norwood — Rxxx —
+            {dueDate}" would just duplicate the copy. Multi-plan users
+            see the first 3 lines with an overflow hint that mirrors
+            the "View breakdown" chip. Data source is the SAME
+            instalments array driving the modal — no new query, no
+            drift. */}
+        {instalments.length > 1 && (
+          <ul
+            className="mt-4 pt-4 border-t border-gray-100 space-y-1.5"
+            data-testid="instalment-hero-lines"
+          >
+            {instalments.slice(0, 3).map((inst, i) => {
+              const rowTotal = inst.amount + inst.dunningFeesCents / 100;
+              return (
+                <li key={i} className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-gray-700 truncate min-w-0" title={inst.practiceName}>
+                    {inst.practiceName}
+                  </span>
+                  <span className="text-gray-500 tabular-nums shrink-0">
+                    {formatRand(rowTotal)} · {formatDate(dueDate)}
+                  </span>
+                </li>
+              );
+            })}
+            {instalments.length > 3 && (
+              <li className="text-[11px] text-gray-400 pt-1">
+                + {instalments.length - 3} more · tap for breakdown
+              </li>
+            )}
+          </ul>
+        )}
       </button>
 
       <InstalmentBreakdownModal

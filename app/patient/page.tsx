@@ -4,8 +4,9 @@ import { createClient } from '@/lib/supabase/server';
 import InstalmentHero, { type InstalmentRow } from './InstalmentHero';
 import ApprovedBalanceCard from './ApprovedBalanceCard';
 import FindCareBar from './FindCareBar';
-import PushSoftAsk from '@/app/_pwa/PushSoftAsk';
+import YourPlansCard, { type PlanChipInput } from './YourPlansCard';
 import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
+import { computePlanProgress } from '@/lib/planProgress';
 
 // ─── Patient home dashboard ──────────────────────────────────────────────
 //
@@ -45,7 +46,16 @@ type PlanSummary = {
   id:           string;
   status:       string;
   total_amount: number;
+  plan_type:    number | null;
   practice:     PracticeEmbed;
+  /** Full instalment set embedded so we can compute per-plan progress
+   *  ("X of Y paid") inline. Matches the shape used by the orders page —
+   *  the breakdown view is the source of truth for this shape. */
+  payments:     Array<{
+    amount:  number | string;
+    status:  string;
+    kind:    string | null;
+  }> | null;
 };
 
 // Embedded plan data on each payment row (many payments → one plan via plan_id FK).
@@ -68,9 +78,6 @@ type UpcomingPayment = {
   // against the rare case where it arrives as a single-element array.
   plan: PaymentPlanEmbed | PaymentPlanEmbed[];
 };
-
-// ─── Shared card class (applied to every block for consistency) ───────────────
-const card = 'bg-white rounded-2xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6';
 
 // Card label: small uppercase navy, used as the title in every card.
 function CardLabel({ children }: { children: React.ReactNode }) {
@@ -101,10 +108,12 @@ export default async function PatientDashboardPage() {
         .single(),
       // No profiles embed here — plans has two FKs to profiles (patient +
       // provider) which causes an ambiguous relationship error. Only embed
-      // practices(name).
+      // practices(name). Payments embed matches the orders page shape so
+      // computePlanProgress can render per-plan "X of Y paid" chips on
+      // the home dashboard without a second round trip.
       supabase
         .from('plans')
-        .select('id, status, total_amount, practice:practices(name)')
+        .select('id, status, total_amount, plan_type, practice:practices(name), payments(amount, status, kind)')
         .eq('patient_id', user.id),
       // All unsettled instalments — soonest-first by *effective* date.
       supabase
@@ -146,6 +155,34 @@ export default async function PatientDashboardPage() {
   const available = approvedLimit != null
     ? availableBalance(approvedLimit, paymentsForBalance)
     : 0;
+
+  // ── Plan chips for YourPlansCard ────────────────────────────────────
+  //
+  // ACTIVE plans only. We compute paid/total per plan from the embedded
+  // payments and hand chips down as pure props (no additional query).
+  // Sorted by "least-paid-first" so the plan most in-progress sits on
+  // top; ties fall back to newest by id (stable enough for Phase 1).
+  const planChips: PlanChipInput[] = allPlans
+    .filter((p) => p.status === 'active')
+    .map((p) => {
+      const prog = computePlanProgress({
+        status:   p.status,
+        payments: (p.payments ?? []).map((pmt) => ({
+          amount: pmt.amount,
+          status: pmt.status,
+          kind:   pmt.kind ?? undefined,
+        })),
+      });
+      return {
+        id:            p.id,
+        practiceName:  getPracticeName(p.practice),
+        paid:          prog.paidCount,
+        total:         prog.totalPayments || (p.plan_type ?? 0),
+        percent:       prog.percent,
+        isPaidInFull:  prog.isPaidInFull,
+      };
+    })
+    .sort((a, b) => a.percent - b.percent);
 
   // Today in SA time — YYYY-MM-DD string compared directly against
   // due_date (also YYYY-MM-DD from the DB). String comparison is
@@ -312,37 +349,23 @@ export default async function PatientDashboardPage() {
             null render, no placeholder, no "R0 available". */}
         <ApprovedBalanceCard limit={approvedLimit} available={available} />
 
-        {/* Active plans count → tappable to /patient/orders */}
-        <Link href="/patient/orders" className={`${card} block hover:shadow-md transition-shadow`}>
-          <CardLabel>Your Plans</CardLabel>
-          {totalCount === 0 ? (
-            <div className="mt-3 rounded-xl border border-dashed border-gray-200 py-8 text-center">
-              <p className="text-sm font-medium text-gray-400">No payment plans yet</p>
-              <p className="mt-1 text-xs text-gray-400">Plans appear here when a practice sends you a bill.</p>
-            </div>
-          ) : (
-            <div className="mt-3 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Active</p>
-                <p className="text-4xl font-bold tabular-nums mt-0.5" style={{ color: '#13294B' }} data-testid="dashboard-active-plans-count">
-                  {currentCount}
-                </p>
-              </div>
-              <span className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm">
-                View all →
-              </span>
-            </div>
-          )}
-        </Link>
-
-        {/* Hero: next instalment / all-paid-up. Pending-bill card
-            no longer lives here — see billReview above. */}
+        {/* Next instalment / all-paid-up. Moved ABOVE Your Plans in
+            the "earn the space" reorder — the pending amount is the
+            more urgent signal so it wins the higher visual slot. */}
         {hero}
 
-        {/* PWA push notifications — soft-ask shown only when the patient
-            has an active plan and hasn't already been prompted. Moved
-            to the tail so it never displaces the primary tiles. */}
-        <PushSoftAsk enabled={currentCount > 0} />
+        {/* Your plans — rich chips per active plan (cap 3 then View all).
+            Zero active plans → compact empty state with a Find-care link. */}
+        <YourPlansCard
+          activeCount={currentCount}
+          totalCount={totalCount}
+          chips={planChips}
+        />
+
+        {/* NOTE: The "Turn on notifications" soft-ask card lived at the
+            tail of the home feed pre-2026-07-13. It now lives in the
+            header bell's Action Centre so persistent tasks never
+            crowd the home flow. */}
 
       </div>
     </div>

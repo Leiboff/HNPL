@@ -137,10 +137,14 @@ describe('Part 2 — phone folded into Personal Details', () => {
 // ─── Part 3: Home dashboard ────────────────────────────────────────────
 
 describe('Part 3 — home dashboard', () => {
-  it('renders ApprovedBalanceCard + FindCareBar + the active-plans count', () => {
+  it('renders ApprovedBalanceCard + FindCareBar + YourPlansCard (carries the active-plans testid)', () => {
     expect(HOME).toMatch(/ApprovedBalanceCard/);
     expect(HOME).toMatch(/FindCareBar/);
-    expect(HOME).toMatch(/data-testid="dashboard-active-plans-count"/);
+    expect(HOME).toMatch(/<YourPlansCard/);
+    // The active-plans-count testid now lives on YourPlansCard, not on
+    // an inline dashboard element — the testid moves with the card.
+    const YOUR_PLANS_CARD = read('app/patient/YourPlansCard.tsx');
+    expect(YOUR_PLANS_CARD).toMatch(/data-testid="dashboard-active-plans-count"/);
   });
 
   it('reads approved_credit_limit from profiles.select', () => {
@@ -200,23 +204,39 @@ describe('Part 3 — home dashboard', () => {
     expect(rmBlock![0]).toMatch(/linear-gradient/);
   });
 
-  it('layout order (bill pending): greeting → FindCareBar → billReview → ApprovedBalanceCard → active plans → hero', () => {
-    // Bill-to-review is lifted OUT of the hero position into a slot
-    // directly beneath the search bar so a patient with a bill needing
-    // action sees it first. The find-care bar remains the primary
-    // tap-target when no bill is pending.
+  it('layout order (bill pending): greeting → FindCareBar → billReview → ApprovedBalanceCard → hero → YourPlansCard', () => {
+    // "Earn the space" reorder (2026-07-13): the next-instalment hero
+    // now sits ABOVE Your Plans — the pending amount is a stronger
+    // signal than the plan-count roll-up so it wins the higher visual
+    // slot. Bill-to-review still sits at the top.
     const greeting   = HOME.indexOf('Hi, {profile?.first_name');
     const findCare   = HOME.indexOf('<FindCareBar />');
     const billReview = HOME.indexOf('{billReview}');
     const balance    = HOME.indexOf('<ApprovedBalanceCard');
-    const plans      = HOME.indexOf('data-testid="dashboard-active-plans-count"');
     const hero       = HOME.indexOf('{hero}');
+    const plansCard  = HOME.indexOf('<YourPlansCard');
     expect(greeting).toBeGreaterThan(-1);
     expect(findCare).toBeGreaterThan(greeting);
     expect(billReview).toBeGreaterThan(findCare);
     expect(balance).toBeGreaterThan(billReview);
-    expect(plans).toBeGreaterThan(balance);
-    expect(hero).toBeGreaterThan(plans);
+    expect(hero).toBeGreaterThan(balance);
+    expect(plansCard).toBeGreaterThan(hero);
+  });
+
+  it('push soft-ask is REMOVED from the home flow (moved to the action centre)', () => {
+    // <PushSoftAsk /> lived at the tail of the home feed. It now lives
+    // inside <ActionCentreSheet /> triggered by the header bell.
+    expect(HOME).not.toMatch(/<PushSoftAsk/);
+    expect(HOME).not.toMatch(/from ['"]@\/app\/_pwa\/PushSoftAsk['"]/);
+  });
+
+  it('YourPlansCard receives the chip inputs plus active + total counts', () => {
+    // The card is a Server Component fed pure props from page.tsx — the
+    // per-plan progress math lives in computePlanProgress and the sort
+    // (least-paid-first) is done on the page before render.
+    expect(HOME).toMatch(/import\s+YourPlansCard,\s*\{\s*type\s+PlanChipInput\s*\}\s+from\s+['"]\.\/YourPlansCard['"]/);
+    expect(HOME).toMatch(/computePlanProgress/);
+    expect(HOME).toMatch(/<YourPlansCard[\s\S]*?activeCount=\{currentCount\}[\s\S]*?totalCount=\{totalCount\}[\s\S]*?chips=\{planChips\}/);
   });
 
   it('no-bill variant: billReview stays null and renders nothing between search + balance', () => {
@@ -317,6 +337,149 @@ describe('Part 4 — post-login passkey prompt', () => {
     const idxNav    = LOGIN_PAGE.indexOf("window.location.href = '/dashboard'", idxSignIn);
     expect(idxRecord).toBeGreaterThan(idxSignIn);
     expect(idxNav).toBeGreaterThan(idxRecord);
+  });
+});
+
+// ─── 2026-07-13 refresh: earn-the-space + action centre ───────────────
+
+describe('YourPlansCard — chip render + caps', () => {
+  const CARD = read('app/patient/YourPlansCard.tsx');
+
+  it('caps visible chips at 3 and shows "View all N" once there are more or historic plans', () => {
+    // The literal cap constant + slice(0, 3) usage pins the cap-at-3 rule.
+    expect(CARD).toMatch(/CHIP_CAP\s*=\s*3/);
+    expect(CARD).toMatch(/slice\s*\(\s*0\s*,\s*CHIP_CAP\s*\)/);
+    // "View all N →" copy is rendered when overflow > 0.
+    expect(CARD).toMatch(/View all \$\{totalCount\}/);
+  });
+
+  it('renders each chip with practice name + "X of Y paid" + a progress bar', () => {
+    expect(CARD).toMatch(/data-testid="your-plans-chip"/);
+    // Non-paid state: `${c.paid} of ${c.total} paid`
+    expect(CARD).toMatch(/\$\{c\.paid\} of \$\{c\.total\} paid/);
+    // Paid-in-full state
+    expect(CARD).toMatch(/Paid in full/);
+    // Progress bar is aria-role="progressbar" so screen readers report %
+    expect(CARD).toMatch(/role="progressbar"/);
+    expect(CARD).toMatch(/aria-valuenow=\{c\.percent\}/);
+  });
+
+  it('renders the empty state with a Find-care link when no plans exist at all', () => {
+    expect(CARD).toMatch(/data-testid="your-plans-empty"/);
+    expect(CARD).toMatch(/href="\/patient\/explore"/);
+    expect(CARD).toMatch(/Find care/);
+  });
+
+  it('renders a "no active" empty state when totalCount > 0 but activeCount === 0', () => {
+    // totalCount>0 && chips.length===0 branch — the past-plans link.
+    expect(CARD).toMatch(/No active plans right now/);
+    expect(CARD).toMatch(/See \$\{totalCount - activeCount\} past plan/);
+  });
+
+  it('chip taps route to /patient/orders (existing plans detail surface)', () => {
+    expect(CARD).toMatch(/href="\/patient\/orders"/);
+  });
+});
+
+describe('InstalmentHero — per-plan lines under the headline', () => {
+  const HERO = read('app/patient/InstalmentHero.tsx');
+
+  it('renders per-plan lines only when there is more than one plan contributing', () => {
+    // Single-plan users see the clean headline (no per-line duplication).
+    expect(HERO).toMatch(/instalments\.length\s*>\s*1/);
+    expect(HERO).toMatch(/data-testid="instalment-hero-lines"/);
+  });
+
+  it('caps inline lines at 3 with an overflow hint pointing at the breakdown', () => {
+    expect(HERO).toMatch(/slice\s*\(\s*0\s*,\s*3\s*\)/);
+    expect(HERO).toMatch(/tap for breakdown/);
+  });
+
+  it('per-plan lines are sourced from the SAME instalments array driving the modal', () => {
+    // No new fetch or transform — the lines use the existing prop.
+    expect(HERO).toMatch(/instalments\.slice\(0, 3\)\.map/);
+  });
+
+  it('the existing View-breakdown link stays intact', () => {
+    expect(HERO).toMatch(/View breakdown/);
+    expect(HERO).toMatch(/InstalmentBreakdownModal/);
+  });
+});
+
+describe('Header action centre — bell replaces logout in patient header', () => {
+  it('patient header imports ActionCentreBell, NOT LogoutButton', () => {
+    expect(LAYOUT).toMatch(/from\s+['"]\.\/ActionCentreBell['"]/);
+    expect(LAYOUT).not.toMatch(/from\s+['"]\.\/LogoutButton['"]/);
+    expect(LAYOUT).toMatch(/<ActionCentreBell\s*\/>/);
+    expect(LAYOUT).not.toMatch(/<LogoutButton\s*\/>/);
+  });
+
+  it('bell has the pending-dot when any action item is unresolved', () => {
+    const BELL = read('app/patient/ActionCentreBell.tsx');
+    expect(BELL).toMatch(/data-testid="action-centre-bell"/);
+    expect(BELL).toMatch(/data-testid="action-centre-bell-dot"/);
+    // Pending is push-idle OR passkey-supported-and-none OR install-available.
+    expect(BELL).toMatch(/hasPending\s*=\s*pushPending \|\| passkeyPending \|\| installPending/);
+  });
+
+  it('action-centre sheet exposes push + passkey + install items', () => {
+    const SHEET = read('app/patient/ActionCentreSheet.tsx');
+    expect(SHEET).toMatch(/data-testid="action-centre-sheet"/);
+    // Each item passes its testid prop; Item renders <div data-testid={testid}>.
+    expect(SHEET).toMatch(/testid="ac-item-push"/);
+    expect(SHEET).toMatch(/testid="ac-item-passkey"/);
+    expect(SHEET).toMatch(/testid="ac-item-install"/);
+    expect(SHEET).toMatch(/data-testid=\{testid\}/);
+    // Install item is hidden entirely when beforeinstallprompt is unavailable
+    // AND we're not on iOS Safari — the render tree ends the ternary with a
+    // `: null` (the 'none' branch), so no ac-item-install renders.
+    expect(SHEET).toMatch(/null\s*\/\*\s*'none'/);
+  });
+
+  it('completed items render a done tick (subtle, never vanish)', () => {
+    const SHEET = read('app/patient/ActionCentreSheet.tsx');
+    expect(SHEET).toMatch(/data-testid="ac-item-done"/);
+    // The done-tick is emitted only when the item's `done` prop is true.
+    expect(SHEET).toMatch(/{done && \(/);
+  });
+
+  it('push soft-ask logic in the centre reuses the same LS key as the removed home card', () => {
+    const SHEET = read('app/patient/ActionCentreSheet.tsx');
+    expect(SHEET).toMatch(/hnpl_push_softask_dismissed/);
+    expect(SHEET).toMatch(/enablePush/);
+  });
+});
+
+describe('Logout is on Profile (not the header)', () => {
+  it('Profile page imports + renders ProfileLogoutSection', () => {
+    const PROF = read('app/patient/profile/page.tsx');
+    expect(PROF).toMatch(/import\s+ProfileLogoutSection\s+from\s+['"]\.\/ProfileLogoutSection['"]/);
+    expect(PROF).toMatch(/<ProfileLogoutSection\s*\/>/);
+  });
+
+  it('ProfileLogoutSection uses the shared logoutAndRedirect helper', () => {
+    const SECTION = read('app/patient/profile/ProfileLogoutSection.tsx');
+    expect(SECTION).toMatch(/logoutAndRedirect/);
+    expect(SECTION).toMatch(/data-testid="profile-logout-button"/);
+  });
+
+  it('patient header does NOT render a Log out label anymore', () => {
+    // Code-only match — the header comments may still describe the
+    // relocation.
+    const codeOnly = LAYOUT
+      .replace(/\/\/.*$/gm, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(codeOnly).not.toMatch(/LogoutButton/);
+  });
+});
+
+describe('Passkey interrupt-prompt caps regression pin', () => {
+  // The action-centre passkey item is ALWAYS visible until enrolled,
+  // but the frequency-capped interrupt-prompt behaviour must NOT
+  // change. Pin the cap logic so this refresh's diff can't accidentally
+  // widen the re-prompt cadence.
+  it('serverAllowsPasskeyPrompt still combines !permanentlyDismissed AND loginCount >= nextShowAt', () => {
+    expect(LAYOUT).toMatch(/!permanentlyDismissed && loginCount >= nextShowAt/);
   });
 });
 

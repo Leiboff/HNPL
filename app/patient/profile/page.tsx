@@ -6,6 +6,7 @@ import SalaryDaySection from './SalaryDaySection';
 import PasskeysSection from './PasskeysSection';
 import ProfileAccordion from './ProfileAccordion';
 import NotificationsToggle from './NotificationsToggle';
+import ProfileLogoutSection from './ProfileLogoutSection';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
@@ -133,6 +134,11 @@ export default async function ProfilePage() {
         notifications={<NotificationsToggle />}
         passkeys={<PasskeysSection />}
       />
+
+      {/* Log out lives on the profile screen (2026-07-13) — moved out
+          of the patient header when the header adopted the bell icon
+          for the Action Centre. */}
+      <ProfileLogoutSection />
 
     </div>
   );
