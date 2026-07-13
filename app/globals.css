@@ -40,3 +40,70 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ─── Find-care search bar — rotating conic-gradient border ─────────────
+ *
+ * The pill sits on a wrapper (.find-care-bar-wrap) that carries the
+ * rotating conic gradient. The inner Link (.find-care-bar-surface)
+ * is inset by 2px with a matching border-radius so only the thin
+ * ring of gradient shows around the edge.
+ *
+ * Technique: an @property-registered custom property (--fcb-angle)
+ * lets the conic-gradient's angle be animated smoothly by keyframes.
+ * The wrapper also carries a soft teal box-shadow at low opacity to
+ * give the ring a subtle glow. On focus-within the animation speeds
+ * up slightly and the glow brightens — subtle acknowledgment without
+ * removing the focus indicator on the underlying Link (which keeps
+ * its focus-visible ring).
+ *
+ * Accessibility: prefers-reduced-motion switches the animation off
+ * and falls back to a static navy → teal linear gradient border. */
+
+@property --fcb-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes fcb-spin {
+  to { --fcb-angle: 360deg; }
+}
+
+.find-care-bar-wrap {
+  position: relative;
+  border-radius: 1rem; /* rounded-2xl */
+  padding: 2px;
+  background:
+    conic-gradient(
+      from var(--fcb-angle),
+      #13294B 0deg,
+      #15A89E 120deg,
+      #7EE8DE 210deg,
+      #15A89E 300deg,
+      #13294B 360deg
+    );
+  animation: fcb-spin 8s linear infinite;
+  box-shadow: 0 0 18px -6px rgba(21, 168, 158, 0.35);
+  transition: box-shadow 200ms ease;
+}
+
+.find-care-bar-wrap:hover,
+.find-care-bar-wrap:focus-within {
+  box-shadow: 0 0 22px -4px rgba(21, 168, 158, 0.55);
+  animation-duration: 6s;
+}
+
+.find-care-bar-surface {
+  /* Inset by the 2px padding on the wrapper so the gradient reads as
+   * a thin ring rather than a wide band. The inner rounding is one
+   * pixel less than the wrapper's so the corners look concentric. */
+  border-radius: calc(1rem - 2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .find-care-bar-wrap {
+    animation: none;
+    background: linear-gradient(135deg, #13294B 0%, #15A89E 100%);
+    box-shadow: none;
+  }
+}

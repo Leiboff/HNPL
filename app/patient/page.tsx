@@ -152,18 +152,23 @@ export default async function PatientDashboardPage() {
   // timezone-safe.
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
 
-  // ── Hero: priority A > B > C ───────────────────────────────────────────────
-  // A: pending bill(s) need action (amber accent, highest priority)
-  // B: upcoming instalments — sum all due on the soonest date, tappable modal
-  // C: nothing due — all paid up
-  let hero: React.ReactNode;
-
+  // ── Bill-to-review — highest-priority tile, ALWAYS surfaced first ─────
+  //
+  // Lifted OUT of the "hero" position (post-plans) into a slot directly
+  // under the search bar so the patient sees a bill needing action as
+  // their first tile after greeting/search. Amber accent unchanged.
+  // When no bill is pending, billReview stays null and the layout is
+  // identical to the pre-reorder state.
+  let billReview: React.ReactNode = null;
   if (pendingCount > 0) {
     if (pendingCount === 1) {
       const plan         = pendingPlans[0];
       const practiceName = getPracticeName(plan.practice);
-      hero = (
-        <div className="bg-white rounded-3xl shadow-sm p-5 sm:p-6 border border-amber-200">
+      billReview = (
+        <div
+          className="bg-white rounded-3xl shadow-sm p-5 sm:p-6 border border-amber-200"
+          data-testid="bill-to-review-card"
+        >
           <p className="text-xs font-semibold uppercase tracking-widest text-amber-600">
             Bill to Review
           </p>
@@ -184,8 +189,11 @@ export default async function PatientDashboardPage() {
         </div>
       );
     } else {
-      hero = (
-        <div className="bg-white rounded-3xl shadow-sm p-5 sm:p-6 border border-amber-200">
+      billReview = (
+        <div
+          className="bg-white rounded-3xl shadow-sm p-5 sm:p-6 border border-amber-200"
+          data-testid="bill-to-review-card"
+        >
           <p className="text-xs font-semibold uppercase tracking-widest text-amber-600">
             Bills to Review
           </p>
@@ -205,7 +213,18 @@ export default async function PatientDashboardPage() {
         </div>
       );
     }
-  } else if (payments.length > 0) {
+  }
+
+  // ── Hero (position: below Your Plans) ──────────────────────────────
+  // Priority when bill-review is ABSENT:
+  //   A: upcoming instalments — sum all due on the soonest date
+  //   B: nothing due — all paid up
+  // When a bill IS pending, hero renders only if there is ALSO an
+  // upcoming instalment (never "all paid up" alongside a pending
+  // bill — that would read as contradictory).
+  let hero: React.ReactNode = null;
+
+  if (payments.length > 0) {
     const effectiveDate = (p: UpcomingPayment): string =>
       p.next_attempt_date ?? p.due_date;
 
@@ -248,7 +267,11 @@ export default async function PatientDashboardPage() {
         instalments={instalments}
       />
     );
-  } else {
+  } else if (pendingCount === 0) {
+    // No upcoming instalments AND no pending bill — safe to say "all paid up".
+    // When a bill IS pending but no instalments are scheduled yet, hero
+    // stays null so the pending bill (already shown at the top) isn't
+    // contradicted by an "all paid up" tile beneath it.
     hero = (
       <div className="bg-white rounded-3xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6">
         <CardLabel>Payments</CardLabel>
@@ -277,6 +300,14 @@ export default async function PatientDashboardPage() {
             the greeting so it's the first tap-target the patient sees. */}
         <FindCareBar />
 
+        {/* Bill-to-review — highest-priority tile when a bill is
+            pending. Lifted OUT of the hero slot (post-plans) so a
+            patient with a bill to accept sees it immediately, above
+            the balance/plans tiles. Renders null when no bill pends;
+            in that case the layout is unchanged from the pre-reorder
+            state. */}
+        {billReview}
+
         {/* Approved balance — renders ONLY when limit is set. Null →
             null render, no placeholder, no "R0 available". */}
         <ApprovedBalanceCard limit={approvedLimit} available={available} />
@@ -304,7 +335,8 @@ export default async function PatientDashboardPage() {
           )}
         </Link>
 
-        {/* Hero: pending bill / next instalment / all-paid-up */}
+        {/* Hero: next instalment / all-paid-up. Pending-bill card
+            no longer lives here — see billReview above. */}
         {hero}
 
         {/* PWA push notifications — soft-ask shown only when the patient

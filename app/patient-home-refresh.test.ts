@@ -169,21 +169,88 @@ describe('Part 3 — home dashboard', () => {
     expect(bar).not.toMatch(/<input/);
   });
 
-  it('layout order: greeting → FindCareBar → ApprovedBalanceCard → active plans → hero', () => {
-    // The find-care bar is the FIRST element under the greeting so
-    // it's the primary tap-target on the home dashboard. Approved
-    // balance still respects its own null-guard (renders nothing
-    // when the limit is unset).
-    const greeting  = HOME.indexOf('Hi, {profile?.first_name');
-    const findCare  = HOME.indexOf('<FindCareBar />');
-    const balance   = HOME.indexOf('<ApprovedBalanceCard');
-    const plans     = HOME.indexOf('data-testid="dashboard-active-plans-count"');
-    const hero      = HOME.indexOf('{hero}');
+  it('FindCareBar retains its navigation/submit wiring', () => {
+    // The link + testid + submit-arrow SVG are all preserved through
+    // the 2026-07 rotating-border restyle so downstream nav wiring
+    // and any e2e that targets the submit chevron keeps working.
+    const bar = read('app/patient/FindCareBar.tsx');
+    expect(bar).toMatch(/data-testid="find-care-bar"/);
+    expect(bar).toMatch(/href="\/patient\/explore"/);
+    // The right-side arrow chevron is what mimics a submit affordance.
+    expect(bar).toMatch(/m9 6 6 6-6 6/);
+    // The rotating ring lives on an outer wrapper — the inner Link
+    // keeps its own focus-visible ring so keyboard focus remains obvious.
+    expect(bar).toMatch(/focus-visible:ring-2/);
+  });
+
+  it('FindCareBar rotating conic-gradient border + reduced-motion fallback are present in globals.css', () => {
+    // The animated ring is implemented via @property + @keyframes so a
+    // pure CSS approach with no JS animation loop. prefers-reduced-motion
+    // must fall back to a static gradient border with animation disabled.
+    const css = read('app/globals.css');
+    expect(css).toMatch(/@property\s+--fcb-angle/);
+    expect(css).toMatch(/@keyframes\s+fcb-spin/);
+    expect(css).toMatch(/conic-gradient/);
+    expect(css).toMatch(/\.find-care-bar-wrap/);
+    // Reduced-motion fallback: media query + animation:none inside it
+    // + a static linear-gradient border.
+    const rmBlock = css.match(/@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)\s*\{[\s\S]*?\n\}/);
+    expect(rmBlock).not.toBeNull();
+    expect(rmBlock![0]).toMatch(/animation:\s*none/);
+    expect(rmBlock![0]).toMatch(/linear-gradient/);
+  });
+
+  it('layout order (bill pending): greeting → FindCareBar → billReview → ApprovedBalanceCard → active plans → hero', () => {
+    // Bill-to-review is lifted OUT of the hero position into a slot
+    // directly beneath the search bar so a patient with a bill needing
+    // action sees it first. The find-care bar remains the primary
+    // tap-target when no bill is pending.
+    const greeting   = HOME.indexOf('Hi, {profile?.first_name');
+    const findCare   = HOME.indexOf('<FindCareBar />');
+    const billReview = HOME.indexOf('{billReview}');
+    const balance    = HOME.indexOf('<ApprovedBalanceCard');
+    const plans      = HOME.indexOf('data-testid="dashboard-active-plans-count"');
+    const hero       = HOME.indexOf('{hero}');
     expect(greeting).toBeGreaterThan(-1);
     expect(findCare).toBeGreaterThan(greeting);
-    expect(balance).toBeGreaterThan(findCare);
+    expect(billReview).toBeGreaterThan(findCare);
+    expect(balance).toBeGreaterThan(billReview);
     expect(plans).toBeGreaterThan(balance);
     expect(hero).toBeGreaterThan(plans);
+  });
+
+  it('no-bill variant: billReview stays null and renders nothing between search + balance', () => {
+    // Pinning the render contract: billReview is initialised to null,
+    // stays null when pendingCount === 0, and the JSX slot between
+    // FindCareBar and ApprovedBalanceCard renders that null (so the
+    // layout is identical to the pre-reorder state).
+    expect(HOME).toMatch(/let billReview:\s*React\.ReactNode\s*=\s*null/);
+    // Every assignment to billReview (LHS) lives inside the `if
+    // (pendingCount > 0)` block. There are exactly TWO — the
+    // single-pending branch and the multi-pending branch.
+    const rhsAssigns = HOME.match(/billReview\s*=\s*\(/g) ?? [];
+    expect(rhsAssigns.length).toBe(2);
+    // And the initial-null declaration is followed by the pending-count guard.
+    expect(HOME).toMatch(/let billReview[\s\S]{0,80}?=\s*null[\s\S]*?if\s*\(\s*pendingCount\s*>\s*0\s*\)/);
+  });
+
+  it('bill-review card carries the data-testid so downstream tests can query it', () => {
+    // Two branches of billReview (single-pending / multi-pending)
+    // — both must expose the same testid.
+    expect(HOME.match(/data-testid="bill-to-review-card"/g)?.length ?? 0).toBe(2);
+  });
+
+  it('hero no longer surfaces the bill-to-review copy — it lives in billReview only', () => {
+    // The "Bill to Review" and "Bills to Review" JSX heads used to
+    // sit inside the hero branch when pendingCount > 0. They should
+    // now be reachable only via billReview's if-block.
+    const billReviewStart = HOME.indexOf('let billReview');
+    const heroStart       = HOME.indexOf('let hero');
+    expect(billReviewStart).toBeGreaterThan(-1);
+    expect(heroStart).toBeGreaterThan(billReviewStart);
+    // Nothing between "let hero" and the JSX return sets stage="pending"
+    // copy. The "all paid up" branch below only fires when pendingCount === 0.
+    expect(HOME).toMatch(/else if\s*\(\s*pendingCount\s*===\s*0\s*\)/);
   });
 
   it('ApprovedBalanceCard visibility rule unchanged (still gated on approved_credit_limit)', () => {
