@@ -137,14 +137,10 @@ describe('Part 2 — phone folded into Personal Details', () => {
 // ─── Part 3: Home dashboard ────────────────────────────────────────────
 
 describe('Part 3 — home dashboard', () => {
-  it('renders ApprovedBalanceCard + FindCareBar + YourPlansCard (carries the active-plans testid)', () => {
+  it('renders ApprovedBalanceCard + FindCareBar + MergedPlansCard', () => {
     expect(HOME).toMatch(/ApprovedBalanceCard/);
     expect(HOME).toMatch(/FindCareBar/);
-    expect(HOME).toMatch(/<YourPlansCard/);
-    // The active-plans-count testid now lives on YourPlansCard, not on
-    // an inline dashboard element — the testid moves with the card.
-    const YOUR_PLANS_CARD = read('app/patient/YourPlansCard.tsx');
-    expect(YOUR_PLANS_CARD).toMatch(/data-testid="dashboard-active-plans-count"/);
+    expect(HOME).toMatch(/<MergedPlansCard/);
   });
 
   it('reads approved_credit_limit from profiles.select', () => {
@@ -204,23 +200,22 @@ describe('Part 3 — home dashboard', () => {
     expect(rmBlock![0]).toMatch(/linear-gradient/);
   });
 
-  it('layout order (bill pending): greeting → FindCareBar → billReview → ApprovedBalanceCard → hero → YourPlansCard', () => {
-    // "Earn the space" reorder (2026-07-13): the next-instalment hero
-    // now sits ABOVE Your Plans — the pending amount is a stronger
-    // signal than the plan-count roll-up so it wins the higher visual
-    // slot. Bill-to-review still sits at the top.
+  it('layout order (bill pending): greeting → FindCareBar → billReview → ApprovedBalanceCard → MergedPlansCard', () => {
+    // Second-pass merge (2026-07-13): the separate InstalmentHero and
+    // YourPlansCard tiles are now a SINGLE MergedPlansCard so each
+    // practice appears exactly once. Bill-to-review still sits at the
+    // top; approved-balance beneath it; merged card takes the whole
+    // "you owe / your plans" slot.
     const greeting   = HOME.indexOf('Hi, {profile?.first_name');
     const findCare   = HOME.indexOf('<FindCareBar />');
     const billReview = HOME.indexOf('{billReview}');
     const balance    = HOME.indexOf('<ApprovedBalanceCard');
-    const hero       = HOME.indexOf('{hero}');
-    const plansCard  = HOME.indexOf('<YourPlansCard');
+    const merged     = HOME.indexOf('<MergedPlansCard');
     expect(greeting).toBeGreaterThan(-1);
     expect(findCare).toBeGreaterThan(greeting);
     expect(billReview).toBeGreaterThan(findCare);
     expect(balance).toBeGreaterThan(billReview);
-    expect(hero).toBeGreaterThan(balance);
-    expect(plansCard).toBeGreaterThan(hero);
+    expect(merged).toBeGreaterThan(balance);
   });
 
   it('push soft-ask is REMOVED from the home flow (moved to the action centre)', () => {
@@ -230,13 +225,34 @@ describe('Part 3 — home dashboard', () => {
     expect(HOME).not.toMatch(/from ['"]@\/app\/_pwa\/PushSoftAsk['"]/);
   });
 
-  it('YourPlansCard receives the chip inputs plus active + total counts', () => {
-    // The card is a Server Component fed pure props from page.tsx — the
-    // per-plan progress math lives in computePlanProgress and the sort
-    // (least-paid-first) is done on the page before render.
-    expect(HOME).toMatch(/import\s+YourPlansCard,\s*\{\s*type\s+PlanChipInput\s*\}\s+from\s+['"]\.\/YourPlansCard['"]/);
+  it('the standalone YourPlansCard is REMOVED from the home flow and its file deleted', () => {
+    expect(HOME).not.toMatch(/<YourPlansCard/);
+    expect(HOME).not.toMatch(/from ['"]\.\/YourPlansCard['"]/);
+    expect(existsSync(resolve(ROOT, 'app/patient/YourPlansCard.tsx'))).toBe(false);
+  });
+
+  it('the standalone InstalmentHero is REMOVED from the home flow and its file deleted', () => {
+    // The merged card owns the modal + ladder-state display now — the
+    // separate hero component is dead weight and would drift from the
+    // merged copy over time. Keep the codebase honest.
+    expect(HOME).not.toMatch(/<InstalmentHero/);
+    expect(HOME).not.toMatch(/from ['"]\.\/InstalmentHero['"]/);
+    expect(existsSync(resolve(ROOT, 'app/patient/InstalmentHero.tsx'))).toBe(false);
+  });
+
+  it('MergedPlansCard receives headline + row data plus active + total counts', () => {
+    expect(HOME).toMatch(/import\s+MergedPlansCard,\s*\{\s*type\s+MergedPlanRow,\s*type\s+MergedHeadline\s*\}\s+from\s+['"]\.\/MergedPlansCard['"]/);
     expect(HOME).toMatch(/computePlanProgress/);
-    expect(HOME).toMatch(/<YourPlansCard[\s\S]*?activeCount=\{currentCount\}[\s\S]*?totalCount=\{totalCount\}[\s\S]*?chips=\{planChips\}/);
+    expect(HOME).toMatch(/<MergedPlansCard[\s\S]*?headline=\{mergedHeadline\}[\s\S]*?activeCount=\{currentCount\}[\s\S]*?totalCount=\{totalCount\}[\s\S]*?rows=\{planRows\}/);
+  });
+
+  it('per-plan next instalment is computed on the server (nextByPlan map)', () => {
+    // No new fetch — the map is built from the existing payments array
+    // and keyed by plan_id. Pin the shape so a future refactor doesn't
+    // silently break the per-plan next amount / date on the row.
+    expect(HOME).toMatch(/const\s+nextByPlan\s*=\s*new\s+Map/);
+    expect(HOME).toMatch(/nextByPlan\.set\(p\.plan_id/);
+    expect(HOME).toMatch(/nextByPlan\.get\(p\.id\)/);
   });
 
   it('no-bill variant: billReview stays null and renders nothing between search + balance', () => {
@@ -260,17 +276,20 @@ describe('Part 3 — home dashboard', () => {
     expect(HOME.match(/data-testid="bill-to-review-card"/g)?.length ?? 0).toBe(2);
   });
 
-  it('hero no longer surfaces the bill-to-review copy — it lives in billReview only', () => {
-    // The "Bill to Review" and "Bills to Review" JSX heads used to
-    // sit inside the hero branch when pendingCount > 0. They should
-    // now be reachable only via billReview's if-block.
-    const billReviewStart = HOME.indexOf('let billReview');
-    const heroStart       = HOME.indexOf('let hero');
+  it('bill-to-review copy lives ONLY inside billReview (not in the merged card path)', () => {
+    // The "Bill to Review" / "Bills to Review" JSX only appears inside
+    // the `if (pendingCount > 0)` block that builds billReview. The
+    // merged card path (mergedHeadline) has no bill-review copy.
+    const billReviewStart  = HOME.indexOf('let billReview');
+    const mergedStart      = HOME.indexOf('let mergedHeadline');
     expect(billReviewStart).toBeGreaterThan(-1);
-    expect(heroStart).toBeGreaterThan(billReviewStart);
-    // Nothing between "let hero" and the JSX return sets stage="pending"
-    // copy. The "all paid up" branch below only fires when pendingCount === 0.
-    expect(HOME).toMatch(/else if\s*\(\s*pendingCount\s*===\s*0\s*\)/);
+    expect(mergedStart).toBeGreaterThan(billReviewStart);
+    // Both "Bill to Review" mentions in the code sit BEFORE mergedHeadline.
+    const billMatches = [...HOME.matchAll(/Bill[s]? to Review/g)].map(m => m.index ?? -1);
+    for (const idx of billMatches) {
+      expect(idx).toBeGreaterThan(billReviewStart);
+      expect(idx).toBeLessThan(mergedStart);
+    }
   });
 
   it('ApprovedBalanceCard visibility rule unchanged (still gated on approved_credit_limit)', () => {
@@ -342,67 +361,45 @@ describe('Part 4 — post-login passkey prompt', () => {
 
 // ─── 2026-07-13 refresh: earn-the-space + action centre ───────────────
 
-describe('YourPlansCard — chip render + caps', () => {
-  const CARD = read('app/patient/YourPlansCard.tsx');
+describe('MergedPlansCard — source-pin invariants', () => {
+  const CARD = read('app/patient/MergedPlansCard.tsx');
 
-  it('caps visible chips at 3 and shows "View all N" once there are more or historic plans', () => {
-    // The literal cap constant + slice(0, 3) usage pins the cap-at-3 rule.
-    expect(CARD).toMatch(/CHIP_CAP\s*=\s*3/);
-    expect(CARD).toMatch(/slice\s*\(\s*0\s*,\s*CHIP_CAP\s*\)/);
-    // "View all N →" copy is rendered when overflow > 0.
-    expect(CARD).toMatch(/View all \$\{totalCount\}/);
+  it('caps visible rows at 3 and exposes View-all when overflow > 0', () => {
+    expect(CARD).toMatch(/ROW_CAP\s*=\s*3/);
+    expect(CARD).toMatch(/slice\s*\(\s*0\s*,\s*ROW_CAP\s*\)/);
+    expect(CARD).toMatch(/View all \{activeCount\}/);
   });
 
-  it('renders each chip with practice name + "X of Y paid" + a progress bar', () => {
-    expect(CARD).toMatch(/data-testid="your-plans-chip"/);
-    // Non-paid state: `${c.paid} of ${c.total} paid`
-    expect(CARD).toMatch(/\$\{c\.paid\} of \$\{c\.total\} paid/);
-    // Paid-in-full state
+  it('renders each row with practice name + progress bar + right-aligned next amount', () => {
+    expect(CARD).toMatch(/data-testid="merged-plans-row"/);
+    expect(CARD).toMatch(/data-testid="merged-plans-row-name"/);
+    expect(CARD).toMatch(/data-testid="merged-plans-row-amount"/);
+    // Paid state
     expect(CARD).toMatch(/Paid in full/);
-    // Progress bar is aria-role="progressbar" so screen readers report %
+    // Non-paid state
+    expect(CARD).toMatch(/\$\{r\.paid\} of \$\{r\.total\} paid/);
+    // Aria progress
     expect(CARD).toMatch(/role="progressbar"/);
-    expect(CARD).toMatch(/aria-valuenow=\{c\.percent\}/);
+    expect(CARD).toMatch(/aria-valuenow=\{r\.percent\}/);
   });
 
-  it('renders the empty state with a Find-care link when no plans exist at all', () => {
-    expect(CARD).toMatch(/data-testid="your-plans-empty"/);
-    expect(CARD).toMatch(/href="\/patient\/explore"/);
-    expect(CARD).toMatch(/Find care/);
+  it('empty state (0 active plans) — headline hidden, Find-care link + past-plans link', () => {
+    expect(CARD).toMatch(/data-testid="merged-plans-empty"/);
+    expect(CARD).toMatch(/data-testid="merged-plans-find-care"/);
+    expect(CARD).toMatch(/data-testid="merged-plans-past-link"/);
+    // The 0-active branch returns EARLY (headline never renders)
+    expect(CARD).toMatch(/if\s*\(activeCount\s*===\s*0\)/);
   });
 
-  it('renders a "no active" empty state when totalCount > 0 but activeCount === 0', () => {
-    // totalCount>0 && chips.length===0 branch — the past-plans link.
-    expect(CARD).toMatch(/No active plans right now/);
-    expect(CARD).toMatch(/See \$\{totalCount - activeCount\} past plan/);
+  it('headline zone opens the SAME InstalmentBreakdownModal — no fork', () => {
+    expect(CARD).toMatch(/import\s+InstalmentBreakdownModal/);
+    expect(CARD).toMatch(/<InstalmentBreakdownModal/);
+    expect(CARD).toMatch(/data-testid="merged-plans-headline"/);
+    expect(CARD).toMatch(/View breakdown/);
   });
 
-  it('chip taps route to /patient/orders (existing plans detail surface)', () => {
+  it('rows tap through to /patient/orders (unchanged detail surface)', () => {
     expect(CARD).toMatch(/href="\/patient\/orders"/);
-  });
-});
-
-describe('InstalmentHero — per-plan lines under the headline', () => {
-  const HERO = read('app/patient/InstalmentHero.tsx');
-
-  it('renders per-plan lines only when there is more than one plan contributing', () => {
-    // Single-plan users see the clean headline (no per-line duplication).
-    expect(HERO).toMatch(/instalments\.length\s*>\s*1/);
-    expect(HERO).toMatch(/data-testid="instalment-hero-lines"/);
-  });
-
-  it('caps inline lines at 3 with an overflow hint pointing at the breakdown', () => {
-    expect(HERO).toMatch(/slice\s*\(\s*0\s*,\s*3\s*\)/);
-    expect(HERO).toMatch(/tap for breakdown/);
-  });
-
-  it('per-plan lines are sourced from the SAME instalments array driving the modal', () => {
-    // No new fetch or transform — the lines use the existing prop.
-    expect(HERO).toMatch(/instalments\.slice\(0, 3\)\.map/);
-  });
-
-  it('the existing View-breakdown link stays intact', () => {
-    expect(HERO).toMatch(/View breakdown/);
-    expect(HERO).toMatch(/InstalmentBreakdownModal/);
   });
 });
 

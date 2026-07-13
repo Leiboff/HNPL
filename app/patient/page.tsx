@@ -1,10 +1,10 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import InstalmentHero, { type InstalmentRow } from './InstalmentHero';
+import type { InstalmentRow } from './InstalmentBreakdownModal';
 import ApprovedBalanceCard from './ApprovedBalanceCard';
 import FindCareBar from './FindCareBar';
-import YourPlansCard, { type PlanChipInput } from './YourPlansCard';
+import MergedPlansCard, { type MergedPlanRow, type MergedHeadline } from './MergedPlansCard';
 import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
 import { computePlanProgress } from '@/lib/planProgress';
 
@@ -79,18 +79,6 @@ type UpcomingPayment = {
   plan: PaymentPlanEmbed | PaymentPlanEmbed[];
 };
 
-// Card label: small uppercase navy, used as the title in every card.
-function CardLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p
-      className="text-xs font-semibold uppercase tracking-widest"
-      style={{ color: '#13294B', opacity: 0.6 }}
-    >
-      {children}
-    </p>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function PatientDashboardPage() {
@@ -156,13 +144,37 @@ export default async function PatientDashboardPage() {
     ? availableBalance(approvedLimit, paymentsForBalance)
     : 0;
 
-  // ── Plan chips for YourPlansCard ────────────────────────────────────
+  // Today in SA time — YYYY-MM-DD string compared directly against
+  // due_date (also YYYY-MM-DD from the DB). String comparison is
+  // timezone-safe.
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+
+  // ── Per-plan next-instalment lookup ───────────────────────────────
   //
-  // ACTIVE plans only. We compute paid/total per plan from the embedded
-  // payments and hand chips down as pure props (no additional query).
-  // Sorted by "least-paid-first" so the plan most in-progress sits on
-  // top; ties fall back to newest by id (stable enough for Phase 1).
-  const planChips: PlanChipInput[] = allPlans
+  // For the merged card each active plan needs its OWN next unpaid
+  // instalment (any date), not just the aggregated headline group.
+  // Group the already-fetched payments by plan_id, pick the earliest
+  // effective date per plan. No new query.
+  const effectiveDate = (p: UpcomingPayment): string => p.next_attempt_date ?? p.due_date;
+  const nextByPlan = new Map<string, { amount: number; date: string }>();
+  for (const p of payments) {
+    if (!p.plan_id) continue;
+    const eff = effectiveDate(p);
+    const existing = nextByPlan.get(p.plan_id);
+    if (!existing || eff < existing.date) {
+      nextByPlan.set(p.plan_id, {
+        amount: Number(p.amount) + Number(p.dunning_fees_cents ?? 0) / 100,
+        date:   eff,
+      });
+    }
+  }
+
+  // ── Merged-card rows: one per ACTIVE plan ────────────────────────
+  //
+  // Combines progress data (paid/total/percent from the embedded
+  // payments) with the plan's next unpaid instalment amount + date.
+  // Sorted least-paid-first so the plan most in-progress sits on top.
+  const planRows: MergedPlanRow[] = allPlans
     .filter((p) => p.status === 'active')
     .map((p) => {
       const prog = computePlanProgress({
@@ -173,6 +185,7 @@ export default async function PatientDashboardPage() {
           kind:   pmt.kind ?? undefined,
         })),
       });
+      const nxt = nextByPlan.get(p.id);
       return {
         id:            p.id,
         practiceName:  getPracticeName(p.practice),
@@ -180,14 +193,11 @@ export default async function PatientDashboardPage() {
         total:         prog.totalPayments || (p.plan_type ?? 0),
         percent:       prog.percent,
         isPaidInFull:  prog.isPaidInFull,
+        nextAmount:    nxt?.amount ?? null,
+        nextDate:      nxt?.date   ?? null,
       };
     })
     .sort((a, b) => a.percent - b.percent);
-
-  // Today in SA time — YYYY-MM-DD string compared directly against
-  // due_date (also YYYY-MM-DD from the DB). String comparison is
-  // timezone-safe.
-  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
 
   // ── Bill-to-review — highest-priority tile, ALWAYS surfaced first ─────
   //
@@ -252,19 +262,21 @@ export default async function PatientDashboardPage() {
     }
   }
 
-  // ── Hero (position: below Your Plans) ──────────────────────────────
-  // Priority when bill-review is ABSENT:
-  //   A: upcoming instalments — sum all due on the soonest date
-  //   B: nothing due — all paid up
-  // When a bill IS pending, hero renders only if there is ALSO an
-  // upcoming instalment (never "all paid up" alongside a pending
-  // bill — that would read as contradictory).
-  let hero: React.ReactNode = null;
+  // ── Headline data for the merged card ────────────────────────────
+  //
+  // Same aggregation as the old InstalmentHero: sum of the instalments
+  // due on the SOONEST effective date, plus a group-state label that
+  // dominates in defaulted > failed > scheduled order. The card's
+  // headline zone opens the SAME InstalmentBreakdownModal — nothing
+  // downstream changed.
+  //
+  // Set to null when there are no upcoming instalments at all — the
+  // merged card renders the plan rows without a headline zone in
+  // that case (no misleading "all paid up" tile alongside a pending
+  // bill or a fresh active plan without a schedule yet).
+  let mergedHeadline: MergedHeadline | null = null;
 
   if (payments.length > 0) {
-    const effectiveDate = (p: UpcomingPayment): string =>
-      p.next_attempt_date ?? p.due_date;
-
     const sorted     = [...payments].sort((a, b) => effectiveDate(a).localeCompare(effectiveDate(b)));
     const soonestKey = effectiveDate(sorted[0]);
     const dueGroup   = sorted.filter((p) => effectiveDate(p) === soonestKey);
@@ -294,35 +306,14 @@ export default async function PatientDashboardPage() {
       };
     });
 
-    hero = (
-      <InstalmentHero
-        dueDate={soonestKey}
-        total={total}
-        isOverdue={isOverdue}
-        isToday={isToday}
-        groupState={groupState}
-        instalments={instalments}
-      />
-    );
-  } else if (pendingCount === 0) {
-    // No upcoming instalments AND no pending bill — safe to say "all paid up".
-    // When a bill IS pending but no instalments are scheduled yet, hero
-    // stays null so the pending bill (already shown at the top) isn't
-    // contradicted by an "all paid up" tile beneath it.
-    hero = (
-      <div className="bg-white rounded-3xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6">
-        <CardLabel>Payments</CardLabel>
-        <p
-          className="mt-3 text-2xl font-semibold"
-          style={{ color: '#13294B' }}
-        >
-          You&apos;re all paid up
-        </p>
-        <p className="mt-2 text-sm text-gray-400">
-          No instalments due right now.
-        </p>
-      </div>
-    );
+    mergedHeadline = {
+      dueDate: soonestKey,
+      total,
+      isOverdue,
+      isToday,
+      groupState,
+      instalments,
+    };
   }
 
   return (
@@ -349,17 +340,17 @@ export default async function PatientDashboardPage() {
             null render, no placeholder, no "R0 available". */}
         <ApprovedBalanceCard limit={approvedLimit} available={available} />
 
-        {/* Next instalment / all-paid-up. Moved ABOVE Your Plans in
-            the "earn the space" reorder — the pending amount is the
-            more urgent signal so it wins the higher visual slot. */}
-        {hero}
-
-        {/* Your plans — rich chips per active plan (cap 3 then View all).
-            Zero active plans → compact empty state with a Find-care link. */}
-        <YourPlansCard
+        {/* Merged Next Instalment + Your Plans card. Headline zone at
+            top (opens breakdown modal, unchanged), divider, then one
+            row per ACTIVE plan (practice name, progress bar + "X of Y
+            paid", that plan's next instalment amount right-aligned).
+            Replaces both the standalone InstalmentHero and YourPlansCard
+            — each practice now appears exactly ONCE on the home page. */}
+        <MergedPlansCard
+          headline={mergedHeadline}
           activeCount={currentCount}
           totalCount={totalCount}
-          chips={planChips}
+          rows={planRows}
         />
 
         {/* NOTE: The "Turn on notifications" soft-ask card lived at the
