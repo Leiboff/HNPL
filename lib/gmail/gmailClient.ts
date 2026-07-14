@@ -4,6 +4,11 @@
 // dep, no oauth2 SDK. Everything below is service-side; refresh tokens
 // live in crm_email_accounts.refresh_token_enc (AES-256-GCM) and are
 // decrypted only inside the getAccessToken() helper here.
+//
+// Since 0072 one user can connect multiple Gmail addresses. Account
+// selection is by (user_id, id) or (user_id, gmail_address). Legacy
+// callers that pass only userId get the user's most-recently-used
+// account.
 
 import { encryptToken, decryptToken } from '@/lib/crypto/tokenEncryption';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
@@ -15,9 +20,10 @@ export const GMAIL_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
 ] as const;
 
-export const OAUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
-export const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-export const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
+export const OAUTH_ENDPOINT   = 'https://accounts.google.com/o/oauth2/v2/auth';
+export const TOKEN_ENDPOINT   = 'https://oauth2.googleapis.com/token';
+export const REVOKE_ENDPOINT  = 'https://oauth2.googleapis.com/revoke';
+export const GMAIL_API_BASE   = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 function svc() {
   return createServiceClient(
@@ -115,7 +121,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ access
 // ── Get profile (email of the OAuth user) ────────────────────────────
 
 export async function fetchGmailProfile(accessToken: string): Promise<{ emailAddress: string }> {
-  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
+  const res = await fetch(`${GMAIL_API_BASE}/profile`, {
     headers: { 'Authorization': `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(`Gmail profile fetch failed: ${res.status}`);
@@ -130,10 +136,10 @@ export async function saveGmailAccount(input: {
   refreshToken:  string;
   accessToken:   string;
   expiresAt:     Date;
-}): Promise<{ error?: string }> {
+}): Promise<{ error?: string; accountId?: string }> {
   const s = svc();
   const encRt = encryptToken(input.refreshToken);
-  const { error } = await s.from('crm_email_accounts').upsert({
+  const { data, error } = await s.from('crm_email_accounts').upsert({
     user_id:             input.userId,
     gmail_address:       input.gmailAddress,
     refresh_token_enc:   encRt,
@@ -141,22 +147,44 @@ export async function saveGmailAccount(input: {
     access_token_expiry: input.expiresAt.toISOString(),
     connected_at:        new Date().toISOString(),
     status:              'connected',
-  }, { onConflict: 'user_id' });
+  }, { onConflict: 'user_id,gmail_address' })
+    .select('id')
+    .single();
   if (error) return { error: error.message };
-  return {};
+  return { accountId: (data as { id: string } | null)?.id };
 }
 
-export async function getAccessToken(userId: string): Promise<{ accessToken: string; account: GmailAccount } | { error: string }> {
+/**
+ * Look up an account by explicit selector or by "most-recently-used"
+ * fallback. Callers should prefer passing accountId; passing only
+ * userId is legacy behaviour that picks last_used_at (or connected_at
+ * if never used).
+ */
+type AccountSelector =
+  | { userId: string; accountId: string }
+  | { userId: string; gmailAddress: string }
+  | { userId: string };
+
+async function findAccount(sel: AccountSelector): Promise<GmailAccount | null> {
   const s = svc();
-  const { data, error } = await s
-    .from('crm_email_accounts')
-    .select('*')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error) return { error: error.message };
-  if (!data) return { error: 'gmail_not_connected' };
-  const account = data as unknown as GmailAccount;
+  let q = s.from('crm_email_accounts').select('*').eq('user_id', sel.userId);
+  if ('accountId' in sel)      q = q.eq('id', sel.accountId);
+  else if ('gmailAddress' in sel) q = q.ilike('gmail_address', sel.gmailAddress);
+  else                             q = q.order('last_used_at', { ascending: false, nullsFirst: false })
+                                        .order('connected_at', { ascending: false })
+                                        .limit(1);
+  const { data } = await q.maybeSingle();
+  return (data ?? null) as GmailAccount | null;
+}
+
+export async function getAccessToken(
+  sel: AccountSelector,
+): Promise<{ accessToken: string; account: GmailAccount } | { error: string }> {
+  const account = await findAccount(sel);
+  if (!account) return { error: 'gmail_not_connected' };
   if (account.status !== 'connected') return { error: 'gmail_reauth_required' };
+
+  const s = svc();
 
   // Cached access token still valid?
   const cachedExpiry = account.access_token_expiry ? new Date(account.access_token_expiry) : null;
@@ -170,10 +198,7 @@ export async function getAccessToken(userId: string): Promise<{ accessToken: str
     const { accessToken, expiresAt } = await refreshAccessToken(decrypted.plaintext);
 
     // Self-heal: if the stored ciphertext opened under the legacy
-    // SA-ID key, re-encrypt under TOKEN_ENCRYPTION_KEY now that we've
-    // proven Google still honours this refresh token. Any failure to
-    // re-encrypt is non-fatal — the row stays on the legacy key and
-    // we'll try again next refresh.
+    // SA-ID key, re-encrypt under TOKEN_ENCRYPTION_KEY now.
     const patch: Record<string, unknown> = {
       access_token_cache:  accessToken,
       access_token_expiry: expiresAt.toISOString(),
@@ -186,32 +211,75 @@ export async function getAccessToken(userId: string): Promise<{ accessToken: str
       }
     }
 
-    await s.from('crm_email_accounts').update(patch).eq('user_id', userId);
+    await s.from('crm_email_accounts').update(patch).eq('id', account.id);
     return { accessToken, account: { ...account, ...patch } as GmailAccount };
   } catch (err) {
-    // Google revoked or key rotated — flag for reconnect.
     console.warn('[getAccessToken] refresh failed', err);
-    await s.from('crm_email_accounts').update({ status: 'reauth_required' }).eq('user_id', userId);
+    await s.from('crm_email_accounts').update({ status: 'reauth_required' }).eq('id', account.id);
     return { error: 'gmail_reauth_required' };
   }
 }
 
-export async function revokeGmailAccount(userId: string): Promise<{ error?: string }> {
+/**
+ * Revoke a specific account. Best-effort: proceeds to delete the row
+ * even if Google returns a non-2xx (already-revoked, expired token).
+ * Also calls users.stop (best-effort) if a watch was active.
+ */
+export async function revokeGmailAccountById(accountId: string): Promise<{ error?: string }> {
   const s = svc();
-  const { data } = await s.from('crm_email_accounts').select('refresh_token_enc').eq('user_id', userId).maybeSingle();
-  if (data?.refresh_token_enc) {
+  const { data } = await s
+    .from('crm_email_accounts')
+    .select('id, user_id, gmail_address, refresh_token_enc, watch_expires_at')
+    .eq('id', accountId)
+    .maybeSingle();
+  if (!data) return { error: 'not_found' };
+
+  // Try to stop the Gmail push watch first — needs a live access token.
+  if (data.watch_expires_at) {
+    try {
+      const tokenRes = await getAccessToken({ userId: data.user_id as string, accountId });
+      if ('accessToken' in tokenRes) {
+        await stopGmailWatch(tokenRes.accessToken).catch(() => { /* best-effort */ });
+      }
+    } catch { /* best-effort */ }
+  }
+
+  // Revoke the refresh token at Google. Best-effort — proceed on error.
+  if (data.refresh_token_enc) {
     try {
       const { plaintext } = decryptToken(data.refresh_token_enc as string);
       await fetch(REVOKE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body:    new URLSearchParams({ token: plaintext }),
-      }).catch(() => { /* revocation is best-effort */ });
+      }).catch(() => { /* best-effort */ });
     } catch { /* corrupt token — proceed to delete */ }
   }
-  const { error } = await s.from('crm_email_accounts').delete().eq('user_id', userId);
+
+  const { error } = await s.from('crm_email_accounts').delete().eq('id', accountId);
   if (error) return { error: error.message };
   return {};
+}
+
+/**
+ * User-initiated disconnect. Removes ALL of a user's connected accounts
+ * if no selector is supplied, or the specific account otherwise.
+ */
+export async function revokeGmailAccount(
+  userId: string,
+  opts?: { accountId?: string; gmailAddress?: string },
+): Promise<{ error?: string; removed: number }> {
+  const s = svc();
+  let q = s.from('crm_email_accounts').select('id').eq('user_id', userId);
+  if (opts?.accountId)       q = q.eq('id', opts.accountId);
+  else if (opts?.gmailAddress) q = q.ilike('gmail_address', opts.gmailAddress);
+  const { data } = await q;
+  let removed = 0;
+  for (const row of ((data ?? []) as Array<{ id: string }>)) {
+    const r = await revokeGmailAccountById(row.id);
+    if (!r.error) removed++;
+  }
+  return { removed };
 }
 
 export type GmailAccount = {
@@ -223,6 +291,9 @@ export type GmailAccount = {
   access_token_expiry: string | null;
   connected_at:        string;
   last_polled_at:      string | null;
+  last_used_at:        string | null;
+  last_history_id:     string | null;
+  watch_expires_at:    string | null;
   status:              'connected' | 'reauth_required' | 'revoked';
 };
 
@@ -235,28 +306,59 @@ export type SendArgs = {
   to:          string;
   subject:     string;
   bodyText:    string;
+  bodyHtml?:   string;
 };
 
 /**
  * Build an RFC-822 message and send via Gmail's users.messages.send.
- * The body is plain-text; we don't offer HTML compose in Phase 2.
- * Returns { messageId, threadId } from the Gmail response.
+ * If bodyHtml is supplied, the message is multipart/alternative with
+ * text + html parts. Returns { messageId, threadId } from Gmail.
  */
 export async function sendGmail(args: SendArgs): Promise<{ messageId: string; threadId: string }> {
-  const headers = [
+  const subject = args.subject.replace(/[\r\n]/g, ' ');
+  const commonHeaders = [
     `From: "${args.fromName}" <${args.from}>`,
     `To: ${args.to}`,
-    `Subject: ${args.subject.replace(/[\r\n]/g, ' ')}`,
+    `Subject: ${subject}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
-  ].join('\r\n');
-  const raw = `${headers}\r\n\r\n${args.bodyText}`;
+  ];
+
+  let raw: string;
+  if (args.bodyHtml) {
+    const boundary = `bnb=_${Math.floor(Math.random() * 1e9).toString(36)}`;
+    raw = [
+      ...commonHeaders,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: 7bit',
+      '',
+      args.bodyText,
+      '',
+      `--${boundary}`,
+      'Content-Type: text/html; charset=UTF-8',
+      'Content-Transfer-Encoding: 7bit',
+      '',
+      args.bodyHtml,
+      '',
+      `--${boundary}--`,
+    ].join('\r\n');
+  } else {
+    raw = [
+      ...commonHeaders,
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: 7bit',
+      '',
+      args.bodyText,
+    ].join('\r\n');
+  }
+
   const base64Url = Buffer.from(raw, 'utf-8')
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-  const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+  const res = await fetch(`${GMAIL_API_BASE}/messages/send`, {
     method:  'POST',
     headers: { 'Authorization': `Bearer ${args.accessToken}`, 'Content-Type': 'application/json' },
     body:    JSON.stringify({ raw: base64Url }),
@@ -280,7 +382,7 @@ export type ThreadMessage = {
 
 export async function fetchThread(accessToken: string, threadId: string): Promise<ThreadMessage[]> {
   const res = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=From&metadataHeaders=Date`,
+    `${GMAIL_API_BASE}/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=From&metadataHeaders=Date`,
     { headers: { 'Authorization': `Bearer ${accessToken}` } },
   );
   if (!res.ok) {
@@ -308,4 +410,134 @@ export async function fetchThread(accessToken: string, threadId: string): Promis
       snippet:      m.snippet ?? '',
     };
   });
+}
+
+// ── Push notifications: watch / stop / history ───────────────────────
+
+/**
+ * Start (or renew) a Gmail push watch on INBOX. Google requires you
+ * publish an existing Pub/Sub topic; this client sends topicName and
+ * assumes the topic exists + has permission granted to
+ * gmail-api-push@system.gserviceaccount.com.
+ *
+ * Returns { historyId, expiration } — expiration is an ms-since-epoch
+ * string per the Gmail API (converted to Date at the callsite).
+ */
+export async function startGmailWatch(
+  accessToken: string,
+  topicName: string,
+): Promise<{ historyId: string; expiration: string }> {
+  const res = await fetch(`${GMAIL_API_BASE}/watch`, {
+    method:  'POST',
+    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ topicName, labelIds: ['INBOX'], labelFilterAction: 'include' }),
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Gmail watch failed: ${res.status} ${err.slice(0, 200)}`);
+  }
+  return await res.json() as { historyId: string; expiration: string };
+}
+
+export async function stopGmailWatch(accessToken: string): Promise<void> {
+  const res = await fetch(`${GMAIL_API_BASE}/stop`, {
+    method:  'POST',
+    headers: { 'Authorization': `Bearer ${accessToken}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Gmail stop failed: ${res.status} ${err.slice(0, 200)}`);
+  }
+}
+
+export type HistoryMessageAdded = {
+  message: { id: string; threadId: string; labelIds?: string[] };
+};
+
+export type HistoryPage = {
+  history?: Array<{ messagesAdded?: HistoryMessageAdded[] }>;
+  historyId?: string;
+  nextPageToken?: string;
+};
+
+/**
+ * List history from a given startHistoryId. Only INBOX messagesAdded
+ * events are requested — matches the labelIds filter on watch().
+ * Returns { messages, newHistoryId }. On 404 (historyId too old) the
+ * caller must reset by falling back to full-poll.
+ */
+export async function listHistoryFrom(
+  accessToken: string,
+  startHistoryId: string,
+): Promise<
+  | { kind: 'ok';         messages: HistoryMessageAdded[]; newHistoryId: string | null }
+  | { kind: 'expired' }
+> {
+  const messages: HistoryMessageAdded[] = [];
+  let pageToken: string | undefined;
+  let latestHistoryId: string | null = null;
+
+  for (let i = 0; i < 20; i++) {   // hard cap on pagination
+    const url = new URL(`${GMAIL_API_BASE}/history`);
+    url.searchParams.set('startHistoryId', startHistoryId);
+    url.searchParams.set('historyTypes',   'messageAdded');
+    url.searchParams.set('labelId',        'INBOX');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+
+    const res = await fetch(url.toString(), {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+    if (res.status === 404) return { kind: 'expired' };
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      throw new Error(`Gmail history failed: ${res.status} ${err.slice(0, 200)}`);
+    }
+    const page = await res.json() as HistoryPage;
+    if (page.historyId) latestHistoryId = page.historyId;
+    for (const h of (page.history ?? [])) {
+      for (const m of (h.messagesAdded ?? [])) messages.push(m);
+    }
+    if (!page.nextPageToken) break;
+    pageToken = page.nextPageToken;
+  }
+
+  return { kind: 'ok', messages, newHistoryId: latestHistoryId };
+}
+
+/**
+ * Fetch a single Gmail message (metadata only — From, subject, date).
+ * Used by the push handler to convert a historyId event into the
+ * "who wrote this + when" shape the reply ingester needs.
+ */
+export async function fetchMessageMetadata(
+  accessToken: string,
+  messageId: string,
+): Promise<ThreadMessage | null> {
+  const res = await fetch(
+    `${GMAIL_API_BASE}/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Date`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` } },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Gmail message fetch failed: ${res.status} ${err.slice(0, 200)}`);
+  }
+  type ApiMsg = {
+    id: string;
+    threadId: string;
+    labelIds?: string[];
+    internalDate?: string;
+    snippet?: string;
+    payload?: { headers?: Array<{ name: string; value: string }> };
+  };
+  const m = await res.json() as ApiMsg;
+  const fromHdr = m.payload?.headers?.find(h => h.name.toLowerCase() === 'from');
+  return {
+    id:           m.id,
+    threadId:     m.threadId,
+    labelIds:     m.labelIds ?? [],
+    internalDate: m.internalDate ?? '0',
+    from:         fromHdr?.value ?? '',
+    snippet:      m.snippet ?? '',
+  };
 }

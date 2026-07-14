@@ -11,16 +11,19 @@ type Counts = {
   overdueFollowups: number;
 };
 
-const NAV_LINKS = [
-  { href: '/crm',          label: 'My Day',   countKey: 'overdueFollowups' as const },
-  { href: '/crm/leads',    label: 'Leads'                                            },
-  { href: '/crm/board',    label: 'Pipeline'                                         },
-  { href: '/crm/map',      label: 'Map'                                              },
-  { href: '/crm/import',   label: 'Import'                                           },
-  { href: '/crm/settings', label: 'Settings'                                         },
+type NavLink = { href: string; label: string; countKey?: keyof Counts; adminOnly?: boolean };
+
+const NAV_LINKS: NavLink[] = [
+  { href: '/crm',                        label: 'My Day',   countKey: 'overdueFollowups' },
+  { href: '/crm/leads',                  label: 'Leads'                                   },
+  { href: '/crm/board',                  label: 'Pipeline'                                },
+  { href: '/crm/map',                    label: 'Map'                                     },
+  { href: '/crm/import',                 label: 'Import'                                  },
+  { href: '/crm/settings',               label: 'Settings'                                },
+  { href: '/crm/admin/gmail-accounts',   label: 'Gmail (admin)', adminOnly: true          },
 ];
 
-export default function CrmNav({ counts }: { counts: Counts }) {
+export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: boolean }) {
   const pathname = usePathname();
 
   function isActive(href: string) {
@@ -38,7 +41,7 @@ export default function CrmNav({ counts }: { counts: Counts }) {
       ].join(' ')}
     >
       <div className="flex flex-col p-3 space-y-0.5">
-        {NAV_LINKS.map(({ href, label, countKey }) => {
+        {NAV_LINKS.filter(l => !l.adminOnly || isAdmin).map(({ href, label, countKey }) => {
           const active = isActive(href);
           const count  = countKey ? counts[countKey] : 0;
           return (

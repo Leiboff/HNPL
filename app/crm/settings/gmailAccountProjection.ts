@@ -1,52 +1,76 @@
 // ─── Client-safe projection for the settings page ────────────────────
 //
-// The /crm/settings server component fetches a crm_email_accounts row
+// The /crm/settings server component fetches crm_email_accounts rows
 // (via the service-role client — the table is deny-all to session
-// clients) and passes SOMETHING to the client GmailConnectionCard
-// component. What "something" is is the token-isolation boundary:
-// only the three display-safe fields cross that boundary. This module
-// is the projection helper both the page and the tests use so the
-// contract is asserted behaviourally, not by grep.
+// clients) and passes SOMETHING to the client. What "something" is is
+// the token-isolation boundary: only display-safe fields cross that
+// boundary. This module is the projection helper both the page and
+// the tests use so the contract is asserted behaviourally, not by grep.
 //
 // Anything not in ClientSafeGmailAccount MUST NOT leave the server.
 
+export type GmailAccountStatus = 'connected' | 'reauth_required' | 'revoked';
+
 export type ClientSafeGmailAccount = {
-  gmailAddress: string;
-  status:       'connected' | 'reauth_required' | 'revoked';
-  connectedAt:  string;
+  id:              string;
+  gmailAddress:    string;
+  status:          GmailAccountStatus;
+  connectedAt:     string;
+  lastUsedAt:      string | null;
+  lastPolledAt:    string | null;
+  watchExpiresAt:  string | null;
 };
 
-/** Row shape as it comes back from Supabase for crm_email_accounts. */
+/** Row shape as it comes back from Supabase for crm_email_accounts.
+ *  The token-carrying columns are typed `never` so a naive mapper that
+ *  spreads (`{...row}`) fails at compile-time. */
 export type RawGmailAccountRow = {
+  id?:                  string | null;
   gmail_address?:       string | null;
   status?:              string | null;
   connected_at?:        string | null;
-  // The rest of the columns MUST NOT be surfaced. Listing them here
-  // explicitly is intentional — a future column addition needs a
-  // conscious decision to expose or hide it.
-  refresh_token_enc?:   string | null;
-  access_token_cache?:  string | null;
-  access_token_expiry?: string | null;
+  last_used_at?:        string | null;
   last_polled_at?:      string | null;
-  user_id?:             string | null;
-  id?:                  string | null;
+  watch_expires_at?:    string | null;
+
+  // Fields intentionally excluded from the projection.
+  refresh_token_enc?:   never;
+  access_token_cache?:  never;
+  access_token_expiry?: never;
+  user_id?:             never;
+  last_history_id?:     never;
 };
 
-/**
- * Project a raw crm_email_accounts row to the shape the client can
- * see. Explicitly picks only three fields. Any token / cache /
- * timestamp column that would let a caller reconstruct or misuse the
- * connection is dropped.
- */
+const STATUS_SET: ReadonlySet<GmailAccountStatus> =
+  new Set(['connected', 'reauth_required', 'revoked'] as const);
+
 export function toClientSafeGmailAccount(
   raw: RawGmailAccountRow | null | undefined,
 ): ClientSafeGmailAccount | null {
-  if (!raw || !raw.gmail_address || !raw.status || !raw.connected_at) return null;
-  const status = raw.status;
-  if (status !== 'connected' && status !== 'reauth_required' && status !== 'revoked') return null;
+  if (!raw || typeof raw !== 'object') return null;
+  if (typeof raw.id !== 'string' || !raw.id) return null;
+  if (typeof raw.gmail_address !== 'string' || !raw.gmail_address) return null;
+  const status = typeof raw.status === 'string' ? raw.status as GmailAccountStatus : null;
+  if (!status || !STATUS_SET.has(status)) return null;
   return {
-    gmailAddress: raw.gmail_address,
+    id:             raw.id,
+    gmailAddress:   raw.gmail_address,
     status,
-    connectedAt:  raw.connected_at,
+    connectedAt:    typeof raw.connected_at === 'string' ? raw.connected_at : new Date(0).toISOString(),
+    lastUsedAt:     typeof raw.last_used_at === 'string' ? raw.last_used_at : null,
+    lastPolledAt:   typeof raw.last_polled_at === 'string' ? raw.last_polled_at : null,
+    watchExpiresAt: typeof raw.watch_expires_at === 'string' ? raw.watch_expires_at : null,
   };
+}
+
+export function toClientSafeGmailAccounts(
+  rows: RawGmailAccountRow[] | null | undefined,
+): ClientSafeGmailAccount[] {
+  if (!Array.isArray(rows)) return [];
+  const out: ClientSafeGmailAccount[] = [];
+  for (const r of rows) {
+    const p = toClientSafeGmailAccount(r);
+    if (p) out.push(p);
+  }
+  return out;
 }

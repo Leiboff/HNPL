@@ -45,7 +45,11 @@ type Activity = {
   occurred_at: string;
   created_at: string;
   created_by: string | null;
+  sent_from: string | null;
 };
+
+type ActorRef = { firstName: string | null; lastName: string | null };
+type ActorsById = Record<string, ActorRef>;
 
 type PendingInvite = {
   token: string;
@@ -58,10 +62,11 @@ const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sen
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
 
 export default function LeadDetailClient({
-  lead: initialLead, activities: initialActivities, pendingInvite,
+  lead: initialLead, activities: initialActivities, actorsById, pendingInvite,
 }: {
   lead: Lead;
   activities: Activity[];
+  actorsById: ActorsById;
   pendingInvite: PendingInvite;
 }) {
   const [lead, setLead]           = useState(initialLead);
@@ -107,6 +112,7 @@ export default function LeadDetailClient({
           occurred_at: new Date().toISOString(),
           created_at:  new Date().toISOString(),
           created_by:  null,
+          sent_from:   null,
         },
         ...a,
       ]));
@@ -128,6 +134,7 @@ export default function LeadDetailClient({
           occurred_at: new Date().toISOString(),
           created_at:  new Date().toISOString(),
           created_by:  null,
+          sent_from:   null,
         },
         ...a,
       ]));
@@ -282,7 +289,7 @@ export default function LeadDetailClient({
         ) : (
           <ul className="divide-y divide-gray-100">
             {activities.map(a => (
-              <li key={a.id} className="px-4 py-3">
+              <li key={a.id} className="px-4 py-3" data-testid={`crm-activity:${a.type}`}>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-600">
                     {a.type.replace(/_/g, ' ')}
@@ -291,6 +298,9 @@ export default function LeadDetailClient({
                 </div>
                 <p className="mt-1 text-sm text-gray-900 font-medium">{a.title}</p>
                 {a.body && <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{a.body}</p>}
+                <p className="mt-1 text-[11px] text-gray-500" data-testid="crm-activity-attribution">
+                  {renderAttribution(a, actorsById)}
+                </p>
               </li>
             ))}
           </ul>
@@ -339,6 +349,28 @@ export default function LeadDetailClient({
       )}
     </div>
   );
+}
+
+// ── Timeline attribution helper ────────────────────────────────────
+
+function renderAttribution(a: Activity, actors: ActorsById): string {
+  const actor = a.created_by ? actors[a.created_by] : null;
+  const name  = actor
+    ? [actor.firstName, actor.lastName].filter(Boolean).join(' ').trim() || null
+    : null;
+
+  if (a.type === 'email_reply') {
+    // Reply attribution names the ACCOUNT that received it, not a human.
+    return a.sent_from ? `Reply to ${a.sent_from}` : 'Reply';
+  }
+  if (a.type === 'email') {
+    if (name && a.sent_from) return `Sent by ${name} · ${a.sent_from}`;
+    if (name)                return `Sent by ${name}`;
+    if (a.sent_from)         return `Sent from ${a.sent_from}`;
+    return 'Sent';
+  }
+  if (a.type === 'stage_change' && !name) return 'system';
+  return name ? `By ${name}` : 'system';
 }
 
 // ── Atoms ───────────────────────────────────────────────────────────

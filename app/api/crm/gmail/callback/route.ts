@@ -1,12 +1,20 @@
 import { NextResponse } from 'next/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { exchangeCodeForTokens, fetchGmailProfile, saveGmailAccount } from '@/lib/gmail/gmailClient';
+import {
+  exchangeCodeForTokens,
+  fetchGmailProfile,
+  saveGmailAccount,
+  startGmailWatch,
+} from '@/lib/gmail/gmailClient';
 
 // ─── /api/crm/gmail/callback — OAuth landing ─────────────────────────
 //
-// Validates the state cookie matches ?state=, exchanges the code for
-// tokens (offline access → refresh_token issued), persists the
-// encrypted refresh token, redirects back to /crm/settings.
+// Since 0072 we start a Pub/Sub watch (best-effort) on every fresh
+// connect when GMAIL_PUBSUB_TOPIC is set. Without the env var we skip
+// the watch and the system stays on the daily safety-net poller —
+// preserves pre-Pub/Sub behaviour so the deploy is safe before ops
+// wires up the topic.
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +22,14 @@ function backToSettings(origin: string, msg: string, ok: boolean): Response {
   const url = new URL('/crm/settings', origin);
   url.searchParams.set(ok ? 'connected' : 'error', msg);
   return NextResponse.redirect(url);
+}
+
+function svc() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -36,7 +52,6 @@ export async function GET(req: Request): Promise<Response> {
   if (err) return backToSettings(origin, err, false);
   if (!code) return backToSettings(origin, 'missing_code', false);
 
-  // The state format is <userId>.<nonce>. Ensure the userId matches the session.
   const stateUserId = stateParam.split('.')[0];
   if (stateUserId !== user.id) return backToSettings(origin, 'user_mismatch', false);
 
@@ -44,10 +59,6 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const tokens = await exchangeCodeForTokens(code, redirectUri);
     if (!tokens.refresh_token) {
-      // Happens if the account previously granted consent and Google
-      // didn't reissue a refresh_token. Ask the user to revoke access
-      // in their Google account first — we forced prompt=consent so
-      // this should be rare.
       return backToSettings(origin, 'no_refresh_token', false);
     }
     const profile = await fetchGmailProfile(tokens.access_token);
@@ -60,6 +71,30 @@ export async function GET(req: Request): Promise<Response> {
       expiresAt,
     });
     if (saveRes.error) return backToSettings(origin, 'save_failed', false);
+
+    // Best-effort Pub/Sub watch. If the topic env var is unset the
+    // system stays polling — nothing to configure, nothing breaks.
+    const topic = process.env.GMAIL_PUBSUB_TOPIC;
+    if (topic && saveRes.accountId) {
+      try {
+        const w = await startGmailWatch(tokens.access_token, topic);
+        const expiration = w.expiration ? new Date(Number(w.expiration)).toISOString() : null;
+        const s = svc();
+        await s.from('crm_email_accounts').update({
+          last_history_id:  w.historyId,
+          watch_expires_at: expiration,
+        }).eq('id', saveRes.accountId);
+        await s.from('crm_audit_log').insert({
+          actor_id:    user.id,
+          action:      'gmail_account.watch_started',
+          target_type: 'crm_email_account',
+          target_id:   saveRes.accountId,
+          details:     { gmail_address: profile.emailAddress, expiration },
+        });
+      } catch (watchErr) {
+        console.warn('[gmail-callback] watch start failed', watchErr);
+      }
+    }
 
     const res = backToSettings(origin, profile.emailAddress, true);
     res.headers.append('Set-Cookie', 'crm_gmail_state=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax');

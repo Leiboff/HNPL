@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/cron/crm-reply-poll",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 6 * * *"
     }
   ]
 }

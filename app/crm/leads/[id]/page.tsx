@@ -38,10 +38,25 @@ export default async function LeadDetailPage({
 
   const { data: activities } = await supabase
     .from('crm_activities')
-    .select('id, type, title, body, occurred_at, created_at, created_by')
+    .select('id, type, title, body, occurred_at, created_at, created_by, sent_from')
     .eq('lead_id', id)
     .order('occurred_at', { ascending: false })
     .limit(200);
+
+  // Resolve author display names for the timeline attribution row.
+  const actorIds = Array.from(new Set(
+    (activities ?? []).map(a => (a as { created_by: string | null }).created_by).filter(Boolean) as string[],
+  ));
+  const actorsById: Record<string, { firstName: string | null; lastName: string | null }> = {};
+  if (actorIds.length > 0) {
+    const { data: actors } = await supabase
+      .from('profiles')
+      .select('id, first_name, last_name')
+      .in('id', actorIds);
+    for (const p of (actors ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null }>) {
+      actorsById[p.id] = { firstName: p.first_name, lastName: p.last_name };
+    }
+  }
 
   // Optional: pending practice invitation for this lead
   const { data: pendingInvite } = await supabase
@@ -56,6 +71,7 @@ export default async function LeadDetailPage({
     <LeadDetailClient
       lead={lead}
       activities={activities ?? []}
+      actorsById={actorsById}
       pendingInvite={pendingInvite ?? null}
     />
   );

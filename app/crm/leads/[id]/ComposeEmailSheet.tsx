@@ -1,14 +1,19 @@
 'use client';
 
 import { useEffect, useState, useTransition } from 'react';
-import { listTemplates, previewCompose, sendComposedEmail, type TemplateRow } from './composeEmail';
+import {
+  listTemplates,
+  listMyGmailAccounts,
+  previewCompose,
+  sendComposedEmail,
+  type TemplateRow,
+  type ComposeAccount,
+} from './composeEmail';
 
 // ─── Compose email sheet ────────────────────────────────────────────
 //
-// Bottom sheet with To (prefilled from the lead), subject, body,
-// template picker. Merge fields substituted server-side (previewCompose
-// returns the substituted subject/body). Send → sendComposedEmail →
-// Gmail API. On reauth needed, surface a "Reconnect Gmail" link.
+// Since 0072: "Send as" selector (multi-account) + auto-appended
+// signature with per-send toggle to omit.
 
 type Props = {
   open:         boolean;
@@ -18,22 +23,38 @@ type Props = {
   practiceName: string;
 };
 
+const LAST_ACCOUNT_KEY = 'crm.compose.lastAccountId';
+
 export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, practiceName }: Props) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [accounts,  setAccounts]  = useState<ComposeAccount[]>([]);
+  const [accountId, setAccountId] = useState<string>('');
   const [templateId, setTemplateId] = useState<string>('');
   const [subject, setSubject]       = useState('');
   const [body, setBody]             = useState('');
-  const [previewText, setPreview]   = useState<{ subject: string; body: string } | null>(null);
+  const [omitSignature, setOmitSignature] = useState(false);
+  const [previewText, setPreview] = useState<{ subject: string; body: string; signatureHtml?: string; signatureText?: string } | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err' | 'reauth'; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     if (!open) return;
     void (async () => {
-      const rows = await listTemplates();
-      setTemplates(rows);
+      const [tpls, accs] = await Promise.all([listTemplates(), listMyGmailAccounts()]);
+      setTemplates(tpls);
+      setAccounts(accs);
+      // Restore last selection, else the default.
+      const stored = typeof window !== 'undefined' ? window.localStorage.getItem(LAST_ACCOUNT_KEY) : null;
+      const found  = accs.find(a => a.id === stored);
+      const first  = accs[0];
+      setAccountId((found ?? first)?.id ?? '');
     })();
   }, [open]);
+
+  function pickAccount(id: string) {
+    setAccountId(id);
+    try { if (typeof window !== 'undefined') window.localStorage.setItem(LAST_ACCOUNT_KEY, id); } catch { /* ignore */ }
+  }
 
   function loadTemplate(id: string) {
     setTemplateId(id);
@@ -50,11 +71,18 @@ export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, pr
       const res = await previewCompose({
         leadId,
         templateId: templateId || undefined,
-        subject,
-        body,
+        subject, body,
+        omitSignature,
       });
       if (res.error) { setMsg({ kind: 'err', text: res.error }); return; }
-      if (res.preview) setPreview(res.preview);
+      if (res.preview) {
+        setPreview({
+          subject: res.preview.subject,
+          body:    res.preview.body,
+          signatureHtml: res.preview.signature?.html,
+          signatureText: res.preview.signature?.text,
+        });
+      }
     });
   }
 
@@ -66,6 +94,8 @@ export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, pr
         leadId,
         subject: previewText.subject,
         body:    previewText.body,
+        accountId: accountId || undefined,
+        omitSignature,
       });
       if (res.needsReconnect) {
         setMsg({ kind: 'reauth', text: 'Gmail needs to be reconnected before we can send.' });
@@ -73,12 +103,12 @@ export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, pr
       }
       if (res.error) { setMsg({ kind: 'err', text: res.error }); return; }
       setMsg({ kind: 'ok', text: 'Sent.' });
-      // Close after brief pause so the ok flash is visible.
       setTimeout(onClose, 700);
     });
   }
 
   if (!open) return null;
+  const noAccounts = accounts.length === 0;
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Compose email">
@@ -100,6 +130,20 @@ export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, pr
             <div className="text-xs text-gray-600">
               <span className="font-medium">To:</span> {leadEmail ?? <span className="text-red-600">(lead has no email — add one first)</span>}
             </div>
+
+            <label className="text-xs text-gray-700 block">
+              Send as
+              <select
+                value={accountId}
+                onChange={e => pickAccount(e.target.value)}
+                disabled={noAccounts}
+                className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm disabled:bg-gray-50"
+                data-testid="compose-account-picker"
+              >
+                {noAccounts && <option value="">(no Gmail connected — go to Settings)</option>}
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.gmailAddress}{a.isDefault ? ' · default' : ''}</option>)}
+              </select>
+            </label>
 
             <label className="text-xs text-gray-700 block">
               Template
@@ -138,10 +182,26 @@ export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, pr
               </p>
             </label>
 
+            <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+              <input
+                type="checkbox"
+                checked={omitSignature}
+                onChange={e => setOmitSignature(e.target.checked)}
+                data-testid="compose-omit-signature"
+              />
+              Omit my signature on this send
+            </label>
+
             {previewText && (
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs" data-testid="compose-preview">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs space-y-2" data-testid="compose-preview">
                 <p className="font-semibold text-gray-900">Preview subject: {previewText.subject}</p>
-                <pre className="mt-2 whitespace-pre-wrap font-sans text-gray-700">{previewText.body}</pre>
+                <pre className="whitespace-pre-wrap font-sans text-gray-700">{previewText.body}</pre>
+                {previewText.signatureHtml && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <div className="text-[10px] font-semibold text-gray-500 mb-1">Signature (auto-appended):</div>
+                    <div className="bg-white rounded p-2 border border-gray-100" data-testid="compose-preview-signature" dangerouslySetInnerHTML={{ __html: previewText.signatureHtml }} />
+                  </div>
+                )}
               </div>
             )}
 
@@ -170,7 +230,7 @@ export default function ComposeEmailSheet({ open, onClose, leadId, leadEmail, pr
               <button type="button" onClick={doPreview} disabled={pending || !subject || !body} className="rounded-lg border border-gray-200 bg-white text-gray-700 px-3 py-2 text-sm">
                 {pending ? 'Working…' : 'Preview'}
               </button>
-              <button type="button" onClick={doSend} disabled={pending || !leadEmail || !subject || !body} className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium disabled:opacity-60" data-testid="compose-send">
+              <button type="button" onClick={doSend} disabled={pending || noAccounts || !leadEmail || !subject || !body} className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium disabled:opacity-60" data-testid="compose-send">
                 {pending ? 'Sending…' : previewText ? 'Send' : 'Preview & send'}
               </button>
             </div>

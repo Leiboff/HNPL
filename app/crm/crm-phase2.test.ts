@@ -136,29 +136,32 @@ describe('Gmail OAuth flow', () => {
   });
 });
 
-// ── Cron reply-poll ───────────────────────────────────────────────
+// ── Cron reply-poll (safety-net since 0072) ──────────────────────
 
-describe('crm-reply-poll cron', () => {
+describe('crm-reply-poll cron — safety-net + watch renewal (since 0072)', () => {
   const SRC = read('app/api/cron/crm-reply-poll/route.ts');
+  const INGEST = read('lib/gmail/replyIngest.ts');
 
   it('is auth-gated by CRON_SECRET with timing-safe compare (matches collect-instalments)', () => {
     expect(SRC).toMatch(/process\.env\.CRON_SECRET/);
     expect(SRC).toMatch(/timingSafeEqual/);
   });
 
-  it('is idempotent — insert only when gmail_message_id NOT in the existing set', () => {
-    expect(SRC).toMatch(/knownIds\.has\(m\.id\)/);
-    expect(SRC).toMatch(/if \(knownIds\.has\(m\.id\)\)\s+continue/);
+  it('idempotency lives in the shared reply-ingest module (dedupe on gmail_message_id)', () => {
+    expect(INGEST).toMatch(/gmail_message_id/);
+    expect(INGEST).toMatch(/duplicate/);
   });
 
-  it('skips closed-stage leads (signed / onboarded / lost)', () => {
-    expect(SRC).toMatch(/CLOSED_STAGES\s*=\s*new Set\s*\(\s*\[[\s\S]*?'signed'[\s\S]*?'onboarded'[\s\S]*?'lost'/);
+  it('shared ingester skips closed-stage leads (signed / onboarded / lost)', () => {
+    expect(INGEST).toMatch(/CLOSED_STAGES\s*=\s*new Set\s*\(\s*\[[\s\S]*?'signed'[\s\S]*?'onboarded'[\s\S]*?'lost'/);
   });
 
-  it('is registered in vercel.json crons with a */15 cadence', () => {
+  it('is registered in vercel.json crons with a daily safety-net cadence', () => {
     const cron = read('vercel.json');
     expect(cron).toMatch(/\/api\/cron\/crm-reply-poll/);
-    expect(cron).toMatch(/\*\/15 \* \* \* \*/);
+    // Since 0072 the primary channel is Pub/Sub push; the cron is a
+    // once-a-day safety-net sweep + watch renewal, no longer */15.
+    expect(cron).not.toMatch(/\*\/15 \* \* \* \*/);
   });
 });
 
@@ -307,7 +310,7 @@ describe('CRM Phase 2 files exist', () => {
     'app/api/crm/gmail/disconnect/route.ts',
     'app/api/cron/crm-reply-poll/route.ts',
     'app/crm/settings/page.tsx',
-    'app/crm/settings/GmailConnectionCard.tsx',
+    'app/crm/settings/GmailConnectionsCard.tsx',
     'app/crm/leads/[id]/composeEmail.ts',
     'app/crm/leads/[id]/ComposeEmailSheet.tsx',
     'app/crm/map/page.tsx',

@@ -25,10 +25,14 @@ describe('vercel.json — cron entries', () => {
     expect(collect.schedule).toBe('0 11 * * *');
   });
 
-  it('has the CRM reply-poll cron on a */15 cadence (Phase 2)', () => {
+  it('has the CRM reply-poll cron on a daily safety-net cadence (since 0072)', () => {
+    // Since 0072 the primary channel is Gmail push (Pub/Sub → the push
+    // endpoint). The cron is a once-a-day safety-net sweep + watch
+    // renewal. Format: 0 <hour> * * * — matches 06:00 UTC = 08:00 SAST.
     const poll = config.crons.find((c: { path: string }) => c.path === '/api/cron/crm-reply-poll');
     expect(poll).toBeDefined();
-    expect(poll.schedule).toBe('*/15 * * * *');
+    expect(poll.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
+    expect(poll.schedule).not.toBe('*/15 * * * *');
   });
 });
 

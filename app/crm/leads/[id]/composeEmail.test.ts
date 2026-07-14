@@ -19,7 +19,11 @@ const state: {
   templates:   Array<{ id: string; name: string; subject: string; body: string }>;
   activityInserts: Array<Record<string, unknown>>;
   sendResult:  { throw: unknown } | { ok: { messageId: string; threadId: string } };
-  tokenResult: { accessToken: string; account: { gmail_address: string } } | { error: string };
+  tokenResult: { accessToken: string; account: { id: string; gmail_address: string } } | { error: string };
+  gmailAccountsListResult: Array<{ id: string; gmail_address: string; last_used_at: string | null; connected_at: string; status: string }>;
+  signatureRow: { display_name: string; title: string; phone: string; email: string; html_override: string | null; text_fallback: string | null } | null;
+  sendCallArgs: Array<Record<string, unknown>>;
+  updateCalls: Array<{ table: string; patch: Record<string, unknown> }>;
 } = {
   profile:     { role: 'sales', first_name: 'Sam', last_name: 'S.' },
   lead:        null,
@@ -27,7 +31,11 @@ const state: {
   templates:   [],
   activityInserts: [],
   sendResult:  { ok: { messageId: 'msg-1', threadId: 'thread-1' } },
-  tokenResult: { accessToken: 'ya29.fixture', account: { gmail_address: 'sam@x.com' } },
+  tokenResult: { accessToken: 'ya29.fixture', account: { id: 'acct-A', gmail_address: 'sam@x.com' } },
+  gmailAccountsListResult: [],
+  signatureRow: null,
+  sendCallArgs: [],
+  updateCalls: [],
 };
 
 // Session-client mock (createClient from lib/supabase/server)
@@ -60,25 +68,54 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
-// Service-role mock — used by sendComposedEmail to log the activity
+// Service-role mock — used by sendComposedEmail to log the activity + look up signatures/accounts
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from(table: string) {
-      return {
-        update() { return { eq: async () => ({ error: null }) }; },
-        insert(row: Record<string, unknown>) {
+      // Chainable stub. Each terminal accessor returns { data, error }.
+      const chain: {
+        select(): typeof chain;
+        eq(): typeof chain;
+        order(): typeof chain;
+        update(patch: Record<string, unknown>): { eq: (...args: unknown[]) => Promise<{ error: null }> };
+        insert(row: Record<string, unknown>): Promise<{ error: null }>;
+        maybeSingle(): Promise<{ data: unknown; error: null }>;
+        then?: (fn: (r: unknown) => unknown) => unknown;
+      } = {
+        select() { return chain; },
+        eq()     { return chain; },
+        order()  { return chain; },
+        update(patch) {
+          return { eq: async () => { state.updateCalls.push({ table, patch }); return { error: null }; } };
+        },
+        insert: async (row) => {
           if (table === 'crm_activities') state.activityInserts.push(row);
           return { error: null };
         },
+        maybeSingle: async () => {
+          if (table === 'crm_signatures') return { data: state.signatureRow, error: null };
+          return { data: null, error: null };
+        },
       };
+      // The list-accounts path awaits the query directly — expose then()
+      // to satisfy `await q.from('crm_email_accounts')...`.
+      Object.defineProperty(chain, 'then', {
+        value: (fn: (r: unknown) => unknown) => {
+          if (table === 'crm_email_accounts') return fn({ data: state.gmailAccountsListResult, error: null });
+          return fn({ data: null, error: null });
+        },
+        configurable: true,
+      });
+      return chain;
     },
   }),
 }));
 
-// Gmail client mock
+// Gmail client mock — records send args so we can assert bodyHtml/bodyText.
 vi.mock('@/lib/gmail/gmailClient', () => ({
   getAccessToken: async () => state.tokenResult,
-  sendGmail: async () => {
+  sendGmail: async (args: Record<string, unknown>) => {
+    state.sendCallArgs.push(args);
     if ('throw' in state.sendResult) {
       const e = state.sendResult.throw;
       if (e instanceof Error) throw e;
@@ -115,7 +152,11 @@ beforeEach(() => {
   state.templates   = [];
   state.activityInserts = [];
   state.sendResult  = { ok: { messageId: 'msg-1', threadId: 'thread-1' } };
-  state.tokenResult = { accessToken: 'ya29.fixture', account: { gmail_address: 'sam@x.com' } };
+  state.tokenResult = { accessToken: 'ya29.fixture', account: { id: 'acct-A', gmail_address: 'sam@x.com' } };
+  state.gmailAccountsListResult = [];
+  state.signatureRow = null;
+  state.sendCallArgs = [];
+  state.updateCalls  = [];
 });
 
 describe('sendComposedEmail — return shape has NO token material', () => {
@@ -181,6 +222,84 @@ describe('sendComposedEmail — return shape has NO token material', () => {
     expect(res.error).toBe('unauthorized');
     expect(state.activityInserts.length).toBe(0);
     assertNoTokenMaterial(res);
+  });
+});
+
+describe('sendComposedEmail — multi-account, attribution, signature', () => {
+  it('records sent_from + gmail_thread_id on the crm_activities insert', async () => {
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({ leadId: 'lead-1', subject: 'Hi', body: 'Hello' });
+    const emailAct = state.activityInserts.find(a => a.type === 'email');
+    expect(emailAct).toBeDefined();
+    expect(emailAct!.sent_from).toBe('sam@x.com');
+    expect(emailAct!.gmail_thread_id).toBe('thread-1');
+    expect(emailAct!.gmail_message_id).toBe('msg-1');
+    expect(emailAct!.created_by).toBe('user-1');
+  });
+
+  it('updates last_used_at on the connected account after a successful send', async () => {
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({ leadId: 'lead-1', subject: 'Hi', body: 'Hello' });
+    const updated = state.updateCalls.find(c => c.table === 'crm_email_accounts' && 'last_used_at' in c.patch);
+    expect(updated).toBeDefined();
+    expect(typeof updated!.patch.last_used_at).toBe('string');
+  });
+
+  it('signature auto-appended: bodyHtml + bodyText carry the signature text', async () => {
+    state.signatureRow = {
+      display_name: 'Sam S.', title: 'BD', phone: '+27 82 111 2222', email: 'sam@x.com',
+      html_override: null, text_fallback: null,
+    };
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({ leadId: 'lead-1', subject: 'Hi', body: 'Hello' });
+    expect(state.sendCallArgs.length).toBe(1);
+    const args = state.sendCallArgs[0];
+    expect(args.bodyText).toContain('Hello');
+    expect(args.bodyText).toContain('betternow');   // signature block
+    expect(args.bodyHtml).toContain('better');
+    expect(args.bodyHtml).toContain('#13294B');
+  });
+
+  it('signature omitted when omitSignature=true (bodyHtml empty)', async () => {
+    state.signatureRow = {
+      display_name: 'Sam S.', title: '', phone: '', email: '',
+      html_override: null, text_fallback: null,
+    };
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({ leadId: 'lead-1', subject: 'Hi', body: 'Hello', omitSignature: true });
+    const args = state.sendCallArgs[0];
+    expect(args.bodyText).toBe('Hello');
+    expect(args.bodyHtml).toBeUndefined();
+  });
+
+  it('signature raw-HTML override is sanitised in the send body', async () => {
+    state.signatureRow = {
+      display_name: 'Sam', title: '', phone: '', email: '',
+      html_override: 'Hi <script>alert(1)</script> <a href="javascript:evil()">click</a>',
+      text_fallback: null,
+    };
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({ leadId: 'lead-1', subject: 'Hi', body: 'Hello' });
+    const args = state.sendCallArgs[0];
+    expect(args.bodyHtml).not.toContain('<script');
+    expect(args.bodyHtml).not.toContain('alert(1)');
+    expect(String(args.bodyHtml).toLowerCase()).not.toContain('javascript:');
+  });
+});
+
+describe('listMyGmailAccounts — Send-as source', () => {
+  it('lists connected accounts most-recently-used first, flags default', async () => {
+    state.gmailAccountsListResult = [
+      { id: 'acct-1', gmail_address: 'jess@betternow.co.za', last_used_at: '2026-07-14', connected_at: '2026-07-01', status: 'connected' },
+      { id: 'acct-2', gmail_address: 'admin@betternow.co.za', last_used_at: null,        connected_at: '2026-07-02', status: 'connected' },
+    ];
+    const { listMyGmailAccounts } = await fresh();
+    const list = await listMyGmailAccounts();
+    expect(list.map(l => l.gmailAddress)).toEqual(['jess@betternow.co.za', 'admin@betternow.co.za']);
+    expect(list[0].isDefault).toBe(true);
+    expect(list[1].isDefault).toBe(false);
+    // No token material in the returned list.
+    assertNoTokenMaterial(list);
   });
 });
 

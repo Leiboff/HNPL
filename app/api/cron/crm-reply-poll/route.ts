@@ -1,22 +1,22 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { getAccessToken, fetchThread, type ThreadMessage } from '@/lib/gmail/gmailClient';
+import {
+  getAccessToken,
+  startGmailWatch,
+  type GmailAccount,
+} from '@/lib/gmail/gmailClient';
+import { sweepAllThreadsForAccount } from '@/lib/gmail/replyIngest';
 
-// ─── /api/cron/crm-reply-poll — Gmail reply tracker ───────────────────
+// ─── /api/cron/crm-reply-poll — Gmail reply safety-net + renewal ─────
 //
-// Runs every 15 minutes (see vercel.json). For each connected Gmail
-// account, finds every email activity on a non-closed lead that carries
-// a gmail_thread_id, fetches thread metadata, and inserts an
-// 'email_reply' activity for every inbound message we haven't seen
-// before (idempotency key = gmail_message_id — unique per thread).
+// Since 0072 this is DOWNGRADED from every-15-min primary poller to a
+// daily safety-net sweep. Gmail push (Pub/Sub → /api/crm/gmail/push)
+// is the primary channel; this cron:
+//   1. Sweeps every connected account's tracked threads (idempotent)
+//   2. Renews any Gmail watch expiring in the next 24 h
 //
-// Auth model: same CRON_SECRET / Authorization: Bearer pattern as
-// /api/cron/collect-instalments — timing-safe compare against env.
-//
-// Scope: uses the gmail.readonly scope granted at connect time.
-// Only threads updated since the account's last_polled_at are re-fetched,
-// so a re-run costs one Gmail call per thread that changed.
+// Same CRON_SECRET / timing-safe Authorization: Bearer pattern.
 
 export const dynamic = 'force-dynamic';
 const REQUIRE_CRON_SECRET = true;
@@ -28,17 +28,6 @@ function svc() {
     { auth: { persistSession: false } },
   );
 }
-
-const CLOSED_STAGES = new Set(['signed', 'onboarded', 'lost']);
-
-type EmailActivityRow = {
-  id:                string;
-  lead_id:           string;
-  gmail_thread_id:   string;
-  gmail_message_id:  string | null;
-  created_by:        string | null;
-  occurred_at:       string;
-};
 
 async function handle(req: NextRequest): Promise<NextResponse> {
   const secret = process.env.CRON_SECRET;
@@ -58,92 +47,63 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
   const s = svc();
 
-  // Every connected account we might have to poll.
   const { data: accounts } = await s
     .from('crm_email_accounts')
-    .select('user_id, gmail_address, last_polled_at, status')
+    .select('*')
     .eq('status', 'connected');
 
-  const summary = { accounts: 0, threads: 0, newReplies: 0, errors: 0 };
+  const summary = { accounts: 0, threads: 0, newReplies: 0, watchesRenewed: 0, errors: 0 };
+  const topic = process.env.GMAIL_PUBSUB_TOPIC;
+  const now = Date.now();
+  const RENEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-  for (const acc of (accounts ?? []) as Array<{ user_id: string; gmail_address: string; last_polled_at: string | null }>) {
+  for (const raw of ((accounts ?? []) as GmailAccount[])) {
     summary.accounts++;
 
-    // Fresh access token via the client helper (refreshes if expired,
-    // downgrades the account to reauth_required on grant-invalid).
-    const tokenRes = await getAccessToken(acc.user_id);
+    const tokenRes = await getAccessToken({ userId: raw.user_id, accountId: raw.id });
     if ('error' in tokenRes) {
       summary.errors++;
       continue;
     }
 
-    // Every open email activity created by (or observable to) this user
-    // — grouped by thread id, only for leads not in a closed stage.
-    // We DEDUPE on thread_id first so we hit Gmail once per thread even
-    // if a lead has multiple outgoing emails on the same thread.
-    const { data: emailActs } = await s
-      .from('crm_activities')
-      .select('id, lead_id, gmail_thread_id, gmail_message_id, created_by, occurred_at, crm_leads!inner(stage)')
-      .not('gmail_thread_id', 'is', null)
-      .eq('created_by', acc.user_id);
+    // ── Sweep tracked threads (safety-net) ────────────────────────
+    try {
+      const sweep = await sweepAllThreadsForAccount(
+        { id: raw.id, user_id: raw.user_id, gmail_address: raw.gmail_address },
+        tokenRes.accessToken,
+      );
+      summary.threads    += sweep.threads;
+      summary.newReplies += sweep.newReplies;
+      summary.errors     += sweep.errors;
+    } catch (err) {
+      console.warn('[cron/crm-reply-poll] sweep failed', err);
+      summary.errors++;
+    }
 
-    const seenThreads = new Set<string>();
-    type ActRow = EmailActivityRow & { crm_leads?: { stage?: string } | { stage?: string }[] };
-    for (const raw of (emailActs ?? []) as unknown as ActRow[]) {
-      const leadStageRel = Array.isArray(raw.crm_leads) ? raw.crm_leads[0] : raw.crm_leads;
-      if (leadStageRel?.stage && CLOSED_STAGES.has(leadStageRel.stage)) continue;
-      const threadId = raw.gmail_thread_id;
-      if (!threadId || seenThreads.has(threadId)) continue;
-      seenThreads.add(threadId);
-      summary.threads++;
-
+    // ── Renew Gmail watch if within the renewal window ───────────
+    const expiresAt = raw.watch_expires_at ? new Date(raw.watch_expires_at).getTime() : null;
+    const needsRenewal = topic && (
+      expiresAt == null ||
+      expiresAt - now < RENEW_WINDOW_MS
+    );
+    if (needsRenewal) {
       try {
-        const messages = await fetchThread(tokenRes.accessToken, threadId);
-        if (messages.length === 0) continue;
-
-        // Existing message-ids we've logged for this thread — used
-        // both for outbound-send (gmail_message_id of the send) and
-        // any prior polled inbound. This is the idempotency key: a
-        // re-poll finds the same ids and inserts nothing.
-        const { data: existing } = await s
-          .from('crm_activities')
-          .select('gmail_message_id')
-          .eq('gmail_thread_id', threadId)
-          .not('gmail_message_id', 'is', null);
-        const knownIds = new Set(((existing ?? []) as Array<{ gmail_message_id: string }>).map(e => e.gmail_message_id));
-
-        // The account's own gmail_address — everything from OTHER
-        // addresses on the thread counts as inbound. We also ignore
-        // SENT labels to avoid double-counting user's own drafts.
-        for (const m of messages) {
-          if (knownIds.has(m.id)) continue;
-          const fromLc = (m.from || '').toLowerCase();
-          const isFromMe = fromLc.includes(acc.gmail_address.toLowerCase());
-          if (isFromMe) continue;
-          if (m.labelIds.includes('SENT')) continue;
-
-          const occurredAt = new Date(Number(m.internalDate)).toISOString();
-          await s.from('crm_activities').insert({
-            lead_id:          raw.lead_id,
-            type:             'email_reply',
-            title:            `Reply from ${m.from.split('<')[0].trim() || m.from}`,
-            body:             m.snippet,
-            occurred_at:      occurredAt,
-            gmail_thread_id:  m.threadId,
-            gmail_message_id: m.id,
-            created_by:       acc.user_id,
-          });
-          summary.newReplies++;
-        }
+        const w = await startGmailWatch(tokenRes.accessToken, topic);
+        const newExp = w.expiration ? new Date(Number(w.expiration)).toISOString() : null;
+        await s.from('crm_email_accounts').update({
+          last_history_id:  raw.last_history_id ?? w.historyId,
+          watch_expires_at: newExp,
+        }).eq('id', raw.id);
+        summary.watchesRenewed++;
       } catch (err) {
-        console.warn('[cron/crm-reply-poll] thread fetch failed', { threadId, err });
+        console.warn('[cron/crm-reply-poll] watch renew failed', err);
         summary.errors++;
       }
     }
 
     await s.from('crm_email_accounts')
       .update({ last_polled_at: new Date().toISOString() })
-      .eq('user_id', acc.user_id);
+      .eq('id', raw.id);
   }
 
   return NextResponse.json({ ok: true, ...summary });

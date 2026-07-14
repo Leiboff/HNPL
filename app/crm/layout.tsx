@@ -17,7 +17,8 @@ import { sastDayWindows } from '@/lib/crm/timezone';
 // the sidebar and mobile nav agree without re-querying.
 
 export default async function CrmLayout({ children }: { children: React.ReactNode }) {
-  const { supabase } = await requireSalesOrAdmin({ next: '/crm' });
+  const { supabase, role } = await requireSalesOrAdmin({ next: '/crm' });
+  const isAdmin = role === 'admin';
 
   const { todayStartUtc } = sastDayWindows(new Date());
 
@@ -51,7 +52,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       </header>
 
       <div className="flex flex-row flex-1">
-        <CrmNav counts={counts} />
+        <CrmNav counts={counts} isAdmin={isAdmin} />
         <main className="flex-1 min-w-0 pb-28 md:pb-0">
           {children}
         </main>
