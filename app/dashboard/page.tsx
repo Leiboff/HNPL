@@ -18,10 +18,17 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 //                           → /practice  otherwise (staff, non-owner)
 //   practice_provider       → /provider
 //   admin (platform)        → /admin
+//   sales                   → /crm
 //
 // Solo brand-admins never notice this hop — /brand redirects them
 // straight to /practice. Multi-branch owners land on the group
 // dashboard instead of an arbitrary practice page.
+//
+// Sales users may have been created originally as patients (a role
+// promotion). They must NEVER be pulled into the patient onboarding
+// gate — the switch below routes them straight to /crm and the
+// /onboarding and /patient gates additionally short-circuit on
+// role==='sales'.
 
 export default async function DashboardPage() {
   const { user, supabase } = await requireConfirmedUser({ next: '/dashboard' });
@@ -55,6 +62,8 @@ export default async function DashboardPage() {
       redirect('/provider');
     case 'admin':
       redirect('/admin');
+    case 'sales':
+      redirect('/crm');
   }
 
   return (

@@ -34,6 +34,14 @@ export default async function PatientLayout({
       redirect('/practice');
     } else if (profile?.role === 'admin') {
       redirect('/admin');
+    } else if (profile?.role === 'sales') {
+      // Sales users often started life as patients (role-promoted
+      // profiles). If they hit /patient we send them home to the
+      // CRM — never fall through to /login (redirect loop) or into
+      // the patient onboarding gate below.
+      redirect('/crm');
+    } else if (profile?.role === 'practice_provider') {
+      redirect('/provider');
     } else {
       redirect('/login');
     }

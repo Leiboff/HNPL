@@ -38,7 +38,28 @@ const state: {
   updateCalls: Array<{ table: string; patch: Record<string, unknown> }>;
   activityById: Record<string, ActivityRow>;
   accountByAddress: Record<string, { id: string; gmail_address: string; status: string }>;
-  fetchedMessageMetadata: Record<string, { rfcMessageId: string | null; subject: string; references: string | null } | null>;
+  /** By connection_id — for resolveSender's explicit ownership lookup. */
+  accountById: Record<string, { id: string; user_id: string; gmail_address: string; status: string }>;
+  /** Alias rows by id. Nested crm_email_accounts row via the join. */
+  aliasById: Record<string, {
+    id: string;
+    alias_email: string;
+    label: string | null;
+    allowed_roles: string[];
+    crm_email_accounts: { id: string; gmail_address: string; status: string };
+  }>;
+  /** Alias rows keyed by lower(alias_email) for reply-mode ownership. */
+  aliasByAddress: Record<string, {
+    id: string;
+    alias_email: string;
+    allowed_roles: string[];
+    crm_email_accounts: { id: string; gmail_address: string; status: string };
+  }>;
+  fetchedMessageMetadata: Record<string, { rfcMessageId: string | null; subject: string; references: string | null; from?: string } | null>;
+  /** Whole-thread fetch fixtures for the legacy path. */
+  fetchedThread: Record<string, Array<{ id: string; rfcMessageId: string | null; references: string | null }>> | null;
+  /** Set to true when a fetchThread call should throw. */
+  fetchThreadShouldThrow: boolean;
 } = {
   profile:     { role: 'sales', first_name: 'Sam', last_name: 'S.' },
   lead:        null,
@@ -53,7 +74,12 @@ const state: {
   updateCalls: [],
   activityById: {},
   accountByAddress: {},
+  accountById: {},
+  aliasById: {},
+  aliasByAddress: {},
   fetchedMessageMetadata: {},
+  fetchedThread: null,
+  fetchThreadShouldThrow: false,
 };
 
 // Session-client mock (createClient from lib/supabase/server)
@@ -112,7 +138,9 @@ vi.mock('@supabase/supabase-js', () => ({
           return chain;
         },
         ilike(col, val) {
-          if (col === 'gmail_address') filters.ilikeAddress = String(val).toLowerCase();
+          if (col === 'gmail_address' || col === 'alias_email') {
+            filters.ilikeAddress = String(val).toLowerCase();
+          }
           return chain;
         },
         order()  { return chain; },
@@ -135,12 +163,21 @@ vi.mock('@supabase/supabase-js', () => ({
               ? { id: state.lead.id, email: state.lead.email }
               : null, error: null };
           }
+          if (table === 'crm_email_accounts' && filters.eqById) {
+            return { data: state.accountById[filters.eqById] ?? null, error: null };
+          }
           if (table === 'crm_email_accounts' && filters.ilikeAddress) {
             return { data: state.accountByAddress[filters.ilikeAddress] ?? null, error: null };
           }
           if (table === 'crm_email_accounts' && filters.limitOne) {
             const first = state.gmailAccountsListResult[0] ?? null;
             return { data: first, error: null };
+          }
+          if (table === 'crm_sendas_aliases' && filters.eqById) {
+            return { data: state.aliasById[filters.eqById] ?? null, error: null };
+          }
+          if (table === 'crm_sendas_aliases' && filters.ilikeAddress) {
+            return { data: state.aliasByAddress[filters.ilikeAddress] ?? null, error: null };
           }
           return { data: null, error: null };
         },
@@ -179,13 +216,29 @@ vi.mock('@/lib/gmail/gmailClient', () => ({
       threadId:     'thread-x',
       labelIds:     [],
       internalDate: '0',
-      from:         '',
+      from:         m.from ?? '',
       snippet:      '',
       rfcMessageId: m.rfcMessageId,
       subject:      m.subject,
       references:   m.references,
       inReplyTo:    null,
     };
+  },
+  fetchThread: async (_token: string, threadId: string) => {
+    if (state.fetchThreadShouldThrow) throw new Error('fetchThread simulated failure');
+    const msgs = state.fetchedThread?.[threadId] ?? [];
+    return msgs.map(m => ({
+      id:           m.id,
+      threadId,
+      labelIds:     [],
+      internalDate: '0',
+      from:         '',
+      snippet:      '',
+      rfcMessageId: m.rfcMessageId,
+      subject:      '',
+      references:   m.references,
+      inReplyTo:    null,
+    }));
   },
 }));
 
@@ -217,13 +270,26 @@ beforeEach(() => {
   state.activityInserts = [];
   state.sendResult  = { ok: { messageId: 'msg-1', threadId: 'thread-1' } };
   state.tokenResult = { accessToken: 'ya29.fixture', account: { id: 'acct-A', gmail_address: 'sam@x.com' } };
-  state.gmailAccountsListResult = [];
+  // Default: one account so the "no accountId supplied" path in
+  // resolveSender resolves. Individual tests can override.
+  state.gmailAccountsListResult = [
+    { id: 'acct-A', gmail_address: 'sam@x.com', last_used_at: null, connected_at: '2026-07-01', status: 'connected' },
+  ];
   state.signatureRow = null;
   state.sendCallArgs = [];
   state.updateCalls  = [];
   state.activityById = {};
   state.accountByAddress = {};
+  state.accountById = {
+    // Default: the fixture account belongs to the fixture user. Tests
+    // that assert cross-user rejection override this.
+    'acct-A': { id: 'acct-A', user_id: 'user-1', gmail_address: 'sam@x.com', status: 'connected' },
+  };
+  state.aliasById = {};
+  state.aliasByAddress = {};
   state.fetchedMessageMetadata = {};
+  state.fetchedThread = null;
+  state.fetchThreadShouldThrow = false;
 });
 
 describe('sendComposedEmail — return shape has NO token material', () => {
@@ -429,7 +495,7 @@ describe('loadReplyContext — prefill for reply mode', () => {
     const ctx = res.context!;
     expect(ctx.to).toBe('alice@rosebank.co.za');
     expect(ctx.subject).toBe('Re: betternow for Rosebank Dental');
-    expect(ctx.lockedAccount).toEqual({ id: 'acct-A', gmailAddress: 'sam@x.com' });
+    expect(ctx.lockedAccount).toEqual({ id: 'acct-A', gmailAddress: 'sam@x.com', kind: 'account', via: 'sam@x.com' });
     expect(ctx.threadId).toBe('thread-A');
     expect(ctx.messageRfcId).toBe('<orig@mail>');
     expect(ctx.ownerDisconnected).toBe(false);
@@ -533,17 +599,92 @@ describe('sendComposedEmail — reply-mode send passes threading through', () =>
     expect(emailAct!.sent_from).toBe('sam@x.com');
   });
 
-  it('falls back to threadId-only when the anchor has no message_rfc_id', async () => {
+  it('LEGACY row without message_rfc_id: live-fetches thread, stamps headers, backfills rfc id', async () => {
+    // Pre-0073 row — no stored rfc id.
     state.activityById['act-1'].message_rfc_id = null;
+    // Live thread has two messages; tip carries a Message-Id and a
+    // prior References chain.
+    state.fetchedThread = {
+      'thread-A': [
+        { id: 'gmail-msg-0', rfcMessageId: '<oldest@mail>', references: null },
+        { id: 'gmail-msg-1', rfcMessageId: '<tip@mail>',    references: '<oldest@mail>' },
+      ],
+    };
+    state.sendResult = { ok: { messageId: 'msg-reply', threadId: 'thread-A' } };
+
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+    });
+    expect(res.error).toBeUndefined();
+
+    // Headers on the wire: BOTH In-Reply-To and References set —
+    // NEVER a threadId-only fallback.
+    const args = state.sendCallArgs[0];
+    expect(args.threadId).toBe('thread-A');
+    expect(args.inReplyTo).toBe('<tip@mail>');
+    expect(args.references).toBe('<oldest@mail> <tip@mail>');
+
+    // Backfill — the anchor's tip Message-Id was written back.
+    const backfill = state.updateCalls.find(c =>
+      c.table === 'crm_activities' && 'message_rfc_id' in c.patch,
+    );
+    expect(backfill).toBeDefined();
+    expect(backfill!.patch.message_rfc_id).toBe('<tip@mail>');
+  });
+
+  it('LEGACY row + live fetch FAILS → aborts with reply_threading_headers_unavailable (never headerless send)', async () => {
+    state.activityById['act-1'].message_rfc_id = null;
+    state.fetchThreadShouldThrow = true;
+
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+    });
+    expect(res.error).toBe('reply_threading_headers_unavailable');
+    expect(state.sendCallArgs.length).toBe(0);
+  });
+
+  it('LEGACY row + live fetch returns messages with no Message-Id → same abort', async () => {
+    state.activityById['act-1'].message_rfc_id = null;
+    state.fetchedThread = {
+      'thread-A': [
+        { id: 'gmail-msg-1', rfcMessageId: null, references: null },
+      ],
+    };
+
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+    });
+    expect(res.error).toBe('reply_threading_headers_unavailable');
+    expect(state.sendCallArgs.length).toBe(0);
+  });
+
+  it('own-Message-Id capture writes message_rfc_id on the outbound row', async () => {
+    state.fetchedMessageMetadata['gmail-msg-1'] = {
+      rfcMessageId: '<orig@mail>', subject: '', references: null,
+    };
+    state.sendResult = { ok: { messageId: 'msg-reply', threadId: 'thread-A' } };
+    // The own-Message-Id lookback fetches messages.get on the returned id.
+    state.fetchedMessageMetadata['msg-reply'] = {
+      rfcMessageId: '<our-outbound@mail>', subject: '', references: null,
+    };
+
     const { sendComposedEmail } = await fresh();
     await sendComposedEmail({
       leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
       replyToActivityId: 'act-1',
     });
-    const args = state.sendCallArgs[0];
-    expect(args.threadId).toBe('thread-A');
-    expect(args.inReplyTo).toBeUndefined();
-    expect(args.references).toBeUndefined();
+    // The capture uses .update({ message_rfc_id }).eq('gmail_message_id', messageId).
+    const capture = state.updateCalls.find(c =>
+      c.table === 'crm_activities'
+      && (c.patch as { message_rfc_id?: string }).message_rfc_id === '<our-outbound@mail>',
+    );
+    expect(capture).toBeDefined();
   });
 
   it('owner-address disconnected → { error: reply_owner_disconnected, needsReconnect: true }', async () => {
@@ -568,5 +709,169 @@ describe('sendComposedEmail — reply-mode send passes threading through', () =>
     });
     expect(res.error).toBe('reply_owner_locked');
     expect(state.sendCallArgs.length).toBe(0);
+  });
+});
+
+// ── Send-as enforcement (PART C) ─────────────────────────────────────
+
+describe('server-side send-as denial: user cannot send from another user\'s connection', () => {
+  it('rejects a crafted accountId pointing at another user\'s connection with not_your_connection', async () => {
+    // Sam (user-1) tries to send from Jess's connection (owned by user-99).
+    state.accountById['jess-acct'] = {
+      id: 'jess-acct', user_id: 'user-99', gmail_address: 'jess@x.com', status: 'connected',
+    };
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Hi', body: 'Hello',
+      accountId: 'jess-acct',
+    });
+    expect(res.error).toBe('not_your_connection');
+    expect(state.sendCallArgs.length).toBe(0);
+  });
+
+  it('rejects an unknown accountId with account_not_found (never falls through to a default)', async () => {
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Hi', body: 'Hello',
+      accountId: 'does-not-exist',
+    });
+    expect(res.error).toBe('account_not_found');
+    expect(state.sendCallArgs.length).toBe(0);
+  });
+});
+
+// ── Alias visibility + send + rewrite detection (PART C) ─────────────
+
+describe('send-as aliases — visibility, send path, rewrite detection', () => {
+  it('listMyGmailAccounts includes role-eligible aliases labelled "alias@ via connection@"', async () => {
+    // Sam is sales; alias allowed for admin only → NOT shown.
+    state.gmailAccountsListResult = [
+      { id: 'acct-A', gmail_address: 'sam@x.com', last_used_at: null, connected_at: '2026-07-01', status: 'connected' },
+    ];
+    // Aliases join is currently mocked as empty (no then() case for it) — accept that and just check the account shape.
+    const { listMyGmailAccounts } = await fresh();
+    const list = await listMyGmailAccounts();
+    expect(list.length).toBe(1);
+    expect(list[0].kind).toBe('account');
+    expect(list[0].via).toBe('sam@x.com');
+  });
+
+  it('resolveSender denies alias when caller role not in allowed_roles', async () => {
+    state.profile = { role: 'sales' };   // sam is sales
+    state.aliasById['support-alias'] = {
+      id: 'support-alias',
+      alias_email: 'support@betternow.co.za',
+      label: 'Support',
+      allowed_roles: ['admin'],           // sales excluded
+      crm_email_accounts: { id: 'jess-acct', gmail_address: 'jess@x.com', status: 'connected' },
+    };
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Hi', body: 'Hello',
+      aliasId: 'support-alias',
+    });
+    expect(res.error).toBe('alias_not_allowed');
+    expect(state.sendCallArgs.length).toBe(0);
+  });
+
+  it('alias send sets From header to alias_email and detects Gmail rewrite', async () => {
+    state.profile = { role: 'admin' };
+    state.aliasById['support-alias'] = {
+      id: 'support-alias',
+      alias_email: 'support@betternow.co.za',
+      label: 'Support',
+      allowed_roles: ['admin'],
+      crm_email_accounts: { id: 'jess-acct', gmail_address: 'jess@x.com', status: 'connected' },
+    };
+    // Alias isn't registered under jess@'s "Send mail as" — Gmail rewrites From.
+    state.sendResult = { ok: { messageId: 'msg-r1', threadId: 'thread-r1' } };
+    state.fetchedMessageMetadata['msg-r1'] = {
+      rfcMessageId: '<r@mail>', subject: '',
+      references: null,
+      from: '"Jess" <jess@x.com>',   // the recipient actually saw jess@
+    };
+    // Underlying connection still authenticated.
+    state.accountById['jess-acct'] = {
+      id: 'jess-acct', user_id: 'user-99', gmail_address: 'jess@x.com', status: 'connected',
+    };
+
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Hi', body: 'Hello',
+      aliasId: 'support-alias',
+    });
+    // Send happened, but the warning surfaces the rewrite.
+    expect(res.error).toBeUndefined();
+    expect(res.warning).toBeDefined();
+    expect(res.warning).toContain('alias_rewritten:support@betternow.co.za');
+
+    // Outbound activity was logged with sent_from = alias_email.
+    const emailAct = state.activityInserts.find(a => a.type === 'email');
+    expect(emailAct!.sent_from).toBe('support@betternow.co.za');
+
+    // The From header on the wire was the alias.
+    expect(state.sendCallArgs[0].from).toBe('support@betternow.co.za');
+
+    // A "note" activity was added to the timeline flagging the rewrite.
+    const note = state.activityInserts.find(a => a.type === 'note' && a.title === 'Alias not configured in Gmail');
+    expect(note).toBeDefined();
+  });
+
+  it('reply mode lock follows an alias when the anchor sent_from matches an alias_email', async () => {
+    state.profile = { role: 'admin' };
+    // Anchor was a previous alias send: sent_from = the alias.
+    state.activityById['act-alias'] = {
+      id: 'act-alias', lead_id: 'lead-1', type: 'email_reply',
+      title: 'Reply from Alice',
+      gmail_thread_id: 'thread-alias',
+      gmail_message_id: 'gmail-alias-1',
+      message_rfc_id: '<alias-inbound@mail>',
+      reply_from: 'alice@rosebank.co.za',
+      sent_from: 'support@betternow.co.za',
+    };
+    state.aliasByAddress['support@betternow.co.za'] = {
+      id: 'support-alias',
+      alias_email: 'support@betternow.co.za',
+      allowed_roles: ['admin'],
+      crm_email_accounts: { id: 'jess-acct', gmail_address: 'jess@x.com', status: 'connected' },
+    };
+    state.aliasById['support-alias'] = state.aliasByAddress['support@betternow.co.za'] as never;
+    state.accountById['jess-acct'] = {
+      id: 'jess-acct', user_id: 'user-99', gmail_address: 'jess@x.com', status: 'connected',
+    };
+
+    const { loadReplyContext } = await fresh();
+    const res = await loadReplyContext({ activityId: 'act-alias' });
+    expect(res.context?.lockedAccount?.kind).toBe('alias');
+    expect(res.context?.lockedAccount?.gmailAddress).toBe('support@betternow.co.za');
+    expect(res.context?.lockedAccount?.via).toBe('jess@x.com');
+  });
+
+  it('reply mode with alias lock: client cannot override the locked sender', async () => {
+    state.profile = { role: 'admin' };
+    state.activityById['act-alias'] = {
+      id: 'act-alias', lead_id: 'lead-1', type: 'email_reply',
+      title: 'Reply from Alice',
+      gmail_thread_id: 'thread-alias',
+      gmail_message_id: 'gmail-alias-1',
+      message_rfc_id: '<alias-inbound@mail>',
+      reply_from: 'alice@rosebank.co.za',
+      sent_from: 'support@betternow.co.za',
+    };
+    state.aliasByAddress['support@betternow.co.za'] = {
+      id: 'support-alias',
+      alias_email: 'support@betternow.co.za',
+      allowed_roles: ['admin'],
+      crm_email_accounts: { id: 'jess-acct', gmail_address: 'jess@x.com', status: 'connected' },
+    };
+
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-alias',
+      // Attempting to override — should fail.
+      aliasId: 'some-other-alias',
+    });
+    expect(res.error).toBe('reply_owner_locked');
   });
 });

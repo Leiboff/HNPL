@@ -232,7 +232,9 @@ describe('composeEmail — accountId + sent_from + signature append', () => {
   });
 
   it('records sent_from on the crm_activities insert', () => {
-    expect(SRC).toMatch(/sent_from:\s*tokenRes\.account\.gmail_address/);
+    // Since 0074 sent_from can be an alias — the send path uses the
+    // sender resolver's fromEmail rather than the raw account address.
+    expect(SRC).toMatch(/sent_from:\s*sender\.fromEmail/);
   });
 
   it('updates last_used_at on the account after successful send', () => {

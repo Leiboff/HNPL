@@ -136,9 +136,14 @@ describe('composeEmail — reply-mode plumbing', () => {
   });
 
   it('reply mode passes threadId + inReplyTo + references to sendGmail', () => {
+    // Since the threading-fix pass (Part A of the follow-up),
+    // inReplyTo comes from resolveReplyThreadingHeaders — not
+    // directly from anchor.message_rfc_id — so legacy rows also get
+    // proper headers via a live thread fetch.
     expect(SRC).toMatch(/threadId:\s*anchor\?\.gmail_thread_id/);
-    expect(SRC).toMatch(/inReplyTo:\s*anchor\?\.message_rfc_id/);
+    expect(SRC).toMatch(/inReplyTo:\s*inReplyTo \?\? undefined/);
     expect(SRC).toMatch(/references:\s*priorReferences/);
+    expect(SRC).toMatch(/resolveReplyThreadingHeaders/);
   });
 
   it('rejects a client-supplied accountId that mismatches the thread owner', () => {

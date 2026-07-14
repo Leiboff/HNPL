@@ -39,6 +39,18 @@ export default async function GmailAccountsAdminPage() {
     .select('id, user_id, gmail_address, status, connected_at, last_used_at, last_polled_at, watch_expires_at')
     .order('connected_at', { ascending: false });
 
+  // Aliases, grouped by connection for the per-row manager.
+  const { data: aliases } = await s
+    .from('crm_sendas_aliases')
+    .select('id, connection_id, alias_email, label, allowed_roles, created_at');
+  const aliasesByConn: Record<string, Array<{ id: string; aliasEmail: string; label: string | null; allowedRoles: string[]; createdAt: string }>> = {};
+  for (const row of ((aliases ?? []) as Array<{ id: string; connection_id: string; alias_email: string; label: string | null; allowed_roles: string[]; created_at: string }>)) {
+    (aliasesByConn[row.connection_id] ||= []).push({
+      id: row.id, aliasEmail: row.alias_email, label: row.label,
+      allowedRoles: row.allowed_roles ?? [], createdAt: row.created_at,
+    });
+  }
+
   const userIds = Array.from(new Set(((rows ?? []) as Array<{ user_id: string }>).map(r => r.user_id)));
   const profiles: Record<string, { firstName: string | null; lastName: string | null; email: string | null }> = {};
   if (userIds.length > 0) {
@@ -66,6 +78,7 @@ export default async function GmailAccountsAdminPage() {
     lastUsedAt:     r.last_used_at,
     lastPolledAt:   r.last_polled_at,
     watchExpiresAt: r.watch_expires_at,
+    aliases:        aliasesByConn[r.id] ?? [],
   }));
 
   return (

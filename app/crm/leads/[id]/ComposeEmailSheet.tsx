@@ -121,12 +121,17 @@ export default function ComposeEmailSheet({
   function doSend() {
     if (!previewText) { doPreview(); return; }
     setMsg(null);
+    // Route the picked id to the right server param based on kind.
+    const picked  = accounts.find(a => a.id === accountId);
+    const lockKind = replyMode?.lockedAccount?.kind;
+    const kind    = replyMode ? (lockKind ?? picked?.kind ?? 'account') : (picked?.kind ?? 'account');
     startTransition(async () => {
       const res = await sendComposedEmail({
         leadId,
         subject: previewText.subject,
         body:    previewText.body,
-        accountId: accountId || undefined,
+        accountId: kind === 'account' ? (accountId || undefined) : undefined,
+        aliasId:   kind === 'alias'   ? (accountId || undefined) : undefined,
         omitSignature,
         replyToActivityId: replyMode?.activityId,
       });
@@ -139,7 +144,24 @@ export default function ComposeEmailSheet({
         });
         return;
       }
+      if (res.error === 'reply_threading_headers_unavailable') {
+        setMsg({
+          kind: 'err',
+          text: 'Could not resolve threading headers for this thread — try again in a moment, or open the conversation in Gmail if the problem persists.',
+        });
+        return;
+      }
       if (res.error) { setMsg({ kind: 'err', text: res.error }); return; }
+      if (res.warning && res.warning.startsWith('alias_rewritten:')) {
+        // Sent, but the recipient saw the underlying address. Tell the
+        // admin so they can register the alias in Gmail settings.
+        const [, expected, actual] = res.warning.split(':');
+        setMsg({
+          kind: 'err',
+          text: `Sent, but Gmail rewrote From from ${expected} to ${actual}. Register the alias under Gmail Settings → Accounts → Send mail as, then future sends will honour it.`,
+        });
+        return;
+      }
       setMsg({ kind: 'ok', text: 'Sent.' });
       setTimeout(onClose, 700);
     });
@@ -187,7 +209,13 @@ export default function ComposeEmailSheet({
               >
                 <div>
                   <span className="font-medium">Send from:</span>{' '}
-                  {replyMode.lockedAccount?.gmailAddress ?? '(no account)'}
+                  {replyMode.lockedAccount
+                    ? (
+                      replyMode.lockedAccount.kind === 'alias'
+                        ? `${replyMode.lockedAccount.gmailAddress} via ${replyMode.lockedAccount.via}`
+                        : replyMode.lockedAccount.gmailAddress
+                    )
+                    : '(no account)'}
                 </div>
                 <div className="text-[10px] text-gray-500">
                   Locked to the address that owns this thread.
@@ -213,7 +241,14 @@ export default function ComposeEmailSheet({
                   data-testid="compose-account-picker"
                 >
                   {noAccounts && <option value="">(no Gmail connected — go to Settings)</option>}
-                  {accounts.map(a => <option key={a.id} value={a.id}>{a.gmailAddress}{a.isDefault ? ' · default' : ''}</option>)}
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.kind === 'alias'
+                        ? `${a.label ? `${a.label} — ` : ''}${a.gmailAddress} via ${a.via}`
+                        : a.gmailAddress}
+                      {a.isDefault ? ' · default' : ''}
+                    </option>
+                  ))}
                 </select>
               </label>
             )}

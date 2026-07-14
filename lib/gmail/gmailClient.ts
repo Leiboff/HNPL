@@ -159,14 +159,27 @@ export async function saveGmailAccount(input: {
  * fallback. Callers should prefer passing accountId; passing only
  * userId is legacy behaviour that picks last_used_at (or connected_at
  * if never used).
+ *
+ * The `{ connectionId }` selector bypasses the user_id filter — used
+ * ONLY by alias sends where authorisation has already been granted
+ * by resolveSender (a role-in-allowed_roles check on the alias row).
  */
 type AccountSelector =
   | { userId: string; accountId: string }
   | { userId: string; gmailAddress: string }
-  | { userId: string };
+  | { userId: string }
+  | { connectionId: string };
 
 async function findAccount(sel: AccountSelector): Promise<GmailAccount | null> {
   const s = svc();
+  if ('connectionId' in sel) {
+    const { data } = await s
+      .from('crm_email_accounts')
+      .select('*')
+      .eq('id', sel.connectionId)
+      .maybeSingle();
+    return (data ?? null) as GmailAccount | null;
+  }
   let q = s.from('crm_email_accounts').select('*').eq('user_id', sel.userId);
   if ('accountId' in sel)      q = q.eq('id', sel.accountId);
   else if ('gmailAddress' in sel) q = q.ilike('gmail_address', sel.gmailAddress);

@@ -26,6 +26,96 @@ async function guardAdmin(): Promise<Guard> {
   return { ok: true, adminId: user.id };
 }
 
+export async function adminAddSendAsAlias(input: {
+  connectionId: string;
+  aliasEmail:   string;
+  label?:       string;
+  allowedRoles: Array<'sales' | 'admin'>;
+}): Promise<{ ok: boolean; error?: string; aliasId?: string }> {
+  const g = await guardAdmin();
+  if (!g.ok) return { ok: false, error: g.error };
+
+  const aliasEmail = (input.aliasEmail ?? '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(aliasEmail)) {
+    return { ok: false, error: 'invalid_email' };
+  }
+  const rolesSet = new Set(input.allowedRoles ?? []);
+  const roles = Array.from(rolesSet).filter(r => r === 'sales' || r === 'admin');
+  if (roles.length === 0) return { ok: false, error: 'no_roles' };
+
+  const s = svc();
+  const { data: existingConn } = await s
+    .from('crm_email_accounts')
+    .select('id')
+    .eq('id', input.connectionId)
+    .maybeSingle();
+  if (!existingConn) return { ok: false, error: 'connection_not_found' };
+
+  const { data: insertRow, error } = await s
+    .from('crm_sendas_aliases')
+    .insert({
+      connection_id: input.connectionId,
+      alias_email:   aliasEmail,
+      label:         (input.label ?? '').trim() || null,
+      allowed_roles: roles,
+      created_by:    g.adminId,
+    })
+    .select('id')
+    .single();
+  if (error) {
+    if (/duplicate key/i.test(error.message)) return { ok: false, error: 'alias_already_exists' };
+    return { ok: false, error: error.message };
+  }
+  const aliasId = (insertRow as { id: string } | null)?.id;
+
+  await s.from('crm_audit_log').insert({
+    actor_id:    g.adminId,
+    action:      'gmail_account.alias_added',
+    target_type: 'crm_email_account',
+    target_id:   input.connectionId,
+    details: {
+      alias_email: aliasEmail,
+      alias_id:    aliasId,
+      allowed_roles: roles,
+    },
+  });
+
+  revalidatePath('/crm/admin/gmail-accounts');
+  return { ok: true, aliasId };
+}
+
+export async function adminRemoveSendAsAlias(input: {
+  aliasId: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const g = await guardAdmin();
+  if (!g.ok) return { ok: false, error: g.error };
+
+  const s = svc();
+  const { data: alias } = await s
+    .from('crm_sendas_aliases')
+    .select('id, connection_id, alias_email')
+    .eq('id', input.aliasId)
+    .maybeSingle();
+  if (!alias) return { ok: false, error: 'not_found' };
+
+  const { error } = await s.from('crm_sendas_aliases').delete().eq('id', input.aliasId);
+  if (error) return { ok: false, error: error.message };
+
+  await s.from('crm_audit_log').insert({
+    actor_id:    g.adminId,
+    action:      'gmail_account.alias_removed',
+    target_type: 'crm_email_account',
+    target_id:   (alias as { connection_id: string }).connection_id,
+    details: {
+      alias_email: (alias as { alias_email: string }).alias_email,
+      alias_id:    input.aliasId,
+    },
+  });
+
+  revalidatePath('/crm/admin/gmail-accounts');
+  return { ok: true };
+}
+
 export async function adminRevokeGmailAccount(input: {
   accountId: string;
   reason?:   string;

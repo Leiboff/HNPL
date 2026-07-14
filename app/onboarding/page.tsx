@@ -29,7 +29,7 @@ export default async function OnboardingRouter() {
   const service = svc();
   const { data: profile } = await service
     .from('profiles')
-    .select('phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed')
+    .select('role, phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -37,6 +37,14 @@ export default async function OnboardingRouter() {
     // Trigger hasn't run yet — bounce to /dashboard which will settle
     // this on its next request (the auth-callback belt-and-braces
     // handles fresh Google users; email users always have a profile).
+    redirect('/dashboard');
+  }
+
+  // Non-patient roles never belong in patient onboarding. A sales
+  // user promoted from a stale patient profile could otherwise be
+  // dragged through phone / ID / credit steps that don't apply to
+  // them. Hand off to the role dispatcher.
+  if (profile.role && profile.role !== 'patient') {
     redirect('/dashboard');
   }
 
