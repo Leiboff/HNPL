@@ -420,6 +420,50 @@ async function main() {
       }
     }
 
+    // ── Scenario 8b: crm_email_accounts is deny-all to session clients
+    h1('Scenario 8b — crm_email_accounts RLS deny-all (session client SELECT + INSERT rejected)');
+    {
+      // Seed one row via the service-role client so there's SOMETHING
+      // for a session-client SELECT to potentially return if RLS were
+      // wrong.
+      await svc.from('crm_email_accounts').upsert({
+        user_id:            f.salesUserId,
+        gmail_address:      `${RUN_TAG}-tokens@test.example`,
+        refresh_token_enc:  'v1:AAAA:BBBB:CCCC',
+        access_token_cache: null,
+        connected_at:       new Date().toISOString(),
+        status:             'connected',
+      }, { onConflict: 'user_id' });
+
+      // Sales user's own session client. They should NOT be able to
+      // read their own row (deny-all) — the settings page reaches this
+      // table via the service-role client only.
+      const client = await userClient(f.salesUserId, `${RUN_TAG}-sales@test.example`);
+      const { data: probeSales, error: selErr } = await client
+        .from('crm_email_accounts').select('*').eq('user_id', f.salesUserId);
+      if (selErr && /permission denied/i.test(selErr.message)) {
+        ok(`Sales SELECT rejected by RLS: ${selErr.message}`);
+      } else if ((probeSales ?? []).length === 0) {
+        ok(`Sales SELECT returned 0 rows (RLS filtered)`);
+      } else {
+        bad(`Sales SELECT unexpectedly returned ${probeSales!.length} rows — RLS is not deny-all`);
+      }
+
+      // INSERT attempt via session client (using the sales user's id)
+      const { error: insErr } = await client
+        .from('crm_email_accounts')
+        .insert({
+          user_id:           f.salesUserId,
+          gmail_address:     `${RUN_TAG}-attack@test.example`,
+          refresh_token_enc: 'v1:XX:YY:ZZ',
+        });
+      if (insErr) ok(`Sales INSERT rejected: ${insErr.message}`);
+      else        bad(`Sales INSERT unexpectedly succeeded — RLS is not deny-all`);
+
+      // Cleanup the seeded row
+      await svc.from('crm_email_accounts').delete().eq('user_id', f.salesUserId);
+    }
+
     // ── Scenario 9: happy path onboarded flip ─────────────────────────
     h1('Scenario 9 — practice approval flips signed → onboarded');
     {

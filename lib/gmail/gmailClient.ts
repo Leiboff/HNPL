@@ -166,14 +166,31 @@ export async function getAccessToken(userId: string): Promise<{ accessToken: str
 
   // Refresh.
   try {
-    const refreshToken = decryptToken(account.refresh_token_enc);
-    const { accessToken, expiresAt } = await refreshAccessToken(refreshToken);
-    await s.from('crm_email_accounts')
-      .update({ access_token_cache: accessToken, access_token_expiry: expiresAt.toISOString() })
-      .eq('user_id', userId);
-    return { accessToken, account: { ...account, access_token_cache: accessToken, access_token_expiry: expiresAt.toISOString() } };
+    const decrypted = decryptToken(account.refresh_token_enc);
+    const { accessToken, expiresAt } = await refreshAccessToken(decrypted.plaintext);
+
+    // Self-heal: if the stored ciphertext opened under the legacy
+    // SA-ID key, re-encrypt under TOKEN_ENCRYPTION_KEY now that we've
+    // proven Google still honours this refresh token. Any failure to
+    // re-encrypt is non-fatal — the row stays on the legacy key and
+    // we'll try again next refresh.
+    const patch: Record<string, unknown> = {
+      access_token_cache:  accessToken,
+      access_token_expiry: expiresAt.toISOString(),
+    };
+    if (decrypted.usedLegacyKey) {
+      try {
+        patch.refresh_token_enc = encryptToken(decrypted.plaintext);
+      } catch (reEncErr) {
+        console.warn('[getAccessToken] re-encrypt under primary key failed', reEncErr);
+      }
+    }
+
+    await s.from('crm_email_accounts').update(patch).eq('user_id', userId);
+    return { accessToken, account: { ...account, ...patch } as GmailAccount };
   } catch (err) {
     // Google revoked or key rotated — flag for reconnect.
+    console.warn('[getAccessToken] refresh failed', err);
     await s.from('crm_email_accounts').update({ status: 'reauth_required' }).eq('user_id', userId);
     return { error: 'gmail_reauth_required' };
   }
@@ -184,11 +201,11 @@ export async function revokeGmailAccount(userId: string): Promise<{ error?: stri
   const { data } = await s.from('crm_email_accounts').select('refresh_token_enc').eq('user_id', userId).maybeSingle();
   if (data?.refresh_token_enc) {
     try {
-      const refreshToken = decryptToken(data.refresh_token_enc as string);
+      const { plaintext } = decryptToken(data.refresh_token_enc as string);
       await fetch(REVOKE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body:    new URLSearchParams({ token: refreshToken }),
+        body:    new URLSearchParams({ token: plaintext }),
       }).catch(() => { /* revocation is best-effort */ });
     } catch { /* corrupt token — proceed to delete */ }
   }

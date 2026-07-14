@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import GmailConnectionCard from './GmailConnectionCard';
+import { toClientSafeGmailAccount } from './gmailAccountProjection';
 
 // ─── /crm/settings — per-user CRM setup ───────────────────────────────
 //
@@ -50,11 +51,7 @@ export default async function CrmSettingsPage({
       </div>
 
       <GmailConnectionCard
-        account={account ? {
-          gmailAddress: account.gmail_address as string,
-          status:       account.status as 'connected' | 'reauth_required' | 'revoked',
-          connectedAt:  account.connected_at as string,
-        } : null}
+        account={toClientSafeGmailAccount(account)}
         connectedFlag={params.connected ?? null}
         errorFlag={params.error ?? null}
       />

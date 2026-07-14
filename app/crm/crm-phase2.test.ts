@@ -60,18 +60,43 @@ describe('0071 — crm_email_accounts + templates + activities extension', () =>
 
 // ── Token encryption ──────────────────────────────────────────────
 
-describe('token encryption reuse', () => {
-  it('lib/crypto/tokenEncryption wraps the existing AES-256-GCM helper', () => {
+describe('token encryption — dedicated key + legacy fallback', () => {
+  it('lib/crypto/tokenEncryption keys off TOKEN_ENCRYPTION_KEY (not the SA-ID key)', () => {
     const src = read('lib/crypto/tokenEncryption.ts');
-    expect(src).toMatch(/from\s+['"]@\/lib\/idEncryption['"]/);
+    expect(src).toMatch(/PRIMARY_KEY_ENV\s*=\s*['"]TOKEN_ENCRYPTION_KEY['"]/);
+    expect(src).toMatch(/LEGACY_KEY_ENV\s*=\s*['"]SA_ID_ENCRYPTION_KEY['"]/);
     expect(src).toMatch(/export function encryptToken/);
     expect(src).toMatch(/export function decryptToken/);
+    // The dedicated module does NOT depend on lib/idEncryption anymore.
+    expect(src).not.toMatch(/from\s+['"]@\/lib\/idEncryption['"]/);
+  });
+
+  it('encryptToken always writes under the primary key (no legacy path on write)', () => {
+    const src = read('lib/crypto/tokenEncryption.ts');
+    expect(src).toMatch(/export function encryptToken[\s\S]*?getPrimaryKey\(\)/);
+    // encryptToken must not consult the legacy key on the write path.
+    const enc = src.match(/export function encryptToken[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(enc).not.toMatch(/getLegacyKey/);
+  });
+
+  it('decryptToken returns { plaintext, usedLegacyKey } and logs a warning on legacy path', () => {
+    const src = read('lib/crypto/tokenEncryption.ts');
+    expect(src).toMatch(/DecryptResult/);
+    expect(src).toMatch(/usedLegacyKey/);
+    expect(src).toMatch(/console\.warn\([\s\S]*?legacy SA_ID_ENCRYPTION_KEY/);
+  });
+
+  it('gmailClient re-encrypts under the primary key on successful refresh (self-heal)', () => {
+    const src = read('lib/gmail/gmailClient.ts');
+    // decryptToken now returns an object with .plaintext / .usedLegacyKey
+    expect(src).toMatch(/decryptToken\s*\(\s*account\.refresh_token_enc\s*\)/);
+    expect(src).toMatch(/decrypted\.usedLegacyKey/);
+    expect(src).toMatch(/refresh_token_enc\s*=\s*encryptToken\s*\(\s*decrypted\.plaintext\s*\)/);
   });
 
   it('the Gmail client uses encryptToken on save and NEVER exposes plaintext to callers', () => {
     const src = read('lib/gmail/gmailClient.ts');
     expect(src).toMatch(/import\s*\{[\s\S]*?encryptToken[\s\S]*?decryptToken[\s\S]*?\}\s*from\s+['"]@\/lib\/crypto\/tokenEncryption['"]/);
-    // saveGmailAccount encrypts the refresh token before insert
     expect(src).toMatch(/encryptToken\s*\(\s*input\.refreshToken\s*\)/);
   });
 });
