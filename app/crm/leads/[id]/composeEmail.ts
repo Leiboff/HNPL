@@ -3,8 +3,9 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { getAccessToken, sendGmail } from '@/lib/gmail/gmailClient';
+import { getAccessToken, sendGmail, fetchMessageMetadata } from '@/lib/gmail/gmailClient';
 import { substituteMergeFields } from '@/lib/gmail/mergeFields';
+import { prefixReSubject, deriveSubjectFromOutboundTitle } from '@/lib/gmail/replySubject';
 import {
   applySignatureMergeFields,
   composeWithSignature,
@@ -16,10 +17,9 @@ import {
 
 // ─── Compose + send + list templates + list accounts ─────────────────
 //
-// Since 0072: sales/admin users may connect several Gmail addresses.
-// Compose accepts an accountId; if omitted, the user's most-recently-
-// used connection is picked (last_used_at desc, connected_at fallback).
-// Signature is auto-appended (per-send toggle to omit).
+// Since 0072: multiple Gmail addresses per user.
+// Since 0073: reply mode — replying to a timeline activity lands in
+// the same Gmail thread with proper In-Reply-To / References headers.
 
 function svc() {
   return createServiceClient(
@@ -185,7 +185,149 @@ async function buildSignatureForUser(
   };
 }
 
-// ─── sendComposedEmail — actually send via Gmail + log activity ─────
+// ─── Reply mode: prefill context ─────────────────────────────────────
+
+export type ReplyContext = {
+  activityId:      string;
+  leadId:          string;
+  threadId:        string | null;
+  /** Present when the anchor row has a captured RFC Message-Id; falls
+   *  back to threadId-only sends when null. */
+  messageRfcId:    string | null;
+  /** Prior References string, if any — passed through when we compose. */
+  references:      string | null;
+  /** Where the reply goes. */
+  to:              string;
+  /** Subject with "Re: " prefixed unless already present (case-insensitive). */
+  subject:         string;
+  /** The account that owns the thread (must be used to send). */
+  lockedAccount: {
+    id:            string;
+    gmailAddress:  string;
+  } | null;
+  /** Set when the account that owns the thread is no longer connected —
+   *  the UI must NOT silently fall back to a different address. */
+  ownerDisconnected: boolean;
+};
+
+/**
+ * Resolve everything the compose sheet needs to open in reply mode
+ * against a specific timeline activity. Sales/admin-guarded; returns
+ * an error string on any failure. Never surfaces token material.
+ */
+export async function loadReplyContext(input: {
+  activityId: string;
+}): Promise<{ context?: ReplyContext; error?: string }> {
+  const g = await guardSalesOrAdmin();
+  if (!g.ok) return { error: g.error };
+
+  const s = svc();
+  const { data } = await s
+    .from('crm_activities')
+    .select('id, lead_id, type, title, gmail_thread_id, gmail_message_id, message_rfc_id, reply_from, sent_from')
+    .eq('id', input.activityId)
+    .maybeSingle();
+  const activity = (data ?? null) as {
+    id: string;
+    lead_id: string;
+    type: string;
+    title: string | null;
+    gmail_thread_id: string | null;
+    gmail_message_id: string | null;
+    message_rfc_id: string | null;
+    reply_from: string | null;
+    sent_from: string | null;
+  } | null;
+  if (!activity) return { error: 'activity_not_found' };
+  if (activity.type !== 'email' && activity.type !== 'email_reply') {
+    return { error: 'not_replyable' };
+  }
+  if (!activity.gmail_thread_id) return { error: 'thread_missing' };
+
+  // Anchor recipient — depends on which side of the conversation the
+  // anchor sits on.
+  const { data: leadRow } = await s
+    .from('crm_leads')
+    .select('email')
+    .eq('id', activity.lead_id)
+    .maybeSingle();
+  const leadEmail = (leadRow?.email as string | null) ?? null;
+
+  let to: string | null;
+  if (activity.type === 'email_reply') {
+    to = activity.reply_from || leadEmail;
+  } else {
+    to = leadEmail;
+  }
+  if (!to) return { error: 'no_recipient' };
+
+  // Find the connected account that owns this thread. The reply MUST
+  // go out from the same address — otherwise Gmail creates a new
+  // thread for the counterparty and threading breaks for them.
+  const ownerAddress = activity.sent_from;
+  let lockedAccount: ReplyContext['lockedAccount'] = null;
+  let ownerDisconnected = false;
+  if (ownerAddress) {
+    const { data: acct } = await s
+      .from('crm_email_accounts')
+      .select('id, gmail_address, status')
+      .eq('user_id', g.userId)
+      .ilike('gmail_address', ownerAddress)
+      .maybeSingle();
+    const row = (acct ?? null) as { id: string; gmail_address: string; status: string } | null;
+    if (row && row.status === 'connected') {
+      lockedAccount = { id: row.id, gmailAddress: row.gmail_address };
+    } else {
+      ownerDisconnected = true;
+    }
+  } else {
+    // Very old rows with no sent_from — no thread owner recorded. Fall
+    // back to the user's default account; the UI still shows it as
+    // locked to that address.
+    const { data: acct } = await s
+      .from('crm_email_accounts')
+      .select('id, gmail_address, status, last_used_at, connected_at')
+      .eq('user_id', g.userId)
+      .eq('status', 'connected')
+      .order('last_used_at', { ascending: false, nullsFirst: false })
+      .order('connected_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const row = (acct ?? null) as { id: string; gmail_address: string } | null;
+    if (row) lockedAccount = { id: row.id, gmailAddress: row.gmail_address };
+  }
+
+  // Subject: derive from the anchor's title if possible, else from
+  // Gmail metadata (subject header). Prefix "Re: " idempotently.
+  let subject = deriveSubjectFromOutboundTitle(activity.title) ?? '';
+  if (!subject && lockedAccount && activity.gmail_message_id) {
+    // Best-effort: reach into Gmail to fetch the anchor's Subject header.
+    // If the token refresh fails, fall through with an empty subject
+    // (the user can type one).
+    const tokenRes = await getAccessToken({ userId: g.userId, accountId: lockedAccount.id });
+    if ('accessToken' in tokenRes) {
+      const meta = await fetchMessageMetadata(tokenRes.accessToken, activity.gmail_message_id).catch(() => null);
+      if (meta?.subject) subject = meta.subject;
+    }
+  }
+  subject = prefixReSubject(subject);
+
+  return {
+    context: {
+      activityId:        activity.id,
+      leadId:            activity.lead_id,
+      threadId:          activity.gmail_thread_id,
+      messageRfcId:      activity.message_rfc_id,
+      references:        null,   // References chain is passed through inside the send action from the anchor row.
+      to,
+      subject,
+      lockedAccount,
+      ownerDisconnected,
+    },
+  };
+}
+
+// ─── sendComposedEmail — Gmail send + activity log ─────────────────
 
 export async function sendComposedEmail(input: {
   leadId:         string;
@@ -193,6 +335,9 @@ export async function sendComposedEmail(input: {
   body:           string;
   accountId?:     string;
   omitSignature?: boolean;
+  /** Present in reply mode. When set the account is enforced against
+   *  the anchor's sent_from — any mismatch is rejected. */
+  replyToActivityId?: string;
 }): Promise<{ error?: string; needsReconnect?: boolean }> {
   const g = await guardSalesOrAdmin();
   if (!g.ok) return { error: g.error };
@@ -204,20 +349,94 @@ export async function sendComposedEmail(input: {
     .eq('id', input.leadId)
     .maybeSingle();
   if (!lead) return { error: 'lead_not_found' };
-  if (!lead.email) return { error: 'lead_has_no_email' };
+
+  const s = svc();
+
+  // ── Reply-mode context lookup ────────────────────────────────────
+  //
+  // In reply mode we override the recipient with the anchor's
+  // counterparty and lock the send account to the thread owner.
+  // Threading headers are derived from the anchor row.
+  type ReplyAnchor = {
+    id: string;
+    lead_id: string;
+    gmail_thread_id: string | null;
+    gmail_message_id: string | null;
+    message_rfc_id: string | null;
+    reply_from: string | null;
+    sent_from: string | null;
+    type: string;
+  };
+  let anchor: ReplyAnchor | null = null;
+  let priorReferences: string | null = null;
+  if (input.replyToActivityId) {
+    const { data } = await s
+      .from('crm_activities')
+      .select('id, lead_id, gmail_thread_id, gmail_message_id, message_rfc_id, reply_from, sent_from, type')
+      .eq('id', input.replyToActivityId)
+      .maybeSingle();
+    anchor = (data ?? null) as ReplyAnchor | null;
+    if (!anchor) return { error: 'reply_anchor_not_found' };
+    if (anchor.lead_id !== lead.id) return { error: 'reply_anchor_mismatched_lead' };
+    if (!anchor.gmail_thread_id) return { error: 'reply_anchor_no_thread' };
+
+    // References: pull from the anchor's live Gmail metadata if we
+    // have the message id. Missing metadata → fall back to just
+    // In-Reply-To (Gmail-side threading still works via threadId).
+    // We attempt this only when the anchor has a rfc id — otherwise
+    // there's no header to build a References chain around anyway.
+  }
+
+  // Compute recipient: reply mode overrides.
+  let recipient: string | null = lead.email;
+  if (anchor) {
+    recipient = anchor.type === 'email_reply' ? (anchor.reply_from || lead.email) : lead.email;
+  }
+  if (!recipient) return { error: 'lead_has_no_email' };
+
+  // Compute account selector: reply mode locks to the thread owner.
+  let selector: Parameters<typeof getAccessToken>[0];
+  if (anchor) {
+    if (!anchor.sent_from) return { error: 'reply_anchor_owner_unknown' };
+    // Confirm the anchor's owning address is still connected for this user.
+    const { data: acct } = await s
+      .from('crm_email_accounts')
+      .select('id, status')
+      .eq('user_id', g.userId)
+      .ilike('gmail_address', anchor.sent_from)
+      .maybeSingle();
+    const row = (acct ?? null) as { id: string; status: string } | null;
+    if (!row || row.status !== 'connected') {
+      return { error: 'reply_owner_disconnected', needsReconnect: true };
+    }
+    // Guard against the client trying to override the account.
+    if (input.accountId && input.accountId !== row.id) {
+      return { error: 'reply_owner_locked' };
+    }
+    selector = { userId: g.userId, accountId: row.id };
+  } else {
+    selector = input.accountId
+      ? { userId: g.userId, accountId: input.accountId }
+      : { userId: g.userId };
+  }
 
   const { data: me } = await supabase.from('profiles').select('first_name, last_name').eq('id', g.userId).single();
   const fromName = [me?.first_name, me?.last_name].filter(Boolean).join(' ') || 'betternow';
 
-  const selector = input.accountId
-    ? { userId: g.userId, accountId: input.accountId }
-    : { userId: g.userId };
   const tokenRes = await getAccessToken(selector);
   if ('error' in tokenRes) {
     if (tokenRes.error === 'gmail_not_connected' || tokenRes.error === 'gmail_reauth_required') {
       return { error: tokenRes.error, needsReconnect: true };
     }
     return { error: tokenRes.error };
+  }
+
+  // Pull the anchor's prior References from Gmail metadata if we're
+  // replying and we have the rfc id — this happens AFTER token refresh
+  // so we don't need to re-authenticate.
+  if (anchor && anchor.message_rfc_id && anchor.gmail_message_id) {
+    const meta = await fetchMessageMetadata(tokenRes.accessToken, anchor.gmail_message_id).catch(() => null);
+    if (meta?.references) priorReferences = meta.references;
   }
 
   const sig = input.omitSignature ? null : await buildSignatureForUser(g.userId);
@@ -233,15 +452,17 @@ export async function sendComposedEmail(input: {
       accessToken: tokenRes.accessToken,
       from:        tokenRes.account.gmail_address,
       fromName,
-      to:          lead.email,
+      to:          recipient,
       subject:     input.subject,
       bodyText:    composed.bodyText,
       bodyHtml:    composed.bodyHtml || undefined,
+      threadId:    anchor?.gmail_thread_id ?? undefined,
+      inReplyTo:   anchor?.message_rfc_id ?? undefined,
+      references:  priorReferences ?? undefined,
     });
 
-    // Log activity via service-role so the insert lands regardless of
-    // RLS drift. If we sent an email we MUST have a row.
-    const s = svc();
+    // Log the outbound activity — same thread id so subsequent inbound
+    // replies keep matching this lead.
     await s.from('crm_activities').insert({
       lead_id:          lead.id,
       type:             'email',
@@ -253,6 +474,21 @@ export async function sendComposedEmail(input: {
       gmail_message_id: messageId,
       sent_from:        tokenRes.account.gmail_address,
     });
+
+    // Best-effort: capture our OWN Message-Id header via a metadata
+    // lookback so future replies-to-us can stamp In-Reply-To. Failure
+    // is non-fatal — send succeeded; the row just lacks message_rfc_id
+    // and the reply-mode UI degrades to threadId-only.
+    fetchMessageMetadata(tokenRes.accessToken, messageId)
+      .then(async (meta) => {
+        if (meta?.rfcMessageId) {
+          await s.from('crm_activities')
+            .update({ message_rfc_id: meta.rfcMessageId })
+            .eq('gmail_message_id', messageId);
+        }
+      })
+      .catch(err => console.warn('[sendComposedEmail] own message-id capture failed', err));
+
     await s.from('crm_email_accounts')
       .update({ last_used_at: new Date().toISOString() })
       .eq('id', tokenRes.account.id);
@@ -262,7 +498,6 @@ export async function sendComposedEmail(input: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'send_failed';
     if (/401|invalid_grant|Invalid Credentials/i.test(msg)) {
-      const s = svc();
       await s.from('crm_email_accounts')
         .update({ status: 'reauth_required' })
         .eq('id', tokenRes.account.id);

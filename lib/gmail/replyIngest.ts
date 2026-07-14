@@ -80,8 +80,25 @@ export async function ingestOneMessage(
     gmail_message_id: message.id,
     created_by:       account.user_id,
     sent_from:        account.gmail_address,
+    // Since 0073: capture the raw From address and the RFC Message-Id
+    // so a CRM-side reply can prefill "To:" and stamp In-Reply-To.
+    reply_from:       extractEmailAddress(message.from),
+    message_rfc_id:   message.rfcMessageId,
   });
   return 'inserted';
+}
+
+/**
+ * Extract the bare email address from an RFC 5322 From header (e.g.
+ * `"Alice Smith" <alice@example.com>` → `alice@example.com`).
+ * Returns the input unchanged if no angle-bracketed address is found.
+ */
+export function extractEmailAddress(rawFrom: string): string {
+  if (!rawFrom) return '';
+  const m = rawFrom.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/);
+  if (m) return m[1].trim();
+  const bare = rawFrom.trim();
+  return /@/.test(bare) ? bare : rawFrom;
 }
 
 /**

@@ -12,6 +12,18 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 type LeadRow = { id: string; practice_name: string; email: string | null; contact_first_name: string; contact_last_name: string; };
 
+type ActivityRow = {
+  id: string;
+  lead_id: string;
+  type: string;
+  title: string | null;
+  gmail_thread_id: string | null;
+  gmail_message_id: string | null;
+  message_rfc_id: string | null;
+  reply_from: string | null;
+  sent_from: string | null;
+};
+
 const state: {
   profile:     { role: string; first_name?: string | null; last_name?: string | null } | null;
   lead:        LeadRow | null;
@@ -24,6 +36,9 @@ const state: {
   signatureRow: { display_name: string; title: string; phone: string; email: string; html_override: string | null; text_fallback: string | null } | null;
   sendCallArgs: Array<Record<string, unknown>>;
   updateCalls: Array<{ table: string; patch: Record<string, unknown> }>;
+  activityById: Record<string, ActivityRow>;
+  accountByAddress: Record<string, { id: string; gmail_address: string; status: string }>;
+  fetchedMessageMetadata: Record<string, { rfcMessageId: string | null; subject: string; references: string | null } | null>;
 } = {
   profile:     { role: 'sales', first_name: 'Sam', last_name: 'S.' },
   lead:        null,
@@ -36,6 +51,9 @@ const state: {
   signatureRow: null,
   sendCallArgs: [],
   updateCalls: [],
+  activityById: {},
+  accountByAddress: {},
+  fetchedMessageMetadata: {},
 };
 
 // Session-client mock (createClient from lib/supabase/server)
@@ -72,19 +90,33 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from(table: string) {
-      // Chainable stub. Each terminal accessor returns { data, error }.
+      // Track the chain's filter state so maybeSingle() can look up
+      // the right row when tests seed activityById / accountByAddress.
+      const filters: { eqById: string | null; ilikeAddress: string | null; limitOne: boolean } =
+        { eqById: null, ilikeAddress: null, limitOne: false };
+
       const chain: {
         select(): typeof chain;
-        eq(): typeof chain;
+        eq(col: string, val: unknown): typeof chain;
+        ilike(col: string, val: string): typeof chain;
         order(): typeof chain;
+        limit(n: number): typeof chain;
         update(patch: Record<string, unknown>): { eq: (...args: unknown[]) => Promise<{ error: null }> };
         insert(row: Record<string, unknown>): Promise<{ error: null }>;
         maybeSingle(): Promise<{ data: unknown; error: null }>;
         then?: (fn: (r: unknown) => unknown) => unknown;
       } = {
         select() { return chain; },
-        eq()     { return chain; },
+        eq(col, val) {
+          if (col === 'id') filters.eqById = String(val);
+          return chain;
+        },
+        ilike(col, val) {
+          if (col === 'gmail_address') filters.ilikeAddress = String(val).toLowerCase();
+          return chain;
+        },
         order()  { return chain; },
+        limit(_n) { filters.limitOne = true; return chain; },
         update(patch) {
           return { eq: async () => { state.updateCalls.push({ table, patch }); return { error: null }; } };
         },
@@ -93,7 +125,23 @@ vi.mock('@supabase/supabase-js', () => ({
           return { error: null };
         },
         maybeSingle: async () => {
-          if (table === 'crm_signatures') return { data: state.signatureRow, error: null };
+          if (table === 'crm_signatures')   return { data: state.signatureRow, error: null };
+          if (table === 'crm_activities' && filters.eqById) {
+            return { data: state.activityById[filters.eqById] ?? null, error: null };
+          }
+          if (table === 'crm_leads' && filters.eqById) {
+            // Reply-mode recipient lookup — service-role side.
+            return { data: state.lead && state.lead.id === filters.eqById
+              ? { id: state.lead.id, email: state.lead.email }
+              : null, error: null };
+          }
+          if (table === 'crm_email_accounts' && filters.ilikeAddress) {
+            return { data: state.accountByAddress[filters.ilikeAddress] ?? null, error: null };
+          }
+          if (table === 'crm_email_accounts' && filters.limitOne) {
+            const first = state.gmailAccountsListResult[0] ?? null;
+            return { data: first, error: null };
+          }
           return { data: null, error: null };
         },
       };
@@ -122,6 +170,22 @@ vi.mock('@/lib/gmail/gmailClient', () => ({
       throw new Error(String(e));
     }
     return state.sendResult.ok;
+  },
+  fetchMessageMetadata: async (_token: string, messageId: string) => {
+    const m = state.fetchedMessageMetadata[messageId] ?? null;
+    if (!m) return null;
+    return {
+      id:           messageId,
+      threadId:     'thread-x',
+      labelIds:     [],
+      internalDate: '0',
+      from:         '',
+      snippet:      '',
+      rfcMessageId: m.rfcMessageId,
+      subject:      m.subject,
+      references:   m.references,
+      inReplyTo:    null,
+    };
   },
 }));
 
@@ -157,6 +221,9 @@ beforeEach(() => {
   state.signatureRow = null;
   state.sendCallArgs = [];
   state.updateCalls  = [];
+  state.activityById = {};
+  state.accountByAddress = {};
+  state.fetchedMessageMetadata = {};
 });
 
 describe('sendComposedEmail — return shape has NO token material', () => {
@@ -325,5 +392,181 @@ describe('previewCompose — pure merge, no token material', () => {
     const res = await previewCompose({ leadId: 'gone', subject: 's', body: 'b' });
     expect(res.error).toBe('lead_not_found');
     assertNoTokenMaterial(res);
+  });
+});
+
+// ── Reply mode ──────────────────────────────────────────────────────
+
+describe('loadReplyContext — prefill for reply mode', () => {
+  beforeEach(() => {
+    state.accountByAddress['sam@x.com'] = {
+      id: 'acct-A', gmail_address: 'sam@x.com', status: 'connected',
+    };
+  });
+
+  it('email_reply anchor → To = reply_from, subject "Re: …" idempotent, sender locked to sent_from', async () => {
+    state.activityById['act-1'] = {
+      id: 'act-1',
+      lead_id: 'lead-1',
+      type: 'email_reply',
+      title: 'Reply from Alice',
+      gmail_thread_id: 'thread-A',
+      gmail_message_id: 'gmail-msg-1',
+      message_rfc_id: '<orig@mail>',
+      reply_from: 'alice@rosebank.co.za',
+      sent_from: 'sam@x.com',
+    };
+    // Anchor has no derivable subject (title is "Reply from ..."). We
+    // fall through to fetchMessageMetadata for the subject header.
+    state.fetchedMessageMetadata['gmail-msg-1'] = {
+      rfcMessageId: '<orig@mail>',
+      subject: 'betternow for Rosebank Dental',
+      references: null,
+    };
+    const { loadReplyContext } = await fresh();
+    const res = await loadReplyContext({ activityId: 'act-1' });
+    expect(res.error).toBeUndefined();
+    const ctx = res.context!;
+    expect(ctx.to).toBe('alice@rosebank.co.za');
+    expect(ctx.subject).toBe('Re: betternow for Rosebank Dental');
+    expect(ctx.lockedAccount).toEqual({ id: 'acct-A', gmailAddress: 'sam@x.com' });
+    expect(ctx.threadId).toBe('thread-A');
+    expect(ctx.messageRfcId).toBe('<orig@mail>');
+    expect(ctx.ownerDisconnected).toBe(false);
+    assertNoTokenMaterial(res);
+  });
+
+  it('sent email anchor → To = lead.email, Re: prefix idempotent from title', async () => {
+    state.activityById['act-2'] = {
+      id: 'act-2',
+      lead_id: 'lead-1',
+      type: 'email',
+      title: 'Email sent: Re: hello there',  // note already prefixed
+      gmail_thread_id: 'thread-B',
+      gmail_message_id: 'gmail-msg-2',
+      message_rfc_id: '<me@mail>',
+      reply_from: null,
+      sent_from: 'sam@x.com',
+    };
+    const { loadReplyContext } = await fresh();
+    const res = await loadReplyContext({ activityId: 'act-2' });
+    const ctx = res.context!;
+    expect(ctx.to).toBe('alice@rosebank.co.za');   // lead.email fixture
+    expect(ctx.subject).toBe('Re: hello there');    // idempotent — not "Re: Re: …"
+    expect(ctx.lockedAccount?.gmailAddress).toBe('sam@x.com');
+  });
+
+  it('anchor owner disconnected → ownerDisconnected=true, lockedAccount=null', async () => {
+    state.activityById['act-3'] = {
+      id: 'act-3',
+      lead_id: 'lead-1',
+      type: 'email_reply',
+      title: 'Reply from Alice',
+      gmail_thread_id: 'thread-C',
+      gmail_message_id: 'msg-3',
+      message_rfc_id: '<x@mail>',
+      reply_from: 'alice@rosebank.co.za',
+      sent_from: 'orphan@x.com',   // no matching account in accountByAddress
+    };
+    const { loadReplyContext } = await fresh();
+    const res = await loadReplyContext({ activityId: 'act-3' });
+    expect(res.context!.ownerDisconnected).toBe(true);
+    expect(res.context!.lockedAccount).toBeNull();
+  });
+
+  it('not-replyable activity type (note) → error', async () => {
+    state.activityById['act-4'] = {
+      id: 'act-4', lead_id: 'lead-1', type: 'note',
+      title: 'A note', gmail_thread_id: null, gmail_message_id: null,
+      message_rfc_id: null, reply_from: null, sent_from: null,
+    };
+    const { loadReplyContext } = await fresh();
+    const res = await loadReplyContext({ activityId: 'act-4' });
+    expect(res.error).toBe('not_replyable');
+  });
+
+  it('missing activity → activity_not_found', async () => {
+    const { loadReplyContext } = await fresh();
+    const res = await loadReplyContext({ activityId: 'nope' });
+    expect(res.error).toBe('activity_not_found');
+  });
+});
+
+describe('sendComposedEmail — reply-mode send passes threading through', () => {
+  beforeEach(() => {
+    state.accountByAddress['sam@x.com'] = {
+      id: 'acct-A', gmail_address: 'sam@x.com', status: 'connected',
+    };
+    state.activityById['act-1'] = {
+      id: 'act-1', lead_id: 'lead-1', type: 'email_reply',
+      title: 'Reply from Alice',
+      gmail_thread_id: 'thread-A',
+      gmail_message_id: 'gmail-msg-1',
+      message_rfc_id: '<orig@mail>',
+      reply_from: 'alice@rosebank.co.za',
+      sent_from: 'sam@x.com',
+    };
+  });
+
+  it('threadId + inReplyTo + references reach sendGmail', async () => {
+    state.fetchedMessageMetadata['gmail-msg-1'] = {
+      rfcMessageId: '<orig@mail>',
+      subject: '',
+      references: '<earlier-a@mail> <earlier-b@mail>',
+    };
+    // Gmail returns the same thread id we asked for.
+    state.sendResult = { ok: { messageId: 'msg-reply', threadId: 'thread-A' } };
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+    });
+    expect(state.sendCallArgs.length).toBe(1);
+    const args = state.sendCallArgs[0];
+    expect(args.threadId).toBe('thread-A');
+    expect(args.inReplyTo).toBe('<orig@mail>');
+    expect(args.references).toBe('<earlier-a@mail> <earlier-b@mail>');
+    expect(args.to).toBe('alice@rosebank.co.za');
+    // Logged activity carries the Gmail-returned thread id + sent_from.
+    const emailAct = state.activityInserts.find(a => a.type === 'email');
+    expect(emailAct!.gmail_thread_id).toBe('thread-A');
+    expect(emailAct!.sent_from).toBe('sam@x.com');
+  });
+
+  it('falls back to threadId-only when the anchor has no message_rfc_id', async () => {
+    state.activityById['act-1'].message_rfc_id = null;
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+    });
+    const args = state.sendCallArgs[0];
+    expect(args.threadId).toBe('thread-A');
+    expect(args.inReplyTo).toBeUndefined();
+    expect(args.references).toBeUndefined();
+  });
+
+  it('owner-address disconnected → { error: reply_owner_disconnected, needsReconnect: true }', async () => {
+    delete state.accountByAddress['sam@x.com'];
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+    });
+    expect(res.error).toBe('reply_owner_disconnected');
+    expect(res.needsReconnect).toBe(true);
+    // No send attempted.
+    expect(state.sendCallArgs.length).toBe(0);
+  });
+
+  it('rejects a mismatched accountId (client cannot override the locked sender)', async () => {
+    const { sendComposedEmail } = await fresh();
+    const res = await sendComposedEmail({
+      leadId: 'lead-1', subject: 'Re: hello', body: 'thanks!',
+      replyToActivityId: 'act-1',
+      accountId: 'acct-DIFFERENT',
+    });
+    expect(res.error).toBe('reply_owner_locked');
+    expect(state.sendCallArgs.length).toBe(0);
   });
 });

@@ -307,12 +307,24 @@ export type SendArgs = {
   subject:     string;
   bodyText:    string;
   bodyHtml?:   string;
+  /** Include on reply-mode sends so Gmail places the message in the
+   *  same thread. Without this Gmail may (and often does) create a
+   *  new thread even when In-Reply-To is set. */
+  threadId?:   string;
+  /** RFC 822 Message-Id of the message being replied to. Stamped
+   *  into the In-Reply-To header and appended to References. */
+  inReplyTo?:  string;
+  /** Prior References value on the message being replied to. When
+   *  present, the outbound References becomes `${prior} ${inReplyTo}`.
+   *  When absent, References = inReplyTo alone. */
+  references?: string;
 };
 
 /**
  * Build an RFC-822 message and send via Gmail's users.messages.send.
  * If bodyHtml is supplied, the message is multipart/alternative with
- * text + html parts. Returns { messageId, threadId } from Gmail.
+ * text + html parts. threadId/inReplyTo/references are optional and
+ * used only in reply mode. Returns { messageId, threadId } from Gmail.
  */
 export async function sendGmail(args: SendArgs): Promise<{ messageId: string; threadId: string }> {
   const subject = args.subject.replace(/[\r\n]/g, ' ');
@@ -322,6 +334,13 @@ export async function sendGmail(args: SendArgs): Promise<{ messageId: string; th
     `Subject: ${subject}`,
     'MIME-Version: 1.0',
   ];
+  if (args.inReplyTo) {
+    commonHeaders.push(`In-Reply-To: ${args.inReplyTo}`);
+    const refs = args.references
+      ? `${args.references.trim()} ${args.inReplyTo}`
+      : args.inReplyTo;
+    commonHeaders.push(`References: ${refs}`);
+  }
 
   let raw: string;
   if (args.bodyHtml) {
@@ -358,10 +377,13 @@ export async function sendGmail(args: SendArgs): Promise<{ messageId: string; th
     .toString('base64')
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+  const body: Record<string, string> = { raw: base64Url };
+  if (args.threadId) body.threadId = args.threadId;
+
   const res = await fetch(`${GMAIL_API_BASE}/messages/send`, {
     method:  'POST',
     headers: { 'Authorization': `Bearer ${args.accessToken}`, 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ raw: base64Url }),
+    body:    JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.text().catch(() => '');
@@ -378,11 +400,57 @@ export type ThreadMessage = {
   internalDate: string;   // ms since epoch
   from:         string;
   snippet:      string;
+  /** RFC 822 Message-Id header, if present. Used to stamp
+   *  In-Reply-To / References on subsequent CRM-side replies. */
+  rfcMessageId: string | null;
+  subject:      string;
+  /** Prior References header on this message (space-separated
+   *  message-ids), if any. Passed through when composing a reply. */
+  references:   string | null;
+  inReplyTo:    string | null;
 };
+
+// Header set requested on every thread/message metadata fetch.
+// Adding one costs nothing per call; keeping this in one place means
+// every ingest path automatically captures the RFC threading info.
+const METADATA_HEADERS =
+  'metadataHeaders=From&metadataHeaders=Date&metadataHeaders=Subject' +
+  '&metadataHeaders=Message-Id&metadataHeaders=References&metadataHeaders=In-Reply-To';
+
+type ApiMsg = {
+  id: string;
+  threadId: string;
+  labelIds?: string[];
+  internalDate?: string;
+  snippet?: string;
+  payload?: { headers?: Array<{ name: string; value: string }> };
+};
+
+function pickHeader(headers: Array<{ name: string; value: string }> | undefined, name: string): string | null {
+  const lc = name.toLowerCase();
+  const h = headers?.find(x => x.name.toLowerCase() === lc);
+  return h?.value ?? null;
+}
+
+function projectApiMsg(m: ApiMsg): ThreadMessage {
+  const headers = m.payload?.headers;
+  return {
+    id:           m.id,
+    threadId:     m.threadId,
+    labelIds:     m.labelIds ?? [],
+    internalDate: m.internalDate ?? '0',
+    from:         pickHeader(headers, 'from')       ?? '',
+    snippet:      m.snippet ?? '',
+    rfcMessageId: pickHeader(headers, 'message-id'),
+    subject:      pickHeader(headers, 'subject')    ?? '',
+    references:   pickHeader(headers, 'references'),
+    inReplyTo:    pickHeader(headers, 'in-reply-to'),
+  };
+}
 
 export async function fetchThread(accessToken: string, threadId: string): Promise<ThreadMessage[]> {
   const res = await fetch(
-    `${GMAIL_API_BASE}/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=From&metadataHeaders=Date`,
+    `${GMAIL_API_BASE}/threads/${encodeURIComponent(threadId)}?format=metadata&${METADATA_HEADERS}`,
     { headers: { 'Authorization': `Bearer ${accessToken}` } },
   );
   if (!res.ok) {
@@ -390,26 +458,8 @@ export async function fetchThread(accessToken: string, threadId: string): Promis
     const err = await res.text().catch(() => '');
     throw new Error(`Gmail thread fetch failed: ${res.status} ${err.slice(0, 200)}`);
   }
-  type ApiMsg = {
-    id: string;
-    threadId: string;
-    labelIds?: string[];
-    internalDate?: string;
-    snippet?: string;
-    payload?: { headers?: Array<{ name: string; value: string }> };
-  };
   const parsed = await res.json() as { messages?: ApiMsg[] };
-  return (parsed.messages ?? []).map((m) => {
-    const fromHdr = m.payload?.headers?.find(h => h.name.toLowerCase() === 'from');
-    return {
-      id:           m.id,
-      threadId:     m.threadId,
-      labelIds:     m.labelIds ?? [],
-      internalDate: m.internalDate ?? '0',
-      from:         fromHdr?.value ?? '',
-      snippet:      m.snippet ?? '',
-    };
-  });
+  return (parsed.messages ?? []).map(projectApiMsg);
 }
 
 // ── Push notifications: watch / stop / history ───────────────────────
@@ -505,16 +555,18 @@ export async function listHistoryFrom(
 }
 
 /**
- * Fetch a single Gmail message (metadata only — From, subject, date).
- * Used by the push handler to convert a historyId event into the
- * "who wrote this + when" shape the reply ingester needs.
+ * Fetch a single Gmail message (metadata only — From, Subject, Date,
+ * Message-Id, References, In-Reply-To). Used by:
+ *   • the push handler to convert a historyId event into a match candidate
+ *   • the compose action to look up our own Message-Id after send
+ *   • the reply-mode context builder to load subject + rfc id
  */
 export async function fetchMessageMetadata(
   accessToken: string,
   messageId: string,
 ): Promise<ThreadMessage | null> {
   const res = await fetch(
-    `${GMAIL_API_BASE}/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=From&metadataHeaders=Date`,
+    `${GMAIL_API_BASE}/messages/${encodeURIComponent(messageId)}?format=metadata&${METADATA_HEADERS}`,
     { headers: { 'Authorization': `Bearer ${accessToken}` } },
   );
   if (res.status === 404) return null;
@@ -522,22 +574,6 @@ export async function fetchMessageMetadata(
     const err = await res.text().catch(() => '');
     throw new Error(`Gmail message fetch failed: ${res.status} ${err.slice(0, 200)}`);
   }
-  type ApiMsg = {
-    id: string;
-    threadId: string;
-    labelIds?: string[];
-    internalDate?: string;
-    snippet?: string;
-    payload?: { headers?: Array<{ name: string; value: string }> };
-  };
   const m = await res.json() as ApiMsg;
-  const fromHdr = m.payload?.headers?.find(h => h.name.toLowerCase() === 'from');
-  return {
-    id:           m.id,
-    threadId:     m.threadId,
-    labelIds:     m.labelIds ?? [],
-    internalDate: m.internalDate ?? '0',
-    from:         fromHdr?.value ?? '',
-    snippet:      m.snippet ?? '',
-  };
+  return projectApiMsg(m);
 }

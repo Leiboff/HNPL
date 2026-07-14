@@ -84,6 +84,7 @@ export default function LeadDetailClient({
   const [showLog,  setShowLog]  = useState<null | { type: 'call' | 'meeting' | 'whatsapp' | 'email' | 'note' }>(null);
   const [showStage, setShowStage] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
+  const [replyToActivityId, setReplyToActivityId] = useState<string | null>(null);
 
   function ok(text: string)  { setMsg({ kind: 'ok', text }); }
   function err(text: string) { setMsg({ kind: 'err', text }); }
@@ -231,7 +232,7 @@ export default function LeadDetailClient({
         <QuickBtn onClick={() => setShowLog({ type: 'call' })}     label="Log call" />
         <QuickBtn onClick={() => setShowLog({ type: 'meeting' })}  label="Log meeting" />
         <QuickBtn onClick={() => setShowLog({ type: 'note' })}     label="Add note" />
-        <QuickBtn onClick={() => setShowCompose(true)}             label="Email lead" />
+        <QuickBtn onClick={() => { setReplyToActivityId(null); setShowCompose(true); }} label="Email lead" />
         <QuickBtn onClick={() => setSchedule({ open: true, type: 'call' })}    label="Schedule call" />
         <QuickBtn onClick={() => setSchedule({ open: true, type: 'meeting' })} label="Schedule meeting" />
         <QuickBtn onClick={() => setShowStage(true)}               label="Move stage" tone="accent" />
@@ -295,6 +296,16 @@ export default function LeadDetailClient({
                     {a.type.replace(/_/g, ' ')}
                   </span>
                   <span className="text-xs text-gray-500">{timeAgo(a.occurred_at)}</span>
+                  {(a.type === 'email' || a.type === 'email_reply') && (
+                    <button
+                      type="button"
+                      onClick={() => { setReplyToActivityId(a.id); setShowCompose(true); }}
+                      className="ml-auto rounded-md border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[10px] font-medium hover:bg-gray-50"
+                      data-testid={`crm-activity-reply:${a.id}`}
+                    >
+                      Reply
+                    </button>
+                  )}
                 </div>
                 <p className="mt-1 text-sm text-gray-900 font-medium">{a.title}</p>
                 {a.body && <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{a.body}</p>}
@@ -331,10 +342,11 @@ export default function LeadDetailClient({
       {showCompose && (
         <ComposeEmailSheet
           open
-          onClose={() => setShowCompose(false)}
+          onClose={() => { setShowCompose(false); setReplyToActivityId(null); }}
           leadId={lead.id}
           leadEmail={lead.email}
           practiceName={lead.practice_name}
+          replyToActivityId={replyToActivityId}
         />
       )}
 
