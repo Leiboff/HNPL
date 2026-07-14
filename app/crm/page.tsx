@@ -76,6 +76,24 @@ export default async function CrmHomePage() {
     .select('id', { count: 'exact', head: true })
     .gt('occurred_at', sevenDaysAgo.toISOString());
 
+  // ── Inbound (unowned) leads from the public /practices form ────
+  //
+  // Surfaced above the follow-up buckets so sales sees new inbound
+  // work first thing when they load /crm. Only unowned rows count —
+  // once someone claims a lead by editing owner_user_id the row falls
+  // out of this tray.
+  const { data: inboundRows } = await supabase
+    .from('crm_leads')
+    .select('id, practice_name, contact_first_name, contact_last_name, suburb, city, created_at')
+    .eq('source', 'inbound')
+    .is('owner_user_id', null)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  const inbound = (inboundRows ?? []) as Array<{
+    id: string; practice_name: string; contact_first_name: string; contact_last_name: string;
+    suburb: string | null; city: string | null; created_at: string;
+  }>;
+
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -102,6 +120,41 @@ export default async function CrmHomePage() {
       </div>
 
       <StageStrip byStage={byStage} />
+
+      {/* ── Inbound tray (public-form leads not yet claimed) ───── */}
+      {inbound.length > 0 && (
+        <section
+          data-testid="crm-inbound-tray"
+          className="bg-white rounded-2xl border border-[#15A89E]/40 overflow-hidden"
+        >
+          <header className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-[#15A89E]/5">
+            <h2 className="text-sm font-semibold" style={{ color: '#13294B' }}>
+              New inbound
+            </h2>
+            <span className="inline-flex items-center rounded-full bg-[#15A89E]/15 text-[#0F766E] px-2 py-0.5 text-xs font-medium">
+              {inbound.length}
+            </span>
+          </header>
+          <ul className="divide-y divide-gray-100">
+            {inbound.map(r => (
+              <li key={r.id}>
+                <Link href={`/crm/leads/${r.id}`} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{r.practice_name}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {r.contact_first_name} {r.contact_last_name}
+                      {(r.suburb || r.city) && ` · ${[r.suburb, r.city].filter(Boolean).join(', ')}`}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-500 tabular-nums shrink-0">
+                    {new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium' })}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* ── Buckets ─────────────────────────────────────────────── */}
       <Bucket

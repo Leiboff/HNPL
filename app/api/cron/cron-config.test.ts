@@ -10,21 +10,25 @@ const ROOT = resolve(process.cwd());
 // but load-bearing pieces of the daily-collection pipeline. If anyone
 // changes either, these tests fail loudly and prompt a re-review.
 
-describe('vercel.json — daily collection cron', () => {
+describe('vercel.json — cron entries', () => {
   const config = JSON.parse(readFileSync(resolve(ROOT, 'vercel.json'), 'utf8'));
 
-  it('declares exactly one cron entry today', () => {
+  it('declares an array of cron entries', () => {
     expect(Array.isArray(config.crons)).toBe(true);
-    expect(config.crons).toHaveLength(1);
+    expect(config.crons.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('targets the collect-instalments route', () => {
-    expect(config.crons[0].path).toBe('/api/cron/collect-instalments');
-  });
-
-  it('is scheduled at 11:00 UTC = 13:00 SAST (early afternoon, after salary deposits)', () => {
+  it('has the collect-instalments cron scheduled 11:00 UTC = 13:00 SAST', () => {
     // Cron format: minute hour day-of-month month day-of-week
-    expect(config.crons[0].schedule).toBe('0 11 * * *');
+    const collect = config.crons.find((c: { path: string }) => c.path === '/api/cron/collect-instalments');
+    expect(collect).toBeDefined();
+    expect(collect.schedule).toBe('0 11 * * *');
+  });
+
+  it('has the CRM reply-poll cron on a */15 cadence (Phase 2)', () => {
+    const poll = config.crons.find((c: { path: string }) => c.path === '/api/cron/crm-reply-poll');
+    expect(poll).toBeDefined();
+    expect(poll.schedule).toBe('*/15 * * * *');
   });
 });
 

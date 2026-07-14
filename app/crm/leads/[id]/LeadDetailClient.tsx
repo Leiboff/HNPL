@@ -7,6 +7,7 @@ import { formatDateTime, timeAgo, formatRand } from '@/app/admin/_lib/format';
 import {
   updateLead, moveLeadStage, logActivity, scheduleFollowup, markSigned, markFollowupDone,
 } from '../actions';
+import ComposeEmailSheet from './ComposeEmailSheet';
 
 // ─── Lead detail — fields (editable) + activity timeline + quick actions
 
@@ -77,6 +78,7 @@ export default function LeadDetailClient({
   const [schedule, setSchedule] = useState<{ open: boolean; type: 'call' | 'meeting' }>({ open: false, type: 'call' });
   const [showLog,  setShowLog]  = useState<null | { type: 'call' | 'meeting' | 'whatsapp' | 'email' | 'note' }>(null);
   const [showStage, setShowStage] = useState(false);
+  const [showCompose, setShowCompose] = useState(false);
 
   function ok(text: string)  { setMsg({ kind: 'ok', text }); }
   function err(text: string) { setMsg({ kind: 'err', text }); }
@@ -222,6 +224,7 @@ export default function LeadDetailClient({
         <QuickBtn onClick={() => setShowLog({ type: 'call' })}     label="Log call" />
         <QuickBtn onClick={() => setShowLog({ type: 'meeting' })}  label="Log meeting" />
         <QuickBtn onClick={() => setShowLog({ type: 'note' })}     label="Add note" />
+        <QuickBtn onClick={() => setShowCompose(true)}             label="Email lead" />
         <QuickBtn onClick={() => setSchedule({ open: true, type: 'call' })}    label="Schedule call" />
         <QuickBtn onClick={() => setSchedule({ open: true, type: 'meeting' })} label="Schedule meeting" />
         <QuickBtn onClick={() => setShowStage(true)}               label="Move stage" tone="accent" />
@@ -311,6 +314,17 @@ export default function LeadDetailClient({
           onSubmit={(d, t, dur, notes) => doSchedule(d, t, dur, notes, schedule.type)}
           onCancel={() => setSchedule({ open: false, type: 'call' })}
           pending={pending}
+        />
+      )}
+
+      {/* Compose email sheet */}
+      {showCompose && (
+        <ComposeEmailSheet
+          open
+          onClose={() => setShowCompose(false)}
+          leadId={lead.id}
+          leadEmail={lead.email}
+          practiceName={lead.practice_name}
         />
       )}
 

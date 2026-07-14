@@ -9,6 +9,7 @@ import {
   ShieldCheckIcon,
   PeopleIcon,
 } from '../_landing/icons';
+import PublicLeadForm from './PublicLeadForm';
 import '../landing.css';
 
 // ─── /practices — provider-facing marketing page ───────────────────────
@@ -175,6 +176,9 @@ export default function PracticesPage() {
           </div>
         </div>
       </section>
+
+      {/* ── Public lead capture form (Phase 2) ──────────────────────────── */}
+      <PublicLeadForm />
 
       {/* ── Final CTA ────────────────────────────────────────────────────── */}
       <section>

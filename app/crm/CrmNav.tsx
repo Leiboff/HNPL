@@ -12,10 +12,12 @@ type Counts = {
 };
 
 const NAV_LINKS = [
-  { href: '/crm',        label: 'My Day',   countKey: 'overdueFollowups' as const },
-  { href: '/crm/leads',  label: 'Leads'                                            },
-  { href: '/crm/board',  label: 'Pipeline'                                         },
-  { href: '/crm/import', label: 'Import'                                           },
+  { href: '/crm',          label: 'My Day',   countKey: 'overdueFollowups' as const },
+  { href: '/crm/leads',    label: 'Leads'                                            },
+  { href: '/crm/board',    label: 'Pipeline'                                         },
+  { href: '/crm/map',      label: 'Map'                                              },
+  { href: '/crm/import',   label: 'Import'                                           },
+  { href: '/crm/settings', label: 'Settings'                                         },
 ];
 
 export default function CrmNav({ counts }: { counts: Counts }) {
