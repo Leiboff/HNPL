@@ -8,6 +8,7 @@ import { normalizePhoneZA } from '@/lib/validation';
 import { neutraliseFormula } from '@/lib/crm/csv';
 import { normalisePhone, normaliseEmail } from '@/lib/crm/dedupe';
 import { SPECIALTIES } from '@/lib/specialties';
+import { checkAndRecord as checkAndRecordPublicLeadRate } from '@/lib/crm/publicLeadRateLimit';
 
 // ─── Public lead capture — /practices form ───────────────────────────
 //
@@ -24,27 +25,6 @@ import { SPECIALTIES } from '@/lib/specialties';
 //   • per-IP rate limit (best-effort, in-memory across the instance)
 //   • payload validation (server-authoritative)
 //   • formula-injection neutralisation on every string field
-
-const RATE_LIMIT_MAX       = 5;
-const RATE_LIMIT_WINDOW_MS = 60 * 60_000;   // 1 h
-const rateBuckets = new Map<string, number[]>();
-
-export function __resetPublicLeadRateBucketsForTests(): void {
-  rateBuckets.clear();
-}
-
-function consumeRateBudget(ip: string, now: number): boolean {
-  const cutoff = now - RATE_LIMIT_WINDOW_MS;
-  const existing = rateBuckets.get(ip) ?? [];
-  const fresh = existing.filter(t => t > cutoff);
-  if (fresh.length >= RATE_LIMIT_MAX) {
-    rateBuckets.set(ip, fresh);
-    return false;
-  }
-  fresh.push(now);
-  rateBuckets.set(ip, fresh);
-  return true;
-}
 
 function svc() {
   return createServiceClient(
@@ -84,7 +64,7 @@ export async function submitPublicLead(input: PublicLeadInput): Promise<PublicLe
   const ip = (h.get('x-forwarded-for') ?? '').split(',')[0].trim()
           || h.get('x-real-ip')
           || 'anon';
-  if (!consumeRateBudget(ip, Date.now())) {
+  if (!checkAndRecordPublicLeadRate(ip)) {
     return { ok: false, error: 'rate_limited', message: 'Too many submissions from this IP.' };
   }
 

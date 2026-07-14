@@ -5,8 +5,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // Invokes submitPublicLead directly with real payloads. Mocks
 // next/headers (for IP) and the service-role Supabase client so we
 // can assert against the exact insert payload the action would send
-// to the DB. The rate-limit bucket is per-instance in-memory and
-// reset between tests via the exported __resetPublicLeadRateBucketsForTests.
+// to the DB. The rate-limit bucket lives in @/lib/crm/publicLeadRateLimit
+// (outside 'use server' so the action file exports only async
+// functions — Next.js requires this) and is reset between tests via
+// the exported resetForTests().
 
 type InsertPayload = Record<string, unknown>;
 
@@ -77,8 +79,8 @@ beforeEach(async () => {
   state.inserts = [];
   state.profileLookupReturns = null;
   currentIp = '198.51.100.1';
-  const { __resetPublicLeadRateBucketsForTests } = await import('./publicLeadAction');
-  __resetPublicLeadRateBucketsForTests();
+  const { resetForTests } = await import('@/lib/crm/publicLeadRateLimit');
+  resetForTests();
 });
 
 // ── (a) Happy path — row created, response reveals nothing ─────
@@ -275,14 +277,13 @@ describe('(e) validation', () => {
 // ── (f) Read-path probe ─────────────────────────────────────────
 
 describe('(f) module surface — NO read path for unauthenticated callers', () => {
-  it('exposes exactly the write action + the test-only reset helper — nothing else that reads crm_leads', async () => {
+  it('exposes exactly submitPublicLead — no test hook, no read helper, on the public surface', async () => {
     const mod = await fresh();
     const exported = Object.keys(mod).sort();
-    // Only the write action + rate-limit reset helper are public.
-    expect(exported).toEqual([
-      '__resetPublicLeadRateBucketsForTests',
-      'submitPublicLead',
-    ]);
+    // Server-action files must export only async functions (Next.js
+    // enforces this at build time). The rate-limit reset helper lives
+    // in @/lib/crm/publicLeadRateLimit — not on the public surface.
+    expect(exported).toEqual(['submitPublicLead']);
   });
 
   it('submitPublicLead\'s return type never carries lead data even on success', async () => {

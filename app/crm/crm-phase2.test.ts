@@ -201,8 +201,15 @@ describe('/practices public lead capture', () => {
   });
 
   it('applies per-IP rate limit + formula-injection neutralisation on every string field', () => {
-    expect(ACTION).toMatch(/consumeRateBudget/);
-    expect(ACTION).toMatch(/RATE_LIMIT_MAX/);
+    // Rate-limit state lives outside 'use server' (Next.js requires all
+    // exports from an action file be async functions) — the action
+    // consumes the helper from lib/crm/publicLeadRateLimit.
+    expect(ACTION).toMatch(/checkAndRecordPublicLeadRate/);
+    expect(ACTION).toMatch(/from\s+['"]@\/lib\/crm\/publicLeadRateLimit['"]/);
+    const LIMIT = read('lib/crm/publicLeadRateLimit.ts');
+    expect(LIMIT).toMatch(/RATE_LIMIT_MAX\s*=\s*5/);
+    expect(LIMIT).toMatch(/export function checkAndRecord/);
+    expect(LIMIT).toMatch(/export function resetForTests/);
     expect(ACTION).toMatch(/neutraliseFormula/);
     expect(ACTION).toMatch(/from\s+['"]@\/lib\/crm\/csv['"]/);
   });
