@@ -73,7 +73,10 @@ export default function SettleEntireBillButton({
           case 'transport_error':
             setResultMsg(`Couldn't reach the payment processor. Please try again in a moment.`);
             return;
-          case 'no_authorization_code':
+          case 'declined':
+            setResultMsg('The card was declined. Please try again or contact support.');
+            return;
+          case 'no_registration_id':
             setResultMsg('No saved card on this plan — please contact support.');
             return;
           case 'no_email':

@@ -2,51 +2,29 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { paystackRequest } from '@/lib/paystack';
-import { saveCardForPatient, type PaystackAuthorization } from '@/lib/paystack/saveCardForPatient';
+import { getPaymentProvider } from '@/lib/payments/provider';
+import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
+import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 
-// ─── /checkout/[token]/complete ────────────────────────────────────────────
+// ─── /checkout/[token]/complete — Peach COPYandPAY return route ─────
 //
-// Paystack callback for the anonymous checkout flow. By the time the
-// patient arrives here:
-//   - The auth user + profile already exist (initiateCheckout did it).
-//   - The plan is at pending_first_payment with a payments schedule.
-//   - Paystack has either succeeded, declined, or abandoned the charge.
+// The Peach widget POSTs to this URL when the payment completes and
+// appends ?resourcePath=/v1/checkouts/{id}/payment. We call GET on
+// that path to fetch the final status.
 //
 // What this page does, idempotently:
-//   1. Verify the Paystack transaction.
-//   2. If success → save the card to payment_methods (idempotent via
-//      saveCardForPatient), mark the invitation accepted, and redirect
-//      to the password step.
-//   3. If decline → send the patient back to /checkout/[token] with
-//      an error param so they can try a different card. The same
-//      account + plan are reused on retry — no duplicate accounts.
+//   1. Fetch the checkout status via `resourcePath`.
+//   2. Classify the result code:
+//        SUCCESS  → save card + activate plan + redirect to /done
+//        PENDING  → show "we're still waiting"; the webhook will finish
+//                   the state flip in the background
+//        REJECTED → back to /checkout/[token] with an error card
 //
-// The existing webhook still does its own work in parallel — it
-// flips payment[1] from processing → collected, creates the payout
-// row, and (when every instalment is collected) marks the plan
-// completed. Both paths are idempotent.
+// The webhook does its own idempotent state flips in parallel — both
+// paths converge on the same rows.
 
 type Params = { token: string };
-
-type PaystackVerifyResponse = {
-  status:   boolean;
-  message?: string;
-  data?: {
-    status?:        string;
-    reference?:     string;
-    authorization?: PaystackAuthorization & { reusable?: boolean };
-    metadata?: {
-      purpose?:   string;
-      patientId?: string;
-      planId?:    string;
-      token?:     string;
-      paymentId?: string;
-      [k: string]: unknown;
-    };
-  };
-};
 
 function ErrorCard({ reason, token }: { reason: string; token: string }) {
   return (
@@ -66,9 +44,28 @@ function ErrorCard({ reason, token }: { reason: string; token: string }) {
         <Link
           href={`/checkout/${encodeURIComponent(token)}`}
           className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+          data-testid="checkout-complete-retry"
         >
           Try again
         </Link>
+      </div>
+    </div>
+  );
+}
+
+function PendingCard() {
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gray-50">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center space-y-4">
+        <div className="w-12 h-12 mx-auto rounded-full bg-amber-100 flex items-center justify-center">
+          <svg className="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
+          </svg>
+        </div>
+        <h1 className="text-xl font-semibold text-gray-900">Just a moment…</h1>
+        <p className="text-sm text-gray-600">
+          Your card is still being processed. This usually resolves in a few seconds — refresh in a bit or check your email for a confirmation.
+        </p>
       </div>
     </div>
   );
@@ -83,119 +80,127 @@ export default async function CheckoutCompletePage({
 }) {
   const { token } = await params;
   const sp        = await searchParams;
-  const reference = (sp.reference ?? sp.trxref) as string | undefined;
+  const resourcePath = (sp.resourcePath ?? sp.resource_path) as string | undefined;
 
-  if (!reference) {
-    return <ErrorCard token={token} reason="We didn't get a payment reference from Paystack." />;
+  if (!resourcePath) {
+    return <ErrorCard token={token} reason="We didn't get a payment reference back from the payment provider." />;
   }
 
-  // ── Verify with Paystack ──────────────────────────────────────────────
-  let verify: PaystackVerifyResponse | null = null;
+  // ── Fetch the final status via Peach ──────────────────────────────
+  const provider = getPaymentProvider();
+  let status: Awaited<ReturnType<typeof provider.getCheckoutStatus>>;
   try {
-    verify = await paystackRequest<PaystackVerifyResponse>(
-      `/transaction/verify/${encodeURIComponent(reference)}`,
-    );
+    status = await provider.getCheckoutStatus(resourcePath);
   } catch (err) {
     return (
       <ErrorCard
         token={token}
-        reason={err instanceof Error ? err.message : 'Paystack verify failed.'}
+        reason={err instanceof Error ? err.message : 'Payment verification failed.'}
       />
     );
   }
 
-  if (!verify?.status) {
-    return <ErrorCard token={token} reason={verify?.message ?? 'Paystack rejected the verification.'} />;
+  const classified = classifyResultCode(status.resultCode);
+  if (classified === 'pending') {
+    return <PendingCard />;
   }
+  if (classified === 'rejected') {
+    return <ErrorCard token={token} reason={status.resultDescription ?? 'Your card was declined. Please try a different card.'} />;
+  }
+  // SUCCESS below.
 
-  const data    = verify.data;
-  const purpose = data?.metadata?.purpose;
-  const metaPid = data?.metadata?.patientId;
-  const metaPlanId = data?.metadata?.planId;
-  const auth    = data?.authorization;
-
-  if (purpose !== 'checkout_first_payment') {
+  // Merchant transaction id — echoed back on the checkout. We rely on
+  // it to look up the payment row and the patient.
+  const reference = status.merchantTransactionId;
+  if (!reference || !reference.startsWith('hnpl_co_')) {
     return <ErrorCard token={token} reason="This payment reference isn't from a checkout flow." />;
   }
 
-  if (data?.status !== 'success') {
-    return <ErrorCard token={token} reason={`Card was ${data?.status ?? 'declined'}. Please try a different card.`} />;
+  if (!status.registrationId) {
+    return <ErrorCard token={token} reason="The payment provider didn't return a reusable card token. Please try again." />;
   }
 
-  if (!metaPid || !metaPlanId) {
-    return <ErrorCard token={token} reason="Couldn't tie the payment back to your account. Please contact support." />;
-  }
-
-  if (!auth?.authorization_code) {
-    return <ErrorCard token={token} reason="Paystack didn't return a reusable card authorization." />;
-  }
-
-  if (auth.reusable === false) {
-    return (
-      <ErrorCard token={token} reason="Your card came back marked as not reusable. We can't collect the remaining instalments from it." />
-    );
-  }
-
-  // ── Service-role work: save card, mark accepted, mark payment collected ─
+  // ── Service-role work: activate plan + save card + accept invite ──
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } },
   );
 
-  // Save the card. saveCardForPatient is idempotent — if the webhook
-  // raced us to it, we get { kind: 'already_saved' } back.
-  const saveResult = await saveCardForPatient(metaPid, auth, svc);
-  if (saveResult.kind === 'error') {
-    return <ErrorCard token={token} reason={`Couldn't save your card: ${saveResult.message}`} />;
+  const { data: payment } = await svc
+    .from('payments')
+    .select('id, plan_id, patient_id, instalment_number, status')
+    .eq('peach_payment_id', reference)
+    .maybeSingle();
+
+  if (!payment) {
+    return <ErrorCard token={token} reason="Couldn't tie the payment back to your account. Please contact support." />;
   }
 
-  // Mark instalment #1 as collected if the webhook hasn't already.
-  // The webhook flips status=processing → collected on charge.success;
-  // we do the same here so the page-driven path stays correct even
-  // when the webhook is delayed (e.g. localhost without a tunnel).
+  const planId    = payment.plan_id as string;
+  const patientId = payment.patient_id as string;
+
+  // Save the card — idempotent; if the webhook raced us we get
+  // { kind: 'already_saved' }.
+  if (status.card) {
+    await saveCardForPatient(
+      patientId,
+      {
+        registrationId: status.registrationId,
+        brand:          status.card.brand       ?? null,
+        last4:          status.card.last4       ?? null,
+        expiryMonth:    status.card.expiryMonth ?? null,
+        expiryYear:     status.card.expiryYear  ?? null,
+        holder:         status.card.holder      ?? null,
+      },
+      svc,
+    );
+  }
+
+  // Store the reusable registration id on the plan (idempotent — only
+  // if not already set; the webhook may have won).
+  await svc
+    .from('plans')
+    .update({ peach_registration_id: status.registrationId })
+    .eq('id', planId)
+    .is('peach_registration_id', null);
+
+  // Mark instalment #1 as collected (idempotent).
   await svc
     .from('payments')
     .update({ status: 'collected', collected_at: new Date().toISOString() })
-    .eq('plan_id', metaPlanId)
-    .eq('instalment_number', 1)
+    .eq('id', payment.id)
     .eq('status', 'processing');
 
-  // Activate the plan (idempotent — only if still pending_first_payment).
+  // Activate the plan (idempotent).
   await svc
     .from('plans')
     .update({ status: 'active' })
-    .eq('id', metaPlanId)
+    .eq('id', planId)
     .eq('status', 'pending_first_payment');
 
-  // Mark the invitation accepted (idempotent — only first hit sets the
-  // timestamp).
+  // Mark the invitation accepted (idempotent).
   await svc
     .from('patient_invitations')
     .update({ accepted_at: new Date().toISOString() })
     .eq('token', token)
     .is('accepted_at', null);
 
-  // ── Make sure the patient is still authenticated for /done ────────────
-  // If their session was lost during the Paystack roundtrip (rare but
-  // possible in some browsers' third-party-cookie scenarios), reset a
-  // temp password and sign them back in so they don't dead-end at
-  // "set your password" without a session.
+  // ── Make sure the patient is still authenticated for /done ────────
+  // If their session dropped during the widget interaction (rare — the
+  // widget is same-origin, but keep the fallback for parity with the
+  // earlier Paystack flow), reset a temp password and sign them back in.
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user || user.id !== metaPid) {
-    // Get the email of the patient to re-sign-in
+  if (!user || user.id !== patientId) {
     const { data: profile } = await svc
       .from('profiles')
       .select('email')
-      .eq('id', metaPid)
+      .eq('id', patientId)
       .single();
     if (profile?.email) {
-      // Policy-safe temp password — Supabase's admin password-policy
-      // check runs against this string too, even though it's plumbing
-      // the patient never sees. See lib/auth/tempPassword.ts.
       const tempPwd = generateTempPassword();
-      const { error: updErr } = await svc.auth.admin.updateUserById(metaPid, { password: tempPwd });
+      const { error: updErr } = await svc.auth.admin.updateUserById(patientId, { password: tempPwd });
       if (!updErr) {
         await supabase.auth.signInWithPassword({ email: profile.email, password: tempPwd });
       }

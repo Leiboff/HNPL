@@ -97,7 +97,7 @@ export async function previewDefaultChange(newCardId: string): Promise<PreviewDe
     .from('plans')
     .select('id, invoice_number')
     .eq('patient_id', user.id)
-    .neq('paystack_authorization_code', newCard.token)
+    .neq('peach_registration_id', newCard.token)
     .in('status', ACTIVE_PLAN_STATUSES)
     .order('created_at', { ascending: false })
     .limit(4);
@@ -189,7 +189,7 @@ export async function removeCard(cardId: string): Promise<RemoveCardResult> {
       .from('plans')
       .select('id')
       .eq('patient_id', user.id)
-      .eq('paystack_authorization_code', cardToRemove.token)
+      .eq('peach_registration_id', cardToRemove.token)
       .in('status', ACTIVE_PLAN_STATUSES);
 
     const strayIds = (strays ?? []).map((p) => p.id as string);
@@ -206,7 +206,7 @@ export async function removeCard(cardId: string): Promise<RemoveCardResult> {
       if (defaultCard) {
         const { error: repointErr } = await supabase
           .from('plans')
-          .update({ paystack_authorization_code: defaultCard.token })
+          .update({ peach_registration_id: defaultCard.token })
           .in('id', strayIds);
         if (repointErr) return { error: repointErr.message };
         repointedPlans = strayIds.length;
@@ -249,8 +249,8 @@ export default async function PaymentMethodsPage() {
     <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: '#13294B' }}>Payment Methods</h1>
       <p className="text-sm text-gray-500 mb-6 leading-relaxed">
-        Your card details are never stored on BetterNow. They&apos;re held by Paystack,
-        our PCI-DSS certified payment partner — we only keep a secure reference to
+        Your card details are never stored on BetterNow. They&apos;re held by our
+        PCI-DSS certified payment partner — we only keep a secure reference to
         charge your instalments.
       </p>
       <PaymentMethods

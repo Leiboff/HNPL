@@ -23,7 +23,7 @@ function read(p: string): string {
 
 const DASHBOARD       = read('app/patient/page.tsx');
 const ORDERS_PAGE     = read('app/patient/orders/page.tsx');
-const WEBHOOK         = read('app/api/webhooks/paystack/route.ts');
+const WEBHOOK         = read('app/api/payments/peach/webhook/route.ts');
 const CRON            = read('app/api/cron/collect-instalments/route.ts');
 const ADMIN_DASH      = read('app/admin/page.tsx');
 const ADMIN_LAYOUT    = read('app/admin/layout.tsx');

@@ -489,7 +489,7 @@ describe('Diff scope — no payment-logic files modified', () => {
   // deliberate test update.
   const PROTECTED = [
     'lib/finance.ts',
-    'app/api/webhooks/paystack/route.ts',
+    'app/api/payments/peach/webhook/route.ts',
     'lib/payments/dunning.ts',
     'lib/bills/lifecycle.ts',
   ];

@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
-import { paystackRequest } from '@/lib/paystack';
+import { getPaymentProvider } from '@/lib/payments/provider';
 
 // ─── Patient-initiated "Pay now" — self-settle a past-due instalment ──
 //
@@ -177,7 +177,8 @@ export type SettleAllOutcome =
   | { ok: false; status: 'nothing_to_settle' }
   | { ok: false; status: 'race_lost' }
   | { ok: false; status: 'transport_error'; message: string }
-  | { ok: false; status: 'no_authorization_code' }
+  | { ok: false; status: 'declined'; message: string }
+  | { ok: false; status: 'no_registration_id' }
   | { ok: false; status: 'no_email' };
 
 export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOutcome> {
@@ -231,20 +232,20 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   const amountCents  = c.amount_cents  as number;
   const coveredCount = c.covered_count as number;
 
-  // ── 3. Plan + patient — needed for the Paystack call.
+  // ── 3. Plan + patient — needed for the Peach MIT call.
   const { data: plan } = await svc
     .from('plans')
-    .select('paystack_authorization_code, patient_id')
+    .select('peach_registration_id, patient_id')
     .eq('id', planId)
     .maybeSingle();
-  if (!plan?.paystack_authorization_code) {
+  if (!plan?.peach_registration_id) {
     // No stored card — revert the claim by failing the settlement row.
     // Mirrors the chargeInstalment revert pattern: flip rows back to
     // their snapshot statuses via the RPC's failure path is the right
     // home; here we directly fail-out the settlement row, and the
-    // webhook handler's charge.failed path will run the revert.
-    await failSettlementRow(svc, settlementId, 'no_authorization_code');
-    return { ok: false, status: 'no_authorization_code' };
+    // webhook handler's failure path will run the revert.
+    await failSettlementRow(svc, settlementId, 'no_registration_id');
+    return { ok: false, status: 'no_registration_id' };
   }
 
   const { data: profile } = await svc
@@ -257,13 +258,12 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     return { ok: false, status: 'no_email' };
   }
 
-  // ── 4. Reference + Paystack charge. Reference embeds 'settle' so
+  // ── 4. Reference + Peach MIT charge. Reference embeds 'settle' so
   //       the webhook can short-circuit-detect a settlement charge if
   //       needed; routing primarily uses the payment row's kind column.
   const reference = `hnpl_settle_${settlementId.replace(/-/g, '').slice(0, 16)}`;
   await svc.from('payments').update({ peach_payment_id: reference }).eq('id', settlementId);
 
-  // Audit trail — best effort, doesn't gate the charge.
   await svc.from('plan_events').insert({
     plan_id:    planId,
     patient_id: user.id,
@@ -277,28 +277,40 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     },
   });
 
-  try {
-    await paystackRequest('/transaction/charge_authorization', {
-      method: 'POST',
-      body: JSON.stringify({
-        authorization_code: plan.paystack_authorization_code,
-        email:              profile.email,
-        amount:             amountCents,
-        currency:           'ZAR',
-        reference,
-        metadata: { purpose: 'settle_entire_plan' },
-      }),
-    });
-  } catch (err) {
+  const provider = getPaymentProvider();
+  const chargeResult = await provider.chargeSavedCard({
+    registrationId:        plan.peach_registration_id,
+    amountCents,
+    merchantTransactionId: reference,
+    currency:              'ZAR',
+    standingInstruction: {
+      mode:   'REPEATED',
+      source: 'MIT',
+      type:   'UNSCHEDULED',
+    },
+  });
+
+  if (chargeResult.status === 'error') {
     // Transport error: the settlement row stays in 'processing'.
-    // We do NOT revert here — Paystack may still have received the
+    // We do NOT revert here — Peach may still have received the
     // charge; reverting would risk double-charging if a delayed
     // webhook later arrives. Same posture as chargeInstalment's
-    // transport_error path. Admin reconciles via the Paystack dashboard.
+    // transport_error path. Admin reconciles via the Peach dashboard.
     return {
       ok: false,
       status: 'transport_error',
-      message: err instanceof Error ? err.message : String(err),
+      message: chargeResult.resultDescription ?? 'transport error',
+    };
+  }
+
+  if (chargeResult.status === 'rejected') {
+    // Immediate provider rejection (card decline, etc.). Same posture
+    // as the charge.failed webhook path: revert the settlement row.
+    await failSettlementRow(svc, settlementId, chargeResult.resultDescription ?? 'declined');
+    return {
+      ok: false,
+      status: 'declined',
+      message: chargeResult.resultDescription ?? 'Card was declined.',
     };
   }
 

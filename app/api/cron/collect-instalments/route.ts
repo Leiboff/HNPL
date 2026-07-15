@@ -35,7 +35,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     }
     // Constant-time compare via crypto.timingSafeEqual — same pattern
     // the Paystack webhook handler uses for its HMAC signature check
-    // (app/api/webhooks/paystack/route.ts). The length check guards
+    // (app/api/payments/peach/webhook/route.ts). The length check guards
     // against a mismatched-size header throwing instead of cleanly
     // rejecting; an attacker-supplied short/garbage header gets the
     // same 401 as a wrong-secret-of-equal-length one. (M5 fix, 2026-06-22.)
@@ -68,7 +68,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   //
   //   • plan.status = 'active'             — don't charge cancelled or
   //                                          completed plans.
-  //   • plan.paystack_authorization_code   — must have a stored token.
+  //   • plan.peach_registration_id   — must have a stored token.
   //                                          Filter at the join.
   //   • last_dunning_attempt_date < today  — belt-and-braces same-day
   //                                          re-run guard. The atomic
@@ -91,23 +91,23 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   const [scheduledRes, failedRes] = await Promise.all([
     svc
       .from('payments')
-      .select('id, plans!inner(status, paystack_authorization_code)')
+      .select('id, plans!inner(status, peach_registration_id)')
       .eq('kind', 'instalment')
       .eq('status', 'scheduled')
       .lte('due_date', todayStr)
       .or(sameDayGuard)
       .eq('plans.status', 'active')
-      .not('plans.paystack_authorization_code', 'is', null),
+      .not('plans.peach_registration_id', 'is', null),
     svc
       .from('payments')
-      .select('id, plans!inner(status, paystack_authorization_code)')
+      .select('id, plans!inner(status, peach_registration_id)')
       .eq('kind', 'instalment')
       .eq('status', 'failed')
       .not('next_attempt_date', 'is', null)
       .lte('next_attempt_date', todayStr)
       .or(sameDayGuard)
       .eq('plans.status', 'active')
-      .not('plans.paystack_authorization_code', 'is', null),
+      .not('plans.peach_registration_id', 'is', null),
   ]);
 
   if (scheduledRes.error) {

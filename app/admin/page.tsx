@@ -182,7 +182,7 @@ export default async function AdminDashboardPage() {
       key:    'payouts',
       tone:   'warn',
       label:  `${pendingPay.length} payout${pendingPay.length === 1 ? '' : 's'} owed · ${formatRand(pendingPayoutTot)}`,
-      detail: 'Settle via Paystack / banking, then mark paid.',
+      detail: 'Settle via Peach / banking, then mark paid.',
       href:   '/admin/payouts',
     });
   }

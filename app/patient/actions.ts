@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
-import { paystackRequest } from '@/lib/paystack';
+import { getPaymentProvider } from '@/lib/payments/provider';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
@@ -165,13 +165,12 @@ export async function acceptPlan(
 
 export async function initializeFirstPayment(
   planId: string,
-): Promise<{ error: string | null; authorizationUrl?: string }> {
+): Promise<{ error: string | null; checkoutId?: string; shopperResultUrl?: string; amountCents?: number }> {
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated.' };
 
-  // Verify plan belongs to this patient and is waiting for first payment
   const { data: plan } = await supabase
     .from('plans')
     .select('id, status')
@@ -182,7 +181,6 @@ export async function initializeFirstPayment(
 
   if (!plan) return { error: 'Plan not found or not ready for payment.' };
 
-  // Fetch the first instalment payment row
   const { data: payment } = await supabase
     .from('payments')
     .select('id, amount')
@@ -193,74 +191,66 @@ export async function initializeFirstPayment(
 
   if (!payment) return { error: 'First instalment not found.' };
 
-  // Fetch patient email (Paystack requires it)
   const { data: profile } = await supabase
     .from('profiles')
-    .select('email')
+    .select('email, first_name, last_name')
     .eq('id', user.id)
     .single();
 
   if (!profile?.email) return { error: 'Account email not found.' };
 
-  // Derive a stable unique reference from the payment ID so the webhook can look it up
-  const reference = `hnpl_${payment.id.replace(/-/g, '').slice(0, 20)}`;
-
-  // Paystack amounts are in the smallest currency unit (cents for ZAR)
+  // Server-computed amount. Reference is stable + attempt-independent so
+  // the Peach webhook can find the payment row on the resulting
+  // PAYMENT.<code> event.
+  const reference   = `hnpl_${payment.id.replace(/-/g, '').slice(0, 20)}`;
   const amountCents = Math.round(Number(payment.amount) * 100);
+  const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const shopperResultUrl = `${appUrl}/patient/payment-complete`;
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-
-  type InitResponse = {
-    status: boolean;
-    message: string;
-    data: { authorization_url: string; access_code: string; reference: string };
-  };
-
-  let initData: InitResponse['data'];
+  const provider = getPaymentProvider();
+  let checkoutId: string;
   try {
-    const result = await paystackRequest<InitResponse>('/transaction/initialize', {
-      method: 'POST',
-      body: JSON.stringify({
-        email:        profile.email,
-        amount:       amountCents,
-        currency:     'ZAR',
-        reference,
-        // Card-only: required so Paystack creates a reusable authorization for future debits
-        channels:     ['card'],
-        callback_url: `${appUrl}/patient/payment-complete`,
-        metadata: {
-          planId,
-          paymentId:         payment.id,
-          instalment_number: 1,
-          // custom_filters tells the Paystack popup to only offer recurring-capable cards
-          custom_filters: { reusable: true },
-        },
-      }),
+    const checkout = await provider.createCheckout({
+      amountCents,
+      merchantTransactionId: reference,
+      currency:              'ZAR',
+      paymentType:           'DB',
+      createRegistration:    true,
+      standingInstruction: {
+        mode:   'INITIAL',
+        source: 'CIT',
+        type:   'UNSCHEDULED',
+      },
+      customer: {
+        email:     profile.email,
+        givenName: profile.first_name ?? null,
+        surname:   profile.last_name  ?? null,
+      },
+      customParameters: {
+        SHOPPER_planId:    planId,
+        SHOPPER_paymentId: payment.id,
+      },
     });
-
-    if (!result.status) {
-      return { error: result.message ?? 'Failed to initialize payment.' };
-    }
-    initData = result.data;
+    checkoutId = checkout.checkoutId;
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to initialize payment.' };
   }
 
-  // Persist the Paystack reference on the payment row so the webhook can find it
   const { error: updateError } = await supabase
     .from('payments')
-    .update({ peach_payment_id: initData.reference })
+    .update({ peach_payment_id: reference })
     .eq('id', payment.id)
     .eq('patient_id', user.id);
 
   if (updateError) return { error: updateError.message };
 
-  return { error: null, authorizationUrl: initData.authorization_url };
+  return { error: null, checkoutId, shopperResultUrl, amountCents };
 }
 
 export async function initializeCardRegistration(returnTo?: string): Promise<{
-  error: string | null;
-  authorizationUrl?: string;
+  error:            string | null;
+  checkoutId?:      string;
+  shopperResultUrl?: string;
 }> {
   'use server';
 
@@ -270,50 +260,40 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('email')
+    .select('email, first_name, last_name')
     .eq('id', user.id)
     .single();
 
   if (!profile?.email) return { error: 'Account email not found.' };
 
-  const reference = `hnpl_cardreg_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+  const reference = `hnpl_reg_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
   const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
-  // Only accept relative paths — no full URLs, no external redirects.
   const safePath = (returnTo && returnTo.startsWith('/'))
     ? returnTo
     : '/patient/payment-methods/complete';
+  const shopperResultUrl = `${appUrl}${safePath}`;
 
-  type InitResponse = {
-    status:  boolean;
-    message: string;
-    data: { authorization_url: string; access_code: string; reference: string };
-  };
-
+  const provider = getPaymentProvider();
   try {
-    const result = await paystackRequest<InitResponse>('/transaction/initialize', {
-      method: 'POST',
-      body: JSON.stringify({
-        email:        profile.email,
-        amount:       100,
-        currency:     'ZAR',
-        reference,
-        channels:     ['card'],
-        callback_url: `${appUrl}${safePath}`,
-        metadata: {
-          purpose:        'card_registration',
-          patientId:      user.id,
-          return_to:      safePath,
-          custom_filters: { reusable: true },
-        },
-      }),
+    const checkout = await provider.createCheckout({
+      // Registration-only: no amount, no paymentType. OPPWA creates the
+      // stored credential without a debit. Old Paystack flow required a
+      // R1 charge + refund; Peach makes this a first-class capability.
+      amountCents:           0,
+      merchantTransactionId: reference,
+      createRegistration:    true,
+      customer: {
+        email:     profile.email,
+        givenName: profile.first_name ?? null,
+        surname:   profile.last_name  ?? null,
+      },
+      customParameters: {
+        SHOPPER_purpose:   'card_registration',
+        SHOPPER_patientId: user.id,
+      },
     });
-
-    if (!result.status) {
-      return { error: result.message ?? 'Failed to initialize card registration.' };
-    }
-
-    return { error: null, authorizationUrl: result.data.authorization_url };
+    return { error: null, checkoutId: checkout.checkoutId, shopperResultUrl };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to initialize card registration.' };
   }
@@ -435,8 +415,8 @@ export async function payWithSavedCard(
       .eq('id', plan.application_id as string);
   }
 
-  // Store the Paystack reference on the payment row BEFORE charging so the
-  // webhook can look up the row even if our process crashes after the charge.
+  // Reference stamped on the payment row BEFORE the charge so the
+  // Peach webhook can reconcile even if our process crashes mid-flight.
   const reference = `hnpl_pay_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
 
   const { error: refErr } = await supabase
@@ -453,56 +433,46 @@ export async function payWithSavedCard(
     return { error: refErr.message };
   }
 
-  // Charge the saved card silently — no checkout redirect needed
+  // Silent MIT charge against the saved card's registration id.
+  // paymentMethod.token holds the Peach registrationId for newly-added
+  // cards; the RPC-refresh path (0041) writes registrationIds into the
+  // same column so this works uniformly.
   const amountCents = Math.round(instalments[0] * 100);
 
-  type ChargeAuthResponse = {
-    status:   boolean;
-    message:  string;
-    data?: {
-      status:    string;
-      reference: string;
-      amount:    number;
-    };
-  };
+  const provider = getPaymentProvider();
+  const chargeResult = await provider.chargeSavedCard({
+    registrationId:        paymentMethod.token,
+    amountCents,
+    merchantTransactionId: reference,
+    currency:              'ZAR',
+    standingInstruction: {
+      mode:   'REPEATED',   // Subsequent charge on an already-stored card
+      source: 'MIT',
+      type:   'UNSCHEDULED',
+    },
+  });
 
-  let chargeResult: ChargeAuthResponse;
-  try {
-    chargeResult = await paystackRequest<ChargeAuthResponse>('/transaction/charge_authorization', {
-      method: 'POST',
-      body: JSON.stringify({
-        authorization_code: paymentMethod.token,
-        email:              profile.email,
-        amount:             amountCents,
-        currency:           'ZAR',
-        reference,
-        metadata: {
-          purpose:           'first_instalment_silent',
-          planId,
-          paymentId:         instalment1Id,
-          instalment_number: 1,
-        },
-      }),
-    });
-  } catch (err) {
-    // Network / API error — roll everything back so the patient can retry
+  if (chargeResult.status === 'error' || chargeResult.status === 'rejected') {
     await supabase.from('payments').delete().eq('plan_id', planId);
     await supabase.from('plans')
       .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
       .eq('id', planId);
-    return { error: err instanceof Error ? err.message : 'Failed to charge card.' };
+    return { error: chargeResult.resultDescription ?? 'Card was declined. Please try a different card.' };
   }
 
-  // If Paystack immediately declines, roll back and surface the reason
-  if (!chargeResult.status || chargeResult.data?.status === 'failed') {
-    await supabase.from('payments').delete().eq('plan_id', planId);
-    await supabase.from('plans')
-      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
-      .eq('id', planId);
-    return { error: chargeResult.message ?? 'Card was declined. Please try a different card.' };
-  }
+  // Also stamp the plan with the reusable registration id so the
+  // collections cron can find it — the webhook does this too, so the
+  // write is idempotent (IS DISTINCT FROM would be nice but the
+  // constraint is not there today).
+  await supabase
+    .from('plans')
+    .update({ peach_registration_id: paymentMethod.token })
+    .eq('id', planId)
+    .eq('patient_id', user.id)
+    .is('peach_registration_id', null);
 
-  // Charge is in-flight or succeeded — the webhook will activate the plan.
+  // Charge is in-flight (pending) or succeeded — the webhook will
+  // activate the plan on the terminal PAYMENT event.
   revalidatePath('/patient', 'layout');
   return { error: null, planId };
 }

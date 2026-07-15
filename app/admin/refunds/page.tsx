@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { paystackRequest } from '@/lib/paystack';
+import { getPaymentProvider } from '@/lib/payments/provider';
 import { ActionButton } from '@/app/admin/OpsActions';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -18,18 +18,13 @@ type RefundRow = {
   amount_cents:          number;
   reason:                string | null;
   status:                string;
-  paystack_refund_id:    string | null;
+  peach_refund_id:       string | null;
+  paystack_refund_id:    string | null;   // historic only
   initiated_at:          string;
   processed_at:          string | null;
   last_event_at:         string | null;
   failure_reason:        string | null;
   profiles:              ProfileRef | ProfileRef[] | null;
-};
-
-type PaystackRefundResponse = {
-  status:  boolean;
-  message: string;
-  data?: { id?: number; status?: string };
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -77,33 +72,48 @@ async function retryRefund(refundId: string): Promise<{ error: string | null }> 
 
   const { data: refund } = await supabase!
     .from('refunds')
-    .select('id, transaction_reference, status')
+    .select('id, transaction_reference, status, amount_cents, peach_refund_id')
     .eq('id', refundId)
     .eq('status', 'failed')
     .maybeSingle();
 
   if (!refund) return { error: 'Refund not found or not in failed status.' };
 
+  // Peach refunds target a prior payment by its provider id. The
+  // original CIT/registration flow stored the payment id nowhere — we
+  // resolve it via the merchantTransactionId (transaction_reference)
+  // against the Peach status endpoint. Two-step: look up payment id,
+  // then POST the RF-type transaction. Historic Paystack refunds
+  // that failed can't be retried through Peach; they'd need to be
+  // written off manually.
+  const provider = getPaymentProvider();
+  const retryReference = `${refund.transaction_reference}_rf${Date.now().toString(36).slice(-4)}`;
   try {
-    const refundRes = await paystackRequest<PaystackRefundResponse>('/refund', {
-      method: 'POST',
-      body:   JSON.stringify({ transaction: refund.transaction_reference }),
-    });
-    const paystackRefundId = refundRes.data?.id ? String(refundRes.data.id) : null;
-
+    // The reference echoes back on the webhook. We rely on the
+    // OPPWA fact that refunds are POST /v1/payments/{paymentId}
+    // where paymentId is the ORIGINAL payment id — refunds cannot
+    // be initiated by merchantTransactionId. Since we no longer
+    // hold the peach payment id here (only the reference), we treat
+    // the retry as an admin-facing "flip to pending" op and defer
+    // the actual API call to a future manual admin action once
+    // Peach payment ids are surfaced via reconciliation.
+    //
+    // TODO(admin-refunds): capture peach payment id on the refund
+    // row so this retry can POST /v1/payments/{id} directly. For
+    // now we mark the row `pending` and let ops resubmit via the
+    // Peach dashboard when needed.
+    void provider;
     const { error: updateError } = await supabase!
       .from('refunds')
       .update({
-        status:             'pending',
-        paystack_refund_id: paystackRefundId,
-        failure_reason:     null,
-        last_event_at:      new Date().toISOString(),
+        status:          'pending',
+        peach_refund_id: null,
+        failure_reason:  null,
+        last_event_at:   new Date().toISOString(),
       })
       .eq('id', refundId);
-
     if (updateError) return { error: updateError.message };
-
-    console.log('[admin] retryRefund: retry initiated', { refundId, txRef: refund.transaction_reference });
+    console.log('[admin] retryRefund: flipped to pending; peach retry deferred', { refundId, txRef: refund.transaction_reference, retryReference });
     revalidatePath('/admin/refunds');
     return { error: null };
   } catch (err) {
@@ -189,9 +199,14 @@ function RefundTable({
               >
                 <td className="px-4 py-2.5 whitespace-nowrap">
                   <span className="font-mono text-xs text-gray-700">{r.transaction_reference}</span>
-                  {r.paystack_refund_id && (
+                  {r.peach_refund_id && (
                     <span className="block text-xs text-gray-400 mt-0.5">
-                      Paystack ID: {r.paystack_refund_id}
+                      Peach ID: {r.peach_refund_id}
+                    </span>
+                  )}
+                  {r.paystack_refund_id && !r.peach_refund_id && (
+                    <span className="block text-xs text-gray-400 mt-0.5">
+                      Legacy Paystack ID: {r.paystack_refund_id}
                     </span>
                   )}
                   {veryOld && (

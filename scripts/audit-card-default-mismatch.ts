@@ -31,7 +31,7 @@ type Plan = {
   invoice_number:              string | null;
   patient_id:                  string;
   status:                      string;
-  paystack_authorization_code: string | null;
+  peach_registration_id: string | null;
 };
 
 type Card = {
@@ -45,9 +45,9 @@ async function main() {
 
   const { data: plans, error: planErr } = await supabase
     .from('plans')
-    .select('id, invoice_number, patient_id, status, paystack_authorization_code')
+    .select('id, invoice_number, patient_id, status, peach_registration_id')
     .in('status', ['active', 'pending_first_payment'])
-    .not('paystack_authorization_code', 'is', null);
+    .not('peach_registration_id', 'is', null);
 
   if (planErr) {
     console.error('[audit] Failed to load plans:', planErr.message);
@@ -83,7 +83,7 @@ async function main() {
   for (const p of plans as Plan[]) {
     const def = defaultByPatient.get(p.patient_id);
     if (!def)                                       noDefault.push(p);
-    else if (def.token !== p.paystack_authorization_code) mismatch.push(p);
+    else if (def.token !== p.peach_registration_id) mismatch.push(p);
     else                                            matchesDefault.push(p);
   }
 
@@ -101,7 +101,7 @@ async function main() {
       console.log(
         `  ${p.invoice_number ?? p.id.slice(0, 8)}  patient=${p.patient_id.slice(0, 8)}…  ` +
         `status=${p.status}  default_last4=${def?.last_four ?? '?'}  ` +
-        `plan_token=${(p.paystack_authorization_code ?? '').slice(0, 12)}…`,
+        `plan_token=${(p.peach_registration_id ?? '').slice(0, 12)}…`,
       );
     }
     console.log('');
@@ -112,7 +112,7 @@ async function main() {
     for (const p of noDefault) {
       console.log(
         `  ${p.invoice_number ?? p.id.slice(0, 8)}  patient=${p.patient_id.slice(0, 8)}…  ` +
-        `status=${p.status}  plan_token=${(p.paystack_authorization_code ?? '').slice(0, 12)}…`,
+        `status=${p.status}  plan_token=${(p.peach_registration_id ?? '').slice(0, 12)}…`,
       );
     }
     console.log('');

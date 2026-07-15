@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { cookies } from 'next/headers';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { paystackRequest } from '@/lib/paystack';
+import { getPaymentProvider } from '@/lib/payments/provider';
 import { encryptId } from '@/lib/idEncryption';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import {
@@ -86,7 +86,20 @@ export type InitiateCheckoutInput = {
 };
 
 export type InitiateCheckoutResult =
-  | { ok: true;  authorizationUrl: string }
+  | {
+      ok:                  true;
+      // Peach COPYandPAY: the widget script is loaded with this id and
+      // renders the card entry / 3DS UI in-page. No off-site redirect.
+      checkoutId:          string;
+      // Server-computed instalment 1 amount in cents. Displayed to the
+      // patient (for confirmation) but the value the widget POSTs to
+      // Peach is bound to `checkoutId` on the server side — the client
+      // cannot mutate it.
+      amountCents:         number;
+      // Where the widget should POST on completion. Encoded so the
+      // return route can look up the plan without another round-trip.
+      shopperResultUrl:    string;
+    }
   | { ok: false; error: string }
   // requireLogin fires for the organic-account email collision case
   // (#6 in the verification audit). The form uses `loginUrl` to send
@@ -388,7 +401,10 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   const { error: paymentsErr } = await svc.from('payments').insert(paymentRows);
   if (paymentsErr) return { ok: false, error: `Failed to create schedule: ${paymentsErr.message}` };
 
-  // ── 7. Stamp the Paystack reference on the instalment-1 row ───────────
+  // ── 7. Stamp the Peach reference on the instalment-1 row ─────────────
+  // Same identifier convention that Paystack used — the Peach webhook
+  // echoes it back as `merchantTransactionId`, and the reconcile query
+  // still looks it up in payments.peach_payment_id.
   const reference = `hnpl_co_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
   await svc.from('payments').update({ peach_payment_id: reference }).eq('id', instalment1Id);
 
@@ -409,63 +425,52 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   });
   if (signInErr) return { ok: false, error: `Failed to sign in: ${signInErr.message}` };
 
-  // ── 9. Initialize the Paystack transaction ────────────────────────────
+  // ── 9. Create the Peach COPYandPAY checkout ──────────────────────────
+  // The checkout is created server-side with the amount we just
+  // computed. The client receives ONLY a checkoutId to mount the widget
+  // against — the amount is bound on the server side and the widget
+  // sends it directly to Peach. Client cannot supply / override the
+  // amount at any point.
   const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? '';
-  const callbackUrl = `${appUrl}/checkout/${token}/complete`;
+  const shopperResultUrl = `${appUrl}/checkout/${token}/complete`;
   const amountCents = Math.round(instalments[0] * 100);
 
-  type PaystackInitResponse = {
-    status: boolean;
-    message?: string;
-    data?: { authorization_url?: string; reference?: string };
-  };
-
-  let initResult: PaystackInitResponse;
+  const provider = getPaymentProvider();
+  let checkoutId: string;
   try {
-    initResult = await paystackRequest<PaystackInitResponse>('/transaction/initialize', {
-      method: 'POST',
-      body: JSON.stringify({
-        email:        normalizedEmail,
-        amount:       amountCents,
-        currency:     'ZAR',
-        reference,
-        callback_url: callbackUrl,
-        metadata: {
-          purpose:           'checkout_first_payment',
-          token,
-          patientId:         userId,
-          planId:            plan.id,
-          paymentId:         instalment1Id,
-          instalment_number: 1,
-        },
-      }),
+    const checkout = await provider.createCheckout({
+      amountCents,
+      merchantTransactionId: reference,
+      currency:              'ZAR',
+      paymentType:           'DB',
+      createRegistration:    true,   // remember the card for MIT retries
+      standingInstruction: {
+        mode:   'INITIAL',           // Card-on-file: first CIT charge
+        source: 'CIT',
+        type:   'UNSCHEDULED',
+      },
+      customer: {
+        email:     normalizedEmail,
+        givenName: firstName.trim(),
+        surname:   lastName.trim(),
+      },
+      customParameters: {
+        SHOPPER_purpose:    'checkout_first_payment',
+        SHOPPER_token:      token,
+        SHOPPER_patientId:  userId,
+        SHOPPER_planId:     plan.id as string,
+        SHOPPER_paymentId:  instalment1Id,
+      },
     });
+    checkoutId = checkout.checkoutId;
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
   }
 
-  if (!initResult.status || !initResult.data?.authorization_url) {
-    return { ok: false, error: initResult.message ?? 'Payment initialization failed.' };
-  }
-
-  // Stash the token in a cookie so the callback / done pages can read
-  // it without depending on URL params alone.
-  //
-  // Cookie posture (hardened 2026-06-21):
-  //   • httpOnly: JS in the browser cannot read it (no XSS exfiltration).
-  //   • sameSite: 'lax' — required because the Paystack callback is a
-  //     top-level navigation from paystack.com back to /checkout/*; lax
-  //     allows the cookie to ride that hop. 'strict' would drop it.
-  //   • secure: production only — Vercel terminates TLS so the cookie
-  //     is only ever set over HTTPS in prod. Locally on `next dev` the
-  //     loopback is http; setting secure there would prevent the cookie
-  //     from being stored at all, breaking local checkout testing.
-  //   • path: '/checkout' — the only routes that READ this cookie are
-  //     under /checkout (complete + done pages). Narrower path = the
-  //     browser sends it on fewer requests.
-  //   • maxAge: 60 minutes — the checkout flow's outer envelope. Long
-  //     enough to cover slow Paystack hops + a brief abandon-resume,
-  //     short enough that an idle session doesn't dangle the token.
+  // Stash the token in a cookie so the complete + done pages can read
+  // it without depending on URL params alone. Cookie posture matches
+  // the earlier Paystack flow — the widget's shopperResultUrl still
+  // lands us on /checkout/{token}/complete.
   const cookieStore = await cookies();
   cookieStore.set('hnpl_checkout_token', token, {
     httpOnly: true,
@@ -475,7 +480,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     path:     '/checkout',
   });
 
-  return { ok: true, authorizationUrl: initResult.data.authorization_url };
+  return { ok: true, checkoutId, amountCents, shopperResultUrl };
 }
 
 // ─── finalizePassword — set the patient's real password ────────────────────

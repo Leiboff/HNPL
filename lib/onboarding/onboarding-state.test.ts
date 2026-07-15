@@ -449,13 +449,13 @@ describe('Server-side acceptance gate — acceptPlan + payWithSavedCard', () => 
     expect(updateIdx).toBeGreaterThan(guardIdx);
   });
 
-  it('payWithSavedCard calls requireOnboarded BEFORE any Paystack call', () => {
+  it('payWithSavedCard calls requireOnboarded BEFORE any payment-provider call', () => {
     const fnStart = PATIENT_ACT.indexOf('export async function payWithSavedCard');
     const body = PATIENT_ACT.slice(fnStart);
-    const guardIdx      = body.indexOf('requireOnboarded(');
-    const paystackIdx   = body.indexOf('paystackRequest<');
+    const guardIdx    = body.indexOf('requireOnboarded(');
+    const chargeIdx   = body.indexOf('provider.chargeSavedCard');
     expect(guardIdx).toBeGreaterThan(0);
-    expect(paystackIdx).toBeGreaterThan(guardIdx);
+    expect(chargeIdx).toBeGreaterThan(guardIdx);
   });
 
   it('refusal returns a not_onboarded reason + /onboarding href for the client', () => {
@@ -776,16 +776,15 @@ describe('No orphan imports of the pre-unification component locations', () => {
 describe('Diff scope — onboarding + auth surfaces + the acceptance gate only', () => {
   it('the state module is pure — no I/O imports', () => {
     expect(STATE_TS).not.toMatch(/from ['"]@\/lib\/supabase\//);
-    expect(STATE_TS).not.toMatch(/from ['"]@\/lib\/paystack/);
+    expect(STATE_TS).not.toMatch(/from ['"]@\/lib\/payments\/provider/);
     expect(STATE_TS).not.toMatch(/from ['"]@\/lib\/finance/);
   });
 
   it('the onboarding actions file doesn\'t import payment / webhook / finance-math modules', () => {
     const FORBIDDEN = [
       '@/lib/payments/',
-      '@/lib/paystack/',
+      'app/api/payments/peach/webhook',
       '@/lib/bills/lifecycle',
-      'app/api/webhooks/paystack',
       '@/lib/finance',
     ];
     for (const mod of FORBIDDEN) {

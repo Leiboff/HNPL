@@ -1,23 +1,11 @@
 import Link from 'next/link';
-import { paystackRequest } from '@/lib/paystack';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type VerifyResponse = {
-  status:  boolean;
-  message: string;
-  data: {
-    status:           string; // 'success' | 'failed' | 'abandoned' | 'ongoing' | ...
-    amount:           number; // kobo (ZAR cents)
-    reference:        string;
-    gateway_response: string;
-  };
-};
+import { getPaymentProvider } from '@/lib/payments/provider';
+import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatRand(kobo: number): string {
-  const rands = kobo / 100;
+function formatRand(cents: number): string {
+  const rands = cents / 100;
   const [integer, decimal] = rands.toFixed(2).split('.');
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
@@ -34,7 +22,7 @@ function ResultCard({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SuccessCard({ amountKobo }: { amountKobo: number }) {
+function SuccessCard({ amountCents }: { amountCents: number }) {
   return (
     <ResultCard>
       <div className="flex items-center justify-center w-14 h-14 rounded-full bg-green-100 mx-auto">
@@ -45,8 +33,8 @@ function SuccessCard({ amountKobo }: { amountKobo: number }) {
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Payment successful</h1>
         <p className="mt-1 text-sm text-gray-500">
-          {amountKobo > 0 ? (
-            <>Your first instalment of <span className="font-medium text-gray-700">{formatRand(amountKobo)}</span> has been received.</>
+          {amountCents > 0 ? (
+            <>Your first instalment of <span className="font-medium text-gray-700">{formatRand(amountCents)}</span> has been received.</>
           ) : (
             <>Your first instalment has been received.</>
           )}
@@ -146,41 +134,31 @@ export default async function PaymentCompletePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params    = await searchParams;
-  const reference = (params.reference ?? params.trxref) as string | undefined;
+  const params       = await searchParams;
+  const resourcePath = (params.resourcePath ?? params.resource_path) as string | undefined;
 
-  if (!reference) {
+  if (!resourcePath) {
     return <NoReferenceCard />;
   }
 
-  // Verify the transaction with Paystack.
-  // This is a read-only check — we don't activate anything here; the webhook
-  // already did that. We're just showing the patient what happened.
-  type TxStatus = 'success' | 'failed' | 'abandoned' | 'pending';
-  let txStatus: TxStatus = 'pending';
-  let amountKobo = 0;
+  // Read-only check against Peach — we don't activate anything here;
+  // the webhook already did (or will). We're just showing the patient
+  // what happened.
+  let txStatus: 'success' | 'failed' | 'pending' = 'pending';
+  let amountCents = 0;
 
   try {
-    const result = await paystackRequest<VerifyResponse>(
-      `/transaction/verify/${encodeURIComponent(reference)}`,
-    );
-
-    if (result.status && result.data) {
-      amountKobo = result.data.amount;
-      const s    = result.data.status;
-      if      (s === 'success')   txStatus = 'success';
-      else if (s === 'failed')    txStatus = 'failed';
-      else if (s === 'abandoned') txStatus = 'abandoned';
-      // 'ongoing', 'processing', or anything else stays 'pending'
-    }
+    const provider = getPaymentProvider();
+    const status   = await provider.getCheckoutStatus(resourcePath);
+    const c        = classifyResultCode(status.resultCode);
+    if      (c === 'success')  txStatus = 'success';
+    else if (c === 'rejected') txStatus = 'failed';
+    if (status.amountCents) amountCents = status.amountCents;
   } catch (err) {
-    // Verification failed (network error, bad reference, etc.). Show pending
-    // rather than an error — the webhook may still process it.
-    console.error('[payment-complete] Paystack verify error:', err);
+    console.error('[payment-complete] Peach status fetch error:', err);
   }
 
-  if (txStatus === 'success')   return <SuccessCard amountKobo={amountKobo} />;
-  if (txStatus === 'failed')    return <FailedCard />;
-  if (txStatus === 'abandoned') return <FailedCard abandoned />;
+  if (txStatus === 'success') return <SuccessCard amountCents={amountCents} />;
+  if (txStatus === 'failed')  return <FailedCard />;
   return <PendingCard />;
 }

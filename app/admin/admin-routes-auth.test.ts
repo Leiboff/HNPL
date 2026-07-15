@@ -30,7 +30,6 @@ const ADMIN_PAGES = [
   'app/admin/practices/page.tsx',
   'app/admin/practices/[id]/page.tsx',
   'app/admin/refunds/page.tsx',
-  'app/admin/paystack-test/page.tsx',
 ];
 
 describe('admin routes — server-side admin auth pattern', () => {
@@ -41,8 +40,7 @@ describe('admin routes — server-side admin auth pattern', () => {
   });
 
   // The layout is the canonical place. Every PAGE other than the layout
-  // and paystack-test (legacy stub) also repeats the role check — the
-  // belt-and-braces layer.
+  // also repeats the role check — the belt-and-braces layer.
   const PAGES_WITH_ROLE_CHECK = ADMIN_PAGES.filter(
     (p) => p !== 'app/admin/layout.tsx',
   );

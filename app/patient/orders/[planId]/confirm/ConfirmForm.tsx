@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { payWithSavedCard, initializeCardRegistration } from '@/app/patient/actions';
+import PeachWidget from '@/app/_components/PeachWidget';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +91,10 @@ export default function ConfirmForm({
   const [error,          setError]          = useState<string | null>(null);
   const [addCardLoading, setAddCardLoading] = useState(false);
   const [addCardError,   setAddCardError]   = useState<string | null>(null);
+  // Peach COPYandPAY widget lives on the same page — mounted after
+  // initializeCardRegistration returns a checkoutId. Null means "no
+  // widget mounted".
+  const [addCardWidget,  setAddCardWidget]  = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
 
   // Card search status: 'polling' when we return from registration and no card visible yet
   const [cardSearchStatus, setCardSearchStatus] = useState<CardSearchStatus>(() => {
@@ -219,23 +224,23 @@ export default function ConfirmForm({
     }
   }
 
-  // ── Add new card — navigate to Paystack with a return URL ──────────────────
+  // ── Add new card — Peach registration-only checkout, mounted inline ──
 
   async function handleAddNewCard() {
     if (!planType) return;
     setAddCardLoading(true);
     setAddCardError(null);
 
-    // Include planType and from=registration so the confirm page can restore state
     const returnTo = `/patient/orders/${planId}/confirm?planType=${planType}&from=registration`;
     const result   = await initializeCardRegistration(returnTo);
 
-    if (result.error) {
-      setAddCardError(result.error);
+    if (result.error || !result.checkoutId || !result.shopperResultUrl) {
+      setAddCardError(result.error ?? 'Could not start card registration.');
       setAddCardLoading(false);
       return;
     }
-    window.location.href = result.authorizationUrl!;
+    setAddCardWidget({ checkoutId: result.checkoutId, shopperResultUrl: result.shopperResultUrl });
+    setAddCardLoading(false);
   }
 
   // ── Pay with selected card ─────────────────────────────────────────────────
@@ -260,6 +265,34 @@ export default function ConfirmForm({
   const busy         = submitting || addCardLoading;
 
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  // Peach widget takes over the surface while it's mounted. The
+  // shopperResultUrl brings the patient back to the same route with
+  // ?from=registration so the polling-fallback re-scans for the new card.
+  if (addCardWidget) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">{practiceName}</h1>
+          <p className="mt-2 text-sm text-gray-600">Enter your card details to add it to your account.</p>
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <PeachWidget
+            checkoutId={addCardWidget.checkoutId}
+            shopperResultUrl={addCardWidget.shopperResultUrl}
+          />
+          <button
+            type="button"
+            onClick={() => setAddCardWidget(null)}
+            className="mt-3 text-xs text-gray-500 underline hover:text-gray-700"
+            data-testid="confirm-widget-cancel"
+          >
+            Cancel and go back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

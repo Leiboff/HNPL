@@ -1,25 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ─── Tests for the atomic claim + charge helper ─────────────────────────────
+// ─── Tests for the atomic claim + charge helper ─────────────────────
 //
-// The helper is the load-bearing piece for not double-charging. These
-// tests use a stub Supabase client where:
-//   • from('payments').select(...).eq('id', X).maybeSingle()  → snapshot
-//   • from('payments').update(...).eq(...).in(...).lt(...).lte(...).select()
-//        → atomic claim. The stub honours the WHERE predicates against
-//          the current row so the "already claimed" case returns 0 rows.
-//   • from('plans').select(...).eq('id', X).maybeSingle()  → plan
-//   • from('profiles').select(...).eq('id', X).single()    → email
+// Peach edition. Same claim / retry-cap / dunning / idempotency
+// semantics as the pre-swap Paystack tests — only the inner charge
+// call changed from paystackRequest(/transaction/charge_authorization)
+// to provider.chargeSavedCard(). The tests here mock the provider so
+// we can assert the request shape and simulate transport-level errors.
 
-const paystackRequestSpy = vi.fn();
+const chargeSavedCardSpy = vi.fn();
 
-vi.mock('@/lib/paystack', () => ({
-  paystackRequest: (...args: unknown[]) => paystackRequestSpy(...args),
+vi.mock('./provider', () => ({
+  getPaymentProvider: () => ({
+    chargeSavedCard: (...args: unknown[]) => chargeSavedCardSpy(...args),
+  }),
 }));
 
 import { attemptChargeInstalment, MAX_ATTEMPTS } from './chargeInstalment';
 
-// ─── Stub Supabase ──────────────────────────────────────────────────────────
+// ─── Stub Supabase ──────────────────────────────────────────────────
 
 type PaymentRow = {
   id:           string;
@@ -34,10 +33,10 @@ type PaymentRow = {
   last_dunning_attempt_date?:  string | null;
 };
 type PlanRow = {
-  id:                          string;
-  paystack_authorization_code: string | null;
-  patient_id:                  string;
-  status:                      string;
+  id:                     string;
+  peach_registration_id:  string | null;
+  patient_id:             string;
+  status:                 string;
 };
 type ProfileRow = { id: string; email: string };
 
@@ -120,11 +119,20 @@ function makeStub(state: StubState) {
   return stub;
 }
 
+// Default: provider responds with a successful charge. Tests can override.
+function stubSuccess() {
+  chargeSavedCardSpy.mockResolvedValue({
+    status:            'success',
+    providerPaymentId: 'peach-payment-abc',
+    resultCode:        '000.100.110',
+  });
+}
+
 beforeEach(() => {
-  paystackRequestSpy.mockReset();
+  chargeSavedCardSpy.mockReset();
 });
 
-// ─── attemptChargeInstalment ────────────────────────────────────────────────
+// ─── attemptChargeInstalment ────────────────────────────────────────
 
 describe('attemptChargeInstalment — atomic claim semantics', () => {
   it('returns claim_lost when the row is already in processing (concurrent claim)', async () => {
@@ -133,13 +141,13 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
         id: 'p1', status: 'processing', retry_count: 1, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
       today:    '2026-06-15',
     });
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('claim_lost');
-    expect(paystackRequestSpy).not.toHaveBeenCalled();
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
   });
 
   it('returns claim_lost when retry_count is already at the cap', async () => {
@@ -148,12 +156,12 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
         id: 'p1', status: 'failed', retry_count: MAX_ATTEMPTS, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     });
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('claim_lost');
-    expect(paystackRequestSpy).not.toHaveBeenCalled();
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
   });
 
   it('returns claim_lost when due_date is in the future', async () => {
@@ -162,12 +170,12 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
         id: 'p1', status: 'scheduled', retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-07-01',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     });
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('claim_lost');
-    expect(paystackRequestSpy).not.toHaveBeenCalled();
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
   });
 
   it('claim is atomic — a second concurrent call to the same row sees status=processing and bails', async () => {
@@ -176,35 +184,35 @@ describe('attemptChargeInstalment — atomic claim semantics', () => {
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockResolvedValue({ status: true });
+    stubSuccess();
     const first = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(first.kind).toBe('charged');
     expect(state.payments[0].status).toBe('processing');
 
     const second = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(second.kind).toBe('claim_lost');
-    // Paystack was called exactly ONCE despite two attempts.
-    expect(paystackRequestSpy).toHaveBeenCalledTimes(1);
+    // Peach was called exactly ONCE despite two attempts.
+    expect(chargeSavedCardSpy).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('attemptChargeInstalment — successful charge', () => {
-  it('writes a fresh reference, increments retry_count, stamps last_dunning_attempt_date, marks processing, calls Paystack with the correct payload', async () => {
+  it('writes a fresh reference, increments retry_count, stamps last_dunning_attempt_date, marks processing, calls Peach with the correct payload', async () => {
     const state: StubState = {
       payments: [{
         id: 'aaaa1111-bbbb-2222-cccc-333344445555',
         status: 'scheduled' as string, retry_count: 0, amount: 250.75,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH_ABC', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG_ABC', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockResolvedValue({ status: true });
+    stubSuccess();
 
     const result = await attemptChargeInstalment(svc, state.payments[0].id, { today: '2026-06-15' });
 
@@ -219,15 +227,24 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(state.payments[0].peach_payment_id).toBe(result.reference);
     expect(state.payments[0].last_dunning_attempt_date).toBe('2026-06-15');
 
-    expect(paystackRequestSpy).toHaveBeenCalledTimes(1);
-    const [endpoint, opts] = paystackRequestSpy.mock.calls[0] as [string, RequestInit];
-    expect(endpoint).toBe('/transaction/charge_authorization');
-    const body = JSON.parse(opts.body as string);
-    expect(body.authorization_code).toBe('AUTH_ABC');
-    expect(body.email).toBe('u@example.com');
-    expect(body.amount).toBe(25075);
-    expect(body.currency).toBe('ZAR');
-    expect(body.reference).toBe(result.reference);
+    expect(chargeSavedCardSpy).toHaveBeenCalledTimes(1);
+    const [args] = chargeSavedCardSpy.mock.calls as [[{
+      registrationId:        string;
+      amountCents:           number;
+      merchantTransactionId: string;
+      currency:              string;
+      standingInstruction:   { mode: string; source: string; type: string };
+    }]];
+    expect(args[0].registrationId).toBe('REG_ABC');
+    expect(args[0].amountCents).toBe(25075);
+    expect(args[0].currency).toBe('ZAR');
+    expect(args[0].merchantTransactionId).toBe(result.reference);
+    // Card-on-file: subsequent charges are REPEATED / MIT / UNSCHEDULED.
+    expect(args[0].standingInstruction).toEqual({
+      mode:   'REPEATED',
+      source: 'MIT',
+      type:   'UNSCHEDULED',
+    });
   });
 
   it('on retry of a previously failed row, attemptNumber increments and reference reflects it', async () => {
@@ -236,11 +253,11 @@ describe('attemptChargeInstalment — successful charge', () => {
         id: 'p1', status: 'failed' as string, retry_count: 2, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockResolvedValue({ status: true });
+    stubSuccess();
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('charged');
     if (result.kind !== 'charged') return;
@@ -249,40 +266,40 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(state.payments[0].retry_count).toBe(3);
   });
 
-  it('includes accrued dunning fees in the Paystack amount (retry-carries-fees)', async () => {
+  it('includes accrued dunning fees in the Peach amount (retry-carries-fees)', async () => {
     const state: StubState = {
       payments: [{
         id: 'p1', status: 'failed', retry_count: 2, amount: 250,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 10_000, // R100 accrued
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockResolvedValue({ status: true });
+    stubSuccess();
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('charged');
     if (result.kind !== 'charged') return;
     // 250.00 instalment + R100 fees = R350 = 35000 cents
     expect(result.amountChargedCents).toBe(35_000);
-    const body = JSON.parse((paystackRequestSpy.mock.calls[0] as [string, RequestInit])[1].body as string);
-    expect(body.amount).toBe(35_000);
+    const [args] = chargeSavedCardSpy.mock.calls as [[{ amountCents: number }]];
+    expect(args[0].amountCents).toBe(35_000);
   });
 });
 
-describe('attemptChargeInstalment — Paystack transport error', () => {
-  it('does NOT revert the row when Paystack throws — claim stays in processing for manual reconcile', async () => {
+describe('attemptChargeInstalment — Peach transport error', () => {
+  it('does NOT revert the row when Peach returns status=error — claim stays in processing for manual reconcile', async () => {
     const state: StubState = {
       payments: [{
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockRejectedValue(new Error('Paystack 502'));
+    chargeSavedCardSpy.mockResolvedValue({ status: 'error', resultDescription: 'Peach 502' });
 
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('transport_error');
@@ -299,7 +316,7 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'cancelled' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'cancelled' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
@@ -309,29 +326,29 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
     expect(state.payments[0].status).toBe('scheduled');
     expect(state.payments[0].retry_count).toBe(0);
     expect(state.payments[0].peach_payment_id).toBeNull();
-    expect(paystackRequestSpy).not.toHaveBeenCalled();
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
   });
 
-  it('reverts the claim when the plan has no stored authorization code', async () => {
+  it('reverts the claim when the plan has no stored registration id', async () => {
     const state: StubState = {
       payments: [{
         id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 100,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: null, patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: null, patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('claim_lost');
-    if (result.kind === 'claim_lost') expect(result.reason).toBe('no_authorization_code');
+    if (result.kind === 'claim_lost') expect(result.reason).toBe('no_registration_id');
     expect(state.payments[0].status).toBe('scheduled');
     expect(state.payments[0].retry_count).toBe(0);
-    expect(paystackRequestSpy).not.toHaveBeenCalled();
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
   });
 });
 
-// ─── self-settle path ──────────────────────────────────────────────────────
+// ─── self-settle path ──────────────────────────────────────────────
 
 describe('attemptChargeInstalment — selfSettle widens the claim', () => {
   it('charges a defaulted row when selfSettle=true', async () => {
@@ -341,11 +358,11 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 30_000,
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockResolvedValue({ status: true });
+    stubSuccess();
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15', selfSettle: true });
     expect(result.kind).toBe('charged');
     if (result.kind !== 'charged') return;
@@ -360,13 +377,13 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 30_000,
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     expect(result.kind).toBe('claim_lost');
-    expect(paystackRequestSpy).not.toHaveBeenCalled();
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
   });
 
   it('selfSettle race vs cron — exactly one charge fires', async () => {
@@ -376,11 +393,11 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 10_000,
       }],
-      plans:    [{ id: 'plan-1', paystack_authorization_code: 'AUTH', patient_id: 'u1', status: 'active' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
       profiles: [{ id: 'u1', email: 'u@example.com' }],
     };
     const svc = makeStub(state);
-    paystackRequestSpy.mockResolvedValue({ status: true });
+    stubSuccess();
 
     const cron       = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
     const selfSettle = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15', selfSettle: true });
@@ -388,6 +405,6 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
     // Whichever ran first claimed; the other got claim_lost.
     const outcomes = [cron.kind, selfSettle.kind].sort();
     expect(outcomes).toEqual(['charged', 'claim_lost']);
-    expect(paystackRequestSpy).toHaveBeenCalledTimes(1);
+    expect(chargeSavedCardSpy).toHaveBeenCalledTimes(1);
   });
 });

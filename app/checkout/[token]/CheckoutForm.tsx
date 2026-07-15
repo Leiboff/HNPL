@@ -21,6 +21,7 @@ import {
   SecondaryButton,
 } from './_components/CheckoutChrome';
 import PlanPickerCards from './_components/PlanPickerCards';
+import PeachWidget from '@/app/_components/PeachWidget';
 
 // ─── Multi-step anonymous checkout ─────────────────────────────────────────
 //
@@ -89,7 +90,7 @@ type Props = {
     planType:    2 | 3;
     salaryDay?:  number | null;
   }) => Promise<
-    | { ok: true;  authorizationUrl: string }
+    | { ok: true;  checkoutId: string; amountCents: number; shopperResultUrl: string }
     | { ok: false; error: string }
     | { ok: false; error: string; requireLogin: true; loginUrl: string }
   >;
@@ -307,6 +308,11 @@ export default function CheckoutForm({
   const [loginUrl,  setLoginUrl]  = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // Post-Pay: the Peach checkout has been created and we mount the
+  // COPYandPAY widget inline. `null` means "still on the form"; a
+  // non-null value swaps the form for the widget.
+  const [widget, setWidget] = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
+
   // Phone-OTP state lives entirely inside the shared <PhoneOtpStep />.
   // CheckoutForm only needs a remount-key — bumping it on
   // change-number / verify_phone_required forces the embedded step
@@ -413,13 +419,13 @@ export default function CheckoutForm({
           }
           return;
         }
-        if (!result.authorizationUrl) {
-          setError('The payment service didn\'t return a URL. Please try again in a moment.');
+        if (!result.checkoutId || !result.shopperResultUrl) {
+          setError('The payment service didn\'t return a checkout. Please try again in a moment.');
           return;
         }
-        // Hard navigate so Paystack's redirect-back lands on a clean server
-        // request that reads our auth cookie.
-        window.location.href = result.authorizationUrl;
+        // Peach COPYandPAY: mount the widget in-page. The widget owns
+        // card entry + 3DS and POSTs to shopperResultUrl on completion.
+        setWidget({ checkoutId: result.checkoutId, shopperResultUrl: result.shopperResultUrl });
       } catch (err) {
         setError(
           err instanceof Error
@@ -428,6 +434,36 @@ export default function CheckoutForm({
         );
       }
     });
+  }
+
+  // Once the widget is mounted the multi-step form is behind the
+  // widget UI. We keep the BillChip visible so the amount + practice
+  // stay in view while the patient enters their card.
+  if (widget) {
+    return (
+      <>
+        <div className="mb-5">
+          <BillChip practiceName={practiceName} totalAmount={totalAmount} />
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-sm text-gray-600">
+            Enter your card details to complete instalment 1. Your saved card will be used for the remaining payments on their due dates.
+          </p>
+          <PeachWidget
+            checkoutId={widget.checkoutId}
+            shopperResultUrl={widget.shopperResultUrl}
+          />
+          <button
+            type="button"
+            onClick={() => setWidget(null)}
+            className="mt-3 text-xs text-gray-500 underline hover:text-gray-700"
+            data-testid="checkout-widget-cancel"
+          >
+            Cancel and go back
+          </button>
+        </div>
+      </>
+    );
   }
 
   return (
