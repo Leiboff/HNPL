@@ -51,6 +51,10 @@ export type ChargeSavedCardParams = {
   // Other combos (INITIAL/CIT, RECURRING/*, INSTALLMENT/*) are covered
   // by other flows (widget charges + registration-only) and don't come
   // through this fn.
+  //
+  // This function ALWAYS uses the RECURRING entity id. There is no
+  // channel override — MIT charges must go through the recurring
+  // channel or the acquirer will apply 3DS rules that will decline.
   standingInstruction:   {
     mode:   'INITIAL' | 'REPEATED';
     source: 'CIT' | 'MIT';
@@ -75,6 +79,11 @@ export type CheckoutCreateParams = {
     surname?:   string | null;
   };
   customParameters?: Record<string, string>;
+  // Which Peach entity to book the checkout against. Widget-driven
+  // checkouts (Flow A first-instalment + Flow B card-registration)
+  // always use 'cit' — that entity is 3DS-enabled at the acquirer.
+  // Defaults to 'cit' when omitted.
+  channel?: 'cit' | 'recurring';
 };
 
 export type CheckoutCreated = {
@@ -113,20 +122,47 @@ export interface PaymentProvider {
   /** Create a checkout for the COPYandPAY widget. Server-only. */
   createCheckout(params: CheckoutCreateParams): Promise<CheckoutCreated>;
 
-  /** Fetch the payment status behind a widget `resourcePath`. Server-only. */
-  getCheckoutStatus(resourcePath: string): Promise<PaymentStatus>;
+  /**
+   * Fetch the payment status behind a widget `resourcePath`. Server-only.
+   * The widget path was created against the CIT entity — defaults to
+   * that. Callers that reused the recurring channel for a checkout can
+   * override with { channel: 'recurring' }.
+   */
+  getCheckoutStatus(resourcePath: string, opts?: { channel?: 'cit' | 'recurring' }): Promise<PaymentStatus>;
 
-  /** Fetch the status of a payment by provider id. Server-only. */
-  getPaymentStatus(providerPaymentId: string): Promise<PaymentStatus>;
+  /**
+   * Fetch the status of a payment by provider id. Peach scopes reads
+   * to the entity that owns the payment; the caller must indicate
+   * which channel the payment was originally booked on. Defaults to
+   * 'recurring' (the common case: cron-inserted rows).
+   */
+  getPaymentStatus(providerPaymentId: string, opts?: { channel?: 'cit' | 'recurring' }): Promise<PaymentStatus>;
 
-  /** Server-to-server MIT charge against a stored registration. */
+  /** Server-to-server MIT charge against a stored registration. Always uses the recurring entity. */
   chargeSavedCard(params: ChargeSavedCardParams): Promise<ChargeResult>;
 
-  /** Delete a stored registration. */
+  /** Delete a stored registration. The registration was created via the CIT widget, so uses the CIT entity. */
   deleteRegistration(registrationId: string): Promise<{ ok: boolean; raw?: unknown }>;
 
-  /** Refund a prior payment by provider id. */
-  refund(providerPaymentId: string, amountCents: number, merchantTransactionId: string): Promise<RefundResult>;
+  /**
+   * Refund a prior payment by provider id. Peach spec:
+   *   POST /v1/payments/{id} with paymentType=RF (refund) — reduces
+   *   a prior debit; the standard flow for our DB (debit) instalments.
+   *   POST /v1/payments/{id} with paymentType=RV (reversal) — voids a
+   *   preauth (PA) that hasn't been captured yet. We only issue DB
+   *   today, so RF is the default; RV is exposed for future PA flows.
+   *
+   * The channel must match the entity the original payment was booked
+   * on: instalment-1 CIT (widget) → 'cit'; instalments 2+ MIT →
+   * 'recurring'; standalone registration R1 (Paystack-era hack, no
+   * longer used) → 'cit'. Defaults to 'recurring'.
+   */
+  refund(
+    providerPaymentId: string,
+    amountCents: number,
+    merchantTransactionId: string,
+    opts?: { paymentType?: 'RF' | 'RV'; channel?: 'cit' | 'recurring' },
+  ): Promise<RefundResult>;
 }
 
 // ─── Provider singleton ─────────────────────────────────────────────

@@ -14,15 +14,33 @@ import { classifyResultCode } from './resultCodes';
 
 // ─── Env-driven configuration ───────────────────────────────────────
 //
-// Read lazily so tests can swap process.env before the first call. The
-// four vars are:
+// Read lazily so tests can swap process.env before the first call. Env
+// vars — read the report for provisioning notes:
 //
-//   PEACH_BASE_URL             — e.g. https://sandbox-card.peachpayments.com
-//                                or the production host per the sandbox doc
-//   PEACH_ENTITY_ID            — the merchant entity for card payments
-//   PEACH_ACCESS_TOKEN         — Bearer token
-//   PEACH_WEBHOOK_SECRET_KEY   — 64-char hex, used to AES-256-GCM
-//                                decrypt inbound webhooks (see webhook.ts)
+//   PEACH_BASE_URL              — e.g. https://sandbox-card.peachpayments.com
+//   PEACH_ENTITY_ID_CIT         — Cardholder-Initiated / 3DSecure entity.
+//                                  Used for COPYandPAY widget-driven
+//                                  checkouts (Flow A first instalment
+//                                  and Flow B card-registration). This
+//                                  channel is 3DS-enabled at the
+//                                  acquirer.
+//   PEACH_ENTITY_ID_RECURRING   — Merchant-Initiated recurring entity.
+//                                  Used for POST /v1/registrations/
+//                                  {id}/payments MIT charges (Flow C
+//                                  cron + settle-entire-bill). Peach
+//                                  provisions this as a SEPARATE
+//                                  entity so 3DS-required rules don't
+//                                  block recurring debits. Single-
+//                                  entity accounts set both to the
+//                                  same value.
+//   PEACH_ACCESS_TOKEN          — Bearer token. Product-family
+//                                  scoped: the recurring / COPYandPAY
+//                                  / S2S token family (NOT a Checkout-
+//                                  product token). One token covers
+//                                  both entity IDs when they belong to
+//                                  the same product family.
+//   PEACH_WEBHOOK_SECRET_KEY    — 64-char hex, AES-256-GCM decrypt key
+//                                  for inbound webhooks (webhook.ts).
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -31,7 +49,16 @@ function requireEnv(name: string): string {
 }
 
 function baseUrl(): string { return requireEnv('PEACH_BASE_URL').replace(/\/$/, ''); }
-function entityId(): string { return requireEnv('PEACH_ENTITY_ID'); }
+
+// Dual-entity: caller-of-record specifies which channel it needs.
+export type PeachChannel = 'cit' | 'recurring';
+
+function entityIdFor(channel: PeachChannel): string {
+  return channel === 'cit'
+    ? requireEnv('PEACH_ENTITY_ID_CIT')
+    : requireEnv('PEACH_ENTITY_ID_RECURRING');
+}
+
 function accessToken(): string { return requireEnv('PEACH_ACCESS_TOKEN'); }
 
 // Hard cap on Peach call duration. Vercel Hobby functions time out at
@@ -191,8 +218,12 @@ function toPaymentStatus(body: PeachPaymentBody): PaymentStatus {
 
 export class PeachProvider implements PaymentProvider {
   async createCheckout(params: CheckoutCreateParams): Promise<CheckoutCreated> {
+    // Default to CIT — the widget-driven flows (Flow A + Flow B) live
+    // on the 3DS-enabled entity. `channel: 'recurring'` is legal but
+    // unusual; keep the escape hatch for edge cases.
+    const channel: PeachChannel = params.channel ?? 'cit';
     const form: Record<string, unknown> = {
-      entityId:              entityId(),
+      entityId:              entityIdFor(channel),
       merchantTransactionId: params.merchantTransactionId,
     };
 
@@ -224,18 +255,23 @@ export class PeachProvider implements PaymentProvider {
     return { checkoutId: res.id, raw: res };
   }
 
-  async getCheckoutStatus(resourcePath: string): Promise<PaymentStatus> {
+  async getCheckoutStatus(resourcePath: string, opts?: { channel?: PeachChannel }): Promise<PaymentStatus> {
     // The widget appends resourcePath = /v1/checkouts/{id}/payment on
-    // return. We tack the entityId onto the query string per the docs.
+    // return. Entity id defaults to CIT because that's where the
+    // widget checkouts are booked.
+    const channel: PeachChannel = opts?.channel ?? 'cit';
     if (!resourcePath.startsWith('/')) resourcePath = `/${resourcePath}`;
     const sep = resourcePath.includes('?') ? '&' : '?';
-    const path = `${resourcePath}${sep}entityId=${encodeURIComponent(entityId())}`;
+    const path = `${resourcePath}${sep}entityId=${encodeURIComponent(entityIdFor(channel))}`;
     const res = await peachFetch('GET', path) as PeachPaymentBody;
     return toPaymentStatus(res);
   }
 
-  async getPaymentStatus(providerPaymentId: string): Promise<PaymentStatus> {
-    const path = `/v1/payments/${encodeURIComponent(providerPaymentId)}?entityId=${encodeURIComponent(entityId())}`;
+  async getPaymentStatus(providerPaymentId: string, opts?: { channel?: PeachChannel }): Promise<PaymentStatus> {
+    // Payments live on the entity that booked them; MIT charges (the
+    // common case for a status lookup) are on the recurring channel.
+    const channel: PeachChannel = opts?.channel ?? 'recurring';
+    const path = `/v1/payments/${encodeURIComponent(providerPaymentId)}?entityId=${encodeURIComponent(entityIdFor(channel))}`;
     const res = await peachFetch('GET', path) as PeachPaymentBody;
     return toPaymentStatus(res);
   }
@@ -244,8 +280,11 @@ export class PeachProvider implements PaymentProvider {
     if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
       throw new Error(`Peach chargeSavedCard: amountCents must be a positive integer; got ${params.amountCents}`);
     }
+    // MIT charges ALWAYS go through the recurring channel — Peach
+    // provisions this as a separate entity so 3DS rules don't block
+    // recurring debits. No override.
     const form: Record<string, unknown> = {
-      entityId:              entityId(),
+      entityId:              entityIdFor('recurring'),
       amount:                formatAmountCents(params.amountCents),
       currency:              params.currency ?? 'ZAR',
       paymentType:           'DB',
@@ -278,10 +317,12 @@ export class PeachProvider implements PaymentProvider {
   }
 
   async deleteRegistration(registrationId: string): Promise<{ ok: boolean; raw?: unknown }> {
+    // Registrations are created by the CIT widget; the entity that
+    // owns them for deletion is the CIT entity.
     try {
       const res = await peachFetch(
         'DELETE',
-        `/v1/registrations/${encodeURIComponent(registrationId)}?entityId=${encodeURIComponent(entityId())}`,
+        `/v1/registrations/${encodeURIComponent(registrationId)}?entityId=${encodeURIComponent(entityIdFor('cit'))}`,
       );
       return { ok: true, raw: res };
     } catch (err) {
@@ -290,15 +331,21 @@ export class PeachProvider implements PaymentProvider {
   }
 
   async refund(
-    providerPaymentId: string,
-    amountCents:       number,
+    providerPaymentId:     string,
+    amountCents:           number,
     merchantTransactionId: string,
+    opts?: { paymentType?: 'RF' | 'RV'; channel?: PeachChannel },
   ): Promise<RefundResult> {
+    // Peach spec (Manage payments): POST /v1/payments/{id} with
+    // paymentType=RF (refund) OR paymentType=RV (reversal of a PA).
+    // Entity id must match the original payment's channel.
+    const paymentType: 'RF' | 'RV' = opts?.paymentType ?? 'RF';
+    const channel:     PeachChannel = opts?.channel ?? 'recurring';
     const body = toFormBody({
-      entityId:              entityId(),
+      entityId:              entityIdFor(channel),
       amount:                formatAmountCents(amountCents),
       currency:              'ZAR',
-      paymentType:           'RF',
+      paymentType,
       merchantTransactionId,
     });
     try {
@@ -324,4 +371,4 @@ export class PeachProvider implements PaymentProvider {
 }
 
 // Exported for tests only.
-export const __internals = { formatAmountCents, toFormBody, toPaymentStatus };
+export const __internals = { formatAmountCents, toFormBody, toPaymentStatus, entityIdFor };
