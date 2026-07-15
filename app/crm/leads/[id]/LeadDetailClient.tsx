@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { SPECIALTIES } from '@/lib/specialties';
 import { formatDateTime, timeAgo, formatRand } from '@/app/admin/_lib/format';
@@ -8,6 +8,8 @@ import {
   updateLead, moveLeadStage, logActivity, scheduleFollowup, markSigned, markFollowupDone,
 } from '../actions';
 import ComposeEmailSheet from './ComposeEmailSheet';
+import ConversationCard from './ConversationCard';
+import { groupTimeline, type TimelineActivity } from './conversationGrouper';
 
 // ─── Lead detail — fields (editable) + activity timeline + quick actions
 
@@ -46,6 +48,9 @@ type Activity = {
   created_at: string;
   created_by: string | null;
   sent_from: string | null;
+  reply_from: string | null;
+  gmail_thread_id: string | null;
+  gmail_message_id: string | null;
 };
 
 type ActorRef = { firstName: string | null; lastName: string | null };
@@ -78,6 +83,15 @@ export default function LeadDetailClient({
       : null,
   );
   const [pending, startTransition] = useTransition();
+
+  // Grouped timeline: consecutive-in-thread emails collapse into
+  // conversation cards positioned by their latest message. Non-email
+  // activities pass through as-is. Recomputed on every activities
+  // change so optimistic inserts land in the right place.
+  const timelineItems = useMemo(
+    () => groupTimeline(activities as unknown as TimelineActivity[]),
+    [activities],
+  );
 
   // Ephemeral form state for the schedule sheet
   const [schedule, setSchedule] = useState<{ open: boolean; type: 'call' | 'meeting' }>({ open: false, type: 'call' });
@@ -114,6 +128,9 @@ export default function LeadDetailClient({
           created_at:  new Date().toISOString(),
           created_by:  null,
           sent_from:   null,
+          reply_from:  null,
+          gmail_thread_id: null,
+          gmail_message_id: null,
         },
         ...a,
       ]));
@@ -136,6 +153,9 @@ export default function LeadDetailClient({
           created_at:  new Date().toISOString(),
           created_by:  null,
           sent_from:   null,
+          reply_from:  null,
+          gmail_thread_id: null,
+          gmail_message_id: null,
         },
         ...a,
       ]));
@@ -288,29 +308,36 @@ export default function LeadDetailClient({
         {activities.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">No activity yet. Log a call, meeting, or note above.</p>
         ) : (
-          <ul className="divide-y divide-gray-100">
-            {activities.map(a => (
-              <li key={a.id} className="px-4 py-3" data-testid={`crm-activity:${a.type}`}>
+          <ul className="divide-y divide-gray-100" data-testid="crm-timeline">
+            {timelineItems.map(item => item.kind === 'conversation' ? (
+              <ConversationCard
+                key={item.key}
+                conversation={item}
+                actorsById={actorsById}
+                onReply={(activityId) => { setReplyToActivityId(activityId); setShowCompose(true); }}
+              />
+            ) : (
+              <li key={item.key} className="px-4 py-3" data-testid={`crm-activity:${item.activity.type}`}>
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-600">
-                    {a.type.replace(/_/g, ' ')}
+                    {item.activity.type.replace(/_/g, ' ')}
                   </span>
-                  <span className="text-xs text-gray-500">{timeAgo(a.occurred_at)}</span>
-                  {(a.type === 'email' || a.type === 'email_reply') && (
+                  <span className="text-xs text-gray-500">{timeAgo(item.activity.occurred_at)}</span>
+                  {(item.activity.type === 'email' || item.activity.type === 'email_reply') && (
                     <button
                       type="button"
-                      onClick={() => { setReplyToActivityId(a.id); setShowCompose(true); }}
+                      onClick={() => { setReplyToActivityId(item.activity.id); setShowCompose(true); }}
                       className="ml-auto rounded-md border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[10px] font-medium hover:bg-gray-50"
-                      data-testid={`crm-activity-reply:${a.id}`}
+                      data-testid={`crm-activity-reply:${item.activity.id}`}
                     >
                       Reply
                     </button>
                   )}
                 </div>
-                <p className="mt-1 text-sm text-gray-900 font-medium">{a.title}</p>
-                {a.body && <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{a.body}</p>}
+                <p className="mt-1 text-sm text-gray-900 font-medium">{item.activity.title}</p>
+                {item.activity.body && <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">{item.activity.body}</p>}
                 <p className="mt-1 text-[11px] text-gray-500" data-testid="crm-activity-attribution">
-                  {renderAttribution(a, actorsById)}
+                  {renderAttribution(item.activity, actorsById)}
                 </p>
               </li>
             ))}

@@ -152,6 +152,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     const verdict = await ingestOneMessage(
       { id: account.id, user_id: account.user_id, gmail_address: account.gmail_address },
       meta,
+      accessToken,
     );
     if (verdict === 'inserted') inserted++;
   }

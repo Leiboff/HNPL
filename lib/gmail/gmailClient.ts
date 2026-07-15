@@ -590,3 +590,82 @@ export async function fetchMessageMetadata(
   const m = await res.json() as ApiMsg;
   return projectApiMsg(m);
 }
+
+// ── Full-body fetch (for ingest body storage) ─────────────────────
+
+type FullApiPart = {
+  mimeType?: string;
+  filename?: string;
+  headers?: Array<{ name: string; value: string }>;
+  body?: { data?: string; size?: number };
+  parts?: FullApiPart[];
+};
+
+type FullApiMsg = ApiMsg & {
+  payload?: FullApiPart & { headers?: Array<{ name: string; value: string }> };
+};
+
+export type FullMessage = ThreadMessage & {
+  /** Raw text/plain body (base64url-decoded), if the message had one. */
+  bodyPlain: string | null;
+  /** Raw text/html body (base64url-decoded), if the message had one. */
+  bodyHtml:  string | null;
+};
+
+function b64urlDecodeToString(b64: string): string {
+  try {
+    const std = b64.replace(/-/g, '+').replace(/_/g, '/');
+    return Buffer.from(std, 'base64').toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+/** Walk the MIME tree and collect the first text/plain and text/html
+ *  parts encountered. Multipart/alternative and multipart/related
+ *  nesting are handled by descending into `parts`. */
+function extractTextParts(payload: FullApiPart | undefined): { plain: string | null; html: string | null } {
+  let plain: string | null = null;
+  let html:  string | null = null;
+  const walk = (part: FullApiPart | undefined) => {
+    if (!part) return;
+    const mime = (part.mimeType ?? '').toLowerCase();
+    // Skip attachments — anything with a filename is an attachment.
+    if (part.filename && part.filename.length > 0) return;
+    if (mime === 'text/plain' && !plain && part.body?.data) {
+      plain = b64urlDecodeToString(part.body.data);
+    } else if (mime === 'text/html' && !html && part.body?.data) {
+      html = b64urlDecodeToString(part.body.data);
+    }
+    if (Array.isArray(part.parts)) {
+      for (const p of part.parts) walk(p);
+    }
+  };
+  walk(payload);
+  return { plain, html };
+}
+
+/**
+ * Fetch a message body — format=full so we get the MIME payload, not
+ * just headers. Returns { bodyPlain, bodyHtml } alongside the same
+ * metadata shape as fetchMessageMetadata. Used by ingest to store the
+ * full clean text as the activity body (not just the Gmail snippet).
+ */
+export async function fetchMessageFull(
+  accessToken: string,
+  messageId: string,
+): Promise<FullMessage | null> {
+  const res = await fetch(
+    `${GMAIL_API_BASE}/messages/${encodeURIComponent(messageId)}?format=full`,
+    { headers: { 'Authorization': `Bearer ${accessToken}` } },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Gmail full-message fetch failed: ${res.status} ${err.slice(0, 200)}`);
+  }
+  const m = await res.json() as FullApiMsg;
+  const base = projectApiMsg(m);
+  const { plain, html } = extractTextParts(m.payload);
+  return { ...base, bodyPlain: plain, bodyHtml: html };
+}

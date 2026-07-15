@@ -182,15 +182,20 @@ describe('ComposeEmailSheet — reply-mode UI', () => {
 
 describe('LeadDetailClient — Reply buttons on email + email_reply', () => {
   const SRC = read('app/crm/leads/[id]/LeadDetailClient.tsx');
+  const CONV = read('app/crm/leads/[id]/ConversationCard.tsx');
 
-  it('renders a Reply button on email + email_reply rows only', () => {
-    expect(SRC).toMatch(/a\.type === 'email' \|\| a\.type === 'email_reply'/);
-    expect(SRC).toMatch(/data-testid=\{`crm-activity-reply:\$\{a\.id\}`\}/);
-  });
-
-  it('opens the compose sheet in reply mode via replyToActivityId', () => {
-    expect(SRC).toMatch(/setReplyToActivityId\(a\.id\)/);
+  it('conversation cards expose a Reply button that opens compose in reply mode', () => {
+    // Since the conversation-view refactor, email/email_reply rows
+    // render inside a ConversationCard. The card's Reply button uses
+    // the thread's latest activity id as the anchor.
+    expect(CONV).toMatch(/data-testid=\{`crm-conversation-reply:\$\{conversation\.threadId\}`\}/);
+    expect(CONV).toMatch(/onReply\(latest\.id\)/);
+    // The parent hooks onReply into setReplyToActivityId + setShowCompose.
+    expect(SRC).toMatch(/setReplyToActivityId\(activityId\)/);
     expect(SRC).toMatch(/replyToActivityId=\{replyToActivityId\}/);
+    // Legacy (no thread id) standalone email rows still get their own Reply button.
+    expect(SRC).toMatch(/item\.activity\.type === 'email' \|\| item\.activity\.type === 'email_reply'/);
+    expect(SRC).toMatch(/data-testid=\{`crm-activity-reply:\$\{item\.activity\.id\}`\}/);
   });
 
   it('the fresh-compose button resets replyToActivityId first (so it opens in normal mode)', () => {

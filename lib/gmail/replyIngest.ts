@@ -9,7 +9,8 @@
 // obtain the candidate messages (fetchThread vs history.list).
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { fetchThread, type ThreadMessage } from './gmailClient';
+import { fetchThread, fetchMessageFull, type ThreadMessage } from './gmailClient';
+import { chooseIngestBody } from './extractBody';
 
 export const CLOSED_STAGES = new Set(['signed', 'onboarded', 'lost']);
 
@@ -32,12 +33,16 @@ export type AccountForIngest = {
  * is a new inbound reply we should log — and if so, insert the
  * crm_activities row. Dedupes on gmail_message_id (row-level).
  *
- * Return value used for reporting: 'inserted' | 'duplicate' |
- * 'from_self' | 'no_matching_thread' | 'lead_closed'.
+ * Callers pass the accessToken so we can fetch the full body
+ * (format=full) once we've decided to insert. Storing the full text
+ * (with quoted tails preserved) means the UI can decide what to hide
+ * at render time — Gmail snippets are lossy and often entity-
+ * encoded.
  */
 export async function ingestOneMessage(
-  account: AccountForIngest,
-  message: ThreadMessage,
+  account:     AccountForIngest,
+  message:     ThreadMessage,
+  accessToken: string,
 ): Promise<'inserted' | 'duplicate' | 'from_self' | 'no_matching_thread' | 'lead_closed'> {
   const s = svc();
 
@@ -69,12 +74,32 @@ export async function ingestOneMessage(
   const stageRel = Array.isArray(rows[0].crm_leads) ? rows[0].crm_leads[0] : rows[0].crm_leads;
   if (stageRel?.stage && CLOSED_STAGES.has(stageRel.stage)) return 'lead_closed';
 
+  // Now that we've cleared the checks, fetch the full body. Fallback
+  // to the metadata snippet if the full-body fetch fails — we always
+  // insert a row so the timeline reflects the message.
+  let bodyText = '';
+  try {
+    const full = await fetchMessageFull(accessToken, message.id);
+    if (full) {
+      bodyText = chooseIngestBody({
+        plain:   full.bodyPlain,
+        html:    full.bodyHtml,
+        snippet: full.snippet || message.snippet,
+      });
+    }
+  } catch (err) {
+    console.warn('[ingestOneMessage] full-body fetch failed — falling back to snippet', err);
+  }
+  if (!bodyText) {
+    bodyText = chooseIngestBody({ plain: null, html: null, snippet: message.snippet });
+  }
+
   const occurredAt = new Date(Number(message.internalDate)).toISOString();
   await s.from('crm_activities').insert({
     lead_id:          rows[0].lead_id,
     type:             'email_reply',
     title:            `Reply from ${message.from.split('<')[0].trim() || message.from}`,
-    body:             message.snippet,
+    body:             bodyText,
     occurred_at:      occurredAt,
     gmail_thread_id:  message.threadId,
     gmail_message_id: message.id,
@@ -137,7 +162,7 @@ export async function sweepAllThreadsForAccount(
     try {
       const messages = await fetchThread(accessToken, threadId);
       for (const m of messages) {
-        const verdict = await ingestOneMessage(account, m);
+        const verdict = await ingestOneMessage(account, m, accessToken);
         if (verdict === 'inserted') summary.newReplies++;
       }
     } catch (err) {

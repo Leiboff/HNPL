@@ -38,7 +38,7 @@ export default async function LeadDetailPage({
 
   const { data: activities } = await supabase
     .from('crm_activities')
-    .select('id, type, title, body, occurred_at, created_at, created_by, sent_from')
+    .select('id, type, title, body, occurred_at, created_at, created_by, sent_from, reply_from, gmail_thread_id, gmail_message_id')
     .eq('lead_id', id)
     .order('occurred_at', { ascending: false })
     .limit(200);
