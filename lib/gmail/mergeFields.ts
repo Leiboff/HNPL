@@ -15,9 +15,11 @@ export type MergeVars = {
   contact_first_name?:  string | null;
   contact_last_name?:   string | null;
   my_name?:             string | null;
+  /** Practice-invite URL — used by the signed→invite flow. */
+  invite_link?:         string | null;
 };
 
-const RE = /\{\{\s*(practice_name|contact_first_name|contact_last_name|my_name)\s*\}\}/g;
+const RE = /\{\{\s*(practice_name|contact_first_name|contact_last_name|my_name|invite_link)\s*\}\}/g;
 
 export function substituteMergeFields(template: string, vars: MergeVars): string {
   return template.replace(RE, (_match, key: keyof MergeVars) => {

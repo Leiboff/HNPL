@@ -21,6 +21,14 @@ import {
 //             subject "Re:"-prefixed idempotently, threadId + In-Reply-To
 //             + References are stamped server-side on send.
 
+type ContactPickerOption = {
+  id:         string;
+  first_name: string;
+  last_name:  string;
+  email:      string | null;
+  is_primary: boolean;
+};
+
 type Props = {
   open:               boolean;
   onClose:            () => void;
@@ -29,12 +37,15 @@ type Props = {
   practiceName:       string;
   /** When set, opens in reply mode against this timeline activity. */
   replyToActivityId?: string | null;
+  /** Full contact list on the lead — enables the To-picker in fresh
+   *  compose mode. Omit to keep the legacy single-recipient behaviour. */
+  contacts?:          ContactPickerOption[];
 };
 
 const LAST_ACCOUNT_KEY = 'crm.compose.lastAccountId';
 
 export default function ComposeEmailSheet({
-  open, onClose, leadId, leadEmail, practiceName, replyToActivityId,
+  open, onClose, leadId, leadEmail, practiceName, replyToActivityId, contacts,
 }: Props) {
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [accounts,  setAccounts]  = useState<ComposeAccount[]>([]);
@@ -48,6 +59,17 @@ export default function ComposeEmailSheet({
   const [pending, startTransition] = useTransition();
 
   const [replyMode, setReplyMode] = useState<ReplyContext | null>(null);
+
+  // Fresh-compose recipient state. Default: primary contact (== leadEmail).
+  // Reply mode ignores this (recipient is locked to counterparty).
+  const [recipientEmail, setRecipientEmail] = useState<string>('');
+  useEffect(() => {
+    if (!open || replyMode) return;
+    const withEmail = (contacts ?? []).filter(c => !!c.email);
+    const primary   = withEmail.find(c => c.is_primary);
+    const initial   = primary?.email ?? withEmail[0]?.email ?? leadEmail ?? '';
+    setRecipientEmail(initial);
+  }, [open, replyMode, contacts, leadEmail]);
 
   useEffect(() => {
     if (!open) return;
@@ -134,6 +156,7 @@ export default function ComposeEmailSheet({
         aliasId:   kind === 'alias'   ? (accountId || undefined) : undefined,
         omitSignature,
         replyToActivityId: replyMode?.activityId,
+        recipientEmailOverride: replyMode ? undefined : (recipientEmail || undefined),
       });
       if (res.needsReconnect || res.error === 'reply_owner_disconnected') {
         setMsg({
@@ -197,10 +220,42 @@ export default function ComposeEmailSheet({
 
           <div className="p-5 space-y-3">
 
-            <div className="text-xs text-gray-600">
-              <span className="font-medium">To:</span>{' '}
-              {toDisplay ?? <span className="text-red-600">(lead has no email — add one first)</span>}
-            </div>
+            {replyMode ? (
+              <div className="text-xs text-gray-600" data-testid="compose-to-reply">
+                <span className="font-medium">To:</span>{' '}
+                {toDisplay ?? <span className="text-red-600">(lead has no email — add one first)</span>}
+              </div>
+            ) : (
+              <div className="text-xs text-gray-700 space-y-1" data-testid="compose-to-picker">
+                <span className="font-medium">To:</span>{' '}
+                {(contacts?.filter(c => !!c.email)?.length ?? 0) > 0 ? (
+                  <select
+                    value={recipientEmail}
+                    onChange={e => setRecipientEmail(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs"
+                    data-testid="compose-contact-picker"
+                  >
+                    {(contacts ?? []).filter(c => !!c.email).map(c => (
+                      <option key={c.id} value={c.email!}>
+                        {c.first_name} {c.last_name}{c.is_primary ? ' (primary)' : ''} · {c.email}
+                      </option>
+                    ))}
+                    <option value="">Custom…</option>
+                  </select>
+                ) : null}
+                <input
+                  type="email"
+                  value={recipientEmail}
+                  onChange={e => setRecipientEmail(e.target.value)}
+                  placeholder="recipient@example.com"
+                  className="ml-2 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs w-56"
+                  data-testid="compose-to-input"
+                />
+                {!recipientEmail && (
+                  <p className="text-[11px] text-red-600 mt-1">Pick a contact or type a recipient email.</p>
+                )}
+              </div>
+            )}
 
             {replyMode ? (
               <div

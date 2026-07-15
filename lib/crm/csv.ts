@@ -91,6 +91,10 @@ export function parseCsv(input: string): CsvParseResult {
 
 // ── Lead-import schema ───────────────────────────────────────────────
 
+// Deal-size (`estimated_monthly_billings`) was removed in the CRM
+// lead-page upgrade pass. The header stays in OPTIONAL_HEADERS so that
+// existing template files people already have on disk keep importing
+// cleanly — we just parse-and-discard.
 export const CSV_TEMPLATE_HEADERS = [
   'practice_name',
   'contact_first_name',
@@ -99,28 +103,28 @@ export const CSV_TEMPLATE_HEADERS = [
   'specialty',
   'phone',
   'email',
+  'street_address',
   'suburb',
   'city',
   'province',
   'source',
-  'estimated_monthly_billings',
   'notes',
 ] as const;
 
 export type CsvLeadDraft = {
-  practice_name:              string;
-  contact_first_name:         string;
-  contact_last_name:          string;
-  role_at_practice:           string | null;
-  specialty:                  string | null;
-  phone:                      string | null;
-  email:                      string | null;
-  suburb:                     string | null;
-  city:                       string | null;
-  province:                   string | null;
-  source:                     string;
-  estimated_monthly_billings: number | null;
-  notes:                      string | null;
+  practice_name:      string;
+  contact_first_name: string;
+  contact_last_name:  string;
+  role_at_practice:   string | null;
+  specialty:          string | null;
+  phone:              string | null;
+  email:              string | null;
+  street_address:     string | null;
+  suburb:             string | null;
+  city:               string | null;
+  province:           string | null;
+  source:             string;
+  notes:              string | null;
 };
 
 export type RowError = {
@@ -146,8 +150,8 @@ export function validateLeadRows(headers: string[], rows: string[][]): {
 
   // Header check
   const missingHeaders = CSV_TEMPLATE_HEADERS.filter(h =>
-    !['role_at_practice', 'specialty', 'phone', 'email', 'suburb', 'city',
-      'province', 'estimated_monthly_billings', 'notes'].includes(h)
+    !['role_at_practice', 'specialty', 'phone', 'email', 'street_address',
+      'suburb', 'city', 'province', 'notes'].includes(h)
     && !headers.includes(h),
   );
   if (missingHeaders.length > 0) {
@@ -192,17 +196,6 @@ export function validateLeadRows(headers: string[], rows: string[][]): {
       });
     }
 
-    const emb = get('estimated_monthly_billings');
-    let emb_num: number | null = null;
-    if (emb) {
-      const n = Number(emb.replace(/[R,\s]/g, ''));
-      if (Number.isNaN(n) || n < 0) {
-        errors.push({ rowNumber, field: 'estimated_monthly_billings', message: `Invalid number: ${emb}` });
-      } else {
-        emb_num = n;
-      }
-    }
-
     const phone = get('phone') || null;
     const email = get('email') || null;
     if (email && !isValidEmail(email)) {
@@ -211,20 +204,23 @@ export function validateLeadRows(headers: string[], rows: string[][]): {
 
     // Emit a draft even if there are errors — the preview UI shows both
     // side by side. The commit step re-checks and skips error rows.
+    // Note: legacy CSVs may still carry an `estimated_monthly_billings`
+    // header — parseCsv keeps it in `headers` but we do not `get` it,
+    // so it is silently ignored.
     drafts.push({
       practice_name,
       contact_first_name,
       contact_last_name,
-      role_at_practice:           get('role_at_practice') || null,
-      specialty:                  get('specialty')        || null,
+      role_at_practice:   get('role_at_practice') || null,
+      specialty:          get('specialty')        || null,
       phone,
       email,
-      suburb:                     get('suburb')   || null,
-      city:                       get('city')     || null,
-      province:                   get('province') || null,
-      source:                     sourceRaw,
-      estimated_monthly_billings: emb_num,
-      notes:                      get('notes') || null,
+      street_address:     get('street_address')   || null,
+      suburb:             get('suburb')           || null,
+      city:               get('city')             || null,
+      province:           get('province')         || null,
+      source:             sourceRaw,
+      notes:              get('notes')            || null,
     });
   }
 

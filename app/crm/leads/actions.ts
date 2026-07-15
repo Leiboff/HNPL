@@ -45,6 +45,7 @@ export type CreateLeadInput = {
   specialty?:                 string | null;
   phone?:                     string | null;
   email?:                     string | null;
+  street_address?:            string | null;
   suburb?:                    string | null;
   city?:                      string | null;
   province?:                  string | null;
@@ -52,7 +53,6 @@ export type CreateLeadInput = {
   longitude?:                 number | null;
   formatted_address?:         string | null;
   source?:                    string;
-  estimated_monthly_billings?: number | null;
   owner_user_id?:             string | null;
   next_follow_up_at?:         string | null;   // ISO
   confirmDupe?:               boolean;         // set to true to bypass the dedupe warning
@@ -116,6 +116,7 @@ export async function createLead(input: CreateLeadInput): Promise<CreateLeadResu
     specialty:                  input.specialty?.trim()          || null,
     phone:                      input.phone?.trim()              || null,
     email:                      input.email?.trim().toLowerCase() || null,
+    street_address:             input.street_address?.trim()     || null,
     suburb:                     input.suburb?.trim()             || null,
     city:                       input.city?.trim()               || null,
     province:                   input.province?.trim()           || null,
@@ -124,7 +125,6 @@ export async function createLead(input: CreateLeadInput): Promise<CreateLeadResu
     formatted_address:          input.formatted_address ?? null,
     source,
     stage:                      'new' as const,
-    estimated_monthly_billings: input.estimated_monthly_billings ?? null,
     owner_user_id:              input.owner_user_id ?? guard.userId,
     created_by:                 guard.userId,
     next_follow_up_at:          input.next_follow_up_at ?? null,
@@ -158,8 +158,8 @@ export async function updateLead(id: string, fields: UpdateLeadFields): Promise<
   const patch: Record<string, unknown> = {};
   const passthrough = [
     'practice_name', 'contact_first_name', 'contact_last_name', 'role_at_practice',
-    'specialty', 'phone', 'email', 'suburb', 'city', 'province', 'latitude',
-    'longitude', 'formatted_address', 'estimated_monthly_billings',
+    'specialty', 'phone', 'email', 'street_address', 'suburb', 'city', 'province',
+    'latitude', 'longitude', 'formatted_address',
     'owner_user_id', 'next_follow_up_at', 'lost_reason',
   ] as const;
   for (const key of passthrough) {
@@ -373,10 +373,18 @@ export async function markFollowupDone(
 }
 
 // ─── markSigned — create a practice_invitation, move stage to 'signed' ─
+//
+// Accepts an optional contactId picked in the invite sheet — the
+// invite carries THAT contact's name/phone as the "who to expect to
+// sign up" (defaults to the primary contact if omitted). The invite's
+// locked email is always the chosen contact's email. Since 0075 also
+// prefills street/suburb/city/province onto /signup/practice.
 
-export async function markSigned(leadId: string): Promise<{
+export async function markSigned(leadId: string, opts?: { contactId?: string | null }): Promise<{
   error?:     string;
   inviteUrl?: string;
+  recipientEmail?: string;
+  recipientName?:  string;
 }> {
   const guard = await guardSalesOrAdmin();
   if (!guard.ok) return { error: guard.error };
@@ -385,12 +393,52 @@ export async function markSigned(leadId: string): Promise<{
 
   const { data: lead } = await supabase
     .from('crm_leads')
-    .select('id, practice_name, contact_first_name, contact_last_name, email, phone, specialty, stage, converted_practice_id')
+    .select('id, practice_name, contact_first_name, contact_last_name, email, phone, specialty, stage, converted_practice_id, street_address, suburb, city, province')
     .eq('id', leadId)
     .single();
   if (!lead) return { error: 'Lead not found.' };
   if (lead.converted_practice_id) return { error: 'Lead already converted to a practice.' };
-  if (!lead.email) return { error: 'The lead needs an email address to send the practice invite.' };
+
+  // Resolve the recipient contact — either the requested one, or the
+  // lead's current primary (which mirrors the lead columns).
+  let recipient: {
+    id:         string;
+    first_name: string;
+    last_name:  string;
+    phone:      string | null;
+    email:      string | null;
+  } | null = null;
+
+  if (opts?.contactId) {
+    const { data: contact } = await supabase
+      .from('crm_lead_contacts')
+      .select('id, first_name, last_name, phone, email')
+      .eq('id', opts.contactId)
+      .eq('lead_id', leadId)
+      .maybeSingle();
+    recipient = (contact ?? null) as typeof recipient;
+    if (!recipient) return { error: 'Chosen contact not found on this lead.' };
+  } else {
+    const { data: primary } = await supabase
+      .from('crm_lead_contacts')
+      .select('id, first_name, last_name, phone, email')
+      .eq('lead_id', leadId)
+      .eq('is_primary', true)
+      .maybeSingle();
+    // Fallback for the very-first-run edge case where the backfill has
+    // not seeded a primary yet — read straight off the lead columns.
+    recipient = (primary as typeof recipient) ?? {
+      id:         '',
+      first_name: lead.contact_first_name,
+      last_name:  lead.contact_last_name,
+      phone:      lead.phone,
+      email:      lead.email,
+    };
+  }
+
+  if (!recipient.email) {
+    return { error: 'The chosen contact needs an email address to send the practice invite.' };
+  }
 
   // Idempotency: if an active (unexpired, unaccepted) invite already
   // exists for this lead, reuse its token instead of creating another.
@@ -409,12 +457,16 @@ export async function markSigned(leadId: string): Promise<{
     token = randomBytes(32).toString('hex');
 
     const { error: invErr } = await supabase.from('practice_invitations').insert({
-      email:              lead.email,
+      email:              recipient.email,
       practice_name:      lead.practice_name,
-      contact_first_name: lead.contact_first_name,
-      contact_last_name:  lead.contact_last_name,
-      phone:              lead.phone,
+      contact_first_name: recipient.first_name,
+      contact_last_name:  recipient.last_name,
+      phone:              recipient.phone,
       specialty:          lead.specialty,
+      street_address:     lead.street_address,
+      suburb:             lead.suburb,
+      city:               lead.city,
+      province:           lead.province,
       lead_id:            leadId,
       invited_by:         guard.userId,
       token,
@@ -432,5 +484,9 @@ export async function markSigned(leadId: string): Promise<{
 
   revalidatePath(`/crm/leads/${leadId}`);
   revalidatePath('/crm/board');
-  return { inviteUrl };
+  return {
+    inviteUrl,
+    recipientEmail: recipient.email,
+    recipientName:  `${recipient.first_name} ${recipient.last_name}`.trim(),
+  };
 }

@@ -4,9 +4,9 @@ import BoardClient from './BoardClient';
 
 // ─── /crm/board — Kanban by stage ─────────────────────────────────────
 //
-// One column per stage; drag-to-move. Column totals: count + sum of
-// estimated_monthly_billings. Server fetches the full board dataset in
-// one query (up to 2000 rows — Phase 1 sales team volume is well under).
+// One column per stage; drag-to-move. Column totals show lead count.
+// Server fetches the full board dataset in one query (up to 2000 rows
+// — Phase 1 sales team volume is well under).
 
 export default async function BoardPage() {
   const { user, supabase } = await requireConfirmedUser({ next: '/crm/board' });
@@ -26,7 +26,7 @@ export default async function BoardPage() {
 
   const { data: rows } = await supabase
     .from('crm_leads')
-    .select('id, practice_name, stage, contact_first_name, contact_last_name, estimated_monthly_billings, next_follow_up_at, specialty')
+    .select('id, practice_name, stage, contact_first_name, contact_last_name, next_follow_up_at, specialty')
     .order('updated_at', { ascending: false })
     .limit(2000);
 

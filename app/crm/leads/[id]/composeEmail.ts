@@ -677,6 +677,10 @@ export async function sendComposedEmail(input: {
   /** Present in reply mode. When set the account is enforced against
    *  the anchor's sent_from — any mismatch is rejected. */
   replyToActivityId?: string;
+  /** When set, override the lead's primary email as the recipient. Used
+   *  by the practice-invite send (recipient = the picked contact, which
+   *  may not be the mirrored primary). Ignored in reply mode. */
+  recipientEmailOverride?: string;
 }): Promise<{ error?: string; needsReconnect?: boolean; warning?: string }> {
   const g = await guardSalesOrAdmin();
   if (!g.ok) return { error: g.error };
@@ -719,10 +723,14 @@ export async function sendComposedEmail(input: {
     if (!anchor.gmail_thread_id) return { error: 'reply_anchor_no_thread' };
   }
 
-  // Compute recipient: reply mode overrides.
+  // Compute recipient: reply mode overrides. Otherwise, the caller may
+  // pass recipientEmailOverride to target a non-primary contact (used
+  // by the practice-invite flow).
   let recipient: string | null = lead.email;
   if (anchor) {
     recipient = anchor.type === 'email_reply' ? (anchor.reply_from || lead.email) : lead.email;
+  } else if (input.recipientEmailOverride) {
+    recipient = input.recipientEmailOverride;
   }
   if (!recipient) return { error: 'lead_has_no_email' };
 

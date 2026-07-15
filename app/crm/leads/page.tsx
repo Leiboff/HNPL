@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { formatDateTime, formatRand } from '@/app/admin/_lib/format';
+import { formatDateTime } from '@/app/admin/_lib/format';
 import LeadsSearchForm from './LeadsSearchForm';
 import { SPECIALTIES } from '@/lib/specialties';
 import { sastDayWindows } from '@/lib/crm/timezone';
@@ -70,14 +70,36 @@ export default async function LeadsListPage({
 
   let query = supabase
     .from('crm_leads')
-    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, estimated_monthly_billings, next_follow_up_at, updated_at, created_at')
+    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, next_follow_up_at, updated_at, created_at')
     .limit(500);
 
   if (q) {
     const like = `%${q}%`;
-    query = query.or(
-      `practice_name.ilike.${like},contact_first_name.ilike.${like},contact_last_name.ilike.${like},email.ilike.${like},phone.ilike.${like}`,
+    // Extend the search to additional contacts: pre-fetch matching
+    // lead_ids from crm_lead_contacts so the .or below finds leads
+    // whose non-primary contact matches. The primary contact already
+    // matches via the mirrored crm_leads columns.
+    const { data: contactHits } = await supabase
+      .from('crm_lead_contacts')
+      .select('lead_id')
+      .or(
+        `first_name.ilike.${like},last_name.ilike.${like},email.ilike.${like},phone.ilike.${like}`,
+      )
+      .limit(500);
+    const extraLeadIds = Array.from(
+      new Set(((contactHits ?? []) as Array<{ lead_id: string }>).map(r => r.lead_id)),
     );
+    const orClauses = [
+      `practice_name.ilike.${like}`,
+      `contact_first_name.ilike.${like}`,
+      `contact_last_name.ilike.${like}`,
+      `email.ilike.${like}`,
+      `phone.ilike.${like}`,
+    ];
+    if (extraLeadIds.length > 0) {
+      orClauses.push(`id.in.(${extraLeadIds.join(',')})`);
+    }
+    query = query.or(orClauses.join(','));
   }
   if (stage)     query = query.eq('stage',     stage);
   if (source)    query = query.eq('source',    source);
@@ -197,7 +219,7 @@ export default async function LeadsListPage({
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {['Practice', 'Contact', 'Stage', 'Specialty', 'Est. R/mo', 'Next follow-up', 'Updated'].map(h => (
+                    {['Practice', 'Contact', 'Stage', 'Specialty', 'Next follow-up', 'Updated'].map(h => (
                       <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
                         {h}
                       </th>
@@ -224,9 +246,6 @@ export default async function LeadsListPage({
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600">{r.specialty ?? '—'}</td>
-                      <td className="px-4 py-3 text-gray-700 tabular-nums whitespace-nowrap">
-                        {r.estimated_monthly_billings ? formatRand(Number(r.estimated_monthly_billings)) : '—'}
-                      </td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                         {r.next_follow_up_at
                           ? new Date(r.next_follow_up_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' })
@@ -259,14 +278,10 @@ export default async function LeadsListPage({
                     {r.stage.replace(/_/g, ' ')}
                   </span>
                 </div>
-                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                   <div>
                     <p className="text-gray-400 uppercase tracking-wide text-[10px]">Specialty</p>
                     <p className="text-gray-900 truncate">{r.specialty ?? '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 uppercase tracking-wide text-[10px]">Est. R/mo</p>
-                    <p className="text-gray-900 tabular-nums">{r.estimated_monthly_billings ? formatRand(Number(r.estimated_monthly_billings)) : '—'}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 uppercase tracking-wide text-[10px]">Next</p>

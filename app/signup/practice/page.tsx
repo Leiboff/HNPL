@@ -180,6 +180,13 @@ export default function PracticeSignupPage() {
         lastName:      pre.contact_last_name  ?? prev.lastName,
         phone:         pre.phone          ?? prev.phone,
         specialty:     pre.specialty      ?? prev.specialty,
+        // Address prefill: street/suburb/city/province may all be blank
+        // on legacy invites — keep the field defaults intact when the
+        // token doesn't carry an address.
+        addressLine1:  pre.street_address ?? prev.addressLine1,
+        suburb:        pre.suburb         ?? prev.suburb,
+        city:          pre.city           ?? prev.city,
+        province:      pre.province       ?? prev.province,
       }));
     })();
   }, []);

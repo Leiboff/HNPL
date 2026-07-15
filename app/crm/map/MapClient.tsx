@@ -211,10 +211,11 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
 
   // ── Backfill lat/lng for a no-coord lead ──────────────────────
   async function backfillCoords(leadId: string, addressLine: string, latitude: number, longitude: number, place: {
-    suburb: string | null; city: string | null; province: string | null;
+    street: string | null; suburb: string | null; city: string | null; province: string | null;
   }) {
     const res = await updateLead(leadId, {
       formatted_address: addressLine,
+      street_address:    place.street ?? addressLine,
       latitude,
       longitude,
       suburb:   place.suburb   ?? undefined,
@@ -384,6 +385,7 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
                       onSelect={(place) => {
                         const parsed = parseAddressComponents(place.addressComponents);
                         void backfillCoords(r.id, place.formattedAddress, place.latitude, place.longitude, {
+                          street:   parsed.addressLine1,
                           suburb:   parsed.suburb,
                           city:     parsed.city,
                           province: parsed.province,

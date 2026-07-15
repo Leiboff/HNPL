@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { formatRand } from '@/app/admin/_lib/format';
 import { bucketFollowups } from '@/lib/crm/followups';
 import { sastDayWindows } from '@/lib/crm/timezone';
 
@@ -40,7 +39,7 @@ export default async function CrmHomePage() {
 
   const { data: rawLeads } = await supabase
     .from('crm_leads')
-    .select('id, practice_name, stage, next_follow_up_at, owner_user_id, estimated_monthly_billings')
+    .select('id, practice_name, stage, next_follow_up_at, owner_user_id')
     .not('next_follow_up_at', 'is', null)
     .lt('next_follow_up_at', upcomingEndUtc.toISOString())
     .order('next_follow_up_at', { ascending: true })
@@ -57,13 +56,12 @@ export default async function CrmHomePage() {
   );
 
   // Metrics strip
-  const { data: allStages } = await supabase.from('crm_leads').select('id, stage, estimated_monthly_billings').limit(5000);
-  const byStage: Record<string, { count: number; value: number }> = {};
-  for (const s of STAGES) byStage[s] = { count: 0, value: 0 };
+  const { data: allStages } = await supabase.from('crm_leads').select('id, stage').limit(5000);
+  const byStage: Record<string, { count: number }> = {};
+  for (const s of STAGES) byStage[s] = { count: 0 };
   for (const l of allStages ?? []) {
     if (byStage[l.stage]) {
       byStage[l.stage].count++;
-      byStage[l.stage].value += Number(l.estimated_monthly_billings ?? 0);
     }
   }
   const nonNew = (allStages ?? []).filter(l => l.stage !== 'new').length;
@@ -200,7 +198,7 @@ function MetricCard({ label, value, tone, hint }: { label: string; value: string
   );
 }
 
-function StageStrip({ byStage }: { byStage: Record<string, { count: number; value: number }> }) {
+function StageStrip({ byStage }: { byStage: Record<string, { count: number }> }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-4">
       <p className="text-xs uppercase tracking-wide text-gray-500 mb-2">Pipeline by stage</p>
@@ -209,9 +207,6 @@ function StageStrip({ byStage }: { byStage: Record<string, { count: number; valu
           <div key={s} className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-1.5">
             <div className="capitalize text-gray-500">{s.replace(/_/g, ' ')}</div>
             <div className="font-semibold text-gray-900 tabular-nums">{byStage[s].count}</div>
-            {byStage[s].value > 0 && (
-              <div className="text-[10px] text-gray-500 tabular-nums">{formatRand(byStage[s].value)}</div>
-            )}
           </div>
         ))}
       </div>

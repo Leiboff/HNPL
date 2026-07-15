@@ -2,14 +2,19 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
+import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
+import { parseAddressComponents } from '@/lib/maps/places';
 import { SPECIALTIES } from '@/lib/specialties';
-import { formatDateTime, timeAgo, formatRand } from '@/app/admin/_lib/format';
+import { formatDateTime, timeAgo } from '@/app/admin/_lib/format';
 import {
-  updateLead, moveLeadStage, logActivity, scheduleFollowup, markSigned, markFollowupDone,
+  updateLead, moveLeadStage, logActivity, scheduleFollowup, markFollowupDone,
 } from '../actions';
 import ComposeEmailSheet from './ComposeEmailSheet';
 import ConversationCard from './ConversationCard';
+import ContactsCard from './ContactsCard';
+import InviteSheet from './InviteSheet';
 import { groupTimeline, type TimelineActivity } from './conversationGrouper';
+import type { LeadContact } from './contactsActions';
 
 // ─── Lead detail — fields (editable) + activity timeline + quick actions
 
@@ -22,6 +27,7 @@ type Lead = {
   specialty: string | null;
   phone: string | null;
   email: string | null;
+  street_address: string | null;
   suburb: string | null;
   city: string | null;
   province: string | null;
@@ -31,7 +37,6 @@ type Lead = {
   source: string;
   stage: string;
   lost_reason: string | null;
-  estimated_monthly_billings: number | null;
   owner_user_id: string | null;
   next_follow_up_at: string | null;
   converted_practice_id: string | null;
@@ -67,21 +72,24 @@ const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sen
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
 
 export default function LeadDetailClient({
-  lead: initialLead, activities: initialActivities, actorsById, pendingInvite,
+  lead: initialLead, activities: initialActivities, contacts: initialContacts, actorsById, pendingInvite,
 }: {
   lead: Lead;
   activities: Activity[];
+  contacts: LeadContact[];
   actorsById: ActorsById;
   pendingInvite: PendingInvite;
 }) {
   const [lead, setLead]           = useState(initialLead);
   const [activities, setActs]     = useState(initialActivities);
+  const [contacts, setContacts]   = useState(initialContacts);
   const [msg, setMsg]             = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [inviteUrl, setInviteUrl] = useState<string | null>(
     pendingInvite && !pendingInvite.accepted_at
       ? `${typeof window !== 'undefined' ? window.location.origin : ''}/signup/practice?token=${pendingInvite.token}`
       : null,
   );
+  const [showInvite, setShowInvite] = useState(false);
   const [pending, startTransition] = useTransition();
 
   // Grouped timeline: consecutive-in-thread emails collapse into
@@ -181,15 +189,20 @@ export default function LeadDetailClient({
     });
   }
 
-  function doMarkSigned() {
+  function savePickedAddress(patch: {
+    street_address: string | null;
+    suburb: string | null;
+    city: string | null;
+    province: string | null;
+    formatted_address: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  }) {
     startTransition(async () => {
-      const res = await markSigned(lead.id);
+      const res = await updateLead(lead.id, patch);
       if (res.error) return err(res.error);
-      if (res.inviteUrl) {
-        setInviteUrl(res.inviteUrl);
-        setLead(l => ({ ...l, stage: 'signed' }));
-        ok('Invite created. Copy the link below and share with the practice.');
-      }
+      setLead(l => ({ ...l, ...patch }));
+      ok('Address saved.');
     });
   }
 
@@ -257,7 +270,7 @@ export default function LeadDetailClient({
         <QuickBtn onClick={() => setSchedule({ open: true, type: 'meeting' })} label="Schedule meeting" />
         <QuickBtn onClick={() => setShowStage(true)}               label="Move stage" tone="accent" />
         {lead.stage !== 'signed' && lead.stage !== 'onboarded' && !inviteUrl && (
-          <QuickBtn onClick={doMarkSigned} label="Mark signed → invite" tone="accent" />
+          <QuickBtn onClick={() => setShowInvite(true)} label="Mark signed → invite" tone="accent" />
         )}
       </div>
 
@@ -266,23 +279,57 @@ export default function LeadDetailClient({
         <h2 className="text-sm font-semibold text-gray-900">Lead details</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <FieldText label="Practice name"     value={lead.practice_name}            onSave={v => saveField('practice_name', v)}      pending={pending} required />
-          <FieldText label="Contact first"     value={lead.contact_first_name}       onSave={v => saveField('contact_first_name', v)} pending={pending} required />
-          <FieldText label="Contact last"      value={lead.contact_last_name}        onSave={v => saveField('contact_last_name', v)}  pending={pending} required />
-          <FieldText label="Role at practice"  value={lead.role_at_practice ?? ''}   onSave={v => saveField('role_at_practice', v || null)} pending={pending} />
           <FieldSelect label="Specialty"       value={lead.specialty ?? ''}          options={['', ...SPECIALTIES]} onSave={v => saveField('specialty', v || null)} pending={pending} />
-          <FieldText label="Phone"             value={lead.phone ?? ''}              onSave={v => saveField('phone', v || null)}      pending={pending} />
-          <FieldText label="Email"             value={lead.email ?? ''}              onSave={v => saveField('email', v.toLowerCase() || null)} pending={pending} type="email" />
-          <FieldText label="Suburb"            value={lead.suburb ?? ''}             onSave={v => saveField('suburb', v || null)}     pending={pending} />
-          <FieldText label="City"              value={lead.city ?? ''}               onSave={v => saveField('city', v || null)}       pending={pending} />
-          <FieldText label="Province"          value={lead.province ?? ''}           onSave={v => saveField('province', v || null)}   pending={pending} />
           <FieldSelect label="Source"          value={lead.source}                   options={[...SOURCES]}                            onSave={v => saveField('source', v)} pending={pending} />
-          <FieldText label="Est. R/mo"         value={String(lead.estimated_monthly_billings ?? '')} onSave={v => saveField('estimated_monthly_billings', v ? Number(v.replace(/[R,\s]/g, '')) : null)} pending={pending} inputMode="numeric" />
         </div>
+
+        {/* Address — Places autocomplete writes street + parsed structured fields + coords in one shot. */}
+        <div className="space-y-2 pt-2 border-t border-gray-100">
+          <p className="text-xs font-medium text-gray-700">Practice address</p>
+          <PlacesAutocomplete
+            variant="address"
+            inputId="lead-detail-address"
+            initialValue={lead.street_address ?? lead.formatted_address ?? ''}
+            placeholder="Search — Google Places will suggest matches"
+            onSelect={(place) => {
+              const parsed = parseAddressComponents(place.addressComponents);
+              savePickedAddress({
+                street_address:    parsed.addressLine1 ?? place.formattedAddress,
+                suburb:            parsed.suburb   ?? lead.suburb,
+                city:              parsed.city     ?? lead.city,
+                province:          parsed.province ?? lead.province,
+                formatted_address: place.formattedAddress,
+                latitude:          place.latitude,
+                longitude:         place.longitude,
+              });
+            }}
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="lead-address-fields">
+            <FieldText label="Street"   value={lead.street_address ?? ''} onSave={v => saveField('street_address', v || null)} pending={pending} />
+            <FieldText label="Suburb"   value={lead.suburb ?? ''}         onSave={v => saveField('suburb', v || null)}         pending={pending} />
+            <FieldText label="City"     value={lead.city ?? ''}           onSave={v => saveField('city', v || null)}           pending={pending} />
+            <FieldText label="Province" value={lead.province ?? ''}       onSave={v => saveField('province', v || null)}       pending={pending} />
+          </div>
+          {lead.formatted_address && (
+            <p className="text-[11px] text-gray-500">Picked: {lead.formatted_address}</p>
+          )}
+        </div>
+
         <p className="text-[10px] text-gray-400 pt-2 border-t border-gray-100">
           Created {formatDateTime(lead.created_at)} · Updated {timeAgo(lead.updated_at)}
-          {lead.estimated_monthly_billings ? ` · deal-size proxy ${formatRand(Number(lead.estimated_monthly_billings))}` : ''}
         </p>
       </div>
+
+      {/* Contacts card — primary is mirrored onto the lead columns; add/edit/remove other contacts here. */}
+      <ContactsCard
+        leadId={lead.id}
+        contacts={contacts}
+        onChange={setContacts}
+        onError={err}
+        onOk={ok}
+        pending={pending}
+        run={startTransition}
+      />
 
       {/* Follow-up schedule */}
       <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
@@ -374,6 +421,10 @@ export default function LeadDetailClient({
           leadEmail={lead.email}
           practiceName={lead.practice_name}
           replyToActivityId={replyToActivityId}
+          contacts={contacts.map(c => ({
+            id: c.id, first_name: c.first_name, last_name: c.last_name,
+            email: c.email, is_primary: c.is_primary,
+          }))}
         />
       )}
 
@@ -384,6 +435,41 @@ export default function LeadDetailClient({
           onSubmit={doStage}
           onCancel={() => setShowStage(false)}
           pending={pending}
+        />
+      )}
+
+      {/* Invite sheet — send-via-Gmail OR copy link */}
+      {showInvite && (
+        <InviteSheet
+          leadId={lead.id}
+          practiceName={lead.practice_name}
+          contacts={contacts}
+          onClose={() => setShowInvite(false)}
+          onSuccess={(url) => {
+            setInviteUrl(url);
+            setLead(l => ({ ...l, stage: 'signed' }));
+            setShowInvite(false);
+            ok('Invite ready.');
+          }}
+          onOptimisticEmail={(title, from) => {
+            setActs(a => ([
+              {
+                id: `optimistic-${Date.now()}`,
+                type: 'email',
+                title,
+                body: null,
+                occurred_at: new Date().toISOString(),
+                created_at:  new Date().toISOString(),
+                created_by:  null,
+                sent_from:   from,
+                reply_from:  null,
+                gmail_thread_id: null,
+                gmail_message_id: null,
+              },
+              ...a,
+            ]));
+          }}
+          onError={err}
         />
       )}
     </div>

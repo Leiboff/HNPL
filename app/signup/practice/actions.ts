@@ -84,6 +84,10 @@ export type PrefillPayload = {
   contact_last_name:  string | null;
   phone:              string | null;
   specialty:          string | null;
+  street_address:     string | null;
+  suburb:             string | null;
+  city:               string | null;
+  province:           string | null;
 };
 
 export async function getPracticeInvitationByToken(token: string): Promise<PrefillPayload | null> {

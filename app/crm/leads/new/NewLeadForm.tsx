@@ -21,6 +21,7 @@ export default function NewLeadForm() {
     specialty:                  '',
     phone:                      '',
     email:                      '',
+    street_address:             '',
     suburb:                     '',
     city:                       '',
     province:                   '',
@@ -28,7 +29,6 @@ export default function NewLeadForm() {
     longitude:                  null as number | null,
     formatted_address:          '',
     source:                     'other' as (typeof SOURCES)[number],
-    estimated_monthly_billings: '',
   });
 
   const [dupes, setDupes]     = useState<Array<{ id: string; practice_name: string }>>([]);
@@ -42,21 +42,21 @@ export default function NewLeadForm() {
     setError(null);
     startTransition(async () => {
       const res = await createLead({
-        practice_name:              f.practice_name,
-        contact_first_name:         f.contact_first_name,
-        contact_last_name:          f.contact_last_name,
-        role_at_practice:           f.role_at_practice || null,
-        specialty:                  f.specialty || null,
-        phone:                      f.phone || null,
-        email:                      f.email || null,
-        suburb:                     f.suburb || null,
-        city:                       f.city || null,
-        province:                   f.province || null,
-        latitude:                   f.latitude,
-        longitude:                  f.longitude,
-        formatted_address:          f.formatted_address || null,
-        source:                     f.source,
-        estimated_monthly_billings: f.estimated_monthly_billings ? Number(f.estimated_monthly_billings.replace(/[R,\s]/g, '')) : null,
+        practice_name:      f.practice_name,
+        contact_first_name: f.contact_first_name,
+        contact_last_name:  f.contact_last_name,
+        role_at_practice:   f.role_at_practice || null,
+        specialty:          f.specialty || null,
+        phone:              f.phone || null,
+        email:              f.email || null,
+        street_address:     f.street_address || null,
+        suburb:             f.suburb || null,
+        city:               f.city || null,
+        province:           f.province || null,
+        latitude:           f.latitude,
+        longitude:          f.longitude,
+        formatted_address:  f.formatted_address || null,
+        source:             f.source,
         confirmDupe,
       });
 
@@ -113,6 +113,7 @@ export default function NewLeadForm() {
             setF(prev => ({
               ...prev,
               formatted_address: place.formattedAddress,
+              street_address:    parsed.addressLine1 ?? place.formattedAddress,
               suburb:            parsed.suburb   ?? prev.suburb,
               city:              parsed.city     ?? prev.city,
               province:          parsed.province ?? prev.province,
@@ -131,9 +132,6 @@ export default function NewLeadForm() {
           <select value={f.source} onChange={e => upd('source', e.target.value as (typeof SOURCES)[number])} className={inp}>
             {SOURCES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
           </select>
-        </Field>
-        <Field label="Estimated R/mo billings" hint="Deal-size proxy — optional">
-          <input value={f.estimated_monthly_billings} onChange={e => upd('estimated_monthly_billings', e.target.value)} inputMode="numeric" className={inp} placeholder="e.g. 25000" />
         </Field>
       </div>
 

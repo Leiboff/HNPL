@@ -55,23 +55,28 @@ describe('neutraliseFormula (spreadsheet injection guard)', () => {
 describe('validateLeadRows', () => {
   const HEADERS = [...CSV_TEMPLATE_HEADERS];
 
+  // HEADERS: practice_name, contact_first_name, contact_last_name,
+  //          role_at_practice, specialty, phone, email, street_address,
+  //          suburb, city, province, source, notes
+
   it('accepts a minimal valid row', () => {
     const rows = [[
       'Rosebank Dental', 'Alice', 'Smith', 'Owner', 'Dentistry',
-      '+27 82 111 2222', 'alice@rosebank.co.za', 'Rosebank', 'JHB', 'Gauteng',
-      'referral', '25000', 'Warm intro from Bob',
+      '+27 82 111 2222', 'alice@rosebank.co.za',
+      '12 Oxford Road', 'Rosebank', 'JHB', 'Gauteng',
+      'referral', 'Warm intro from Bob',
     ]];
     const { drafts, errors } = validateLeadRows(HEADERS, rows);
     expect(errors).toHaveLength(0);
     expect(drafts[0]?.practice_name).toBe('Rosebank Dental');
-    expect(drafts[0]?.estimated_monthly_billings).toBe(25000);
+    expect(drafts[0]?.street_address).toBe('12 Oxford Road');
     expect(drafts[0]?.source).toBe('referral');
   });
 
   it('flags missing required fields per row', () => {
     const rows = [[
-      '', 'Alice', 'Smith', '', '', '', '', '', '', '',
-      'other', '', '',
+      '', 'Alice', 'Smith', '', '', '', '', '', '', '', '',
+      'other', '',
     ]];
     const { errors } = validateLeadRows(HEADERS, rows);
     expect(errors.some(e => e.field === 'practice_name')).toBe(true);
@@ -79,8 +84,8 @@ describe('validateLeadRows', () => {
 
   it('rejects invalid source', () => {
     const rows = [[
-      'X', 'Alice', 'Smith', '', '', '', '', '', '', '',
-      'newsletter', '', '',
+      'X', 'Alice', 'Smith', '', '', '', '', '', '', '', '',
+      'newsletter', '',
     ]];
     const { errors } = validateLeadRows(HEADERS, rows);
     expect(errors.some(e => e.field === 'source')).toBe(true);
@@ -88,8 +93,8 @@ describe('validateLeadRows', () => {
 
   it('rejects invalid email format', () => {
     const rows = [[
-      'X', 'Alice', 'Smith', '', '', '', 'not-an-email', '', '', '',
-      'other', '', '',
+      'X', 'Alice', 'Smith', '', '', '', 'not-an-email', '', '', '', '',
+      'other', '',
     ]];
     const { errors } = validateLeadRows(HEADERS, rows);
     expect(errors.some(e => e.field === 'email')).toBe(true);
@@ -97,8 +102,8 @@ describe('validateLeadRows', () => {
 
   it('applies formula-injection guard to string fields in the draft', () => {
     const rows = [[
-      '=cmd|/c calc', 'Alice', 'Smith', '', '', '', '', '', '', '',
-      'other', '', '',
+      '=cmd|/c calc', 'Alice', 'Smith', '', '', '', '', '', '', '', '',
+      'other', '',
     ]];
     const { drafts } = validateLeadRows(HEADERS, rows);
     expect(drafts[0]?.practice_name.startsWith("'")).toBe(true);
@@ -106,7 +111,7 @@ describe('validateLeadRows', () => {
 
   it('rejects an over-cap import at the file level', () => {
     const rows = Array.from({ length: MAX_IMPORT_ROWS + 1 }, (_, i) => [
-      `P${i}`, 'Alice', 'Smith', '', '', '', '', '', '', '', 'other', '', '',
+      `P${i}`, 'Alice', 'Smith', '', '', '', '', '', '', '', '', 'other', '',
     ]);
     const { errors } = validateLeadRows(HEADERS, rows);
     expect(errors.some(e => e.field === 'file')).toBe(true);
@@ -116,5 +121,23 @@ describe('validateLeadRows', () => {
     const bad = ['practice_name', 'contact_first_name']; // missing contact_last_name, source
     const { errors } = validateLeadRows(bad, [['a', 'b']]);
     expect(errors.some(e => e.field === 'header')).toBe(true);
+  });
+
+  // Legacy CSVs may still carry an `estimated_monthly_billings` column;
+  // we accept it as an extra header and silently discard the values.
+  it('accepts (and discards) a legacy estimated_monthly_billings column', () => {
+    const legacy = [
+      ...HEADERS,
+      'estimated_monthly_billings',
+    ];
+    const rows = [[
+      'Legacy Practice', 'Alice', 'Smith', '', '', '', '', '', '', '', '',
+      'other', '',
+      '99999',  // ignored
+    ]];
+    const { drafts, errors } = validateLeadRows(legacy, rows);
+    expect(errors).toHaveLength(0);
+    // The value never lands anywhere; the draft has no such field.
+    expect(drafts[0]).not.toHaveProperty('estimated_monthly_billings');
   });
 });

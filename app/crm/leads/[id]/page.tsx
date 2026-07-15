@@ -67,10 +67,18 @@ export default async function LeadDetailPage({
     .limit(1)
     .maybeSingle();
 
+  const { data: contacts } = await supabase
+    .from('crm_lead_contacts')
+    .select('id, lead_id, first_name, last_name, role_at_practice, phone, email, is_primary, notes, created_at, updated_at')
+    .eq('lead_id', id)
+    .order('is_primary', { ascending: false })
+    .order('created_at', { ascending: true });
+
   return (
     <LeadDetailClient
       lead={lead}
       activities={activities ?? []}
+      contacts={(contacts ?? []) as never}
       actorsById={actorsById}
       pendingInvite={pendingInvite ?? null}
     />

@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
-import { formatRand } from '@/app/admin/_lib/format';
 import { moveLeadStage, markSigned } from '../leads/actions';
 
 type BoardRow = {
@@ -11,7 +10,6 @@ type BoardRow = {
   stage: string;
   contact_first_name: string;
   contact_last_name: string;
-  estimated_monthly_billings: number | string | null;
   next_follow_up_at: string | null;
   specialty: string | null;
 };
@@ -77,7 +75,7 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Pipeline</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Drag to move between stages. Column totals show lead count + summed monthly-billings proxy.
+            Drag to move between stages. Column totals show lead count per stage.
           </p>
         </div>
         <Link href="/crm/leads/new" className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium">+ New lead</Link>
@@ -105,22 +103,24 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
         {STAGES.map(stage => {
           const stageRows = rows.filter(r => r.stage === stage.key);
-          const total = stageRows.reduce((acc, r) => acc + Number(r.estimated_monthly_billings ?? 0), 0);
           return (
             <div
               key={stage.key}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => onDrop(stage.key, e)}
               className="bg-white rounded-2xl border border-gray-200 min-h-[300px] flex flex-col"
+              data-testid={`crm-board-column:${stage.key}`}
             >
               <div className="p-3 border-b border-gray-100">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-gray-900">{stage.label}</h3>
-                  <span className="text-xs text-gray-500 tabular-nums">{stageRows.length}</span>
+                  <span
+                    className="text-xs text-gray-500 tabular-nums"
+                    data-testid={`crm-board-column-count:${stage.key}`}
+                  >
+                    {stageRows.length}
+                  </span>
                 </div>
-                {total > 0 && (
-                  <p className="text-[10px] text-gray-500 tabular-nums mt-0.5">{formatRand(total)}/mo</p>
-                )}
               </div>
               <ul className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[65vh]">
                 {stageRows.map(r => (
@@ -136,12 +136,11 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
                         {r.contact_first_name} {r.contact_last_name}
                       </p>
                       {r.specialty && <p className="text-[10px] text-gray-400 truncate">{r.specialty}</p>}
-                      <div className="flex items-center justify-between text-[10px] text-gray-400 mt-1">
-                        <span>{r.estimated_monthly_billings ? formatRand(Number(r.estimated_monthly_billings)) : '—'}</span>
-                        {r.next_follow_up_at && (
-                          <span>{new Date(r.next_follow_up_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg' })}</span>
-                        )}
-                      </div>
+                      {r.next_follow_up_at && (
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {new Date(r.next_follow_up_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg' })}
+                        </p>
+                      )}
                     </Link>
                   </li>
                 ))}
