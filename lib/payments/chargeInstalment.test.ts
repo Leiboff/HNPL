@@ -33,10 +33,11 @@ type PaymentRow = {
   last_dunning_attempt_date?:  string | null;
 };
 type PlanRow = {
-  id:                     string;
-  peach_registration_id:  string | null;
-  patient_id:             string;
-  status:                 string;
+  id:                             string;
+  peach_registration_id:          string | null;
+  peach_initial_transaction_id?:  string | null;
+  patient_id:                     string;
+  status:                         string;
 };
 type ProfileRow = { id: string; email: string };
 
@@ -239,11 +240,40 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(args[0].amountCents).toBe(25075);
     expect(args[0].currency).toBe('ZAR');
     expect(args[0].merchantTransactionId).toBe(result.reference);
-    // Card-on-file: subsequent charges are REPEATED / MIT / UNSCHEDULED.
+    // No initialTransactionId on the plan → UNSCHEDULED fallback.
+    // (The dedicated INSTALLMENT-branch test below covers the case
+    // where the plan has an initialTransactionId populated.)
     expect(args[0].standingInstruction).toEqual({
       mode:   'REPEATED',
       source: 'MIT',
       type:   'UNSCHEDULED',
+    });
+  });
+
+  it('when plan.peach_initial_transaction_id is populated, uses INSTALLMENT + initialTransactionId', async () => {
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 250.75,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+      }],
+      plans: [{
+        id: 'plan-1',
+        peach_registration_id:         'REG_ABC',
+        peach_initial_transaction_id:  'txn-INIT-1',
+        patient_id: 'u1', status: 'active',
+      }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    stubSuccess();
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+    expect(result.kind).toBe('charged');
+    const [args] = chargeSavedCardSpy.mock.calls as [[{ standingInstruction: unknown }]];
+    expect(args[0].standingInstruction).toEqual({
+      mode:                 'REPEATED',
+      source:               'MIT',
+      type:                 'INSTALLMENT',
+      initialTransactionId: 'txn-INIT-1',
     });
   });
 

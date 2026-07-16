@@ -6,12 +6,13 @@ import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import PollingConfirmation from './PollingConfirmation';
 
-// ─── Peach COPYandPAY return route for the "add card" flow ──────────
+// ─── Peach Checkout V2 return route for the "add card" flow ─────────
 //
 // Registration-only checkout: no debit, no R1 charge, no refund. On
-// return the widget appends resourcePath; we GET that path to
-// discover the newly-created registrationId + card metadata, then
-// save the payment_methods row idempotently.
+// return the widget navigates the browser here with ?checkoutId=<id>;
+// we call the V2 status API to discover the newly-created
+// registrationId + card metadata, then save the payment_methods row
+// idempotently.
 
 function ResultCard({ children }: { children: React.ReactNode }) {
   return (
@@ -88,7 +89,7 @@ function NoReferenceCard() {
   );
 }
 
-function FailureCard({ resourcePath, reason }: { resourcePath: string; reason: string }) {
+function FailureCard({ checkoutId, reason }: { checkoutId: string; reason: string }) {
   return (
     <ResultCard>
       <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-100 mx-auto">
@@ -102,7 +103,7 @@ function FailureCard({ resourcePath, reason }: { resourcePath: string; reason: s
       </div>
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
         <Link
-          href={`/patient/payment-methods/complete?resourcePath=${encodeURIComponent(resourcePath)}`}
+          href={`/patient/payment-methods/complete?checkoutId=${encodeURIComponent(checkoutId)}`}
           className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
         >
           Try again
@@ -123,10 +124,10 @@ export default async function CardRegistrationCompletePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params       = await searchParams;
-  const resourcePath = (params.resourcePath ?? params.resource_path) as string | undefined;
+  const params     = await searchParams;
+  const checkoutId = params.checkoutId as string | undefined;
 
-  if (!resourcePath) return <NoReferenceCard />;
+  if (!checkoutId) return <NoReferenceCard />;
 
   const supabaseUser       = await createServerClient();
   const { data: { user } } = await supabaseUser.auth.getUser();
@@ -152,26 +153,26 @@ export default async function CardRegistrationCompletePage({
   const provider = getPaymentProvider();
   let status: Awaited<ReturnType<typeof provider.getCheckoutStatus>>;
   try {
-    status = await provider.getCheckoutStatus(resourcePath);
+    status = await provider.getCheckoutStatus(checkoutId);
   } catch (err) {
     console.error('[card-registration-complete] Peach status fetch failed', err instanceof Error ? err.message : err);
-    return <PollingConfirmation since={since} reference={resourcePath} />;
+    return <PollingConfirmation since={since} reference={checkoutId} />;
   }
 
   const classified = classifyResultCode(status.resultCode);
   if (classified === 'pending') {
-    return <PollingConfirmation since={since} reference={resourcePath} />;
+    return <PollingConfirmation since={since} reference={checkoutId} />;
   }
   if (classified === 'rejected') {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason={status.resultDescription ?? 'The card verification did not complete.'}
     />;
   }
 
   if (!status.registrationId || !status.card) {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason="Peach didn't return a stored registration on the verified transaction."
     />;
   }
@@ -183,7 +184,7 @@ export default async function CardRegistrationCompletePage({
 
   if (user && metaPid && metaPid !== user.id) {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason="This card verification belongs to a different account."
     />;
   }
@@ -191,7 +192,7 @@ export default async function CardRegistrationCompletePage({
   const patientId = metaPid ?? user?.id;
   if (!patientId) {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason="Could not match this verification to your account. Sign in and retry."
     />;
   }
@@ -216,7 +217,7 @@ export default async function CardRegistrationCompletePage({
   );
 
   if (result.kind === 'error') {
-    return <FailureCard resourcePath={resourcePath} reason={result.message} />;
+    return <FailureCard checkoutId={checkoutId} reason={result.message} />;
   }
 
   const { data: row } = await svc

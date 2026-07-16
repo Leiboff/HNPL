@@ -235,7 +235,7 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   // ── 3. Plan + patient — needed for the Peach MIT call.
   const { data: plan } = await svc
     .from('plans')
-    .select('peach_registration_id, patient_id')
+    .select('peach_registration_id, peach_initial_transaction_id, patient_id')
     .eq('id', planId)
     .maybeSingle();
   if (!plan?.peach_registration_id) {
@@ -277,17 +277,23 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     },
   });
 
+  // Standing instruction: INSTALLMENT + initialTransactionId when
+  // present, UNSCHEDULED fallback otherwise. Same posture as
+  // chargeInstalment — see comment there. Settlements ARE INSTALLMENT-
+  // aligned semantically (finishing a fixed-instalment plan early),
+  // so the type flag matches the underlying credential.
+  const initial = (plan as { peach_initial_transaction_id?: string | null }).peach_initial_transaction_id ?? null;
+  const standingInstruction = initial
+    ? { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'INSTALLMENT' as const, initialTransactionId: initial }
+    : { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'UNSCHEDULED' as const };
+
   const provider = getPaymentProvider();
   const chargeResult = await provider.chargeSavedCard({
     registrationId:        plan.peach_registration_id,
     amountCents,
     merchantTransactionId: reference,
     currency:              'ZAR',
-    standingInstruction: {
-      mode:   'REPEATED',
-      source: 'MIT',
-      type:   'UNSCHEDULED',
-    },
+    standingInstruction,
   });
 
   if (chargeResult.status === 'error') {

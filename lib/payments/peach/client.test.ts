@@ -1,26 +1,58 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { __internals, PeachProvider } from './client';
+import { __internals, __resetPeachTokenCache, PeachProvider } from './client';
 
-// ─── Peach client unit tests ────────────────────────────────────────
+// ─── Peach Checkout V2 + recurring client unit tests ────────────────
 //
-// Amount formatting, form-body flattening, and the four provider
-// methods (createCheckout, getCheckoutStatus, chargeSavedCard,
-// deleteRegistration). fetch is mocked; no network required.
+// Two credential surfaces on one provider:
+//
+//   • Checkout V2 — OAuth via /api/oauth/token, POST /v2/checkout,
+//     GET /v2/checkout/{id}/status.
+//   • Recurring — static Bearer against /v1/registrations/{id}/payments
+//     and /v1/payments/{id}. Cannot mix credentials — the tests below
+//     pin the invariant.
+//
+// fetch is mocked. No network required.
 
 const originalFetch = globalThis.fetch;
 
+const CHECKOUT_URL  = 'https://checkout.test';
+const RECURRING_URL = 'https://recurring.test';
+const AUTH_URL      = 'https://auth.test';
+
 beforeEach(() => {
-  process.env.PEACH_BASE_URL              = 'https://sandbox-card.peachpayments.com';
-  process.env.PEACH_ENTITY_ID_CIT         = 'ent-CIT';
-  process.env.PEACH_ENTITY_ID_RECURRING   = 'ent-REC';
-  process.env.PEACH_ACCESS_TOKEN          = 'tok-xyz';
+  __resetPeachTokenCache();
+
+  // Checkout V2 (OAuth) creds.
+  process.env.PEACH_AUTH_URL              = AUTH_URL;
+  process.env.PEACH_CHECKOUT_URL          = CHECKOUT_URL;
+  process.env.PEACH_CHECKOUT_CLIENT_ID    = 'client-id-abc';
+  process.env.PEACH_CHECKOUT_CLIENT_SECRET = 'client-secret-xyz';
+  process.env.PEACH_CHECKOUT_MERCHANT_ID  = 'merchant-1';
+  process.env.PEACH_CHECKOUT_ENTITY_ID    = 'entity-CHECKOUT';
+
+  // Recurring creds — DIFFERENT token and entity than checkout.
+  process.env.PEACH_RECURRING_URL         = RECURRING_URL;
+  process.env.PEACH_RECURRING_ENTITY_ID   = 'entity-REC';
+  process.env.PEACH_RECURRING_ACCESS_TOKEN = 'recurring-bearer';
+
+  process.env.NEXT_PUBLIC_APP_URL         = 'https://app.test';
+
+  // Belt-and-braces: delete the OLD env vars so a regression can't
+  // silently re-authenticate through a stale name.
+  delete process.env.PEACH_BASE_URL;
   delete process.env.PEACH_ENTITY_ID;
+  delete process.env.PEACH_ENTITY_ID_CIT;
+  delete process.env.PEACH_ENTITY_ID_RECURRING;
+  delete process.env.PEACH_ACCESS_TOKEN;
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  __resetPeachTokenCache();
 });
+
+// ─── formatAmountCents + toFormBody — unchanged from earlier client ──
 
 describe('formatAmountCents — 2-decimal rands string', () => {
   it('formats a common amount', () => {
@@ -37,13 +69,17 @@ describe('formatAmountCents — 2-decimal rands string', () => {
 });
 
 describe('toFormBody — flattens nested objects with dot-notation', () => {
-  it('flattens standingInstruction', () => {
+  it('flattens standingInstruction incl. initialTransactionId', () => {
     const body = __internals.toFormBody({
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'UNSCHEDULED' },
+      standingInstruction: {
+        mode: 'REPEATED', source: 'MIT', type: 'INSTALLMENT',
+        initialTransactionId: 'txn-init-1',
+      },
     });
-    expect(body).toContain('standingInstruction.mode=INITIAL');
-    expect(body).toContain('standingInstruction.source=CIT');
-    expect(body).toContain('standingInstruction.type=UNSCHEDULED');
+    expect(body).toContain('standingInstruction.mode=REPEATED');
+    expect(body).toContain('standingInstruction.source=MIT');
+    expect(body).toContain('standingInstruction.type=INSTALLMENT');
+    expect(body).toContain('standingInstruction.initialTransactionId=txn-init-1');
   });
   it('URL-encodes reserved characters', () => {
     const body = __internals.toFormBody({ customer: { email: 'a b+c@x.com' } });
@@ -55,20 +91,38 @@ describe('toFormBody — flattens nested objects with dot-notation', () => {
   });
 });
 
-// ─── Provider methods ──────────────────────────────────────────────
+// ─── Mock fetch driver ─────────────────────────────────────────────
+//
+// Sequential responses: the client makes multiple calls in some paths
+// (OAuth token fetch + checkout call). scriptedFetch returns responses
+// from a queue in FIFO order.
 
-function mockFetch(response: unknown, status = 200) {
-  const fake = vi.fn(async () => new Response(JSON.stringify(response), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  }));
+type ScriptedResponse = { url?: RegExp; body: unknown; status?: number };
+
+function scriptedFetch(script: ScriptedResponse[]): ReturnType<typeof vi.fn> {
+  const fake = vi.fn(async (url: string) => {
+    const next = script.shift();
+    if (!next) throw new Error(`Unmocked fetch: ${url}`);
+    if (next.url && !next.url.test(url)) throw new Error(`Fetch URL mismatch: got ${url}, expected ${next.url}`);
+    return new Response(JSON.stringify(next.body), {
+      status:  next.status ?? 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
   globalThis.fetch = fake as unknown as typeof fetch;
   return fake;
 }
 
-describe('PeachProvider.createCheckout — CIT / INITIAL / UNSCHEDULED with amount', () => {
-  it('POSTs /v1/checkouts with server-computed amount + standingInstruction trio + Bearer auth', async () => {
-    const fake = mockFetch({ id: 'chk-1' });
+const OAUTH_OK = { url: new RegExp(`${AUTH_URL}/api/oauth/token`), body: { access_token: 'checkout-tok-1', expires_in: 3600 } };
+
+// ─── createCheckout — Checkout V2 OAuth + JSON body ────────────────
+
+describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/CIT', () => {
+  it('fetches an OAuth token, then POSTs /v2/checkout with the correct JSON body', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: new RegExp(`${CHECKOUT_URL}/v2/checkout$`), body: { checkoutId: 'chk-1' } },
+    ]);
     const p = new PeachProvider();
     const res = await p.createCheckout({
       amountCents: 9200,
@@ -76,103 +130,198 @@ describe('PeachProvider.createCheckout — CIT / INITIAL / UNSCHEDULED with amou
       currency: 'ZAR',
       paymentType: 'DB',
       createRegistration: true,
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'UNSCHEDULED' },
+      shopperResultUrl: 'https://app.test/checkout/tok/complete',
+      origin: 'https://app.test',
+      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
       customer: { email: 'u@x.com' },
     });
     expect(res.checkoutId).toBe('chk-1');
-    expect(fake).toHaveBeenCalledTimes(1);
-    const call = fake.mock.calls[0]! as unknown as [string, RequestInit];
-    const [url, init] = call;
-    expect(url).toBe('https://sandbox-card.peachpayments.com/v1/checkouts');
-    expect(init.method).toBe('POST');
-    const headers = init.headers as Record<string, string>;
-    expect(headers.Authorization).toBe('Bearer tok-xyz');
-    expect(headers['Content-Type']).toBe('application/x-www-form-urlencoded');
-    const body = String(init.body);
-    // Flow A: widget checkout defaults to the CIT entity.
-    expect(body).toContain('entityId=ent-CIT');
-    expect(body).not.toContain('entityId=ent-REC');
-    expect(body).toContain('amount=92.00');
-    expect(body).toContain('currency=ZAR');
-    expect(body).toContain('paymentType=DB');
-    expect(body).toContain('createRegistration=true');
-    expect(body).toContain('standingInstruction.mode=INITIAL');
-    expect(body).toContain('standingInstruction.source=CIT');
-    expect(body).toContain('standingInstruction.type=UNSCHEDULED');
-    expect(body).toContain('merchantTransactionId=hnpl_co_abc');
-  });
+    expect(fake).toHaveBeenCalledTimes(2);
 
-  it('rejects a client-supplied fractional / non-integer amount', async () => {
-    mockFetch({ id: 'chk-2' });
-    const p = new PeachProvider();
-    await expect(p.createCheckout({
-      amountCents: 92.5 as unknown as number,
-      merchantTransactionId: 'x',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'UNSCHEDULED' },
-    })).rejects.toThrow(/positive integer/);
+    // 1) OAuth call — JSON body with the credential triple.
+    const [oauthUrl, oauthInit] = (fake.mock.calls[0] as unknown) as [string, RequestInit];
+    expect(oauthUrl).toBe(`${AUTH_URL}/api/oauth/token`);
+    expect(oauthInit.method).toBe('POST');
+    const oauthHeaders = oauthInit.headers as Record<string, string>;
+    expect(oauthHeaders['Content-Type']).toBe('application/json');
+    const oauthBody = JSON.parse(String(oauthInit.body)) as { clientId: string; clientSecret: string; merchantId: string };
+    expect(oauthBody.clientId).toBe('client-id-abc');
+    expect(oauthBody.clientSecret).toBe('client-secret-xyz');
+    expect(oauthBody.merchantId).toBe('merchant-1');
+
+    // 2) Checkout create call — Bearer with the OAuth token, JSON body.
+    const [chkUrl, chkInit] = (fake.mock.calls[1] as unknown) as [string, RequestInit];
+    expect(chkUrl).toBe(`${CHECKOUT_URL}/v2/checkout`);
+    expect(chkInit.method).toBe('POST');
+    const chkHeaders = chkInit.headers as Record<string, string>;
+    expect(chkHeaders.Authorization).toBe('Bearer checkout-tok-1');
+    expect(chkHeaders['Content-Type']).toBe('application/json');
+    expect(chkHeaders.Origin).toBe('https://app.test');
+    const chkBody = JSON.parse(String(chkInit.body));
+    expect(chkBody.authentication).toEqual({ entityId: 'entity-CHECKOUT' });
+    expect(chkBody.merchantTransactionId).toBe('hnpl_co_abc');
+    expect(chkBody.amount).toBe('92.00');
+    expect(chkBody.currency).toBe('ZAR');
+    expect(chkBody.paymentType).toBe('DB');
+    expect(chkBody.createRegistration).toBe(true);
+    expect(chkBody.shopperResultUrl).toBe('https://app.test/checkout/tok/complete');
+    expect(chkBody.standingInstruction).toEqual({ mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' });
+    expect(chkBody.customer).toEqual({ email: 'u@x.com' });
+    expect(typeof chkBody.nonce).toBe('string');
+    expect(chkBody.nonce.length).toBeGreaterThan(10);
   });
 
   it('registration-only mode — omits amount + currency + paymentType', async () => {
-    const fake = mockFetch({ id: 'chk-reg' });
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg' } },
+    ]);
     const p = new PeachProvider();
     await p.createCheckout({
       amountCents: 0,
       merchantTransactionId: 'hnpl_reg_abc',
       createRegistration: true,
     });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(body).toContain('createRegistration=true');
-    expect(body).not.toContain('amount=');
-    expect(body).not.toContain('currency=');
-    expect(body).not.toContain('paymentType=');
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.createRegistration).toBe(true);
+    expect(chkBody.amount).toBeUndefined();
+    expect(chkBody.currency).toBeUndefined();
+    expect(chkBody.paymentType).toBeUndefined();
   });
 
-  it('encodes customParameters with the customParameters[NAME]=value shape', async () => {
-    const fake = mockFetch({ id: 'chk-cp' });
+  it('rejects a fractional / non-integer amount', async () => {
+    scriptedFetch([]);
     const p = new PeachProvider();
-    await p.createCheckout({
-      amountCents: 5000,
+    await expect(p.createCheckout({
+      amountCents: 92.5 as unknown as number,
       merchantTransactionId: 'x',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'UNSCHEDULED' },
-      customParameters: { SHOPPER_planId: 'plan-1' },
-    });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(decodeURIComponent(body)).toContain('customParameters[SHOPPER_planId]=plan-1');
+      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
+    })).rejects.toThrow(/positive integer/);
+  });
+
+  it('reuses the cached OAuth token on a second createCheckout call', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A' } },
+      // NO OAuth call the second time — token is cached.
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-B' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({ amountCents: 5000, merchantTransactionId: 'x' });
+    await p.createCheckout({ amountCents: 6000, merchantTransactionId: 'y' });
+    expect(fake).toHaveBeenCalledTimes(3);
+    // The three calls were: oauth, checkout-A, checkout-B.
+    const [u1] = (fake.mock.calls[0] as unknown) as [string]; expect(u1).toContain('/api/oauth/token');
+    const [u2] = (fake.mock.calls[1] as unknown) as [string]; expect(u2).toContain('/v2/checkout');
+    const [u3] = (fake.mock.calls[2] as unknown) as [string]; expect(u3).toContain('/v2/checkout');
   });
 });
 
-describe('PeachProvider.chargeSavedCard — MIT / REPEATED / UNSCHEDULED', () => {
-  it('POSTs /v1/registrations/{id}/payments with the MIT triple', async () => {
-    const fake = mockFetch({
-      id: 'pay-1',
-      merchantTransactionId: 'hnpl_abc_a1',
-      result: { code: '000.100.110', description: 'Approved' },
-    });
+// ─── getCheckoutStatus — V2 GET /v2/checkout/{id}/status ───────────
+
+describe('PeachProvider.getCheckoutStatus — V2 status API', () => {
+  it('GETs /v2/checkout/{id}/status with the OAuth Bearer', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      {
+        url: new RegExp(`${CHECKOUT_URL}/v2/checkout/chk-1/status`),
+        body: {
+          id: 'pay-1',
+          amount: '92.00',
+          merchantTransactionId: 'hnpl_co_abc',
+          result: { code: '000.100.110' },
+          card: { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030', holder: 'A B' },
+          registrationId: 'REG_ABC',
+        },
+      },
+    ]);
+    const p = new PeachProvider();
+    const st = await p.getCheckoutStatus('chk-1');
+    expect(st.status).toBe('success');
+    expect(st.amountCents).toBe(9200);
+    expect(st.providerPaymentId).toBe('pay-1');
+    expect(st.registrationId).toBe('REG_ABC');
+    expect(st.card?.brand).toBe('VISA');
+    expect(st.card?.last4).toBe('4242');
+    const [url, init] = (fake.mock.calls[1] as unknown) as [string, RequestInit];
+    expect(url).toBe(`${CHECKOUT_URL}/v2/checkout/chk-1/status`);
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer checkout-tok-1');
+  });
+});
+
+// ─── chargeSavedCard — recurring API, DIFFERENT credentials ────────
+
+describe('PeachProvider.chargeSavedCard — recurring endpoint + REPEATED/INSTALLMENT/MIT + initialTransactionId', () => {
+  it('POSTs /v1/registrations/{id}/payments with the recurring Bearer + INSTALLMENT + initialTransactionId', async () => {
+    const fake = scriptedFetch([
+      // No OAuth call — recurring uses a static token.
+      {
+        url: new RegExp(`${RECURRING_URL}/v1/registrations/REG_ABC/payments`),
+        body: {
+          id: 'pay-mit-1',
+          merchantTransactionId: 'hnpl_abc_a1',
+          result: { code: '000.100.110', description: 'Approved' },
+        },
+      },
+    ]);
     const p = new PeachProvider();
     const res = await p.chargeSavedCard({
       registrationId: 'REG_ABC',
       amountCents: 25075,
       merchantTransactionId: 'hnpl_abc_a1',
-      standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'UNSCHEDULED' },
+      standingInstruction: {
+        mode: 'REPEATED',
+        source: 'MIT',
+        type: 'INSTALLMENT',
+        initialTransactionId: 'txn-initial-1',
+      },
     });
     expect(res.status).toBe('success');
-    expect(res.providerPaymentId).toBe('pay-1');
+    expect(res.providerPaymentId).toBe('pay-mit-1');
     expect(res.resultCode).toBe('000.100.110');
+    expect(fake).toHaveBeenCalledTimes(1);
+
     const [url, init] = (fake.mock.calls[0] as unknown) as [string, RequestInit];
-    expect(url).toBe('https://sandbox-card.peachpayments.com/v1/registrations/REG_ABC/payments');
+    expect(url).toBe(`${RECURRING_URL}/v1/registrations/REG_ABC/payments`);
+    const headers = init.headers as Record<string, string>;
+    // The load-bearing credential-separation invariant: the recurring
+    // call uses the RECURRING bearer, NOT the OAuth token.
+    expect(headers.Authorization).toBe('Bearer recurring-bearer');
+    expect(headers.Authorization).not.toBe('Bearer checkout-tok-1');
+    expect(headers['Content-Type']).toBe('application/x-www-form-urlencoded');
+
     const body = String(init.body);
+    expect(body).toContain('entityId=entity-REC');
+    expect(body).not.toContain('entityId=entity-CHECKOUT');
     expect(body).toContain('amount=250.75');
     expect(body).toContain('paymentType=DB');
     expect(body).toContain('standingInstruction.mode=REPEATED');
     expect(body).toContain('standingInstruction.source=MIT');
-    expect(body).toContain('standingInstruction.type=UNSCHEDULED');
-    // Flow C: MIT charges book against the RECURRING entity — never CIT.
-    expect(body).toContain('entityId=ent-REC');
-    expect(body).not.toContain('entityId=ent-CIT');
+    expect(body).toContain('standingInstruction.type=INSTALLMENT');
+    expect(body).toContain('standingInstruction.initialTransactionId=txn-initial-1');
+  });
+
+  it('accepts UNSCHEDULED fallback when there is no initialTransactionId', async () => {
+    scriptedFetch([{
+      url: /\/v1\/registrations\/REG\/payments/,
+      body: { id: 'pay-u-1', result: { code: '000.100.110' } },
+    }]);
+    const p = new PeachProvider();
+    const res = await p.chargeSavedCard({
+      registrationId: 'REG',
+      amountCents: 5000,
+      merchantTransactionId: 'ref',
+      standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'UNSCHEDULED' },
+    });
+    expect(res.status).toBe('success');
   });
 
   it('maps a decline result code to status=rejected', async () => {
-    mockFetch({ id: 'pay-2', result: { code: '800.100.152', description: 'Declined' } });
+    scriptedFetch([{
+      url: /\/v1\/registrations\/REG\/payments/,
+      body: { id: 'pay-2', result: { code: '800.100.152', description: 'Declined' } },
+    }]);
     const p = new PeachProvider();
     const res = await p.chargeSavedCard({
       registrationId: 'REG',
@@ -183,7 +332,7 @@ describe('PeachProvider.chargeSavedCard — MIT / REPEATED / UNSCHEDULED', () =>
     expect(res.status).toBe('rejected');
   });
 
-  it('maps a transport error to status=error (leaves caller to handle)', async () => {
+  it('maps a transport error to status=error', async () => {
     globalThis.fetch = (vi.fn(async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch);
     const p = new PeachProvider();
     const res = await p.chargeSavedCard({
@@ -197,142 +346,111 @@ describe('PeachProvider.chargeSavedCard — MIT / REPEATED / UNSCHEDULED', () =>
   });
 });
 
-describe('PeachProvider.getCheckoutStatus — GET resourcePath with entityId', () => {
-  it('appends entityId query param + Bearer auth', async () => {
-    const fake = mockFetch({
-      id: 'pay-1',
-      amount: '92.00',
-      merchantTransactionId: 'hnpl_co_abc',
-      result: { code: '000.100.110' },
-      card: { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030', holder: 'A B' },
-      registrationId: 'REG_ABC',
-    });
-    const p = new PeachProvider();
-    const st = await p.getCheckoutStatus('/v1/checkouts/chk-1/payment');
-    expect(st.status).toBe('success');
-    expect(st.amountCents).toBe(9200);
-    expect(st.registrationId).toBe('REG_ABC');
-    expect(st.card?.brand).toBe('VISA');
-    expect(st.card?.last4).toBe('4242');
-    const [url] = (fake.mock.calls[0] as unknown) as [string];
-    expect(url).toBe('https://sandbox-card.peachpayments.com/v1/checkouts/chk-1/payment?entityId=ent-CIT');
-  });
-});
+// ─── deleteRegistration — recurring surface ────────────────────────
 
 describe('PeachProvider.deleteRegistration', () => {
-  it('DELETEs /v1/registrations/{id} against the CIT entity', async () => {
-    const fake = mockFetch({ result: { code: '000.100.110' } });
+  it('DELETEs /v1/registrations/{id} against the recurring entity', async () => {
+    const fake = scriptedFetch([{
+      url: /\/v1\/registrations\/REG_XYZ/,
+      body: { result: { code: '000.100.110' } },
+    }]);
     const p = new PeachProvider();
     const res = await p.deleteRegistration('REG_XYZ');
     expect(res.ok).toBe(true);
     const [url, init] = (fake.mock.calls[0] as unknown) as [string, RequestInit];
-    expect(url).toBe('https://sandbox-card.peachpayments.com/v1/registrations/REG_XYZ?entityId=ent-CIT');
+    expect(url).toBe(`${RECURRING_URL}/v1/registrations/REG_XYZ?entityId=entity-REC`);
     expect(init.method).toBe('DELETE');
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer recurring-bearer');
   });
 });
 
-// ─── Dual-entity routing — the amendment's load-bearing pins ────────
+// ─── refund — RF (default) + RV (reversal) ─────────────────────────
 
-describe('Dual-entity routing — CIT vs RECURRING', () => {
-  it('createCheckout defaults to the CIT entity (widget = 3DS = CIT)', async () => {
-    const fake = mockFetch({ id: 'chk-A' });
-    const p = new PeachProvider();
-    await p.createCheckout({
-      amountCents: 5000,
-      merchantTransactionId: 'x',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'UNSCHEDULED' },
-    });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(body).toContain('entityId=ent-CIT');
-  });
-
-  it('createCheckout honours an explicit { channel: "recurring" } override', async () => {
-    const fake = mockFetch({ id: 'chk-B' });
-    const p = new PeachProvider();
-    await p.createCheckout({
-      amountCents: 5000,
-      merchantTransactionId: 'x',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'UNSCHEDULED' },
-      channel: 'recurring',
-    });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(body).toContain('entityId=ent-REC');
-  });
-
-  it('chargeSavedCard ALWAYS uses the RECURRING entity — no override', async () => {
-    const fake = mockFetch({ id: 'pay-1', result: { code: '000.100.110' } });
-    const p = new PeachProvider();
-    await p.chargeSavedCard({
-      registrationId: 'REG',
-      amountCents: 5000,
-      merchantTransactionId: 'x',
-      standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'UNSCHEDULED' },
-    });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(body).toContain('entityId=ent-REC');
-    expect(body).not.toContain('entityId=ent-CIT');
-  });
-
-  it('getPaymentStatus defaults to RECURRING (MIT is the common case)', async () => {
-    const fake = mockFetch({ id: 'pay-2', result: { code: '000.100.110' } });
-    const p = new PeachProvider();
-    await p.getPaymentStatus('pay-2');
-    const [url] = (fake.mock.calls[0] as unknown) as [string];
-    expect(url).toContain('entityId=ent-REC');
-  });
-
-  it('getPaymentStatus with { channel: "cit" } targets the CIT entity', async () => {
-    const fake = mockFetch({ id: 'pay-3', result: { code: '000.100.110' } });
-    const p = new PeachProvider();
-    await p.getPaymentStatus('pay-3', { channel: 'cit' });
-    const [url] = (fake.mock.calls[0] as unknown) as [string];
-    expect(url).toContain('entityId=ent-CIT');
-  });
-
-  it('getCheckoutStatus defaults to CIT (widgets book against CIT)', async () => {
-    const fake = mockFetch({ id: 'pay-4', result: { code: '000.100.110' } });
-    const p = new PeachProvider();
-    await p.getCheckoutStatus('/v1/checkouts/chk/payment');
-    const [url] = (fake.mock.calls[0] as unknown) as [string];
-    expect(url).toContain('entityId=ent-CIT');
-  });
-});
-
-// ─── Refunds — RF (default) and RV (reversal of a PA) ──────────────
-
-describe('PeachProvider.refund — POST /v1/payments/{id} paymentType=RF / RV', () => {
-  it('defaults to paymentType=RF and RECURRING channel', async () => {
-    const fake = mockFetch({ id: 'rf-1', result: { code: '000.100.110' } });
+describe('PeachProvider.refund — POST /v1/payments/{id} on the recurring surface', () => {
+  it('defaults to paymentType=RF against the recurring entity', async () => {
+    const fake = scriptedFetch([{
+      url: /\/v1\/payments\/peach-payment-1/,
+      body: { id: 'rf-1', result: { code: '000.100.110' } },
+    }]);
     const p = new PeachProvider();
     const res = await p.refund('peach-payment-1', 9200, 'hnpl_rf_x');
     expect(res.status).toBe('success');
     expect(res.providerRefundId).toBe('rf-1');
     const [url, init] = (fake.mock.calls[0] as unknown) as [string, RequestInit];
-    expect(url).toBe('https://sandbox-card.peachpayments.com/v1/payments/peach-payment-1');
+    expect(url).toBe(`${RECURRING_URL}/v1/payments/peach-payment-1`);
     expect(init.method).toBe('POST');
     const body = String(init.body);
     expect(body).toContain('paymentType=RF');
     expect(body).toContain('amount=92.00');
     expect(body).toContain('currency=ZAR');
-    expect(body).toContain('entityId=ent-REC');
+    expect(body).toContain('entityId=entity-REC');
     expect(body).toContain('merchantTransactionId=hnpl_rf_x');
   });
 
   it('honours { paymentType: "RV" } for preauth reversal', async () => {
-    const fake = mockFetch({ id: 'rv-1', result: { code: '000.100.110' } });
+    const fake = scriptedFetch([{
+      url: /\/v1\/payments\/peach-payment-2/,
+      body: { id: 'rv-1', result: { code: '000.100.110' } },
+    }]);
     const p = new PeachProvider();
     await p.refund('peach-payment-2', 9200, 'hnpl_rv_x', { paymentType: 'RV' });
     const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
     expect(body).toContain('paymentType=RV');
     expect(body).not.toContain('paymentType=RF');
   });
+});
 
-  it('honours { channel: "cit" } for refunds against a widget-booked payment', async () => {
-    const fake = mockFetch({ id: 'rf-2', result: { code: '000.100.110' } });
+// ─── Credential-separation invariant ────────────────────────────────
+//
+// The load-bearing property of the 0077 split: the recurring surface
+// never uses OAuth, and Checkout V2 never uses the recurring bearer.
+// A regression here would be a security / correctness failure — a
+// single-token client is exactly what 0077 removed.
+
+describe('Credential separation — Checkout vs Recurring never mix', () => {
+  it('chargeSavedCard makes NO OAuth call (it uses the static recurring bearer)', async () => {
+    const fake = scriptedFetch([{
+      url: /\/v1\/registrations\/REG\/payments/,
+      body: { id: 'pay-x', result: { code: '000.100.110' } },
+    }]);
     const p = new PeachProvider();
-    await p.refund('peach-payment-3', 5000, 'hnpl_rf_cit', { channel: 'cit' });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(body).toContain('entityId=ent-CIT');
-    expect(body).not.toContain('entityId=ent-REC');
+    await p.chargeSavedCard({
+      registrationId: 'REG',
+      amountCents: 5000,
+      merchantTransactionId: 'ref',
+      standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'INSTALLMENT', initialTransactionId: 't' },
+    });
+    // No OAuth token fetch — recurring is authenticated with its own token.
+    for (const call of fake.mock.calls) {
+      const url = (call as unknown as [string])[0];
+      expect(url).not.toContain('/api/oauth/token');
+    }
+  });
+
+  it('refund makes NO OAuth call — recurring surface', async () => {
+    const fake = scriptedFetch([{
+      url: /\/v1\/payments\/pay-1/,
+      body: { id: 'rf-1', result: { code: '000.100.110' } },
+    }]);
+    const p = new PeachProvider();
+    await p.refund('pay-1', 100, 'hnpl_rf_z');
+    for (const call of fake.mock.calls) {
+      const url = (call as unknown as [string])[0];
+      expect(url).not.toContain('/api/oauth/token');
+    }
+  });
+
+  it('createCheckout DOES call the OAuth endpoint and NEVER the recurring host', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-X' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({ amountCents: 1000, merchantTransactionId: 'x' });
+    for (const call of fake.mock.calls) {
+      const url = (call as unknown as [string])[0];
+      expect(url).not.toContain(RECURRING_URL);
+    }
   });
 });

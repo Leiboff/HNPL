@@ -216,10 +216,14 @@ export async function initializeFirstPayment(
       currency:              'ZAR',
       paymentType:           'DB',
       createRegistration:    true,
+      shopperResultUrl,
+      origin:                appUrl,
+      // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
+      // capture. The V2 embedded widget handles 3DS in-page.
       standingInstruction: {
         mode:   'INITIAL',
         source: 'CIT',
-        type:   'UNSCHEDULED',
+        type:   'INSTALLMENT',
       },
       customer: {
         email:     profile.email,
@@ -238,7 +242,7 @@ export async function initializeFirstPayment(
 
   const { error: updateError } = await supabase
     .from('payments')
-    .update({ peach_payment_id: reference })
+    .update({ peach_payment_id: reference, peach_checkout_id: checkoutId })
     .eq('id', payment.id)
     .eq('patient_id', user.id);
 
@@ -277,12 +281,16 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
   const provider = getPaymentProvider();
   try {
     const checkout = await provider.createCheckout({
-      // Registration-only: no amount, no paymentType. OPPWA creates the
-      // stored credential without a debit. Old Paystack flow required a
-      // R1 charge + refund; Peach makes this a first-class capability.
+      // Registration-only: no amount, no paymentType. Checkout V2
+      // creates the stored credential without a debit. This produces
+      // a registrationId but NO initialTransactionId — the first MIT
+      // charge on any plan using this card will run under UNSCHEDULED,
+      // then capture its own initialTransactionId for the plan.
       amountCents:           0,
       merchantTransactionId: reference,
       createRegistration:    true,
+      shopperResultUrl,
+      origin:                appUrl,
       customer: {
         email:     profile.email,
         givenName: profile.first_name ?? null,
@@ -439,6 +447,12 @@ export async function payWithSavedCard(
   // same column so this works uniformly.
   const amountCents = Math.round(instalments[0] * 100);
 
+  // No plan-level initialTransactionId yet — this is the very first
+  // MIT charge on this plan/card combination. UNSCHEDULED is Peach's
+  // recommended type when the stored credential has no initial
+  // reference to link to. On success we capture the payment id below
+  // and stamp it as plan.peach_initial_transaction_id so subsequent
+  // instalments upgrade to INSTALLMENT + initialTransactionId.
   const provider = getPaymentProvider();
   const chargeResult = await provider.chargeSavedCard({
     registrationId:        paymentMethod.token,
@@ -446,7 +460,7 @@ export async function payWithSavedCard(
     merchantTransactionId: reference,
     currency:              'ZAR',
     standingInstruction: {
-      mode:   'REPEATED',   // Subsequent charge on an already-stored card
+      mode:   'REPEATED',
       source: 'MIT',
       type:   'UNSCHEDULED',
     },
@@ -460,16 +474,25 @@ export async function payWithSavedCard(
     return { error: chargeResult.resultDescription ?? 'Card was declined. Please try a different card.' };
   }
 
-  // Also stamp the plan with the reusable registration id so the
-  // collections cron can find it — the webhook does this too, so the
-  // write is idempotent (IS DISTINCT FROM would be nice but the
-  // constraint is not there today).
+  // Stamp the plan with the reusable registration id + the id of THIS
+  // successful MIT — every subsequent charge on this plan uses that
+  // id as its INSTALLMENT initialTransactionId. Idempotent writes so
+  // the webhook can also land the same values without conflict.
   await supabase
     .from('plans')
     .update({ peach_registration_id: paymentMethod.token })
     .eq('id', planId)
     .eq('patient_id', user.id)
     .is('peach_registration_id', null);
+
+  if (chargeResult.providerPaymentId) {
+    await supabase
+      .from('plans')
+      .update({ peach_initial_transaction_id: chargeResult.providerPaymentId })
+      .eq('id', planId)
+      .eq('patient_id', user.id)
+      .is('peach_initial_transaction_id', null);
+  }
 
   // Charge is in-flight (pending) or succeeded — the webhook will
   // activate the plan on the terminal PAYMENT event.

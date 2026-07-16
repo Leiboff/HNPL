@@ -444,10 +444,14 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       currency:              'ZAR',
       paymentType:           'DB',
       createRegistration:    true,   // remember the card for MIT retries
+      shopperResultUrl,
+      origin:                appUrl,
+      // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
+      // capture via the V2 embedded widget.
       standingInstruction: {
-        mode:   'INITIAL',           // Card-on-file: first CIT charge
+        mode:   'INITIAL',
         source: 'CIT',
-        type:   'UNSCHEDULED',
+        type:   'INSTALLMENT',
       },
       customer: {
         email:     normalizedEmail,
@@ -466,6 +470,14 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
   }
+
+  // Reconciliation convenience — the checkoutId is the browser-visible
+  // handle for this transaction; stamp it on the payment row so admin
+  // lookups by checkoutId find the right instalment.
+  await svc
+    .from('payments')
+    .update({ peach_checkout_id: checkoutId })
+    .eq('id', instalment1Id);
 
   // Stash the token in a cookie so the complete + done pages can read
   // it without depending on URL params alone. Cookie posture matches
