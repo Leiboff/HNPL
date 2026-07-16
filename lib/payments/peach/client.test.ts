@@ -344,6 +344,59 @@ describe('PeachProvider.chargeSavedCard — recurring endpoint + REPEATED/INSTAL
     expect(res.status).toBe('error');
     expect(res.resultDescription).toMatch(/ECONNREFUSED/);
   });
+
+  // ── Echoed initialTransactionId (chain root) ──────────────────────
+  //
+  // Peach echoes standingInstruction.initialTransactionId on REPEATED
+  // responses to point at the CIT root of the credential chain. The
+  // client must surface it as a DISTINCT field from providerPaymentId
+  // (which is this response's OWN id — an MIT id, wrong to thread as
+  // a later charge's initialTransactionId).
+
+  it('surfaces echoed standingInstruction.initialTransactionId as a distinct result field', async () => {
+    scriptedFetch([{
+      url: /\/v1\/registrations\/REG\/payments/,
+      body: {
+        id: 'pay-mit-id',
+        result: { code: '000.100.110' },
+        standingInstruction: { initialTransactionId: 'CIT-ROOT-1' },
+      },
+    }]);
+    const p = new PeachProvider();
+    const res = await p.chargeSavedCard({
+      registrationId: 'REG',
+      amountCents: 5000,
+      merchantTransactionId: 'ref',
+      standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'UNSCHEDULED' },
+    });
+    expect(res.providerPaymentId).toBe('pay-mit-id');    // this MIT's own id
+    expect(res.initialTransactionId).toBe('CIT-ROOT-1'); // echoed chain root
+    // Load-bearing separation: chain root MUST NOT be the MIT's own id.
+    expect(res.initialTransactionId).not.toBe(res.providerPaymentId);
+  });
+
+  it('leaves initialTransactionId undefined when Peach does not echo it', async () => {
+    scriptedFetch([{
+      url: /\/v1\/registrations\/REG\/payments/,
+      body: {
+        id: 'pay-mit-solo',
+        result: { code: '000.100.110' },
+        // No standingInstruction object at all.
+      },
+    }]);
+    const p = new PeachProvider();
+    const res = await p.chargeSavedCard({
+      registrationId: 'REG',
+      amountCents: 5000,
+      merchantTransactionId: 'ref',
+      standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'UNSCHEDULED' },
+    });
+    expect(res.status).toBe('success');
+    expect(res.providerPaymentId).toBe('pay-mit-solo');
+    // Absence is a distinct state — the caller uses this to decide
+    // NOT to stamp plans.peach_initial_transaction_id.
+    expect(res.initialTransactionId).toBeUndefined();
+  });
 });
 
 // ─── deleteRegistration — recurring surface ────────────────────────

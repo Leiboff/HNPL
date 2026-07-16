@@ -474,10 +474,8 @@ export async function payWithSavedCard(
     return { error: chargeResult.resultDescription ?? 'Card was declined. Please try a different card.' };
   }
 
-  // Stamp the plan with the reusable registration id + the id of THIS
-  // successful MIT — every subsequent charge on this plan uses that
-  // id as its INSTALLMENT initialTransactionId. Idempotent writes so
-  // the webhook can also land the same values without conflict.
+  // Stamp the reusable registration id (idempotent — the webhook may
+  // land the same value in parallel).
   await supabase
     .from('plans')
     .update({ peach_registration_id: paymentMethod.token })
@@ -485,10 +483,27 @@ export async function payWithSavedCard(
     .eq('patient_id', user.id)
     .is('peach_registration_id', null);
 
-  if (chargeResult.providerPaymentId) {
+  // Stamp peach_initial_transaction_id ONLY from Peach's echoed chain
+  // root (standingInstruction.initialTransactionId on the MIT response).
+  // Do NOT fall back to chargeResult.providerPaymentId — that is THIS
+  // MIT's own id, not the CIT root that established the credential.
+  // Threading an MIT-typed id as a later charge's `initialTransactionId`
+  // is a compliance-shaped bug: Peach validates the reference against
+  // the stored chain and rejects it, and because every writer of this
+  // column is .is(...null)-guarded (write-once) the wrong value would
+  // be locked in permanently.
+  //
+  // When the echo is absent, LEAVE THE COLUMN NULL. chargeInstalment
+  // and settle-actions both fall back safely to UNSCHEDULED when
+  // initialTransactionId is null — no data is better than wrong data.
+  //
+  // TODO(dina): confirm in sandbox which exact field Peach returns as
+  // the valid initialTransactionId, and whether payWithSavedCard
+  // should be REPEATED/CIT (customer present) rather than REPEATED/MIT.
+  if (chargeResult.initialTransactionId) {
     await supabase
       .from('plans')
-      .update({ peach_initial_transaction_id: chargeResult.providerPaymentId })
+      .update({ peach_initial_transaction_id: chargeResult.initialTransactionId })
       .eq('id', planId)
       .eq('patient_id', user.id)
       .is('peach_initial_transaction_id', null);

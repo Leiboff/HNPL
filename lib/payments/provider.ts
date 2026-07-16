@@ -51,7 +51,15 @@ export type ChargeStatus =
 
 export type ChargeResult = {
   status:                ChargeStatus;
-  providerPaymentId?:    string;      // Peach payment id (used later for GET status / refund / initialTransactionId)
+  providerPaymentId?:    string;      // The transaction's OWN top-level id (used later for GET status / refund).
+  // The echoed root of the stored-credential chain — Peach returns this
+  // on a REPEATED response as standingInstruction.initialTransactionId,
+  // pointing at the INITIAL/CIT id that established the credential.
+  // NEVER equal to providerPaymentId on an MIT response: providerPaymentId
+  // is the MIT transaction's own id, initialTransactionId is the CIT
+  // root it's threaded off. Absent when Peach doesn't echo it (older
+  // credentials, or configurations where the field is only on CITs).
+  initialTransactionId?: string;
   resultCode?:           string;      // Raw provider result code (000.100.110, etc.)
   resultDescription?:    string;      // Human-readable
   raw?:                  unknown;     // Full provider response, for logs

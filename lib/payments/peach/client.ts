@@ -289,6 +289,20 @@ type PeachPaymentBody = {
   result?:                PeachResult;
   card?:                  PeachCard;
   registrationId?:        string;
+  // On a REPEATED/MIT response, Peach echoes the root of the stored-
+  // credential chain here — the id of the INITIAL/CIT transaction that
+  // established the credential. This is the value we thread on
+  // subsequent MIT charges as standingInstruction.initialTransactionId.
+  // It is NOT the same as the response's own top-level `id`.
+  //
+  // TODO(dina): confirm in sandbox which exact field Peach returns as
+  // the valid initialTransactionId (plain `id` vs a connector-specific
+  // transaction id), and whether payWithSavedCard should be
+  // REPEATED/CIT (customer present — may need 3DS) rather than
+  // REPEATED/MIT. Not changing tagging in this pass — this note flags.
+  standingInstruction?: {
+    initialTransactionId?: string;
+  };
 };
 
 // V2 status response is broadly the same shape as OPPWA payments —
@@ -429,11 +443,15 @@ export class PeachProvider implements PaymentProvider {
       };
     }
     return {
-      status:            classifyResultCode(res.result?.code),
-      providerPaymentId: res.id,
-      resultCode:        res.result?.code,
-      resultDescription: res.result?.description,
-      raw:               res,
+      status:               classifyResultCode(res.result?.code),
+      providerPaymentId:    res.id,
+      // Echoed root — see PeachPaymentBody.standingInstruction comment
+      // above. Undefined if Peach didn't echo it; the caller must NOT
+      // fall back to res.id (that's this MIT's own id, not the chain root).
+      initialTransactionId: res.standingInstruction?.initialTransactionId,
+      resultCode:           res.result?.code,
+      resultDescription:    res.result?.description,
+      raw:                  res,
     };
   }
 

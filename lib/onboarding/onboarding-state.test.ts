@@ -467,6 +467,48 @@ describe('Server-side acceptance gate — acceptPlan + payWithSavedCard', () => 
   });
 });
 
+describe('payWithSavedCard — peach_initial_transaction_id anchor (0077 fix)', () => {
+  // Regression pin for the initial-transaction anchor bug: this MIT
+  // path used to stamp the column from chargeResult.providerPaymentId
+  // (which is the MIT's own top-level id). Because every writer of the
+  // column is .is(...null)-guarded (write-once), that wrong value
+  // locks in permanently and every later instalment threads a bogus
+  // reference. The fix: stamp from chargeResult.initialTransactionId
+  // (Peach's echoed chain root) and skip the write when the echo is
+  // absent — chargeInstalment / settle-actions fall back safely to
+  // UNSCHEDULED when the column is null.
+
+  const fnStart = PATIENT_ACT.indexOf('export async function payWithSavedCard');
+  const body    = PATIENT_ACT.slice(fnStart);
+
+  it('stamps peach_initial_transaction_id from chargeResult.initialTransactionId', () => {
+    // The .update({...}) block must reference initialTransactionId,
+    // and must NOT reach for providerPaymentId as an anchor source.
+    const stampBlock = body.match(
+      /\.update\(\{\s*peach_initial_transaction_id:\s*chargeResult\.[a-zA-Z]+\s*\}\)/,
+    );
+    expect(stampBlock).not.toBeNull();
+    expect(stampBlock![0]).toContain('chargeResult.initialTransactionId');
+    expect(stampBlock![0]).not.toContain('chargeResult.providerPaymentId');
+  });
+
+  it('gates the write on chargeResult.initialTransactionId being present', () => {
+    // Absent echo → no write. The if-guard immediately preceding the
+    // .update({peach_initial_transaction_id:...}) must be the same
+    // field the update reads from.
+    const guarded = body.match(
+      /if \(chargeResult\.initialTransactionId\) \{[\s\S]*?\.update\(\{\s*peach_initial_transaction_id:\s*chargeResult\.initialTransactionId\s*\}\)/,
+    );
+    expect(guarded).not.toBeNull();
+  });
+
+  it('keeps the write-once .is(peach_initial_transaction_id, null) guard', () => {
+    // Race safety: writers #1/#2 (checkout complete + webhook) may
+    // land in parallel; the DB predicate is what enforces write-once.
+    expect(body).toMatch(/\.is\('peach_initial_transaction_id',\s*null\)/);
+  });
+});
+
 describe('Onboarding routes — layout + router + 5 step pages', () => {
   it('all pages exist', () => {
     expect(existsSync(resolve(ROOT, 'app/onboarding/layout.tsx'))).toBe(true);
