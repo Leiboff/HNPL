@@ -7,7 +7,8 @@ import { createClient } from '@supabase/supabase-js';
 import { calculateFee } from '@/lib/finance';
 import {
   verifyWebhookSignature,
-  parseWebhookBody,
+  parseConfigWebhookBody,
+  parseFormEventBody,
   type DecryptedWebhook,
   type WebhookPaymentPayload,
 } from '@/lib/payments/peach/webhook';
@@ -23,19 +24,32 @@ import {
 import { getPaymentProvider } from '@/lib/payments/provider';
 import crypto from 'node:crypto';
 
-// ─── Peach Checkout V2 webhook receiver ─────────────────────────────
+// ─── Peach Checkout webhook receiver ────────────────────────────────
 //
-// V2 webhooks are signed, not encrypted. Headers:
-//   • x-webhook-signature-algorithm — 'HMAC-SHA256'
-//   • x-webhook-timestamp           — timestamp
-//   • x-webhook-signature           — hex HMAC digest
-// Body: plaintext JSON { type, action?, payload }.
+// TWO distinct deliveries land here:
 //
-// The webhook is authoritative on CIT state (Flow A first instalment,
-// Flow B card-registration completion). For MIT charges (instalments
-// 2+) the synchronous recurring response is authoritative; the webhook
-// is a bonus reconciliation channel — every state flip is guarded by a
-// status precondition so double-delivery is a no-op.
+//   (1) INITIAL configuration webhook — sent when the URL is first
+//       registered in the Dashboard. Content-Type: application/json.
+//       The Dashboard requires a 200 response for the URL to be
+//       accepted. The body carries setup metadata including the
+//       verification code the merchant pastes back into the Dashboard.
+//       We LOG the code prominently and ALWAYS return 200 — even if
+//       PEACH_CHECKOUT_SECRET_TOKEN is unset (chicken-and-egg: we
+//       can't have set up the token before the URL is registered).
+//
+//   (2) EVENT webhooks (all subsequent deliveries) — Content-Type:
+//       application/x-www-form-urlencoded. HMAC-SHA256-signed via
+//       four headers. Payload uses dotted field names for nested
+//       paths. State flips are idempotent, precondition-guarded so
+//       double-delivery is a no-op.
+//
+// Signed message (per docs — reference-webhooks + checkout-webhooks):
+//   `${timestamp}.${webhookId}.${url}.${payload}`
+//   HMAC-SHA256 keyed on the Checkout Secret Token.
+//
+// The `url` component is the exact URL Peach POSTed to (= the URL
+// configured in the Dashboard). Read from env PEACH_CHECKOUT_WEBHOOK_URL
+// so it's stable regardless of Vercel's proxy headers.
 
 function svc() {
   return createClient(
@@ -721,48 +735,165 @@ async function handleRegistrationEvent(payload: WebhookPaymentPayload, action: s
 }
 
 // ─── Route handler ─────────────────────────────────────────────────
+//
+// Posture per surface:
+//
+//   Verification probe (JSON body):
+//     - Signature NOT required. Peach registers the URL BEFORE the
+//       merchant configures HMAC signing; the probe often arrives
+//       unsigned. If a signature IS present and verifies, we log
+//       'signature ok'; if it fails, we log a warning but STILL 200 —
+//       the Dashboard requires 200 to accept the URL.
+//     - We log the whole body under a greppable prefix so the
+//       verification code is trivially findable in Vercel logs.
+//
+//   Event (form-urlencoded body):
+//     - Signature REQUIRED. Bad / missing signature → 401.
+//     - Parsed via URLSearchParams with dotted-name unflattening.
+//     - Dispatched into existing handlers; every state flip is
+//       precondition-guarded so double-delivery is a no-op.
+//     - Handler errors are caught + logged with an alertable prefix
+//       and still return 200 (avoids Peach's retry ladder amplifying
+//       a bug into a state-flip storm).
+//
+//   Malformed body (neither valid JSON nor parseable form) → 400.
+
+function computeWebhookUrl(request: NextRequest): string | null {
+  // Prefer the env — set to match the Dashboard entry verbatim. Vercel
+  // proxies can rewrite host/proto and NextRequest.url may not reflect
+  // the public URL Peach dialed.
+  const envUrl = process.env.PEACH_CHECKOUT_WEBHOOK_URL?.trim();
+  if (envUrl) return envUrl;
+  // Fallback: reconstruct from forwarded headers.
+  const proto = request.headers.get('x-forwarded-proto') ?? 'https';
+  const host  = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
+  if (!host) return null;
+  let pathname = '/api/payments/peach/webhook';
+  try { pathname = new URL(request.url).pathname; } catch { /* keep default */ }
+  return `${proto}://${host}${pathname}`;
+}
 
 export async function POST(request: NextRequest) {
-  const algorithm = request.headers.get('x-webhook-signature-algorithm');
-  const timestamp = request.headers.get('x-webhook-timestamp');
-  const signature = request.headers.get('x-webhook-signature');
-  const secret    = process.env.PEACH_CHECKOUT_SECRET_TOKEN;
+  const contentType = (request.headers.get('content-type') ?? '').toLowerCase();
+  const body = await request.text();
 
+  // ── (1) Verification / initial configuration probe ──────────────
+  //
+  // The Dashboard sends this as JSON when registering the URL. It
+  // carries the verification code the merchant must paste back into
+  // the Dashboard to complete registration. Signature MAY be missing
+  // (the merchant has not yet configured HMAC signing at this point).
+  if (contentType.includes('application/json')) {
+    const parsed = parseConfigWebhookBody(body);
+    if (!parsed) {
+      // JSON claimed by content-type but body doesn't parse. Not a
+      // valid probe; 400 so the Dashboard reports the URL as bad
+      // rather than silently accepting nonsense.
+      console.warn('[peach-webhook] verification probe: body claims JSON but did not parse', { bodyBytes: body.length });
+      return NextResponse.json({ error: 'Body did not parse as JSON' }, { status: 400 });
+    }
+
+    // Prominent, greppable log. Vercel devs can search for "PEACH
+    // WEBHOOK VERIFICATION CODE" in the function logs and paste the
+    // value straight into the Dashboard.
+    //
+    // We dump the full body because the exact field name Peach uses
+    // for the verification token isn't documented — dumping the whole
+    // object avoids depending on a guess.
+    console.log('PEACH WEBHOOK VERIFICATION CODE:', JSON.stringify(parsed));
+    console.log('[peach-webhook] verification probe: full JSON body logged above.');
+
+    // Optional: if signature headers are present, verify them and log
+    // the outcome — informative but not blocking.
+    const algorithm = request.headers.get('x-webhook-signature-algorithm');
+    const signature = request.headers.get('x-webhook-signature');
+    if (algorithm && signature) {
+      const secret = process.env.PEACH_CHECKOUT_SECRET_TOKEN;
+      if (secret) {
+        const url = computeWebhookUrl(request);
+        const ok = verifyWebhookSignature({
+          body,
+          algorithm,
+          timestamp: request.headers.get('x-webhook-timestamp'),
+          webhookId: request.headers.get('x-webhook-id'),
+          url,
+          signature,
+          secret,
+        });
+        console.log('[peach-webhook] verification probe: signature check', { ok });
+      } else {
+        console.log('[peach-webhook] verification probe: signature headers present but PEACH_CHECKOUT_SECRET_TOKEN unset (expected on first registration)');
+      }
+    } else {
+      console.log('[peach-webhook] verification probe: unsigned (expected on first registration)');
+    }
+
+    return NextResponse.json({ received: true }, { status: 200 });
+  }
+
+  // ── (2) Signed event delivery ────────────────────────────────────
+  //
+  // Everything else (form-urlencoded events, or unrecognised content
+  // types that carry a body Peach might sign) is treated as an event
+  // and MUST verify.
+  if (!contentType.includes('application/x-www-form-urlencoded') && contentType !== '') {
+    console.warn('[peach-webhook] unexpected content-type on event delivery', { contentType });
+    // Fall through to signature-check + parse — Peach may add
+    // content-type variants in future; we don't want to reject on the
+    // header alone. If body is unparseable below we 400.
+  }
+
+  const secret = process.env.PEACH_CHECKOUT_SECRET_TOKEN;
   if (!secret) {
-    console.error('[peach-webhook] PEACH_CHECKOUT_SECRET_TOKEN is not set');
+    // Events REQUIRE the secret. Unlike the verification probe,
+    // there's no chicken-and-egg here — the secret must be provisioned
+    // before real events can arrive.
+    console.error('[peach-webhook] PEACH_CHECKOUT_SECRET_TOKEN is not set — cannot verify event');
     return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
   }
 
-  const body = await request.text();
+  const algorithm = request.headers.get('x-webhook-signature-algorithm');
+  const timestamp = request.headers.get('x-webhook-timestamp');
+  const webhookId = request.headers.get('x-webhook-id');
+  const signature = request.headers.get('x-webhook-signature');
+  const url       = computeWebhookUrl(request);
 
   const valid = verifyWebhookSignature({
     body,
     algorithm,
     timestamp,
+    webhookId,
+    url,
     signature,
     secret,
   });
 
   if (!valid) {
-    console.warn('[peach-webhook] HMAC verification failed — request ignored');
+    console.warn('[peach-webhook] event delivery: HMAC verification failed — 401', {
+      hasAlgorithm: !!algorithm,
+      hasTimestamp: !!timestamp,
+      hasWebhookId: !!webhookId,
+      hasSignature: !!signature,
+      hasUrl:       !!url,
+    });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  const parsed: DecryptedWebhook | null = parseWebhookBody(body);
+  const parsed: DecryptedWebhook | null = parseFormEventBody(body);
   if (!parsed) {
-    console.warn('[peach-webhook] Body did not parse into a valid webhook payload');
-    // 200 — signature was authentic; payload is malformed. Peach
-    // shouldn't retry a genuinely malformed body; log and move on.
-    return NextResponse.json({ received: true, note: 'unprocessable payload' }, { status: 200 });
+    console.warn('[peach-webhook] event delivery: body did not parse as form-urlencoded event', { bodyBytes: body.length });
+    return NextResponse.json({ error: 'Malformed event body' }, { status: 400 });
   }
 
   const { type, action, payload } = parsed;
 
-  console.log('[peach-webhook] Event received:', {
+  console.log('[peach-webhook] event received:', {
     type,
     action,
     reference:  (payload as WebhookPaymentPayload).merchantTransactionId,
     resultCode: (payload as WebhookPaymentPayload).result?.code,
+    checkoutId: (payload as WebhookPaymentPayload).checkoutId,
+    webhookId,
   });
 
   try {
@@ -779,12 +910,20 @@ export async function POST(request: NextRequest) {
     } else if (type === 'REGISTRATION') {
       await handleRegistrationEvent(payload as WebhookPaymentPayload, action);
     } else {
-      console.log('[peach-webhook] Unhandled event type — acknowledging without action', { type, action });
+      console.log('[peach-webhook] unhandled event type — acknowledging without action', { type, action });
     }
   } catch (err) {
-    // NEVER re-throw — non-200 would trigger Peach's retry ladder and
-    // could double-fire state flips. Log and 200.
-    console.error('[peach-webhook] Handler threw — swallowing to preserve 200 ACK', err instanceof Error ? err.message : err);
+    // Alertable prefix — silent drops are invisible today, so we
+    // stamp a clearly-greppable marker on the log line. Still 200
+    // to avoid Peach's retry ladder amplifying a bug into a state-
+    // flip storm.
+    console.error('[peach-webhook] ALERT handler-threw', {
+      type,
+      action,
+      reference: (payload as WebhookPaymentPayload).merchantTransactionId,
+      error:     err instanceof Error ? err.message : String(err),
+      stack:     err instanceof Error ? err.stack   : undefined,
+    });
   }
 
   return NextResponse.json({ received: true }, { status: 200 });
