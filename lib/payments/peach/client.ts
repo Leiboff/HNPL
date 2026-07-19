@@ -246,6 +246,18 @@ async function checkoutFetch(
     let parsed: unknown = null;
     try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
     if (!res.ok) {
+      // Prominent, greppable log for the initiate path — otherwise a
+      // 400 "Invalid request body" from Peach V2 lands as a generic
+      // Error message with no context on WHICH field they rejected.
+      const initiatePrefix = path === '/v2/checkout'
+        ? 'PEACH CHECKOUT INITIATE ERROR:'
+        : `PEACH CHECKOUT ERROR at ${path}:`;
+      console.error(initiatePrefix, {
+        status:     res.status,
+        statusText: res.statusText,
+        bodyText:   text,
+        parsedBody: parsed,
+      });
       const msg = (parsed as { result?: { description?: string }; message?: string } | null)?.result?.description
         ?? (parsed as { message?: string } | null)?.message
         ?? `HTTP ${res.status} ${res.statusText}`;
@@ -342,12 +354,20 @@ function toPaymentStatus(body: PeachPaymentBody): PaymentStatus {
 
 export class PeachProvider implements PaymentProvider {
   async createCheckout(params: CheckoutCreateParams): Promise<CheckoutCreated> {
-    // Amount is required unless the caller is doing a registration-only
-    // checkout (createRegistration=true + amountCents==0).
-    const isRegistrationOnly = params.createRegistration && (params.amountCents == null || params.amountCents === 0);
-    if (!isRegistrationOnly) {
+    // Peach V2 hard limit: merchantTransactionId ≤ 16 chars (Visa /
+    // Mastercard 3DS2 mandate; violation returns 800.100.156). Enforce
+    // at the boundary so a regression in a caller's ref-generator
+    // can't slip through.
+    if (!params.merchantTransactionId || params.merchantTransactionId.length > 16) {
+      throw new Error(
+        `Peach createCheckout: merchantTransactionId must be 1-16 chars; got ${params.merchantTransactionId?.length ?? 0} (\"${params.merchantTransactionId}\")`,
+      );
+    }
+
+    const isZeroAmount = params.amountCents === 0;
+    if (!isZeroAmount) {
       if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
-        throw new Error(`Peach createCheckout: amountCents must be a positive integer; got ${params.amountCents}`);
+        throw new Error(`Peach createCheckout: amountCents must be a positive integer (or 0 for zero-amount card verification); got ${params.amountCents}`);
       }
     }
 
@@ -361,19 +381,39 @@ export class PeachProvider implements PaymentProvider {
       nonce:                 nonce(),
     };
 
-    if (!isRegistrationOnly) {
-      body.amount      = formatAmountCents(params.amountCents);
-      body.currency    = params.currency    ?? 'ZAR';
-      body.paymentType = params.paymentType ?? 'DB';
-    }
+    // Amount + currency + paymentType are ALWAYS sent, including on
+    // zero-amount card-verification (Flow B) — Peach's V2 initiate
+    // validator rejects the body when they're missing. For Flow B the
+    // caller sets amountCents=0 + paymentType='PA'; a 0-amount PA is
+    // a scheme-standard card-verification that auto-expires without
+    // capture (no explicit RV reversal needed).
+    body.amount      = isZeroAmount ? '0' : formatAmountCents(params.amountCents);
+    body.currency    = params.currency    ?? 'ZAR';
+    body.paymentType = params.paymentType ?? (isZeroAmount ? 'PA' : 'DB');
 
-    if (params.createRegistration) body.createRegistration = true;
+    if (params.createRegistration)               body.createRegistration = true;
+    if (params.defaultPaymentMethod)             body.defaultPaymentMethod = params.defaultPaymentMethod;
+    if (params.forceDefaultMethod !== undefined) body.forceDefaultMethod   = params.forceDefaultMethod;
 
     if (params.shopperResultUrl) body.shopperResultUrl = params.shopperResultUrl;
 
     if (params.standingInstruction) {
-      const si: Record<string, unknown> = { ...params.standingInstruction };
-      // Peach expects camelCase field name on Checkout V2.
+      // Whitelist the fields we forward to Peach — Peach's V2 validator
+      // rejects unknown fields with "Invalid request body". Keeping
+      // this explicit rather than a spread means a typo in the caller
+      // (e.g. `expiryDate` instead of `expiry`) surfaces here, not as
+      // a mystery 400 from Peach.
+      const src = params.standingInstruction;
+      const si: Record<string, unknown> = {
+        mode:   src.mode,
+        source: src.source,
+        type:   src.type,
+      };
+      if (src.initialTransactionId) si.initialTransactionId = src.initialTransactionId;
+      if (src.expiry)               si.expiry               = src.expiry;
+      if (src.frequency)            si.frequency            = src.frequency;
+      if (typeof src.numberOfInstallments === 'number') si.numberOfInstallments = src.numberOfInstallments;
+      if (src.recurringType)        si.recurringType        = src.recurringType;
       body.standingInstruction = si;
     }
 
@@ -415,6 +455,13 @@ export class PeachProvider implements PaymentProvider {
   async chargeSavedCard(params: ChargeSavedCardParams): Promise<ChargeResult> {
     if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
       throw new Error(`Peach chargeSavedCard: amountCents must be a positive integer; got ${params.amountCents}`);
+    }
+    // Same 16-char merchantTransactionId limit on the recurring
+    // endpoint — Visa/Mastercard 3DS2 mandate applies acquirer-wide.
+    if (!params.merchantTransactionId || params.merchantTransactionId.length > 16) {
+      throw new Error(
+        `Peach chargeSavedCard: merchantTransactionId must be 1-16 chars; got ${params.merchantTransactionId?.length ?? 0} (\"${params.merchantTransactionId}\")`,
+      );
     }
     // MIT charges ALWAYS use the recurring credential set — never the
     // Checkout OAuth token. The entity is the recurring entity.

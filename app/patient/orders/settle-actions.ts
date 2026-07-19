@@ -5,6 +5,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { getPaymentProvider } from '@/lib/payments/provider';
+import { settleRef } from '@/lib/payments/peach/refs';
 
 // ─── Patient-initiated "Pay now" — self-settle a past-due instalment ──
 //
@@ -258,10 +259,12 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     return { ok: false, status: 'no_email' };
   }
 
-  // ── 4. Reference + Peach MIT charge. Reference embeds 'settle' so
-  //       the webhook can short-circuit-detect a settlement charge if
-  //       needed; routing primarily uses the payment row's kind column.
-  const reference = `hnpl_settle_${settlementId.replace(/-/g, '').slice(0, 16)}`;
+  // ── 4. Reference + Peach MIT charge. Compact 16-char ref per
+  //       Peach V2 mandate. Deterministic per settlement so retries
+  //       Peach-dedup. Webhook routing uses the payment row's kind
+  //       column ('settlement'); the purpose char in the ref is
+  //       secondary evidence.
+  const reference = settleRef(settlementId);
   await svc.from('payments').update({ peach_payment_id: reference }).eq('id', settlementId);
 
   await svc.from('plan_events').insert({

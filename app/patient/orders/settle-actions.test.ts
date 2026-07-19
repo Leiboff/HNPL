@@ -159,7 +159,7 @@ describe('selfSettleEntirePlan — happy path: ONE Peach MIT charge for the SUMM
     expect(args[0].registrationId).toBe('REG_ABC');
     expect(args[0].amountCents).toBe(75_500);
     expect(args[0].currency).toBe('ZAR');
-    expect(args[0].merchantTransactionId).toMatch(/^hnpl_settle_/);
+    expect(args[0].merchantTransactionId).toMatch(/^bns[a-z0-9]{13}$/);
     expect(args[0].standingInstruction).toEqual({
       mode:   'REPEATED',
       source: 'MIT',
@@ -174,7 +174,7 @@ describe('selfSettleEntirePlan — happy path: ONE Peach MIT charge for the SUMM
 
     const update = writes.find(w => w.table === 'payments' && w.op === 'update');
     expect(update).toBeDefined();
-    expect((update!.row as Record<string, unknown>).peach_payment_id).toMatch(/^hnpl_settle_/);
+    expect((update!.row as Record<string, unknown>).peach_payment_id).toMatch(/^bns[a-z0-9]{13}$/);
   });
 });
 

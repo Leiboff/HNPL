@@ -1,5 +1,6 @@
 import { getPaymentProvider } from './provider';
 import { chargeAmountCents } from './dunning';
+import { instalmentAttemptRef } from './peach/refs';
 
 // ─── Atomic claim-and-charge for one installment (Peach MIT) ────────
 //
@@ -93,11 +94,14 @@ export async function attemptChargeInstalment(
     return { kind: 'claim_lost', paymentId, reason: 'not_eligible' };
   }
 
-  // Reference — same format as before the Peach swap; the Peach webhook
-  // echoes it back as `merchantTransactionId`. We write it into
-  // peach_payment_id (already-generic name) so webhook lookup keeps
-  // working unchanged.
-  const reference = `hnpl_${paymentId.replace(/-/g, '').slice(0, 16)}_a${nextAttempt}`;
+  // Compact 16-char Peach ref (Visa/Mastercard 3DS2 mandate limits
+  // merchantTransactionId to ≤16 chars). Deterministic per (payment,
+  // attempt): re-entering the same attempt regenerates the same ref
+  // so Peach dedups if we happen to double-fire mid-flight; a fresh
+  // attempt gets a fresh ref. Persisted in payments.peach_payment_id
+  // for webhook echoback reconciliation — that column is provider-
+  // neutral by design (0076 comment).
+  const reference = instalmentAttemptRef(paymentId, nextAttempt);
 
   // ── 2. Atomic claim.
   const allowedStatuses = selfSettle

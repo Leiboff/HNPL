@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
+import { checkoutRef, registrationRef } from '@/lib/payments/peach/refs';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
@@ -173,7 +174,7 @@ export async function initializeFirstPayment(
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status')
+    .select('id, status, plan_type')
     .eq('id', planId)
     .eq('patient_id', user.id)
     .eq('status', 'pending_first_payment')
@@ -191,6 +192,16 @@ export async function initializeFirstPayment(
 
   if (!payment) return { error: 'First instalment not found.' };
 
+  // Last instalment's due_date drives standingInstruction.expiry.
+  const { data: lastInstalment } = await supabase
+    .from('payments')
+    .select('due_date')
+    .eq('plan_id', planId)
+    .eq('kind', 'instalment')
+    .order('instalment_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('email, first_name, last_name')
@@ -199,13 +210,21 @@ export async function initializeFirstPayment(
 
   if (!profile?.email) return { error: 'Account email not found.' };
 
-  // Server-computed amount. Reference is stable + attempt-independent so
-  // the Peach webhook can find the payment row on the resulting
-  // PAYMENT.<code> event.
-  const reference   = `hnpl_${payment.id.replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char peach ref. Deterministic per instalment-1 id so
+  // retries Peach-dedup.
+  const reference   = checkoutRef(payment.id);
   const amountCents = Math.round(Number(payment.amount) * 100);
   const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
   const shopperResultUrl = `${appUrl}/patient/payment-complete`;
+
+  // Flow A standingInstruction fields — see checkout/actions.ts for
+  // the design comment. Same rationale here.
+  const lastDueDate = lastInstalment?.due_date as string | undefined;
+  const expiryDate = lastDueDate
+    ? new Date(new Date(lastDueDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    : '9999-12-31'; // Mastercard scheme default when unknown
+  const planType = plan.plan_type as 2 | 3 | null;
+  const numberOfInstallments = planType === 3 ? 3 : undefined;
 
   const provider = getPaymentProvider();
   let checkoutId: string;
@@ -221,9 +240,12 @@ export async function initializeFirstPayment(
       // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
       // capture. The V2 embedded widget handles 3DS in-page.
       standingInstruction: {
-        mode:   'INITIAL',
-        source: 'CIT',
-        type:   'INSTALLMENT',
+        mode:      'INITIAL',
+        source:    'CIT',
+        type:      'INSTALLMENT',
+        expiry:    expiryDate,
+        frequency: '0001',
+        ...(numberOfInstallments !== undefined ? { numberOfInstallments } : {}),
       },
       customer: {
         email:     profile.email,
@@ -270,7 +292,10 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
 
   if (!profile?.email) return { error: 'Account email not found.' };
 
-  const reference = `hnpl_reg_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char peach ref. Random per-attempt (no natural
+  // deterministic seed — patient can add many cards on the same
+  // account, and each attempt should get a fresh unique ref).
+  const reference = registrationRef(crypto.randomUUID());
   const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
   const safePath = (returnTo && returnTo.startsWith('/'))
@@ -278,17 +303,26 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
     : '/patient/payment-methods/complete';
   const shopperResultUrl = `${appUrl}${safePath}`;
 
+  // Flow B — zero-amount card verification. Peach V2 recipe:
+  //   amountCents=0, paymentType='PA', createRegistration=true,
+  //   defaultPaymentMethod='CARD', forceDefaultMethod=true.
+  //
+  // The PA is a scheme-standard card-verification authorisation with
+  // no funds captured. It auto-expires on the card issuer's normal
+  // authorisation-expiry schedule (Visa/Mastercard 7-30 days) with
+  // NO capture required — we do NOT need to issue an explicit RV
+  // (reversal) afterwards. The cardholder never sees a debit or a
+  // pending hold that would need visible undoing.
   const provider = getPaymentProvider();
   try {
     const checkout = await provider.createCheckout({
-      // Registration-only: no amount, no paymentType. Checkout V2
-      // creates the stored credential without a debit. This produces
-      // a registrationId but NO initialTransactionId — the first MIT
-      // charge on any plan using this card will run under UNSCHEDULED,
-      // then capture its own initialTransactionId for the plan.
       amountCents:           0,
       merchantTransactionId: reference,
+      currency:              'ZAR',
+      paymentType:           'PA',
       createRegistration:    true,
+      defaultPaymentMethod:  'CARD',
+      forceDefaultMethod:    true,
       shopperResultUrl,
       origin:                appUrl,
       customer: {
@@ -425,7 +459,10 @@ export async function payWithSavedCard(
 
   // Reference stamped on the payment row BEFORE the charge so the
   // Peach webhook can reconcile even if our process crashes mid-flight.
-  const reference = `hnpl_pay_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char ref per Peach V2 mandate; this is a Flow-C-style
+  // MIT charge but seeded off the instalment-1 id (not attempt-based —
+  // there's no attempt counter here, it's a one-shot silent charge).
+  const reference = checkoutRef(instalment1Id);
 
   const { error: refErr } = await supabase
     .from('payments')

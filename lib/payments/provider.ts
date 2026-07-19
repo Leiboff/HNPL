@@ -96,15 +96,37 @@ export type ChargeSavedCardParams = {
 
 export type CheckoutCreateParams = {
   amountCents:           number;      // Integer cents (ZAR) — server-computed only
-  merchantTransactionId: string;
+  merchantTransactionId: string;      // Must be ≤ 16 chars (Peach V2 limit; use mintPeachRef).
   currency?:             string;      // Defaults to 'ZAR'
-  paymentType?:          'DB' | 'PA';
+  paymentType?:          'DB' | 'PA'; // DB debit; PA preauth (Flow B zero-amount card verification).
   createRegistration?:   boolean;     // true → widget also captures a reusable card
+  // Force the widget onto card entry (no wallet chooser, no other
+  // methods). Required by the Flow B card-verification recipe so a
+  // zero-amount PA reaches the correct rails.
+  defaultPaymentMethod?: 'CARD';
+  forceDefaultMethod?:   boolean;
   standingInstruction?:  {
     mode:                  'INITIAL' | 'REPEATED';
     source:                'CIT' | 'MIT';
     type:                  'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
     initialTransactionId?: string;
+    // Fields required by Peach for type=INSTALLMENT / mode=INITIAL /
+    // source=CIT chains, per the Peach "Budget Installment" spec:
+    //   expiry               yyyy-MM-dd (Mastercard default 9999-12-31)
+    //   frequency            {N4} scheme-specific frequency code
+    //                        (Mastercard default '0001' = monthly)
+    //   numberOfInstallments allowed values {0, 3, 6, 9, 12, 18, 24, 36};
+    //                        0 = straight debit / not applicable.
+    //   recurringType        NOT for type=INSTALLMENT — only for
+    //                        type=RECURRING (Mastercard SUBSCRIPTION vs
+    //                        STANDING_ORDER). Left in the type only so
+    //                        callers can send it if they ever use
+    //                        type=RECURRING; do NOT send for our
+    //                        fixed-instalment BNPL.
+    expiry?:                string;
+    frequency?:             string;
+    numberOfInstallments?:  number;
+    recurringType?:         'SUBSCRIPTION' | 'STANDING_ORDER';
   };
   customer?: {
     email?:    string | null;

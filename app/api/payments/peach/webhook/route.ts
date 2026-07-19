@@ -13,6 +13,7 @@ import {
   type WebhookPaymentPayload,
 } from '@/lib/payments/peach/webhook';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
+import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient as saveCardForPatientPeach } from '@/lib/payments/peach/saveCardForPatient';
 import { sendPushToUser } from '@/lib/notifications/sendPush';
 import { advanceLadderAfterFailure, chargeAmountCents } from '@/lib/payments/dunning';
@@ -182,8 +183,11 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
-  // Standalone card-registration path — no payment row; just save the card.
-  if (!payment && reference.startsWith('hnpl_reg_')) {
+  // Standalone card-registration path — no payment row; just save
+  // the card. Purpose 'r' identifies the compact peach ref as a Flow B
+  // add-card event. Historic long-form refs (hnpl_reg_*) still hit the
+  // fallback for pre-0079 rows in flight.
+  if (!payment && (peachRefPurpose(reference) === 'r' || reference.startsWith('hnpl_reg_'))) {
     await handleCardRegistrationSuccess(supabase, payload);
     return;
   }
@@ -386,7 +390,7 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
-  if (!payment && reference.startsWith('hnpl_reg_')) {
+  if (!payment && (peachRefPurpose(reference) === 'r' || reference.startsWith('hnpl_reg_'))) {
     console.log('[peach-webhook] card_registration: charge failed — no action needed', {
       reference, reason: payload.result?.description ?? 'unknown',
     });

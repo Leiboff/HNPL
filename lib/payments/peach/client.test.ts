@@ -171,22 +171,54 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     expect(chkBody.nonce.length).toBeGreaterThan(10);
   });
 
-  it('registration-only mode — omits amount + currency + paymentType', async () => {
+  it('Flow B zero-amount card verification — sends the full 5-param recipe', async () => {
+    // Peach V2 zero-amount card verification recipe (verified against
+    // the Peach Checkout tokenisation guide + support articles):
+    //   amount='0', paymentType='PA', createRegistration=true,
+    //   defaultPaymentMethod='CARD', forceDefaultMethod=true.
+    // amount + currency + paymentType MUST be present even for a
+    // 0-amount call — V2's validator rejects the body when they're
+    // missing.
     const fake = scriptedFetch([
       OAUTH_OK,
       { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg' } },
     ]);
     const p = new PeachProvider();
     await p.createCheckout({
-      amountCents: 0,
-      merchantTransactionId: 'hnpl_reg_abc',
-      createRegistration: true,
+      amountCents:           0,
+      merchantTransactionId: 'bnrABCDEFGHIJKLM',   // exactly 16 chars
+      currency:              'ZAR',
+      paymentType:           'PA',
+      createRegistration:    true,
+      defaultPaymentMethod:  'CARD',
+      forceDefaultMethod:    true,
     });
     const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    // The five Flow-B parameters — one assertion per param.
+    expect(chkBody.amount).toBe('0');
+    expect(chkBody.paymentType).toBe('PA');
     expect(chkBody.createRegistration).toBe(true);
-    expect(chkBody.amount).toBeUndefined();
-    expect(chkBody.currency).toBeUndefined();
-    expect(chkBody.paymentType).toBeUndefined();
+    expect(chkBody.defaultPaymentMethod).toBe('CARD');
+    expect(chkBody.forceDefaultMethod).toBe(true);
+    // Currency still present (V2 requires it).
+    expect(chkBody.currency).toBe('ZAR');
+  });
+
+  it('Flow B — paymentType defaults to PA when amountCents=0 and caller omits it', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg-2' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({
+      amountCents:           0,
+      merchantTransactionId: 'bnrDEFGHIJKLMNOP',
+      createRegistration:    true,
+    });
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.paymentType).toBe('PA');
+    expect(chkBody.amount).toBe('0');
+    expect(chkBody.currency).toBe('ZAR');
   });
 
   it('rejects a fractional / non-integer amount', async () => {
@@ -194,9 +226,107 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     const p = new PeachProvider();
     await expect(p.createCheckout({
       amountCents: 92.5 as unknown as number,
-      merchantTransactionId: 'x',
+      merchantTransactionId: 'bnc1234567890abc',
       standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
     })).rejects.toThrow(/positive integer/);
+  });
+
+  it('rejects a merchantTransactionId longer than 16 characters', async () => {
+    scriptedFetch([]);
+    const p = new PeachProvider();
+    await expect(p.createCheckout({
+      amountCents: 1000,
+      merchantTransactionId: 'this-ref-is-way-too-long-for-peach-v2',
+      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
+    })).rejects.toThrow(/1-16 chars/);
+  });
+
+  it('Flow A — sends the extended standingInstruction (expiry, frequency, numberOfInstallments) for INSTALLMENT/INITIAL/CIT', async () => {
+    // Load-bearing pin: our fixed-instalment CIT MUST carry expiry +
+    // frequency at a minimum, and numberOfInstallments when in Peach's
+    // allowed set {3, 6, 9, 12, 18, 24, 36}. Do NOT send recurringType
+    // for type=INSTALLMENT — that field is reserved for type=RECURRING.
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-full' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({
+      amountCents:           30000,
+      merchantTransactionId: 'bnc1234567890abc',
+      currency:              'ZAR',
+      paymentType:           'DB',
+      createRegistration:    true,
+      standingInstruction: {
+        mode:                 'INITIAL',
+        source:               'CIT',
+        type:                 'INSTALLMENT',
+        expiry:               '2027-01-15',
+        frequency:            '0001',
+        numberOfInstallments: 3,
+      },
+    });
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.standingInstruction).toEqual({
+      mode:                 'INITIAL',
+      source:               'CIT',
+      type:                 'INSTALLMENT',
+      expiry:               '2027-01-15',
+      frequency:            '0001',
+      numberOfInstallments: 3,
+    });
+    // recurringType MUST NOT appear on an INSTALLMENT initiate.
+    expect(chkBody.standingInstruction.recurringType).toBeUndefined();
+  });
+
+  it('Flow A — omits numberOfInstallments when caller does not supply it (planType=2 case)', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-noN' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({
+      amountCents:           25000,
+      merchantTransactionId: 'bncABCDEFGHIJKLM',
+      currency:              'ZAR',
+      paymentType:           'DB',
+      createRegistration:    true,
+      standingInstruction: {
+        mode:      'INITIAL',
+        source:    'CIT',
+        type:      'INSTALLMENT',
+        expiry:    '2027-01-15',
+        frequency: '0001',
+      },
+    });
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.standingInstruction.numberOfInstallments).toBeUndefined();
+    expect(chkBody.standingInstruction.expiry).toBe('2027-01-15');
+    expect(chkBody.standingInstruction.frequency).toBe('0001');
+  });
+
+  it('logs "PEACH CHECKOUT INITIATE ERROR:" with raw body on a 400 from /v2/checkout', async () => {
+    // Otherwise Peach's "Invalid request body" lands as a generic
+    // Error message with no context on which field they rejected.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    scriptedFetch([
+      OAUTH_OK,
+      {
+        url:    /\/v2\/checkout$/,
+        status: 400,
+        body:   { errorCode: 'InvalidRequestBody', errorMessage: 'authentication.entityId is required' },
+      },
+    ]);
+    const p = new PeachProvider();
+    await expect(p.createCheckout({
+      amountCents:           1000,
+      merchantTransactionId: 'bnc1234567890abc',
+    })).rejects.toThrow();
+    const emitted = errSpy.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    expect(emitted).toContain('PEACH CHECKOUT INITIATE ERROR');
+    expect(emitted).toContain('InvalidRequestBody');
+    expect(emitted).toContain('authentication.entityId is required');
+    errSpy.mockRestore();
   });
 
   it('reuses the cached OAuth token on a second createCheckout call', async () => {
