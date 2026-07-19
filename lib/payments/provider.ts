@@ -3,7 +3,22 @@
 // The thin surface the domain code calls into. There is one live
 // implementation (Peach Payments — lib/payments/peach). Paystack was
 // removed in the 0076 swap; historic Paystack columns remain in the
-// DB but no code path targets them.
+// DB but no code path targets them. 0077 moved from Peach OPPWA
+// COPYandPAY to Peach Checkout V2 (CIT / capture) + recurring
+// card-on-file API (MIT / instalments 2+).
+//
+// Two credential surfaces — the client hides this but the interface
+// carries the invariants:
+//
+//   • Checkout V2 (CIT) — OAuth-authed calls to /v2/checkout*.
+//     Used by createCheckout + getCheckoutStatus. Tokenises the card
+//     and captures the first instalment in one embedded widget.
+//
+//   • Recurring (MIT) — static Bearer against /v1/registrations/{id}/
+//     payments and /v1/payments/{id}. Used by chargeSavedCard,
+//     deleteRegistration, refund. Cannot be authenticated with a
+//     Checkout-product token — Peach provisions the recurring rail
+//     as a separate product family with its own credentials.
 //
 // Amount conventions:
 //   • All `amountCents` values are integers.
@@ -19,10 +34,14 @@
 //       hnpl_settle_<uuid>     — settlement charge
 //       hnpl_reg_<uuid>        — standalone card-registration
 //
-// The result of a charge is NEVER final until the webhook fires. This
-// interface returns the transport-level outcome (accepted / rejected /
-// pending / transport-error) and the provider payment id; the domain
-// waits for the webhook to flip instalment state.
+// State authority:
+//   • CIT (widget) charges: the WEBHOOK is authoritative. createCheckout
+//     returns a checkoutId; getCheckoutStatus lets the return route
+//     check status while the webhook lands in parallel.
+//   • MIT (recurring) charges: the SYNCHRONOUS response is authoritative
+//     — chargeSavedCard returns success/pending/rejected/error based
+//     on the result.code on the POST response. The webhook is a bonus
+//     reconciliation source but NOT waited on.
 
 export type ChargeStatus =
   | 'success'          // Provider accepted the charge (post-3DS if applicable)
@@ -32,7 +51,15 @@ export type ChargeStatus =
 
 export type ChargeResult = {
   status:                ChargeStatus;
-  providerPaymentId?:    string;      // Peach payment id (used later for GET status / refund)
+  providerPaymentId?:    string;      // The transaction's OWN top-level id (used later for GET status / refund).
+  // The echoed root of the stored-credential chain — Peach returns this
+  // on a REPEATED response as standingInstruction.initialTransactionId,
+  // pointing at the INITIAL/CIT id that established the credential.
+  // NEVER equal to providerPaymentId on an MIT response: providerPaymentId
+  // is the MIT transaction's own id, initialTransactionId is the CIT
+  // root it's threaded off. Absent when Peach doesn't echo it (older
+  // credentials, or configurations where the field is only on CITs).
+  initialTransactionId?: string;
   resultCode?:           string;      // Raw provider result code (000.100.110, etc.)
   resultDescription?:    string;      // Human-readable
   raw?:                  unknown;     // Full provider response, for logs
@@ -46,32 +73,60 @@ export type ChargeSavedCardParams = {
   // ── card-on-file standing instruction ──
   //
   // For merchant-initiated repeats we send:
-  //   type=UNSCHEDULED, mode=REPEATED, source=MIT
+  //   mode=REPEATED, source=MIT, type=INSTALLMENT (default, fixed-instalment plan)
+  //   + initialTransactionId = the id of the FIRST transaction that
+  //   established this card-on-plan pair.
   //
-  // Other combos (INITIAL/CIT, RECURRING/*, INSTALLMENT/*) are covered
-  // by other flows (widget charges + registration-only) and don't come
-  // through this fn.
+  // Fallback: when the plan has no initialTransactionId yet (e.g. the
+  // very first MIT charge on a plan whose card was tokenised via a
+  // registration-only checkout, before Flow A captured it), the caller
+  // passes type=UNSCHEDULED and omits initialTransactionId — Peach
+  // accepts an UNSCHEDULED MIT without the reference.
   //
-  // This function ALWAYS uses the RECURRING entity id. There is no
-  // channel override — MIT charges must go through the recurring
-  // channel or the acquirer will apply 3DS rules that will decline.
+  // This call ALWAYS routes through the RECURRING channel — MIT
+  // charges must go through the recurring credentials or the acquirer
+  // will apply 3DS rules that will decline.
   standingInstruction:   {
-    mode:   'INITIAL' | 'REPEATED';
-    source: 'CIT' | 'MIT';
-    type:   'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
+    mode:                  'INITIAL' | 'REPEATED';
+    source:                'CIT' | 'MIT';
+    type:                  'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
+    initialTransactionId?: string;
   };
 };
 
 export type CheckoutCreateParams = {
   amountCents:           number;      // Integer cents (ZAR) — server-computed only
-  merchantTransactionId: string;
+  merchantTransactionId: string;      // Must be ≤ 16 chars (Peach V2 limit; use mintPeachRef).
   currency?:             string;      // Defaults to 'ZAR'
-  paymentType?:          'DB' | 'PA';
+  paymentType?:          'DB' | 'PA'; // DB debit; PA preauth (Flow B zero-amount card verification).
   createRegistration?:   boolean;     // true → widget also captures a reusable card
+  // Force the widget onto card entry (no wallet chooser, no other
+  // methods). Required by the Flow B card-verification recipe so a
+  // zero-amount PA reaches the correct rails.
+  defaultPaymentMethod?: 'CARD';
+  forceDefaultMethod?:   boolean;
   standingInstruction?:  {
-    mode:   'INITIAL' | 'REPEATED';
-    source: 'CIT' | 'MIT';
-    type:   'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
+    mode:                  'INITIAL' | 'REPEATED';
+    source:                'CIT' | 'MIT';
+    type:                  'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
+    initialTransactionId?: string;
+    // Fields required by Peach for type=INSTALLMENT / mode=INITIAL /
+    // source=CIT chains, per the Peach "Budget Installment" spec:
+    //   expiry               yyyy-MM-dd (Mastercard default 9999-12-31)
+    //   frequency            {N4} scheme-specific frequency code
+    //                        (Mastercard default '0001' = monthly)
+    //   numberOfInstallments allowed values {0, 3, 6, 9, 12, 18, 24, 36};
+    //                        0 = straight debit / not applicable.
+    //   recurringType        NOT for type=INSTALLMENT — only for
+    //                        type=RECURRING (Mastercard SUBSCRIPTION vs
+    //                        STANDING_ORDER). Left in the type only so
+    //                        callers can send it if they ever use
+    //                        type=RECURRING; do NOT send for our
+    //                        fixed-instalment BNPL.
+    expiry?:                string;
+    frequency?:             string;
+    numberOfInstallments?:  number;
+    recurringType?:         'SUBSCRIPTION' | 'STANDING_ORDER';
   };
   customer?: {
     email?:    string | null;
@@ -79,11 +134,14 @@ export type CheckoutCreateParams = {
     surname?:   string | null;
   };
   customParameters?: Record<string, string>;
-  // Which Peach entity to book the checkout against. Widget-driven
-  // checkouts (Flow A first-instalment + Flow B card-registration)
-  // always use 'cit' — that entity is 3DS-enabled at the acquirer.
-  // Defaults to 'cit' when omitted.
-  channel?: 'cit' | 'recurring';
+  // shopperResultUrl travels to the browser and back — the widget's
+  // onCompleted callback navigates the browser to this URL, appending
+  // ?checkoutId={id} so the return route can query final status.
+  shopperResultUrl?: string;
+  // Site origin, used as the Origin header on the /v2/checkout POST.
+  // Defaults to NEXT_PUBLIC_APP_URL. Peach requires the origin to be
+  // in the Checkout Dashboard's allowlist.
+  origin?: string;
 };
 
 export type CheckoutCreated = {
@@ -119,49 +177,63 @@ export type RefundResult = {
 };
 
 export interface PaymentProvider {
-  /** Create a checkout for the COPYandPAY widget. Server-only. */
+  /**
+   * Create a Checkout V2 session for the embedded widget. Server-only.
+   * OAuth token is fetched + cached transparently inside the client.
+   * Returns a checkoutId — the browser mounts checkout.js with this id.
+   */
   createCheckout(params: CheckoutCreateParams): Promise<CheckoutCreated>;
 
   /**
-   * Fetch the payment status behind a widget `resourcePath`. Server-only.
-   * The widget path was created against the CIT entity — defaults to
-   * that. Callers that reused the recurring channel for a checkout can
-   * override with { channel: 'recurring' }.
+   * Fetch the payment status behind a Checkout V2 session. Server-only.
+   * Takes the checkoutId returned by createCheckout (NOT a resourcePath;
+   * V2's status endpoint takes the id directly). The return route calls
+   * this after the widget's onCompleted event navigates the browser
+   * back to the shopperResultUrl.
    */
-  getCheckoutStatus(resourcePath: string, opts?: { channel?: 'cit' | 'recurring' }): Promise<PaymentStatus>;
+  getCheckoutStatus(checkoutId: string): Promise<PaymentStatus>;
 
   /**
-   * Fetch the status of a payment by provider id. Peach scopes reads
-   * to the entity that owns the payment; the caller must indicate
-   * which channel the payment was originally booked on. Defaults to
-   * 'recurring' (the common case: cron-inserted rows).
+   * Server-to-server MIT charge against a stored registration.
+   * Always uses the recurring credential set (never Checkout OAuth).
+   * The response is authoritative — status/resultCode reflect the
+   * final outcome, not a pending state.
    */
-  getPaymentStatus(providerPaymentId: string, opts?: { channel?: 'cit' | 'recurring' }): Promise<PaymentStatus>;
-
-  /** Server-to-server MIT charge against a stored registration. Always uses the recurring entity. */
   chargeSavedCard(params: ChargeSavedCardParams): Promise<ChargeResult>;
 
-  /** Delete a stored registration. The registration was created via the CIT widget, so uses the CIT entity. */
+  /**
+   * Delete a stored registration.
+   *
+   * TODO(dina): confirm from Dashboard whether registration deletion
+   * uses the recurring credentials or the checkout credentials. This
+   * implementation currently routes through the recurring surface,
+   * which matches the endpoint that CREATES registrations for MIT
+   * (/v1/registrations/{id}/payments). If a live deletion returns an
+   * auth error, swap to the checkout surface.
+   */
   deleteRegistration(registrationId: string): Promise<{ ok: boolean; raw?: unknown }>;
 
   /**
-   * Refund a prior payment by provider id. Peach spec:
-   *   POST /v1/payments/{id} with paymentType=RF (refund) — reduces
-   *   a prior debit; the standard flow for our DB (debit) instalments.
+   * Refund a prior payment by provider id. Peach spec (Manage payments):
+   *   POST /v1/payments/{id} with paymentType=RF (refund) — reduces a
+   *   prior debit; the standard flow for our DB (debit) instalments.
    *   POST /v1/payments/{id} with paymentType=RV (reversal) — voids a
    *   preauth (PA) that hasn't been captured yet. We only issue DB
    *   today, so RF is the default; RV is exposed for future PA flows.
    *
-   * The channel must match the entity the original payment was booked
-   * on: instalment-1 CIT (widget) → 'cit'; instalments 2+ MIT →
-   * 'recurring'; standalone registration R1 (Paystack-era hack, no
-   * longer used) → 'cit'. Defaults to 'recurring'.
+   * TODO(dina): confirm from Dashboard whether a refund of a
+   * Checkout-V2-captured payment (i.e. instalment 1) must be booked
+   * against the Checkout entity or the recurring entity. The current
+   * default is 'recurring' — same channel MIT instalments 2+ live on.
+   * If Peach rejects a CIT refund routed to recurring, we'll need
+   * per-payment routing that mirrors the entity the original charge
+   * used (payments.payment_provider + the checkout/recurring split).
    */
   refund(
     providerPaymentId: string,
     amountCents: number,
     merchantTransactionId: string,
-    opts?: { paymentType?: 'RF' | 'RV'; channel?: 'cit' | 'recurring' },
+    opts?: { paymentType?: 'RF' | 'RV' },
   ): Promise<RefundResult>;
 }
 

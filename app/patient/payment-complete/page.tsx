@@ -134,10 +134,10 @@ export default async function PaymentCompletePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params       = await searchParams;
-  const resourcePath = (params.resourcePath ?? params.resource_path) as string | undefined;
+  const params     = await searchParams;
+  const checkoutId = params.checkoutId as string | undefined;
 
-  if (!resourcePath) {
+  if (!checkoutId) {
     return <NoReferenceCard />;
   }
 
@@ -149,7 +149,7 @@ export default async function PaymentCompletePage({
 
   try {
     const provider = getPaymentProvider();
-    const status   = await provider.getCheckoutStatus(resourcePath);
+    const status   = await provider.getCheckoutStatus(checkoutId);
     const c        = classifyResultCode(status.resultCode);
     if      (c === 'success')  txStatus = 'success';
     else if (c === 'rejected') txStatus = 'failed';

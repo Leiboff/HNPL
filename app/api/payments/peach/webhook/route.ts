@@ -1,12 +1,19 @@
-// Node.js runtime required — crypto.createDecipheriv + timingSafeEqual
+// Node.js runtime required — crypto.createHmac + timingSafeEqual
 // are not available in the Edge runtime.
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { calculateFee } from '@/lib/finance';
-import { decryptWebhook, type DecryptedWebhook, type WebhookPaymentPayload } from '@/lib/payments/peach/webhook';
+import {
+  verifyWebhookSignature,
+  parseConfigWebhookBody,
+  parseFormEventBody,
+  type DecryptedWebhook,
+  type WebhookPaymentPayload,
+} from '@/lib/payments/peach/webhook';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
+import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient as saveCardForPatientPeach } from '@/lib/payments/peach/saveCardForPatient';
 import { sendPushToUser } from '@/lib/notifications/sendPush';
 import { advanceLadderAfterFailure, chargeAmountCents } from '@/lib/payments/dunning';
@@ -18,20 +25,32 @@ import {
 import { getPaymentProvider } from '@/lib/payments/provider';
 import crypto from 'node:crypto';
 
-// ─── Peach OPPWA webhook receiver ───────────────────────────────────
+// ─── Peach Checkout webhook receiver ────────────────────────────────
 //
-// Payloads are AES-256-GCM encrypted:
-//   • X-Initialization-Vector — IV hex
-//   • X-Authentication-Tag    — 16-byte GCM tag hex
-//   • body                    — hex-encoded ciphertext (per docs)
-//   • decrypted JSON: { type, action?, payload }
+// TWO distinct deliveries land here:
 //
-// The webhook is authoritative on state — the synchronous checkout-
-// return and the server-to-server MIT charge return give us a
-// classification, but only the webhook flips instalment status.
-// Idempotency: every state flip is guarded by a status precondition
-// (e.g. we only mark a payment 'collected' if it's currently
-// 'processing'), so a re-delivered webhook is a no-op.
+//   (1) INITIAL configuration webhook — sent when the URL is first
+//       registered in the Dashboard. Content-Type: application/json.
+//       The Dashboard requires a 200 response for the URL to be
+//       accepted. The body carries setup metadata including the
+//       verification code the merchant pastes back into the Dashboard.
+//       We LOG the code prominently and ALWAYS return 200 — even if
+//       PEACH_CHECKOUT_SECRET_TOKEN is unset (chicken-and-egg: we
+//       can't have set up the token before the URL is registered).
+//
+//   (2) EVENT webhooks (all subsequent deliveries) — Content-Type:
+//       application/x-www-form-urlencoded. HMAC-SHA256-signed via
+//       four headers. Payload uses dotted field names for nested
+//       paths. State flips are idempotent, precondition-guarded so
+//       double-delivery is a no-op.
+//
+// Signed message (per docs — reference-webhooks + checkout-webhooks):
+//   `${timestamp}.${webhookId}.${url}.${payload}`
+//   HMAC-SHA256 keyed on the Checkout Secret Token.
+//
+// The `url` component is the exact URL Peach POSTed to (= the URL
+// configured in the Dashboard). Read from env PEACH_CHECKOUT_WEBHOOK_URL
+// so it's stable regardless of Vercel's proxy headers.
 
 function svc() {
   return createClient(
@@ -164,8 +183,11 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
-  // Standalone card-registration path — no payment row; just save the card.
-  if (!payment && reference.startsWith('hnpl_reg_')) {
+  // Standalone card-registration path — no payment row; just save
+  // the card. Purpose 'r' identifies the compact peach ref as a Flow B
+  // add-card event. Historic long-form refs (hnpl_reg_*) still hit the
+  // fallback for pre-0079 rows in flight.
+  if (!payment && (peachRefPurpose(reference) === 'r' || reference.startsWith('hnpl_reg_'))) {
     await handleCardRegistrationSuccess(supabase, payload);
     return;
   }
@@ -182,7 +204,7 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status, total_amount, practice_id, patient_id, provider_id, payment_provider')
+    .select('id, status, total_amount, practice_id, patient_id, provider_id, payment_provider, peach_initial_transaction_id')
     .eq('id', payment.plan_id)
     .maybeSingle();
 
@@ -204,17 +226,15 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
       return;
     }
 
-    // Store the registrationId for future MIT charges. Both checkout
-    // (widget) and silent (saved card) paths land here — the checkout
-    // path sees payload.registrationId, the silent path does not.
+    // Store the registrationId + initialTransactionId for future MIT
+    // charges. The V2 return route may have already written these;
+    // both writes are idempotent (guarded by IS NULL).
     if (payload.registrationId) {
-      const { error: regErr } = await supabase
+      await supabase
         .from('plans')
         .update({ peach_registration_id: payload.registrationId })
-        .eq('id', plan.id);
-      if (regErr) {
-        console.error('[peach-webhook] payment.success: failed to store registrationId', regErr.message);
-      }
+        .eq('id', plan.id)
+        .is('peach_registration_id', null);
 
       // Save the card, non-fatal (plan still activates).
       if (payload.card) {
@@ -235,6 +255,17 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
           console.error('[peach-webhook] payment.success: card save failed (non-fatal)', err instanceof Error ? err.message : err);
         }
       }
+    }
+
+    // Stamp initialTransactionId — required for every subsequent MIT
+    // charge on this plan. The webhook's `payload.id` IS the initial
+    // transaction id when this is the first successful CIT capture.
+    if (payload.id && !plan.peach_initial_transaction_id) {
+      await supabase
+        .from('plans')
+        .update({ peach_initial_transaction_id: payload.id })
+        .eq('id', plan.id)
+        .is('peach_initial_transaction_id', null);
     }
 
     const activated = await activateFirstPayment(supabase, payment, plan, now);
@@ -359,7 +390,7 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
-  if (!payment && reference.startsWith('hnpl_reg_')) {
+  if (!payment && (peachRefPurpose(reference) === 'r' || reference.startsWith('hnpl_reg_'))) {
     console.log('[peach-webhook] card_registration: charge failed — no action needed', {
       reference, reason: payload.result?.description ?? 'unknown',
     });
@@ -699,11 +730,6 @@ async function handleRefundFailure(supabase: ReturnType<typeof svc>, payload: We
 async function handleRegistrationEvent(payload: WebhookPaymentPayload, action: string | undefined): Promise<void> {
   const supabase = svc();
   if (action === 'DELETED' && payload.id) {
-    // A card was deleted at the provider. Clean up the local row so
-    // the patient doesn't see a phantom card. Also null out any plan
-    // that pointed at it — the collections cron already guards on
-    // peach_registration_id NOT NULL so a null value just parks the
-    // plan awaiting a new card.
     await supabase.from('payment_methods').delete().eq('token', payload.id);
     await supabase.from('plans').update({ peach_registration_id: null }).eq('peach_registration_id', payload.id);
     console.log('[peach-webhook] registration DELETED — local rows removed', { registrationId: payload.id });
@@ -713,54 +739,176 @@ async function handleRegistrationEvent(payload: WebhookPaymentPayload, action: s
 }
 
 // ─── Route handler ─────────────────────────────────────────────────
+//
+// Posture per surface:
+//
+//   Verification probe (JSON body):
+//     - Signature NOT required. Peach registers the URL BEFORE the
+//       merchant configures HMAC signing; the probe often arrives
+//       unsigned. If a signature IS present and verifies, we log
+//       'signature ok'; if it fails, we log a warning but STILL 200 —
+//       the Dashboard requires 200 to accept the URL.
+//     - We log the whole body under a greppable prefix so the
+//       verification code is trivially findable in Vercel logs.
+//
+//   Event (form-urlencoded body):
+//     - Signature REQUIRED. Bad / missing signature → 401.
+//     - Parsed via URLSearchParams with dotted-name unflattening.
+//     - Dispatched into existing handlers; every state flip is
+//       precondition-guarded so double-delivery is a no-op.
+//     - Handler errors are caught + logged with an alertable prefix
+//       and still return 200 (avoids Peach's retry ladder amplifying
+//       a bug into a state-flip storm).
+//
+//   Malformed body (neither valid JSON nor parseable form) → 400.
+
+function computeWebhookUrl(request: NextRequest): string | null {
+  // Prefer the env — set to match the Dashboard entry verbatim. Vercel
+  // proxies can rewrite host/proto and NextRequest.url may not reflect
+  // the public URL Peach dialed.
+  const envUrl = process.env.PEACH_CHECKOUT_WEBHOOK_URL?.trim();
+  if (envUrl) return envUrl;
+  // Fallback: reconstruct from forwarded headers.
+  const proto = request.headers.get('x-forwarded-proto') ?? 'https';
+  const host  = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
+  if (!host) return null;
+  let pathname = '/api/payments/peach/webhook';
+  try { pathname = new URL(request.url).pathname; } catch { /* keep default */ }
+  return `${proto}://${host}${pathname}`;
+}
 
 export async function POST(request: NextRequest) {
-  const ivHex      = request.headers.get('x-initialization-vector') ?? '';
-  const authTagHex = request.headers.get('x-authentication-tag')    ?? '';
-  const secretHex  = process.env.PEACH_WEBHOOK_SECRET_KEY;
+  const contentType = (request.headers.get('content-type') ?? '').toLowerCase();
+  const body = await request.text();
 
-  if (!secretHex) {
-    console.error('[peach-webhook] PEACH_WEBHOOK_SECRET_KEY is not set');
+  // ── (1) Verification / initial configuration probe ──────────────
+  //
+  // The Dashboard sends this as JSON when registering the URL. It
+  // carries the verification code the merchant must paste back into
+  // the Dashboard to complete registration. Signature MAY be missing
+  // (the merchant has not yet configured HMAC signing at this point).
+  if (contentType.includes('application/json')) {
+    const parsed = parseConfigWebhookBody(body);
+    if (!parsed) {
+      // JSON claimed by content-type but body doesn't parse. Not a
+      // valid probe; 400 so the Dashboard reports the URL as bad
+      // rather than silently accepting nonsense.
+      console.warn('[peach-webhook] verification probe: body claims JSON but did not parse', { bodyBytes: body.length });
+      return NextResponse.json({ error: 'Body did not parse as JSON' }, { status: 400 });
+    }
+
+    // Prominent, greppable log lines. Peach does NOT document which
+    // field carries the verification code on the initial probe, so
+    // extracting a specific field would risk logging "undefined" if
+    // the guess is wrong — leaving us unable to register without a
+    // redeploy. Instead we dump the whole parsed body in TWO forms:
+    //
+    //   PEACH WEBHOOK VERIFICATION CODE: <single-line JSON>
+    //     — one greppable line, useful for log-searching.
+    //
+    //   PEACH WEBHOOK PROBE BODY:
+    //   <pretty-printed multi-line JSON>
+    //     — readable dump, useful for eyeballing the object even when
+    //       the field name is unfamiliar.
+    //
+    // The probe carries setup metadata, NOT card data — redacting
+    // nothing is safe here. Do NOT copy this pattern to the event
+    // path (which does carry card fingerprints).
+    console.log('PEACH WEBHOOK VERIFICATION CODE:', JSON.stringify(parsed));
+    console.log('PEACH WEBHOOK PROBE BODY:\n' + JSON.stringify(parsed, null, 2));
+    console.log('[peach-webhook] verification probe: full JSON body logged above.');
+
+    // Optional: if signature headers are present, verify them and log
+    // the outcome — informative but not blocking.
+    const algorithm = request.headers.get('x-webhook-signature-algorithm');
+    const signature = request.headers.get('x-webhook-signature');
+    if (algorithm && signature) {
+      const secret = process.env.PEACH_CHECKOUT_SECRET_TOKEN;
+      if (secret) {
+        const url = computeWebhookUrl(request);
+        const ok = verifyWebhookSignature({
+          body,
+          algorithm,
+          timestamp: request.headers.get('x-webhook-timestamp'),
+          webhookId: request.headers.get('x-webhook-id'),
+          url,
+          signature,
+          secret,
+        });
+        console.log('[peach-webhook] verification probe: signature check', { ok });
+      } else {
+        console.log('[peach-webhook] verification probe: signature headers present but PEACH_CHECKOUT_SECRET_TOKEN unset (expected on first registration)');
+      }
+    } else {
+      console.log('[peach-webhook] verification probe: unsigned (expected on first registration)');
+    }
+
+    return NextResponse.json({ received: true }, { status: 200 });
+  }
+
+  // ── (2) Signed event delivery ────────────────────────────────────
+  //
+  // Everything else (form-urlencoded events, or unrecognised content
+  // types that carry a body Peach might sign) is treated as an event
+  // and MUST verify.
+  if (!contentType.includes('application/x-www-form-urlencoded') && contentType !== '') {
+    console.warn('[peach-webhook] unexpected content-type on event delivery', { contentType });
+    // Fall through to signature-check + parse — Peach may add
+    // content-type variants in future; we don't want to reject on the
+    // header alone. If body is unparseable below we 400.
+  }
+
+  const secret = process.env.PEACH_CHECKOUT_SECRET_TOKEN;
+  if (!secret) {
+    // Events REQUIRE the secret. Unlike the verification probe,
+    // there's no chicken-and-egg here — the secret must be provisioned
+    // before real events can arrive.
+    console.error('[peach-webhook] PEACH_CHECKOUT_SECRET_TOKEN is not set — cannot verify event');
     return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
   }
-  if (!ivHex || !authTagHex) {
-    console.warn('[peach-webhook] Missing required auth headers');
-    return NextResponse.json({ error: 'Missing headers' }, { status: 401 });
-  }
 
-  // Peach delivers the ciphertext as hex text — read it as text to
-  // avoid encoding surprises.
-  const rawText = await request.text();
-  let ciphertext: Buffer;
-  try {
-    ciphertext = Buffer.from(rawText.trim(), 'hex');
-  } catch {
-    console.warn('[peach-webhook] body is not valid hex');
-    return NextResponse.json({ error: 'Invalid body encoding' }, { status: 401 });
-  }
-  if (ciphertext.length === 0) {
-    return NextResponse.json({ error: 'Empty body' }, { status: 401 });
-  }
+  const algorithm = request.headers.get('x-webhook-signature-algorithm');
+  const timestamp = request.headers.get('x-webhook-timestamp');
+  const webhookId = request.headers.get('x-webhook-id');
+  const signature = request.headers.get('x-webhook-signature');
+  const url       = computeWebhookUrl(request);
 
-  const decrypted: DecryptedWebhook | null = decryptWebhook({
-    ciphertext,
-    ivHex,
-    authTagHex,
-    keyHex: secretHex,
+  const valid = verifyWebhookSignature({
+    body,
+    algorithm,
+    timestamp,
+    webhookId,
+    url,
+    signature,
+    secret,
   });
 
-  if (!decrypted) {
-    console.warn('[peach-webhook] Decrypt / auth check failed — request ignored');
+  if (!valid) {
+    console.warn('[peach-webhook] event delivery: HMAC verification failed — 401', {
+      hasAlgorithm: !!algorithm,
+      hasTimestamp: !!timestamp,
+      hasWebhookId: !!webhookId,
+      hasSignature: !!signature,
+      hasUrl:       !!url,
+    });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
-  const { type, action, payload } = decrypted;
+  const parsed: DecryptedWebhook | null = parseFormEventBody(body);
+  if (!parsed) {
+    console.warn('[peach-webhook] event delivery: body did not parse as form-urlencoded event', { bodyBytes: body.length });
+    return NextResponse.json({ error: 'Malformed event body' }, { status: 400 });
+  }
 
-  console.log('[peach-webhook] Event received:', {
+  const { type, action, payload } = parsed;
+
+  console.log('[peach-webhook] event received:', {
     type,
     action,
-    reference: (payload as WebhookPaymentPayload).merchantTransactionId,
+    reference:  (payload as WebhookPaymentPayload).merchantTransactionId,
     resultCode: (payload as WebhookPaymentPayload).result?.code,
+    checkoutId: (payload as WebhookPaymentPayload).checkoutId,
+    webhookId,
   });
 
   try {
@@ -777,12 +925,20 @@ export async function POST(request: NextRequest) {
     } else if (type === 'REGISTRATION') {
       await handleRegistrationEvent(payload as WebhookPaymentPayload, action);
     } else {
-      console.log('[peach-webhook] Unhandled event type — acknowledging without action', { type, action });
+      console.log('[peach-webhook] unhandled event type — acknowledging without action', { type, action });
     }
   } catch (err) {
-    // NEVER re-throw — non-200 would trigger Peach's retry ladder and
-    // could double-fire state flips. Log and 200.
-    console.error('[peach-webhook] Handler threw — swallowing to preserve 200 ACK', err instanceof Error ? err.message : err);
+    // Alertable prefix — silent drops are invisible today, so we
+    // stamp a clearly-greppable marker on the log line. Still 200
+    // to avoid Peach's retry ladder amplifying a bug into a state-
+    // flip storm.
+    console.error('[peach-webhook] ALERT handler-threw', {
+      type,
+      action,
+      reference: (payload as WebhookPaymentPayload).merchantTransactionId,
+      error:     err instanceof Error ? err.message : String(err),
+      stack:     err instanceof Error ? err.stack   : undefined,
+    });
   }
 
   return NextResponse.json({ received: true }, { status: 200 });

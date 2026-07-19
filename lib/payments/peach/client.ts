@@ -1,5 +1,42 @@
 // SERVER-ONLY. Never import this file in a client component.
-// PEACH_ACCESS_TOKEN must never reach the browser.
+//
+// Peach Checkout V2 (CIT) + recurring card-on-file (MIT) client.
+// Replaces the legacy COPYandPAY / OPPWA single-Bearer + entityId model
+// with the recommended two-surface architecture:
+//
+//   • Checkout V2 surface — OAuth-authed. Used by:
+//       - createCheckout()       — POST /v2/checkout
+//       - getCheckoutStatus()    — GET  /v2/checkout/{id}/status
+//     Token fetched from PEACH_AUTH_URL /api/oauth/token with
+//       { clientId, clientSecret, merchantId }
+//     Cached in-process until 30s before expiry.
+//
+//   • Recurring surface — static Bearer PEACH_RECURRING_ACCESS_TOKEN.
+//     Used by:
+//       - chargeSavedCard()      — POST /v1/registrations/{id}/payments
+//       - deleteRegistration()   — DELETE /v1/registrations/{id}
+//       - refund()               — POST /v1/payments/{id}
+//     entityId on every request = PEACH_RECURRING_ENTITY_ID.
+//
+// Env vars (all server-side; the NEXT_PUBLIC_ ones are widget-only):
+//
+//   Checkout V2 (Dashboard → Checkout):
+//     PEACH_CHECKOUT_CLIENT_ID       OAuth client id
+//     PEACH_CHECKOUT_CLIENT_SECRET   OAuth client secret
+//     PEACH_CHECKOUT_MERCHANT_ID     Merchant id (OAuth body)
+//     PEACH_CHECKOUT_ENTITY_ID       `key` passed to checkout.js in the browser
+//     PEACH_CHECKOUT_SECRET_TOKEN    HMAC key for verifying Checkout webhooks
+//     PEACH_AUTH_URL                 Auth service base — TODO(dina): confirm from Dashboard
+//     PEACH_CHECKOUT_URL             Checkout API base — TODO(dina): confirm from Dashboard
+//     NEXT_PUBLIC_PEACH_CHECKOUT_JS  Browser script (sandbox:
+//                                    https://sandbox-checkout.peachpayments.com/js/checkout.js)
+//
+//   Recurring (Dashboard → Recurring payments):
+//     PEACH_RECURRING_ENTITY_ID      Recurring entity id
+//     PEACH_RECURRING_ACCESS_TOKEN   Bearer token for recurring calls
+//     PEACH_RECURRING_URL            Card / recurring host base —
+//                                    TODO(dina): confirm from Dashboard,
+//                                    do not hardcode oppwa.com
 
 import type {
   PaymentProvider,
@@ -12,35 +49,7 @@ import type {
 } from '../provider';
 import { classifyResultCode } from './resultCodes';
 
-// ─── Env-driven configuration ───────────────────────────────────────
-//
-// Read lazily so tests can swap process.env before the first call. Env
-// vars — read the report for provisioning notes:
-//
-//   PEACH_BASE_URL              — e.g. https://sandbox-card.peachpayments.com
-//   PEACH_ENTITY_ID_CIT         — Cardholder-Initiated / 3DSecure entity.
-//                                  Used for COPYandPAY widget-driven
-//                                  checkouts (Flow A first instalment
-//                                  and Flow B card-registration). This
-//                                  channel is 3DS-enabled at the
-//                                  acquirer.
-//   PEACH_ENTITY_ID_RECURRING   — Merchant-Initiated recurring entity.
-//                                  Used for POST /v1/registrations/
-//                                  {id}/payments MIT charges (Flow C
-//                                  cron + settle-entire-bill). Peach
-//                                  provisions this as a SEPARATE
-//                                  entity so 3DS-required rules don't
-//                                  block recurring debits. Single-
-//                                  entity accounts set both to the
-//                                  same value.
-//   PEACH_ACCESS_TOKEN          — Bearer token. Product-family
-//                                  scoped: the recurring / COPYandPAY
-//                                  / S2S token family (NOT a Checkout-
-//                                  product token). One token covers
-//                                  both entity IDs when they belong to
-//                                  the same product family.
-//   PEACH_WEBHOOK_SECRET_KEY    — 64-char hex, AES-256-GCM decrypt key
-//                                  for inbound webhooks (webhook.ts).
+// ─── Env helpers ────────────────────────────────────────────────────
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -48,22 +57,85 @@ function requireEnv(name: string): string {
   return v;
 }
 
-function baseUrl(): string { return requireEnv('PEACH_BASE_URL').replace(/\/$/, ''); }
+function trimSlash(u: string): string { return u.replace(/\/$/, ''); }
 
-// Dual-entity: caller-of-record specifies which channel it needs.
-export type PeachChannel = 'cit' | 'recurring';
-
-function entityIdFor(channel: PeachChannel): string {
-  return channel === 'cit'
-    ? requireEnv('PEACH_ENTITY_ID_CIT')
-    : requireEnv('PEACH_ENTITY_ID_RECURRING');
-}
-
-function accessToken(): string { return requireEnv('PEACH_ACCESS_TOKEN'); }
+function authUrl():         string { return trimSlash(requireEnv('PEACH_AUTH_URL')); }
+function checkoutUrl():     string { return trimSlash(requireEnv('PEACH_CHECKOUT_URL')); }
+function recurringUrl():    string { return trimSlash(requireEnv('PEACH_RECURRING_URL')); }
+function checkoutEntity():  string { return requireEnv('PEACH_CHECKOUT_ENTITY_ID'); }
+function recurringEntity(): string { return requireEnv('PEACH_RECURRING_ENTITY_ID'); }
+function recurringToken():  string { return requireEnv('PEACH_RECURRING_ACCESS_TOKEN'); }
+function checkoutClientId():     string { return requireEnv('PEACH_CHECKOUT_CLIENT_ID'); }
+function checkoutClientSecret(): string { return requireEnv('PEACH_CHECKOUT_CLIENT_SECRET'); }
+function checkoutMerchantId():   string { return requireEnv('PEACH_CHECKOUT_MERCHANT_ID'); }
 
 // Hard cap on Peach call duration. Vercel Hobby functions time out at
 // 10s; we leave a couple of seconds of headroom.
 const DEFAULT_TIMEOUT_MS = 8_000;
+
+// ─── OAuth token cache (Checkout V2) ────────────────────────────────
+
+type CachedToken = { accessToken: string; expiresAt: number };
+let cachedCheckoutToken: CachedToken | null = null;
+
+async function fetchCheckoutAccessToken(): Promise<string> {
+  const now = Date.now();
+  if (cachedCheckoutToken && cachedCheckoutToken.expiresAt > now + 30_000) {
+    return cachedCheckoutToken.accessToken;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${authUrl()}/api/oauth/token`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept:         'application/json',
+      },
+      body: JSON.stringify({
+        clientId:     checkoutClientId(),
+        clientSecret: checkoutClientSecret(),
+        merchantId:   checkoutMerchantId(),
+      }),
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+    if (!res.ok) {
+      const msg = (parsed as { error?: string; message?: string } | null)?.error
+        ?? (parsed as { error?: string; message?: string } | null)?.message
+        ?? `HTTP ${res.status} ${res.statusText}`;
+      const err = new Error(`Peach auth error: ${msg}`);
+      (err as Error & { raw?: unknown }).raw = parsed;
+      throw err;
+    }
+    const body = parsed as { access_token?: string; expires_in?: number } | null;
+    if (!body?.access_token) {
+      throw new Error('Peach auth error: response missing access_token');
+    }
+    const expiresIn = typeof body.expires_in === 'number' && body.expires_in > 0
+      ? body.expires_in
+      : 300; // 5-min safety default if the field is missing
+    cachedCheckoutToken = {
+      accessToken: body.access_token,
+      expiresAt:   now + (expiresIn * 1000),
+    };
+    return body.access_token;
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error(`Peach auth timed out after ${DEFAULT_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Test hook — resets the OAuth cache. Never call this in production code.
+export function __resetPeachTokenCache(): void {
+  cachedCheckoutToken = null;
+}
 
 // ─── Utility helpers ────────────────────────────────────────────────
 
@@ -78,10 +150,8 @@ export function formatAmountCents(cents: number): string {
   return `${rands}.${remainder.toString().padStart(2, '0')}`;
 }
 
-// Peach expects application/x-www-form-urlencoded for OPPWA v1 calls.
-// We flatten { standingInstruction: { mode: 'INITIAL' } } to
-// standingInstruction.mode=INITIAL, and customer / card sub-objects
-// likewise.
+// Flatten nested objects with dot-notation. Used for the recurring
+// endpoints which take application/x-www-form-urlencoded bodies.
 export function toFormBody(obj: Record<string, unknown>, prefix = ''): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(obj)) {
@@ -105,7 +175,9 @@ function toCustomParametersBody(params: Record<string, string> | undefined): str
     .join('&');
 }
 
-async function peachFetch(
+// ─── Recurring surface fetcher (static Bearer, form-encoded) ────────
+
+async function recurringFetch(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   body?: string,
@@ -114,12 +186,12 @@ async function peachFetch(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const url = `${baseUrl()}${path}`;
+    const url = `${recurringUrl()}${path}`;
     const res = await fetch(url, {
       method,
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${accessToken()}`,
+        Authorization: `Bearer ${recurringToken()}`,
         ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
       },
       body,
@@ -127,7 +199,6 @@ async function peachFetch(
     const text = await res.text();
     let parsed: unknown = null;
     try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
-
     if (!res.ok) {
       const msg = (parsed as { result?: { description?: string } } | null)?.result?.description
         ?? `HTTP ${res.status} ${res.statusText}`;
@@ -139,6 +210,65 @@ async function peachFetch(
   } catch (err) {
     if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
       throw new Error(`Peach timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── Checkout V2 surface fetcher (OAuth, JSON) ──────────────────────
+
+async function checkoutFetch(
+  method: 'GET' | 'POST',
+  path: string,
+  jsonBody?: unknown,
+  extraHeaders: Record<string, string> = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<unknown> {
+  const accessToken = await fetchCheckoutAccessToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = `${checkoutUrl()}${path}`;
+    const res = await fetch(url, {
+      method,
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept:        'application/json',
+        ...(jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...extraHeaders,
+      },
+      body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+    if (!res.ok) {
+      // Prominent, greppable log for the initiate path — otherwise a
+      // 400 "Invalid request body" from Peach V2 lands as a generic
+      // Error message with no context on WHICH field they rejected.
+      const initiatePrefix = path === '/v2/checkout'
+        ? 'PEACH CHECKOUT INITIATE ERROR:'
+        : `PEACH CHECKOUT ERROR at ${path}:`;
+      console.error(initiatePrefix, {
+        status:     res.status,
+        statusText: res.statusText,
+        bodyText:   text,
+        parsedBody: parsed,
+      });
+      const msg = (parsed as { result?: { description?: string }; message?: string } | null)?.result?.description
+        ?? (parsed as { message?: string } | null)?.message
+        ?? `HTTP ${res.status} ${res.statusText}`;
+      const err = new Error(`Peach checkout error: ${msg}`);
+      (err as Error & { raw?: unknown }).raw = parsed;
+      throw err;
+    }
+    return parsed;
+  } catch (err) {
+    if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error(`Peach checkout timed out after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
@@ -171,25 +301,31 @@ type PeachPaymentBody = {
   result?:                PeachResult;
   card?:                  PeachCard;
   registrationId?:        string;
-  // ── Registration-return shape (widget in registration-only mode) ──
-  // COPYandPAY docs place the registration id under `id` when the
-  // paymentType/paymentBrand indicate a registration, and under
-  // `registrationId` when it accompanies a payment. We check both.
+  // On a REPEATED/MIT response, Peach echoes the root of the stored-
+  // credential chain here — the id of the INITIAL/CIT transaction that
+  // established the credential. This is the value we thread on
+  // subsequent MIT charges as standingInstruction.initialTransactionId.
+  // It is NOT the same as the response's own top-level `id`.
+  //
+  // TODO(dina): confirm in sandbox which exact field Peach returns as
+  // the valid initialTransactionId (plain `id` vs a connector-specific
+  // transaction id), and whether payWithSavedCard should be
+  // REPEATED/CIT (customer present — may need 3DS) rather than
+  // REPEATED/MIT. Not changing tagging in this pass — this note flags.
+  standingInstruction?: {
+    initialTransactionId?: string;
+  };
 };
 
-type PeachCheckoutCreateResponse = {
-  id:        string;
-  integrity?: string;
-  result?:   PeachResult;
-};
+// V2 status response is broadly the same shape as OPPWA payments —
+// `id`, `merchantTransactionId`, `amount`, `result.code`, `card` etc.
+// We fold it through the same normaliser.
 
-// Extract the reusable registration id from either shape.
-function pickRegistrationId(body: PeachPaymentBody): string | undefined {
-  if (body.registrationId) return body.registrationId;
-  // Widget in "registration only" mode returns the id under `id` with a
-  // paymentType of `null` or 'RG' — treat any populated id + no amount
-  // as registration-shaped when registrationId is absent.
-  return undefined;
+function nonce(): string {
+  // 32 random hex chars — Peach requires a unique nonce per checkout.
+  // crypto.randomUUID gives us 128 bits of entropy; the dashes are
+  // stripped so the string is dense.
+  return globalThis.crypto.randomUUID().replace(/-/g, '');
 }
 
 function toPaymentStatus(body: PeachPaymentBody): PaymentStatus {
@@ -201,7 +337,7 @@ function toPaymentStatus(body: PeachPaymentBody): PaymentStatus {
     amountCents:           body.amount ? Math.round(Number(body.amount) * 100) : undefined,
     resultCode:            code,
     resultDescription:     body.result?.description,
-    registrationId:        pickRegistrationId(body),
+    registrationId:        body.registrationId,
     card: body.card ? {
       brand:       body.card.paymentBrand ?? null,
       last4:       body.card.last4Digits  ?? null,
@@ -218,61 +354,101 @@ function toPaymentStatus(body: PeachPaymentBody): PaymentStatus {
 
 export class PeachProvider implements PaymentProvider {
   async createCheckout(params: CheckoutCreateParams): Promise<CheckoutCreated> {
-    // Default to CIT — the widget-driven flows (Flow A + Flow B) live
-    // on the 3DS-enabled entity. `channel: 'recurring'` is legal but
-    // unusual; keep the escape hatch for edge cases.
-    const channel: PeachChannel = params.channel ?? 'cit';
-    const form: Record<string, unknown> = {
-      entityId:              entityIdFor(channel),
-      merchantTransactionId: params.merchantTransactionId,
-    };
-
-    // Amount + currency are required for a payment-bearing checkout, and
-    // OPTIONAL when the widget is used in registration-only mode. The
-    // Peach docs are explicit that omitting paymentType + amount +
-    // currency together indicates a registration-only shape.
-    const isRegistrationOnly = params.createRegistration && (params.amountCents == null || params.amountCents === 0);
-    if (!isRegistrationOnly) {
-      if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
-        throw new Error(`Peach createCheckout: amountCents must be a positive integer; got ${params.amountCents}`);
-      }
-      form.amount      = formatAmountCents(params.amountCents);
-      form.currency    = params.currency ?? 'ZAR';
-      form.paymentType = params.paymentType ?? 'DB';
+    // Peach V2 hard limit: merchantTransactionId ≤ 16 chars (Visa /
+    // Mastercard 3DS2 mandate; violation returns 800.100.156). Enforce
+    // at the boundary so a regression in a caller's ref-generator
+    // can't slip through.
+    if (!params.merchantTransactionId || params.merchantTransactionId.length > 16) {
+      throw new Error(
+        `Peach createCheckout: merchantTransactionId must be 1-16 chars; got ${params.merchantTransactionId?.length ?? 0} (\"${params.merchantTransactionId}\")`,
+      );
     }
 
-    if (params.createRegistration) form.createRegistration = 'true';
+    const isZeroAmount = params.amountCents === 0;
+    if (!isZeroAmount) {
+      if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
+        throw new Error(`Peach createCheckout: amountCents must be a positive integer (or 0 for zero-amount card verification); got ${params.amountCents}`);
+      }
+    }
 
-    if (params.standingInstruction) form.standingInstruction = { ...params.standingInstruction };
-    if (params.customer)            form.customer            = { ...params.customer };
+    const origin = params.origin ?? process.env.NEXT_PUBLIC_APP_URL ?? '';
 
-    const flat = toFormBody(form);
-    const extra = toCustomParametersBody(params.customParameters);
-    const body  = extra ? `${flat}&${extra}` : flat;
+    // V2 JSON body shape — the exact field paths (`authentication.entityId`,
+    // `standingInstruction.*`) come from the Checkout V2 request builder.
+    const body: Record<string, unknown> = {
+      authentication: { entityId: checkoutEntity() },
+      merchantTransactionId: params.merchantTransactionId,
+      nonce:                 nonce(),
+    };
 
-    const res = await peachFetch('POST', '/v1/checkouts', body) as PeachCheckoutCreateResponse;
-    if (!res?.id) throw new Error('Peach createCheckout: response missing id');
-    return { checkoutId: res.id, raw: res };
+    // Amount + currency + paymentType are ALWAYS sent, including on
+    // zero-amount card-verification (Flow B) — Peach's V2 initiate
+    // validator rejects the body when they're missing. For Flow B the
+    // caller sets amountCents=0 + paymentType='PA'; a 0-amount PA is
+    // a scheme-standard card-verification that auto-expires without
+    // capture (no explicit RV reversal needed).
+    body.amount      = isZeroAmount ? '0' : formatAmountCents(params.amountCents);
+    body.currency    = params.currency    ?? 'ZAR';
+    body.paymentType = params.paymentType ?? (isZeroAmount ? 'PA' : 'DB');
+
+    if (params.createRegistration)               body.createRegistration = true;
+    if (params.defaultPaymentMethod)             body.defaultPaymentMethod = params.defaultPaymentMethod;
+    if (params.forceDefaultMethod !== undefined) body.forceDefaultMethod   = params.forceDefaultMethod;
+
+    if (params.shopperResultUrl) body.shopperResultUrl = params.shopperResultUrl;
+
+    if (params.standingInstruction) {
+      // Whitelist the fields we forward to Peach — Peach's V2 validator
+      // rejects unknown fields with "Invalid request body". Keeping
+      // this explicit rather than a spread means a typo in the caller
+      // (e.g. `expiryDate` instead of `expiry`) surfaces here, not as
+      // a mystery 400 from Peach.
+      const src = params.standingInstruction;
+      const si: Record<string, unknown> = {
+        mode:   src.mode,
+        source: src.source,
+        type:   src.type,
+      };
+      if (src.initialTransactionId) si.initialTransactionId = src.initialTransactionId;
+      if (src.expiry)               si.expiry               = src.expiry;
+      if (src.frequency)            si.frequency            = src.frequency;
+      if (typeof src.numberOfInstallments === 'number') si.numberOfInstallments = src.numberOfInstallments;
+      if (src.recurringType)        si.recurringType        = src.recurringType;
+      body.standingInstruction = si;
+    }
+
+    if (params.customer) body.customer = { ...params.customer };
+
+    if (params.customParameters) {
+      // V2 accepts a `customParameters` object directly (JSON), unlike
+      // OPPWA v1's bracket-form. Send as-is.
+      body.customParameters = { ...params.customParameters };
+    }
+
+    const res = await checkoutFetch(
+      'POST',
+      '/v2/checkout',
+      body,
+      origin ? { Origin: origin } : {},
+    ) as { checkoutId?: string; id?: string; result?: PeachResult };
+
+    // V2 returns { checkoutId, result } in the primary shape; some
+    // sandbox response bodies use `id` as a synonym. Accept either.
+    const checkoutId = res?.checkoutId ?? res?.id;
+    if (!checkoutId) throw new Error('Peach createCheckout: response missing checkoutId');
+    return { checkoutId, raw: res };
   }
 
-  async getCheckoutStatus(resourcePath: string, opts?: { channel?: PeachChannel }): Promise<PaymentStatus> {
-    // The widget appends resourcePath = /v1/checkouts/{id}/payment on
-    // return. Entity id defaults to CIT because that's where the
-    // widget checkouts are booked.
-    const channel: PeachChannel = opts?.channel ?? 'cit';
-    if (!resourcePath.startsWith('/')) resourcePath = `/${resourcePath}`;
-    const sep = resourcePath.includes('?') ? '&' : '?';
-    const path = `${resourcePath}${sep}entityId=${encodeURIComponent(entityIdFor(channel))}`;
-    const res = await peachFetch('GET', path) as PeachPaymentBody;
-    return toPaymentStatus(res);
-  }
-
-  async getPaymentStatus(providerPaymentId: string, opts?: { channel?: PeachChannel }): Promise<PaymentStatus> {
-    // Payments live on the entity that booked them; MIT charges (the
-    // common case for a status lookup) are on the recurring channel.
-    const channel: PeachChannel = opts?.channel ?? 'recurring';
-    const path = `/v1/payments/${encodeURIComponent(providerPaymentId)}?entityId=${encodeURIComponent(entityIdFor(channel))}`;
-    const res = await peachFetch('GET', path) as PeachPaymentBody;
+  async getCheckoutStatus(checkoutId: string): Promise<PaymentStatus> {
+    // V2 status endpoint takes the checkoutId directly.
+    // TODO(dina): confirm the exact status path in the Dashboard docs.
+    // Current pattern: GET /v2/checkout/{id}/status. If the docs show
+    // a different suffix (e.g. /result), swap here — the response body
+    // shape is stable.
+    const res = await checkoutFetch(
+      'GET',
+      `/v2/checkout/${encodeURIComponent(checkoutId)}/status`,
+    ) as PeachPaymentBody;
     return toPaymentStatus(res);
   }
 
@@ -280,11 +456,17 @@ export class PeachProvider implements PaymentProvider {
     if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
       throw new Error(`Peach chargeSavedCard: amountCents must be a positive integer; got ${params.amountCents}`);
     }
-    // MIT charges ALWAYS go through the recurring channel — Peach
-    // provisions this as a separate entity so 3DS rules don't block
-    // recurring debits. No override.
+    // Same 16-char merchantTransactionId limit on the recurring
+    // endpoint — Visa/Mastercard 3DS2 mandate applies acquirer-wide.
+    if (!params.merchantTransactionId || params.merchantTransactionId.length > 16) {
+      throw new Error(
+        `Peach chargeSavedCard: merchantTransactionId must be 1-16 chars; got ${params.merchantTransactionId?.length ?? 0} (\"${params.merchantTransactionId}\")`,
+      );
+    }
+    // MIT charges ALWAYS use the recurring credential set — never the
+    // Checkout OAuth token. The entity is the recurring entity.
     const form: Record<string, unknown> = {
-      entityId:              entityIdFor('recurring'),
+      entityId:              recurringEntity(),
       amount:                formatAmountCents(params.amountCents),
       currency:              params.currency ?? 'ZAR',
       paymentType:           'DB',
@@ -294,7 +476,7 @@ export class PeachProvider implements PaymentProvider {
     const body = toFormBody(form);
     let res: PeachPaymentBody;
     try {
-      res = await peachFetch(
+      res = await recurringFetch(
         'POST',
         `/v1/registrations/${encodeURIComponent(params.registrationId)}/payments`,
         body,
@@ -308,21 +490,23 @@ export class PeachProvider implements PaymentProvider {
       };
     }
     return {
-      status:            classifyResultCode(res.result?.code),
-      providerPaymentId: res.id,
-      resultCode:        res.result?.code,
-      resultDescription: res.result?.description,
-      raw:               res,
+      status:               classifyResultCode(res.result?.code),
+      providerPaymentId:    res.id,
+      // Echoed root — see PeachPaymentBody.standingInstruction comment
+      // above. Undefined if Peach didn't echo it; the caller must NOT
+      // fall back to res.id (that's this MIT's own id, not the chain root).
+      initialTransactionId: res.standingInstruction?.initialTransactionId,
+      resultCode:           res.result?.code,
+      resultDescription:    res.result?.description,
+      raw:                  res,
     };
   }
 
   async deleteRegistration(registrationId: string): Promise<{ ok: boolean; raw?: unknown }> {
-    // Registrations are created by the CIT widget; the entity that
-    // owns them for deletion is the CIT entity.
     try {
-      const res = await peachFetch(
+      const res = await recurringFetch(
         'DELETE',
-        `/v1/registrations/${encodeURIComponent(registrationId)}?entityId=${encodeURIComponent(entityIdFor('cit'))}`,
+        `/v1/registrations/${encodeURIComponent(registrationId)}?entityId=${encodeURIComponent(recurringEntity())}`,
       );
       return { ok: true, raw: res };
     } catch (err) {
@@ -334,22 +518,24 @@ export class PeachProvider implements PaymentProvider {
     providerPaymentId:     string,
     amountCents:           number,
     merchantTransactionId: string,
-    opts?: { paymentType?: 'RF' | 'RV'; channel?: PeachChannel },
+    opts?: { paymentType?: 'RF' | 'RV' },
   ): Promise<RefundResult> {
     // Peach spec (Manage payments): POST /v1/payments/{id} with
-    // paymentType=RF (refund) OR paymentType=RV (reversal of a PA).
-    // Entity id must match the original payment's channel.
+    // paymentType=RF (refund of a DB) or RV (reversal of a PA).
+    // TODO(dina): confirm from Dashboard whether refunds of a V2
+    // Checkout-captured payment must be booked against the Checkout
+    // entity. Current default: recurring entity — matches where
+    // instalments 2+ live.
     const paymentType: 'RF' | 'RV' = opts?.paymentType ?? 'RF';
-    const channel:     PeachChannel = opts?.channel ?? 'recurring';
     const body = toFormBody({
-      entityId:              entityIdFor(channel),
+      entityId:              recurringEntity(),
       amount:                formatAmountCents(amountCents),
       currency:              'ZAR',
       paymentType,
       merchantTransactionId,
     });
     try {
-      const res = await peachFetch(
+      const res = await recurringFetch(
         'POST',
         `/v1/payments/${encodeURIComponent(providerPaymentId)}`,
         body,
@@ -371,4 +557,9 @@ export class PeachProvider implements PaymentProvider {
 }
 
 // Exported for tests only.
-export const __internals = { formatAmountCents, toFormBody, toPaymentStatus, entityIdFor };
+export const __internals = {
+  formatAmountCents,
+  toFormBody,
+  toPaymentStatus,
+  fetchCheckoutAccessToken,
+};

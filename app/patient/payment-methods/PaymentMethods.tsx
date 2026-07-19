@@ -355,12 +355,13 @@ export default function PaymentMethods({
         </div>
       )}
 
-      {/* R1.00 verification note — keep as-is */}
+      {/* No-charge card verification note — accurate for the Flow B
+          zero-amount PA recipe. No debit, no refund. */}
       <div
         className="rounded-xl px-4 py-3 text-xs text-[#13294B]"
         style={{ background: 'rgba(19,41,75,.05)', border: '1px solid rgba(19,41,75,.10)' }}
       >
-        We charge R1.00 to verify your card and refund it immediately.
+        We verify your card with your bank — no money is taken.
       </div>
 
       {addError && (

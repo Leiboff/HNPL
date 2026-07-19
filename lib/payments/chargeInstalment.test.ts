@@ -33,10 +33,11 @@ type PaymentRow = {
   last_dunning_attempt_date?:  string | null;
 };
 type PlanRow = {
-  id:                     string;
-  peach_registration_id:  string | null;
-  patient_id:             string;
-  status:                 string;
+  id:                             string;
+  peach_registration_id:          string | null;
+  peach_initial_transaction_id?:  string | null;
+  patient_id:                     string;
+  status:                         string;
 };
 type ProfileRow = { id: string; email: string };
 
@@ -219,7 +220,10 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(result.kind).toBe('charged');
     if (result.kind !== 'charged') return;
     expect(result.attemptNumber).toBe(1);
-    expect(result.reference).toMatch(/^hnpl_[a-f0-9]{16}_a1$/);
+    // Compact 16-char Peach ref (Visa/Mastercard 3DS2 mandate).
+    // Purpose char 'i' = MIT instalment attempt.
+    expect(result.reference).toMatch(/^bni[a-z0-9]{13}$/);
+    expect(result.reference.length).toBe(16);
     expect(result.amountChargedCents).toBe(25075);
 
     expect(state.payments[0].status).toBe('processing');
@@ -239,11 +243,40 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(args[0].amountCents).toBe(25075);
     expect(args[0].currency).toBe('ZAR');
     expect(args[0].merchantTransactionId).toBe(result.reference);
-    // Card-on-file: subsequent charges are REPEATED / MIT / UNSCHEDULED.
+    // No initialTransactionId on the plan → UNSCHEDULED fallback.
+    // (The dedicated INSTALLMENT-branch test below covers the case
+    // where the plan has an initialTransactionId populated.)
     expect(args[0].standingInstruction).toEqual({
       mode:   'REPEATED',
       source: 'MIT',
       type:   'UNSCHEDULED',
+    });
+  });
+
+  it('when plan.peach_initial_transaction_id is populated, uses INSTALLMENT + initialTransactionId', async () => {
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'scheduled' as string, retry_count: 0, amount: 250.75,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+      }],
+      plans: [{
+        id: 'plan-1',
+        peach_registration_id:         'REG_ABC',
+        peach_initial_transaction_id:  'txn-INIT-1',
+        patient_id: 'u1', status: 'active',
+      }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    stubSuccess();
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+    expect(result.kind).toBe('charged');
+    const [args] = chargeSavedCardSpy.mock.calls as [[{ standingInstruction: unknown }]];
+    expect(args[0].standingInstruction).toEqual({
+      mode:                 'REPEATED',
+      source:               'MIT',
+      type:                 'INSTALLMENT',
+      initialTransactionId: 'txn-INIT-1',
     });
   });
 
@@ -262,8 +295,36 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(result.kind).toBe('charged');
     if (result.kind !== 'charged') return;
     expect(result.attemptNumber).toBe(3);
-    expect(result.reference).toMatch(/_a3$/);
+    // Compact ref shape — attempt-differentiated by the deterministic
+    // hash of (paymentId, attempt), not by a visible `_aN` suffix.
+    expect(result.reference).toMatch(/^bni[a-z0-9]{13}$/);
     expect(state.payments[0].retry_count).toBe(3);
+  });
+
+  it('reference differs from attempt to attempt on the same payment (attempt-differentiated)', async () => {
+    // Regression pin: attempt=1 and attempt=3 must produce DIFFERENT
+    // refs (Peach dedups on identical merchantTransactionId — same ref
+    // would collapse a retry into the first attempt's outcome).
+    // Attempt=1 case
+    const s1: StubState = {
+      payments: [{ id: 'p1', status: 'scheduled', retry_count: 0, amount: 100, plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc1 = makeStub(s1);
+    stubSuccess();
+    const r1 = await attemptChargeInstalment(svc1, 'p1', { today: '2026-06-15' });
+    // Attempt=3 case (same payment id)
+    const s2: StubState = {
+      payments: [{ id: 'p1', status: 'failed',    retry_count: 2, amount: 100, plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14' }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc2 = makeStub(s2);
+    stubSuccess();
+    const r3 = await attemptChargeInstalment(svc2, 'p1', { today: '2026-06-15' });
+    if (r1.kind !== 'charged' || r3.kind !== 'charged') throw new Error('setup');
+    expect(r1.reference).not.toBe(r3.reference);
   });
 
   it('includes accrued dunning fees in the Peach amount (retry-carries-fees)', async () => {

@@ -82,7 +82,7 @@ function SuccessView({ card }: { card: CardInfo }) {
         </div>
       </div>
       <p className="text-sm text-gray-600">
-        The R1.00 verification charge will be refunded shortly. Your card is ready for future instalment payments.
+        We verified your card with your bank — no money was taken. Your card is ready for future instalment payments.
       </p>
       <Link
         href="/patient/payment-methods"

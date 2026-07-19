@@ -5,6 +5,7 @@ import { cookies } from 'next/headers';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { getPaymentProvider } from '@/lib/payments/provider';
+import { checkoutRef } from '@/lib/payments/peach/refs';
 import { encryptId } from '@/lib/idEncryption';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import {
@@ -402,10 +403,11 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   if (paymentsErr) return { ok: false, error: `Failed to create schedule: ${paymentsErr.message}` };
 
   // ── 7. Stamp the Peach reference on the instalment-1 row ─────────────
-  // Same identifier convention that Paystack used — the Peach webhook
-  // echoes it back as `merchantTransactionId`, and the reconcile query
-  // still looks it up in payments.peach_payment_id.
-  const reference = `hnpl_co_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char ref per Peach V2 mandate. Deterministic per
+  // instalment-1 payment id so a mid-flight retry Peach-dedups.
+  // Webhook echoes it back as merchantTransactionId; reconcile via
+  // payments.peach_payment_id.
+  const reference = checkoutRef(instalment1Id);
   await svc.from('payments').update({ peach_payment_id: reference }).eq('id', instalment1Id);
 
   // ── 8. Sign the user in via fresh temp password ───────────────────────
@@ -435,6 +437,32 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   const shopperResultUrl = `${appUrl}/checkout/${token}/complete`;
   const amountCents = Math.round(instalments[0] * 100);
 
+  // Flow A standingInstruction fields for a fixed-amount fixed-duration
+  // instalment plan (Peach Budget Installment spec):
+  //   expiry               = last instalment date + 30d buffer (yyyy-MM-dd)
+  //                          — covers late-collection retries within the
+  //                          dunning ladder.
+  //   frequency            = '0001' (Mastercard scheme default meaning
+  //                          "monthly cadence"; our schedule is aligned to
+  //                          patient salary day, which is monthly).
+  //   numberOfInstallments = only sent when the value is in Peach's
+  //                          Budget Installment allowed set
+  //                          {0, 3, 6, 9, 12, 18, 24, 36}. Our 2-instalment
+  //                          plans are OMITTED — Peach's Budget Installment
+  //                          scheme doesn't offer a 2-count option, and
+  //                          omission is safe because type=INSTALLMENT
+  //                          already flags the credential as a fixed-term
+  //                          series.
+  //   recurringType        = NOT sent for type=INSTALLMENT. Peach reserves
+  //                          this field for type=RECURRING (SUBSCRIPTION
+  //                          vs STANDING_ORDER, i.e. open-ended series
+  //                          with fixed cadence). Our BNPL is closed-ended
+  //                          fixed-count → type=INSTALLMENT covers it.
+  const lastInstalmentDate = dates[dates.length - 1];
+  const expiryDate = new Date(lastInstalmentDate.getTime() + 30 * 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const numberOfInstallments = planType === 3 ? 3 : undefined;
+
   const provider = getPaymentProvider();
   let checkoutId: string;
   try {
@@ -444,10 +472,17 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       currency:              'ZAR',
       paymentType:           'DB',
       createRegistration:    true,   // remember the card for MIT retries
+      shopperResultUrl,
+      origin:                appUrl,
+      // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
+      // capture via the V2 embedded widget.
       standingInstruction: {
-        mode:   'INITIAL',           // Card-on-file: first CIT charge
-        source: 'CIT',
-        type:   'UNSCHEDULED',
+        mode:      'INITIAL',
+        source:    'CIT',
+        type:      'INSTALLMENT',
+        expiry:    expiryDate,
+        frequency: '0001',
+        ...(numberOfInstallments !== undefined ? { numberOfInstallments } : {}),
       },
       customer: {
         email:     normalizedEmail,
@@ -466,6 +501,14 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
   }
+
+  // Reconciliation convenience — the checkoutId is the browser-visible
+  // handle for this transaction; stamp it on the payment row so admin
+  // lookups by checkoutId find the right instalment.
+  await svc
+    .from('payments')
+    .update({ peach_checkout_id: checkoutId })
+    .eq('id', instalment1Id);
 
   // Stash the token in a cookie so the complete + done pages can read
   // it without depending on URL params alone. Cookie posture matches

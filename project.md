@@ -206,8 +206,12 @@ Environment variables live in `hnpl/.env.local` (never committed):
 ```
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...      # sensitive — server only
+SUPABASE_SERVICE_ROLE_KEY=...       # sensitive — server only
+NEXT_PUBLIC_GOOGLE_PLACES_KEY=...   # browser — Places API (New) — MUST be HTTP-referrer-restricted
+GOOGLE_GEOCODING_SERVER_KEY=...     # server only — Geocoding API — MUST NOT be referrer-restricted; used ONLY by /api/reverse-geocode
 ```
+
+The two Google keys are separate on purpose: the browser Places (New) key can be safely referrer-restricted; the legacy Geocoding REST endpoint (used server-side to turn a coord into a "Suburb, City" label) REJECTS referrer-restricted keys. Never mix them.
 
 ### Test accounts used during development
 - Patient: `test1@test.com` / `test1234`

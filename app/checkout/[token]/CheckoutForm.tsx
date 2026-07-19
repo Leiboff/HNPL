@@ -451,6 +451,7 @@ export default function CheckoutForm({
           </p>
           <PeachWidget
             checkoutId={widget.checkoutId}
+            entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={widget.shopperResultUrl}
           />
           <button

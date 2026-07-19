@@ -279,6 +279,7 @@ export default function ConfirmForm({
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <PeachWidget
             checkoutId={addCardWidget.checkoutId}
+            entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={addCardWidget.shopperResultUrl}
           />
           <button

@@ -7,14 +7,14 @@ import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 
-// ─── /checkout/[token]/complete — Peach COPYandPAY return route ─────
+// ─── /checkout/[token]/complete — Peach Checkout V2 return route ────
 //
-// The Peach widget POSTs to this URL when the payment completes and
-// appends ?resourcePath=/v1/checkouts/{id}/payment. We call GET on
-// that path to fetch the final status.
+// The V2 embedded widget navigates the browser here on completion and
+// appends ?checkoutId=<id>&status=completed. We call the V2 status API
+// with the id to fetch the final result.
 //
 // What this page does, idempotently:
-//   1. Fetch the checkout status via `resourcePath`.
+//   1. Fetch the checkout status via `checkoutId`.
 //   2. Classify the result code:
 //        SUCCESS  → save card + activate plan + redirect to /done
 //        PENDING  → show "we're still waiting"; the webhook will finish
@@ -80,9 +80,9 @@ export default async function CheckoutCompletePage({
 }) {
   const { token } = await params;
   const sp        = await searchParams;
-  const resourcePath = (sp.resourcePath ?? sp.resource_path) as string | undefined;
+  const checkoutId = sp.checkoutId as string | undefined;
 
-  if (!resourcePath) {
+  if (!checkoutId) {
     return <ErrorCard token={token} reason="We didn't get a payment reference back from the payment provider." />;
   }
 
@@ -90,7 +90,7 @@ export default async function CheckoutCompletePage({
   const provider = getPaymentProvider();
   let status: Awaited<ReturnType<typeof provider.getCheckoutStatus>>;
   try {
-    status = await provider.getCheckoutStatus(resourcePath);
+    status = await provider.getCheckoutStatus(checkoutId);
   } catch (err) {
     return (
       <ErrorCard
@@ -164,6 +164,17 @@ export default async function CheckoutCompletePage({
     .update({ peach_registration_id: status.registrationId })
     .eq('id', planId)
     .is('peach_registration_id', null);
+
+  // Store the initial transaction id — required for every subsequent
+  // MIT charge on this plan. status.providerPaymentId is the id of
+  // this CIT capture; save it as the plan's initialTransactionId.
+  if (status.providerPaymentId) {
+    await svc
+      .from('plans')
+      .update({ peach_initial_transaction_id: status.providerPaymentId })
+      .eq('id', planId)
+      .is('peach_initial_transaction_id', null);
+  }
 
   // Mark instalment #1 as collected (idempotent).
   await svc

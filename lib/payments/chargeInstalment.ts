@@ -1,5 +1,6 @@
 import { getPaymentProvider } from './provider';
 import { chargeAmountCents } from './dunning';
+import { instalmentAttemptRef } from './peach/refs';
 
 // ─── Atomic claim-and-charge for one installment (Peach MIT) ────────
 //
@@ -25,18 +26,24 @@ import { chargeAmountCents } from './dunning';
 //
 //   3. Peach charge. POST /v1/registrations/{registrationId}/payments
 //      with:
-//        entityId, amount (rands 2dp), currency=ZAR, paymentType=DB,
-//        merchantTransactionId=<reference>,
+//        entityId (recurring), amount (rands 2dp), currency=ZAR,
+//        paymentType=DB, merchantTransactionId=<reference>,
 //        standingInstruction.mode=REPEATED,
 //        standingInstruction.source=MIT,
-//        standingInstruction.type=UNSCHEDULED
+//        standingInstruction.type=INSTALLMENT (or UNSCHEDULED fallback
+//          when initialTransactionId isn't available),
+//        standingInstruction.initialTransactionId=<plan's initial>
 //      A transport-level error (network / Peach 5xx) leaves the row
 //      in 'processing' — we do NOT know whether the charge reached
 //      Peach, so reverting to 'failed' could cause a double-charge
 //      on the next retry.
 //
-//   4. Definitive outcome via webhook. A card decline arrives on the
-//      Peach webhook (NOT here); the handler advances the ladder.
+//   4. Definitive outcome from the SYNCHRONOUS response. Since 0077
+//      we're on the recurring API which returns a definitive
+//      result.code inline — the provider adapter classifies it into
+//      success/pending/rejected/error and the webhook is a bonus
+//      reconciliation channel (same handlers, guarded by status
+//      preconditions).
 //
 // Retry cap: MAX_ATTEMPTS = 6 (natural dunning-ladder maximum).
 
@@ -87,11 +94,14 @@ export async function attemptChargeInstalment(
     return { kind: 'claim_lost', paymentId, reason: 'not_eligible' };
   }
 
-  // Reference — same format as before the Peach swap; the Peach webhook
-  // echoes it back as `merchantTransactionId`. We write it into
-  // peach_payment_id (already-generic name) so webhook lookup keeps
-  // working unchanged.
-  const reference = `hnpl_${paymentId.replace(/-/g, '').slice(0, 16)}_a${nextAttempt}`;
+  // Compact 16-char Peach ref (Visa/Mastercard 3DS2 mandate limits
+  // merchantTransactionId to ≤16 chars). Deterministic per (payment,
+  // attempt): re-entering the same attempt regenerates the same ref
+  // so Peach dedups if we happen to double-fire mid-flight; a fresh
+  // attempt gets a fresh ref. Persisted in payments.peach_payment_id
+  // for webhook echoback reconciliation — that column is provider-
+  // neutral by design (0076 comment).
+  const reference = instalmentAttemptRef(paymentId, nextAttempt);
 
   // ── 2. Atomic claim.
   const allowedStatuses = selfSettle
@@ -138,9 +148,12 @@ export async function attemptChargeInstalment(
   }
 
   // ── 3. Plan lookup — Peach registration id is now the reusable token.
+  //       peach_initial_transaction_id is required for INSTALLMENT-type
+  //       MIT charges (0077); we fall back to UNSCHEDULED when it's
+  //       missing so cards tokenised before the migration still work.
   const { data: plan } = await svc
     .from('plans')
-    .select('peach_registration_id, patient_id, status, payment_provider')
+    .select('peach_registration_id, peach_initial_transaction_id, patient_id, status, payment_provider')
     .eq('id', current.plan_id)
     .maybeSingle();
 
@@ -168,17 +181,32 @@ export async function attemptChargeInstalment(
   //       throw / status='error') leaves the row in 'processing'.
   const amountChargedCents = chargeAmountCents(Number(current.amount), previousFees);
 
+  // Standing instruction for a fixed-instalment MIT charge:
+  //
+  //   INSTALLMENT + initialTransactionId when the plan has captured
+  //   its initial CIT transaction id (populated by the Checkout V2
+  //   return route + webhook, and by payWithSavedCard on first success).
+  //
+  //   UNSCHEDULED fallback when initialTransactionId is null — this
+  //   applies to cards tokenised before 0077 landed, and to plans
+  //   using a card previously registered via the "add card" flow that
+  //   haven't yet made their first successful MIT charge.
+  //
+  // TODO(dina): once every active plan has peach_initial_transaction_id
+  // backfilled from historic webhook data, tighten this to require the
+  // INSTALLMENT branch and treat missing initial as a claim-lost.
+  const initial = (plan as { peach_initial_transaction_id?: string | null }).peach_initial_transaction_id ?? null;
+  const standingInstruction = initial
+    ? { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'INSTALLMENT' as const, initialTransactionId: initial }
+    : { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'UNSCHEDULED' as const };
+
   const provider = getPaymentProvider();
   const result = await provider.chargeSavedCard({
     registrationId:        plan.peach_registration_id,
     amountCents:           amountChargedCents,
     merchantTransactionId: reference,
     currency:              'ZAR',
-    standingInstruction: {
-      mode:   'REPEATED',
-      source: 'MIT',
-      type:   'UNSCHEDULED',
-    },
+    standingInstruction,
   });
 
   if (result.status === 'error') {

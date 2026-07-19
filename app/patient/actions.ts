@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
+import { checkoutRef, registrationRef } from '@/lib/payments/peach/refs';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
@@ -173,7 +174,7 @@ export async function initializeFirstPayment(
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status')
+    .select('id, status, plan_type')
     .eq('id', planId)
     .eq('patient_id', user.id)
     .eq('status', 'pending_first_payment')
@@ -191,6 +192,16 @@ export async function initializeFirstPayment(
 
   if (!payment) return { error: 'First instalment not found.' };
 
+  // Last instalment's due_date drives standingInstruction.expiry.
+  const { data: lastInstalment } = await supabase
+    .from('payments')
+    .select('due_date')
+    .eq('plan_id', planId)
+    .eq('kind', 'instalment')
+    .order('instalment_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('email, first_name, last_name')
@@ -199,13 +210,21 @@ export async function initializeFirstPayment(
 
   if (!profile?.email) return { error: 'Account email not found.' };
 
-  // Server-computed amount. Reference is stable + attempt-independent so
-  // the Peach webhook can find the payment row on the resulting
-  // PAYMENT.<code> event.
-  const reference   = `hnpl_${payment.id.replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char peach ref. Deterministic per instalment-1 id so
+  // retries Peach-dedup.
+  const reference   = checkoutRef(payment.id);
   const amountCents = Math.round(Number(payment.amount) * 100);
   const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
   const shopperResultUrl = `${appUrl}/patient/payment-complete`;
+
+  // Flow A standingInstruction fields — see checkout/actions.ts for
+  // the design comment. Same rationale here.
+  const lastDueDate = lastInstalment?.due_date as string | undefined;
+  const expiryDate = lastDueDate
+    ? new Date(new Date(lastDueDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    : '9999-12-31'; // Mastercard scheme default when unknown
+  const planType = plan.plan_type as 2 | 3 | null;
+  const numberOfInstallments = planType === 3 ? 3 : undefined;
 
   const provider = getPaymentProvider();
   let checkoutId: string;
@@ -216,10 +235,17 @@ export async function initializeFirstPayment(
       currency:              'ZAR',
       paymentType:           'DB',
       createRegistration:    true,
+      shopperResultUrl,
+      origin:                appUrl,
+      // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
+      // capture. The V2 embedded widget handles 3DS in-page.
       standingInstruction: {
-        mode:   'INITIAL',
-        source: 'CIT',
-        type:   'UNSCHEDULED',
+        mode:      'INITIAL',
+        source:    'CIT',
+        type:      'INSTALLMENT',
+        expiry:    expiryDate,
+        frequency: '0001',
+        ...(numberOfInstallments !== undefined ? { numberOfInstallments } : {}),
       },
       customer: {
         email:     profile.email,
@@ -238,7 +264,7 @@ export async function initializeFirstPayment(
 
   const { error: updateError } = await supabase
     .from('payments')
-    .update({ peach_payment_id: reference })
+    .update({ peach_payment_id: reference, peach_checkout_id: checkoutId })
     .eq('id', payment.id)
     .eq('patient_id', user.id);
 
@@ -266,7 +292,10 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
 
   if (!profile?.email) return { error: 'Account email not found.' };
 
-  const reference = `hnpl_reg_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char peach ref. Random per-attempt (no natural
+  // deterministic seed — patient can add many cards on the same
+  // account, and each attempt should get a fresh unique ref).
+  const reference = registrationRef(crypto.randomUUID());
   const appUrl    = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
 
   const safePath = (returnTo && returnTo.startsWith('/'))
@@ -274,15 +303,28 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
     : '/patient/payment-methods/complete';
   const shopperResultUrl = `${appUrl}${safePath}`;
 
+  // Flow B — zero-amount card verification. Peach V2 recipe:
+  //   amountCents=0, paymentType='PA', createRegistration=true,
+  //   defaultPaymentMethod='CARD', forceDefaultMethod=true.
+  //
+  // The PA is a scheme-standard card-verification authorisation with
+  // no funds captured. It auto-expires on the card issuer's normal
+  // authorisation-expiry schedule (Visa/Mastercard 7-30 days) with
+  // NO capture required — we do NOT need to issue an explicit RV
+  // (reversal) afterwards. The cardholder never sees a debit or a
+  // pending hold that would need visible undoing.
   const provider = getPaymentProvider();
   try {
     const checkout = await provider.createCheckout({
-      // Registration-only: no amount, no paymentType. OPPWA creates the
-      // stored credential without a debit. Old Paystack flow required a
-      // R1 charge + refund; Peach makes this a first-class capability.
       amountCents:           0,
       merchantTransactionId: reference,
+      currency:              'ZAR',
+      paymentType:           'PA',
       createRegistration:    true,
+      defaultPaymentMethod:  'CARD',
+      forceDefaultMethod:    true,
+      shopperResultUrl,
+      origin:                appUrl,
       customer: {
         email:     profile.email,
         givenName: profile.first_name ?? null,
@@ -417,7 +459,10 @@ export async function payWithSavedCard(
 
   // Reference stamped on the payment row BEFORE the charge so the
   // Peach webhook can reconcile even if our process crashes mid-flight.
-  const reference = `hnpl_pay_${instalment1Id.replace(/-/g, '').slice(0, 20)}`;
+  // Compact 16-char ref per Peach V2 mandate; this is a Flow-C-style
+  // MIT charge but seeded off the instalment-1 id (not attempt-based —
+  // there's no attempt counter here, it's a one-shot silent charge).
+  const reference = checkoutRef(instalment1Id);
 
   const { error: refErr } = await supabase
     .from('payments')
@@ -439,6 +484,12 @@ export async function payWithSavedCard(
   // same column so this works uniformly.
   const amountCents = Math.round(instalments[0] * 100);
 
+  // No plan-level initialTransactionId yet — this is the very first
+  // MIT charge on this plan/card combination. UNSCHEDULED is Peach's
+  // recommended type when the stored credential has no initial
+  // reference to link to. On success we capture the payment id below
+  // and stamp it as plan.peach_initial_transaction_id so subsequent
+  // instalments upgrade to INSTALLMENT + initialTransactionId.
   const provider = getPaymentProvider();
   const chargeResult = await provider.chargeSavedCard({
     registrationId:        paymentMethod.token,
@@ -446,7 +497,7 @@ export async function payWithSavedCard(
     merchantTransactionId: reference,
     currency:              'ZAR',
     standingInstruction: {
-      mode:   'REPEATED',   // Subsequent charge on an already-stored card
+      mode:   'REPEATED',
       source: 'MIT',
       type:   'UNSCHEDULED',
     },
@@ -460,16 +511,40 @@ export async function payWithSavedCard(
     return { error: chargeResult.resultDescription ?? 'Card was declined. Please try a different card.' };
   }
 
-  // Also stamp the plan with the reusable registration id so the
-  // collections cron can find it — the webhook does this too, so the
-  // write is idempotent (IS DISTINCT FROM would be nice but the
-  // constraint is not there today).
+  // Stamp the reusable registration id (idempotent — the webhook may
+  // land the same value in parallel).
   await supabase
     .from('plans')
     .update({ peach_registration_id: paymentMethod.token })
     .eq('id', planId)
     .eq('patient_id', user.id)
     .is('peach_registration_id', null);
+
+  // Stamp peach_initial_transaction_id ONLY from Peach's echoed chain
+  // root (standingInstruction.initialTransactionId on the MIT response).
+  // Do NOT fall back to chargeResult.providerPaymentId — that is THIS
+  // MIT's own id, not the CIT root that established the credential.
+  // Threading an MIT-typed id as a later charge's `initialTransactionId`
+  // is a compliance-shaped bug: Peach validates the reference against
+  // the stored chain and rejects it, and because every writer of this
+  // column is .is(...null)-guarded (write-once) the wrong value would
+  // be locked in permanently.
+  //
+  // When the echo is absent, LEAVE THE COLUMN NULL. chargeInstalment
+  // and settle-actions both fall back safely to UNSCHEDULED when
+  // initialTransactionId is null — no data is better than wrong data.
+  //
+  // TODO(dina): confirm in sandbox which exact field Peach returns as
+  // the valid initialTransactionId, and whether payWithSavedCard
+  // should be REPEATED/CIT (customer present) rather than REPEATED/MIT.
+  if (chargeResult.initialTransactionId) {
+    await supabase
+      .from('plans')
+      .update({ peach_initial_transaction_id: chargeResult.initialTransactionId })
+      .eq('id', planId)
+      .eq('patient_id', user.id)
+      .is('peach_initial_transaction_id', null);
+  }
 
   // Charge is in-flight (pending) or succeeded — the webhook will
   // activate the plan on the terminal PAYMENT event.
