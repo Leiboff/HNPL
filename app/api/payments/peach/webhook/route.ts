@@ -793,14 +793,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Body did not parse as JSON' }, { status: 400 });
     }
 
-    // Prominent, greppable log. Vercel devs can search for "PEACH
-    // WEBHOOK VERIFICATION CODE" in the function logs and paste the
-    // value straight into the Dashboard.
+    // Prominent, greppable log lines. Peach does NOT document which
+    // field carries the verification code on the initial probe, so
+    // extracting a specific field would risk logging "undefined" if
+    // the guess is wrong — leaving us unable to register without a
+    // redeploy. Instead we dump the whole parsed body in TWO forms:
     //
-    // We dump the full body because the exact field name Peach uses
-    // for the verification token isn't documented — dumping the whole
-    // object avoids depending on a guess.
+    //   PEACH WEBHOOK VERIFICATION CODE: <single-line JSON>
+    //     — one greppable line, useful for log-searching.
+    //
+    //   PEACH WEBHOOK PROBE BODY:
+    //   <pretty-printed multi-line JSON>
+    //     — readable dump, useful for eyeballing the object even when
+    //       the field name is unfamiliar.
+    //
+    // The probe carries setup metadata, NOT card data — redacting
+    // nothing is safe here. Do NOT copy this pattern to the event
+    // path (which does carry card fingerprints).
     console.log('PEACH WEBHOOK VERIFICATION CODE:', JSON.stringify(parsed));
+    console.log('PEACH WEBHOOK PROBE BODY:\n' + JSON.stringify(parsed, null, 2));
     console.log('[peach-webhook] verification probe: full JSON body logged above.');
 
     // Optional: if signature headers are present, verify them and log

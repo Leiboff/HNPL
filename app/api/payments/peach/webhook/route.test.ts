@@ -143,6 +143,34 @@ describe('POST /api/payments/peach/webhook — JSON verification probe', () => {
     logSpy.mockRestore();
   });
 
+  it('also logs the ENTIRE parsed probe body under a PEACH WEBHOOK PROBE BODY prefix (whatever the code field is called)', async () => {
+    // The field name Peach uses for the verification code isn't
+    // documented — dumping the whole body under a second, pretty-
+    // printed prefix guarantees the code is findable in Vercel logs
+    // even if it's named something we didn't anticipate.
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // Use a field name we WOULDN'T have hardcoded — pins that we're
+    // not extracting a specific key.
+    const body = JSON.stringify({
+      unexpectedFieldName: 'CODE-XYZ',
+      nested: { anotherOddName: 'inner-value' },
+    });
+    const req = makeJsonRequest(body);
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const emitted = logSpy.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    expect(emitted).toContain('PEACH WEBHOOK PROBE BODY');
+    // Every value from the body must appear — no field extraction.
+    expect(emitted).toContain('CODE-XYZ');
+    expect(emitted).toContain('unexpectedFieldName');
+    expect(emitted).toContain('anotherOddName');
+    expect(emitted).toContain('inner-value');
+    // Never the string "undefined" from an extraction miss.
+    expect(emitted).not.toMatch(/PEACH WEBHOOK[^\n]*undefined/);
+    logSpy.mockRestore();
+  });
+
   it('still returns 200 when PEACH_CHECKOUT_SECRET_TOKEN is unset (chicken-and-egg)', async () => {
     delete process.env.PEACH_CHECKOUT_SECRET_TOKEN;
     const req = makeJsonRequest(JSON.stringify({ code: 'VERIFY-99' }));
