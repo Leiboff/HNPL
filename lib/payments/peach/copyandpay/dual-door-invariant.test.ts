@@ -102,6 +102,32 @@ describe('Flow B (card-vault) — uses COPYandPAY, not Checkout V2', () => {
     expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD REQUEST:');
     expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD RESPONSE:');
   });
+
+  it('payWithSavedCard wraps DB-write region in try/catch with rollback (2026-07-21 fix)', () => {
+    // Root cause of the perpetual "Charging…" state: no safety net
+    // between the payment INSERT (status='processing') and the
+    // chargeSavedCard call. Any throw or timeout in that window
+    // left the plan at pending_first_payment with an orphan
+    // processing payment row and no charge attempt.
+    //
+    // The fix:
+    //   • try/catch wrapping the whole write region
+    //   • rollbackPlanState() helper that deletes payments + resets
+    //     the plan to pending_acceptance
+    //   • step-tagged logs (STEP 1 .. STEP 6) so a future stall is
+    //     unambiguous in Vercel logs
+    //   • empty-token short-circuit so a null registrationId returns
+    //     an actionable error instead of a Peach 404 stall
+    expect(PATIENT_ACTIONS).toContain('rollbackPlanState');
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD UNCAUGHT:');
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD STEP 1 PLAN UPDATE');
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD STEP 2 PAYMENTS INSERT');
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD STEP 3 REF STAMP');
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD ROLLBACK:');
+    // Empty-token short-circuit: match the specific catch-and-rollback
+    // pattern, not the same string in a code comment.
+    expect(PATIENT_ACTIONS).toMatch(/if\s*\(!paymentMethod\.token\)/);
+  });
 });
 
 // ─── Invariant 2: COPYandPAY module quarantined from V2 ────────────
