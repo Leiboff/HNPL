@@ -3,11 +3,16 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+// Desktop sidebar labels are aligned with PatientBottomNav so the same
+// route reads the same in both viewports — the mobile tab is "Cards",
+// so the desktop entry is too. Previously "Payment Methods" on desktop
+// while mobile said "Cards" — visually the desktop link looked absent
+// to anyone scanning for the "Cards" affordance.
 const NAV_LINKS = [
   { href: '/patient',                 label: 'Dashboard'       },
   { href: '/patient/orders',          label: 'Orders'          },
   { href: '/patient/explore',         label: 'Find a Practice' },
-  { href: '/patient/payment-methods', label: 'Payment Methods' },
+  { href: '/patient/payment-methods', label: 'Cards'           },
   { href: '/patient/profile',         label: 'Profile'         },
 ];
 
