@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import PeachCopyAndPayWidget from '@/app/_components/PeachCopyAndPayWidget';
 import type {
   CardRow,
@@ -75,13 +75,29 @@ export default function PaymentMethods({
   changeDefaultCard,
   removeCard,
 }: Props) {
-  const router = useRouter();
+  const router       = useRouter();
+  const searchParams = useSearchParams();
 
   const [cards,   setCards]   = useState<CardRow[]>(initialCards);
   const [confirm, setConfirm] = useState<Confirm>({ kind: 'none' });
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [notice,  setNotice]  = useState<string | null>(null);
+
+  // ── ?added=added|already banner from the COPYandPAY return route ──
+  //     The return route uses server-side `redirect(...)` on success
+  //     so the browser lands here with the flag. Shown once per
+  //     navigation; the effect strips the query param after reading.
+  useEffect(() => {
+    const flag = searchParams.get('added');
+    if (!flag) return;
+    setNotice(flag === 'already' ? 'This card is already saved.' : 'Card added successfully.');
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('added');
+    const qs = params.toString();
+    router.replace(qs ? `/patient/payment-methods?${qs}` : '/patient/payment-methods');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Add-card button state
   const [addLoading, setAddLoading] = useState(false);

@@ -179,9 +179,11 @@ type PeachCard = {
 type PeachRegistrationBody = {
   id?:                    string;
   merchantTransactionId?: string;
+  amount?:                string;
   result?:                PeachResult;
   card?:                  PeachCard;
   registrationId?:        string;
+  paymentBrand?:          string;
   paymentType?:           string;
   customParameters?:      Record<string, string>;
 };
@@ -191,17 +193,59 @@ type CheckoutCreateResponse = {
   result?:   PeachResult;
 };
 
+// ─── Registration-id extraction — the load-bearing bit ─────────────
+//
+// Peach OPPWA returns TWO different response shapes on the checkout-
+// status GET, both with a top-level `id`:
+//
+//   Payment-with-createRegistration (Flow A never uses this door):
+//     { id: "<payment-transaction-id>",
+//       registrationId: "<reusable-token>", ...amount, currency }
+//     → the token lives under `registrationId`.
+//
+//   Registration-only (Flow B — this file):
+//     { id: "<reusable-token>",
+//       paymentBrand, result, card, customer, ... }   // NO `registrationId`
+//     → per the Peach registration-tokens reference, the top-level
+//       `id` IS the reusable token; there is no separate
+//       `registrationId` field.
+//
+// Reading only `body.registrationId` (as we did originally) silently
+// returned undefined on every successful vault, which flowed through
+// the return route as "Peach didn't return a stored registration" →
+// FailureCard → user clicks "Try again" → same resourcePath → same
+// failure. That's the loop the users saw.
+//
+// Rule of thumb: prefer `registrationId` when Peach gave us both
+// (payment case, defensive — we don't own that call today but keep
+// the codepath honest); fall back to `id` when it's absent AND the
+// response looks registration-shaped (has a card, no amount).
+function pickRegistrationId(body: PeachRegistrationBody): string | undefined {
+  if (body.registrationId) return body.registrationId;
+  const looksLikeRegistrationOnly = body.card !== undefined && !body.amount;
+  if (looksLikeRegistrationOnly && body.id) return body.id;
+  return undefined;
+}
+
 function toPaymentStatus(body: PeachRegistrationBody): PaymentStatus {
-  const code = body.result?.code;
+  const code           = body.result?.code;
+  const registrationId = pickRegistrationId(body);
   return {
     status:                classifyResultCode(code),
-    providerPaymentId:     body.id,
+    // On a registration-only response `id` IS the registrationId, so
+    // exposing it under `providerPaymentId` would be misleading —
+    // there's no separate transaction to look up. When we picked `id`
+    // as the registration token, leave providerPaymentId undefined.
+    providerPaymentId:     body.registrationId ? body.id : undefined,
     merchantTransactionId: body.merchantTransactionId,
     resultCode:            code,
     resultDescription:     body.result?.description,
-    registrationId:        body.registrationId,
+    registrationId,
     card: body.card ? {
-      brand:       body.card.paymentBrand ?? null,
+      // paymentBrand can live on the card OR at the top level in Peach
+      // responses; the top-level copy is what the registration-only
+      // reference documents. Prefer whichever is present.
+      brand:       body.card.paymentBrand ?? body.paymentBrand ?? null,
       last4:       body.card.last4Digits  ?? null,
       expiryMonth: body.card.expiryMonth  ? Number(body.card.expiryMonth) : null,
       expiryYear:  body.card.expiryYear   ? Number(body.card.expiryYear)  : null,
@@ -282,23 +326,43 @@ export async function createCardRegistration(
 /**
  * Fetch the status of a COPYandPAY checkout after the widget returns.
  *
- * Peach appends the resourcePath onto the shopperResultUrl as
- * `?resourcePath=/v1/checkouts/{id}/payment` (same suffix as a
- * payment status — the docs and our own working code confirm
- * `/payment` is used for BOTH payments and registrations). The
- * successful response body carries `registrationId` + `card` + a
- * result code we classify via classifyResultCode.
+ * Peach appends the resourcePath onto the shopperResultUrl. Two
+ * distinct suffixes, one per shape:
+ *   • REGISTRATION-ONLY (Flow B — this door):
+ *       ?resourcePath=/v1/checkouts/{id}/registration
+ *     Response shape has TOP-LEVEL `id` = the reusable token,
+ *     `paymentBrand`, `result`, `card`, `customer`, `customParameters`,
+ *     `risk`, `buildNumber`, `timestamp`, `ndc` — with NO separate
+ *     `registrationId` field. (Docs: oppwa-integrations-copyandpay-
+ *     registration-tokens.)
+ *   • PAYMENT (with or without createRegistration):
+ *       ?resourcePath=/v1/checkouts/{id}/payment
+ *     Response carries transaction `id`, plus `registrationId` when
+ *     createRegistration was requested.
+ *
+ * We forward whichever suffix the widget hands us — the Peach GET
+ * accepts both — and lean on pickRegistrationId() to normalise.
+ *
+ * The raw response is logged under "PEACH REG STATUS RESPONSE:" so
+ * any future shape drift shows up in the logs directly.
  */
 export async function getCardRegistrationStatus(resourcePath: string): Promise<PaymentStatus> {
   const normalisedPath = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
   const sep  = normalisedPath.includes('?') ? '&' : '?';
   const path = `${normalisedPath}${sep}entityId=${encodeURIComponent(recurringEntity())}`;
   const res  = await copyAndPayFetch('GET', path) as PeachRegistrationBody;
-  return toPaymentStatus(res);
+  const parsed = toPaymentStatus(res);
+  console.log('PEACH REG STATUS RESPONSE:', {
+    resourcePath,
+    resolvedRegistrationId: parsed.registrationId,
+    resultCode:             parsed.resultCode,
+    body:                   res,
+  });
+  return parsed;
 }
 
 // Exported for tests only.
-export const __internals = { toFormBody, toCustomParametersBody, toPaymentStatus };
+export const __internals = { toFormBody, toCustomParametersBody, toPaymentStatus, pickRegistrationId };
 // Nod to crypto so a linter doesn't strip the import; used by callers
 // via crypto.randomUUID passed into mintPeachRef seeds.
 void crypto;
