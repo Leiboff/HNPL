@@ -82,6 +82,15 @@ describe('Flow B (card-vault) — uses COPYandPAY, not Checkout V2', () => {
     expect(PAYMENT_METHODS_RETURN).not.toMatch(/provider\.getCheckoutStatus\(/);
     expect(PAYMENT_METHODS_RETURN).not.toMatch(/await\s+provider\.getCheckoutStatus/);
   });
+
+  it('card-add return route uses server-side redirect on success (no re-entry into widget)', () => {
+    // Server-side `redirect(...)` throws NEXT_REDIRECT — the browser
+    // navigates to /patient/payment-methods without a client-side
+    // link click. Guards against the perceived "widget loop" where
+    // a broken success path re-rendered the failure card.
+    expect(PAYMENT_METHODS_RETURN).toContain("from 'next/navigation'");
+    expect(PAYMENT_METHODS_RETURN).toMatch(/redirect\(`\/patient\/payment-methods\?added=/);
+  });
 });
 
 // ─── Invariant 2: COPYandPAY module quarantined from V2 ────────────
@@ -114,12 +123,57 @@ describe('COPYandPAY module — zero V2 imports / paths / env vars', () => {
     expect(COPYANDPAY_WIDGET).toContain('paymentWidgets.js');
   });
 
+  it('COPYandPAY widget hides the dated brand-chip row (defect 3 fix)', () => {
+    // Brand detection stays on (BIN-based); the visual chips are
+    // hidden via page CSS since paymentWidgets renders them outside
+    // its own iframe.
+    expect(COPYANDPAY_WIDGET).toContain('brandDetection: true');
+    expect(COPYANDPAY_WIDGET).toContain('wpwl-container-brand');
+    expect(COPYANDPAY_WIDGET).toContain('display: none');
+  });
+
+  it('COPYandPAY widget skins the submit button with our brand gradient (defect 3 fix)', () => {
+    expect(COPYANDPAY_WIDGET).toContain('.wpwl-button-pay');
+    expect(COPYANDPAY_WIDGET).toContain('#13294B');
+    expect(COPYANDPAY_WIDGET).toContain('#15A89E');
+  });
+
   it('the V2 widget stays purchase-shaped (uses checkout.js), COPYandPAY widget stays vault-shaped', () => {
     // The two components should be visibly distinct.
     expect(V2_WIDGET).toContain('checkout.js');
     expect(V2_WIDGET).not.toContain('paymentWidgets.js');
     expect(COPYANDPAY_WIDGET).toContain('paymentWidgets.js');
     expect(COPYANDPAY_WIDGET).not.toContain('checkout.js');
+  });
+});
+
+// ─── Fix pin: registration-only response shape handling ────────────
+//
+// Defect 1 fix — pickRegistrationId must fall back to `body.id` for
+// a registration-only response (which has no separate
+// `registrationId` field per Peach docs). These pins protect against
+// a re-regression to the "only reads registrationId" behaviour that
+// caused the widget-loop.
+
+describe('registration.ts — registration-only response fallback (Defect 1 fix)', () => {
+  it('exports pickRegistrationId + toPaymentStatus for testing', () => {
+    expect(COPYANDPAY_REGISTRATION).toContain('pickRegistrationId');
+    expect(COPYANDPAY_REGISTRATION).toContain('toPaymentStatus');
+  });
+
+  it('pickRegistrationId body falls back to body.id when registrationId is absent', () => {
+    // Grep for the fallback pattern — source-shape pin.
+    const fnStart = COPYANDPAY_REGISTRATION.indexOf('function pickRegistrationId');
+    expect(fnStart).toBeGreaterThan(0);
+    const body = COPYANDPAY_REGISTRATION.slice(fnStart, fnStart + 600);
+    // Prefer registrationId first.
+    expect(body).toContain('body.registrationId');
+    // Fall back to body.id under a registration-only shape guard.
+    expect(body).toContain('body.id');
+  });
+
+  it('return route logs the raw response under the greppable PEACH REG STATUS tag', () => {
+    expect(COPYANDPAY_REGISTRATION).toContain('PEACH REG STATUS RESPONSE');
   });
 });
 

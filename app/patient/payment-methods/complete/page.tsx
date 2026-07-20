@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { getPaymentProvider } from '@/lib/payments/provider';
@@ -10,11 +11,22 @@ import PollingConfirmation from './PollingConfirmation';
 //
 // Registration-only checkout (Flow B — dual-door architecture; see
 // lib/payments/peach/copyandpay/registration.ts). No debit, no PA
-// hold, no refund. On return the COPYandPAY widget POSTs to
-// shopperResultUrl with ?resourcePath=/v1/checkouts/{id}/payment
-// appended; we GET that path (via provider.getCardRegistrationStatus)
-// to discover the newly-created registrationId + card metadata, then
-// save the payment_methods row idempotently.
+// hold, no refund. On return the COPYandPAY widget navigates the
+// browser to `shopperResultUrl?resourcePath=/v1/checkouts/{id}/registration`
+// (note: the `/registration` suffix is what Peach's own docs specify
+// for a REGISTRATION-ONLY checkout — a paying checkout would use
+// `/payment` instead; we accept either shape since the same GET
+// endpoint answers both). We fetch the status via
+// provider.getCardRegistrationStatus to discover the newly-created
+// registrationId + card metadata, then save the payment_methods row
+// idempotently.
+//
+// Idempotency posture: `saveCardForPatient` dedupes on the synthetic
+// fingerprint (brand + last4 + expiry) — hitting this URL twice for
+// the same card returns `kind: 'already_saved'` cleanly. The fast
+// path below (recent-card lookup) short-circuits the second visit
+// without even a Peach round-trip when the webhook or a prior render
+// has already landed the row.
 //
 // This route is Flow B ONLY. Flow A's return route lives at
 // app/checkout/[token]/complete/page.tsx (uses Checkout V2 status
@@ -139,9 +151,12 @@ export default async function CardRegistrationCompletePage({
   const { data: { user } } = await supabaseUser.auth.getUser();
   const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-  // ── 1. Fast path: the webhook may have already written the row ────
-  //     (Registration-only has no webhook — this path is a defence-
-  //      in-depth for when a browser refresh double-fires the return.)
+  // ── 1. Fast path (idempotency) — recent card already on file ──────
+  //     If the user hit refresh, back-button, or "Try again" after a
+  //     successful save, we short-circuit here with the SuccessCard
+  //     BEFORE re-calling Peach. The window is 5 minutes; the
+  //     fingerprint dedup in saveCardForPatient covers any collisions
+  //     outside that window.
   if (user) {
     const { data: recentCard } = await supabaseUser
       .from('payment_methods')
@@ -158,8 +173,10 @@ export default async function CardRegistrationCompletePage({
   }
 
   // ── 2. Primary path: ask Peach for the registration status ────────
-  //     COPYandPAY resourcePath = /v1/checkouts/{id}/payment
-  //     (same suffix as a payment status).
+  //     resourcePath for a Flow B registration-only completion is
+  //     `/v1/checkouts/{id}/registration` (per Peach docs). We also
+  //     accept `/v1/checkouts/{id}/payment` from the widget without
+  //     rewriting — the GET endpoint answers both suffixes.
   const provider = getPaymentProvider();
   let status: Awaited<ReturnType<typeof provider.getCardRegistrationStatus>>;
   try {
@@ -170,6 +187,11 @@ export default async function CardRegistrationCompletePage({
   }
 
   const classified = classifyResultCode(status.resultCode);
+  // 000.200.* etc. → the acquirer is still working. Show the polling
+  // view; we DO NOT redirect back into the widget on this branch. The
+  // polling component watches for the payment_methods row (webhook or
+  // eventual completion of the pending path) and flips to Success or
+  // Timeout on its own.
   if (classified === 'pending') {
     return <PollingConfirmation since={since} reference={resourcePath} />;
   }
@@ -230,17 +252,13 @@ export default async function CardRegistrationCompletePage({
     return <FailureCard resourcePath={resourcePath} reason={result.message} />;
   }
 
-  const { data: row } = await svc
-    .from('payment_methods')
-    .select('card_brand, last_four')
-    .eq('id', result.cardId)
-    .single();
-
-  return (
-    <SuccessCard
-      brand={row?.card_brand}
-      lastFour={row?.last_four}
-      alreadySaved={result.kind === 'already_saved'}
-    />
-  );
+  // ── 5. Redirect to the cards list ─────────────────────────────────
+  //     Server-side 3xx redirect. The browser navigates to
+  //     /patient/payment-methods with a query flag so the client can
+  //     surface a "Card added" toast without re-entering the widget.
+  //     redirect() throws NEXT_REDIRECT and unwinds the render — no
+  //     further JSX from this file runs after this line, so the widget
+  //     panel doesn't get another opportunity to reopen.
+  const flag = result.kind === 'already_saved' ? 'already' : 'added';
+  redirect(`/patient/payment-methods?added=${flag}`);
 }

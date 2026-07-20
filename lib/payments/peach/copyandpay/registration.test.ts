@@ -4,6 +4,7 @@ import {
   getCardRegistrationStatus,
   __internals,
 } from './registration';
+import { classifyResultCode } from '../resultCodes';
 
 // ─── COPYandPAY registration-only vault — request/response tests ────
 //
@@ -217,5 +218,184 @@ describe('__internals.toFormBody — dotted-name nesting for nested objects', ()
     expect(body).toContain('customer.email=x%40y.com');
     expect(body).toContain('customer.givenName=A');
     expect(body).not.toContain('standing=');
+  });
+});
+
+// ─── Registration-only response shape (Defect 1 regression pin) ─────
+//
+// Ground truth from Peach docs (oppwa-integrations-copyandpay-
+// registration-tokens): for a REGISTRATION-ONLY checkout the status
+// response has TOP-LEVEL `id` as the reusable token, `paymentBrand`
+// alongside `card`, and NO separate `registrationId` field.
+//
+// Prior impl read only body.registrationId → undefined for every
+// successful vault → FailureCard → "Try again" → same URL → loop.
+// These tests pin the fix so a regression here surfaces as a red
+// build, not a shipped loop.
+
+describe('pickRegistrationId + toPaymentStatus — REGISTRATION-ONLY response', () => {
+  it('extracts body.id as registrationId when registrationId is absent (top-level `id` IS the token per Peach docs)', () => {
+    // Exact response shape documented for a standalone tokenisation
+    // (no amount, createRegistration=true).
+    const body = {
+      id:           '8ac7a49f9d1f9917019d206be0530e48',
+      paymentBrand: 'VISA',
+      result:       { code: '000.100.110', description: 'Request successfully processed' },
+      card: {
+        bin:          '424242',
+        last4Digits:  '4242',
+        holder:       'Alice Test',
+        expiryMonth:  '12',
+        expiryYear:   '2030',
+        paymentBrand: 'VISA',
+      },
+      customer:         { email: 'alice@example.com' },
+      customParameters: { SHOPPER_purpose: 'card_registration', SHOPPER_patientId: 'user-1' },
+      risk:             { score: '0' },
+      buildNumber:      '5b74123',
+      timestamp:        '2026-07-20 12:00:00+0000',
+      ndc:              'nonce-abc',
+    };
+    const picked = __internals.pickRegistrationId(body);
+    expect(picked).toBe('8ac7a49f9d1f9917019d206be0530e48');
+
+    const status = __internals.toPaymentStatus(body);
+    expect(status.status).toBe('success');
+    expect(status.registrationId).toBe('8ac7a49f9d1f9917019d206be0530e48');
+    // When we pick `id` as the registration, providerPaymentId must be
+    // undefined — there's no separate transaction to look up.
+    expect(status.providerPaymentId).toBeUndefined();
+    expect(status.card?.brand).toBe('VISA');
+    expect(status.card?.last4).toBe('4242');
+    expect(status.card?.expiryMonth).toBe(12);
+    expect(status.card?.expiryYear).toBe(2030);
+  });
+
+  it('prefers registrationId when both id and registrationId are present (payment-with-createRegistration shape)', () => {
+    // The other side of the coin — a paying checkout with a bundled
+    // registration returns BOTH `id` (payment) and `registrationId`
+    // (reusable token). The token is what we want.
+    const body = {
+      id:             'peach-payment-1',
+      registrationId: 'reg-abc',
+      amount:         '100.00',
+      currency:       'ZAR',
+      paymentType:    'DB',
+      result:         { code: '000.100.110' },
+      card: { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030' },
+    };
+    const picked = __internals.pickRegistrationId(body);
+    expect(picked).toBe('reg-abc');
+
+    const status = __internals.toPaymentStatus(body);
+    expect(status.registrationId).toBe('reg-abc');
+    // Here providerPaymentId IS meaningful — the payment transaction id.
+    expect(status.providerPaymentId).toBe('peach-payment-1');
+  });
+
+  it('returns undefined when a rejection has no card and no registrationId', () => {
+    const body = {
+      id:     'checkout-x',
+      result: { code: '800.100.152', description: 'Declined' },
+    };
+    expect(__internals.pickRegistrationId(body)).toBeUndefined();
+    const status = __internals.toPaymentStatus(body);
+    expect(status.registrationId).toBeUndefined();
+    expect(status.status).toBe('rejected');
+  });
+
+  it('does NOT fall back to id when amount is present (guards against grabbing a payment id as a token)', () => {
+    // Belt-and-braces: even if a paying response somehow arrived on
+    // this door, we must not confuse its `id` for the registration
+    // token. The `!body.amount` guard is what protects us.
+    const body = {
+      id:     'payment-only-id',
+      amount: '50.00',
+      card:   { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030' },
+      result: { code: '000.100.110' },
+    };
+    expect(__internals.pickRegistrationId(body)).toBeUndefined();
+  });
+});
+
+// ─── Pending state — 000.200.* must map to status='pending' ─────────
+//
+// The return route uses `classifyResultCode` on the parsed status to
+// decide between success / rejected / pending (PollingConfirmation).
+// This test pins the classification so a widget-loop regression
+// (where a pending code gets treated as success or rejected) is
+// caught at CI-time.
+
+describe('getCardRegistrationStatus — pending code triggers polling, never a widget re-entry', () => {
+  it('maps 000.200.100 (pending) to status=pending; classifyResultCode agrees', async () => {
+    scriptedFetch({
+      id:           'checkout-pend',
+      paymentBrand: 'VISA',
+      result:       { code: '000.200.100', description: 'transaction pending' },
+      card:         { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030' },
+    });
+    const status = await getCardRegistrationStatus('/v1/checkouts/chk-pend/registration');
+    expect(status.status).toBe('pending');
+    expect(status.resultCode).toBe('000.200.100');
+    expect(classifyResultCode(status.resultCode)).toBe('pending');
+  });
+});
+
+// ─── Registration-suffix resourcePath support ───────────────────────
+//
+// Per Peach docs, a REGISTRATION-ONLY completion appends
+// `/v1/checkouts/{id}/registration` (not `/payment`). The GET
+// endpoint answers either suffix so we forward whichever the widget
+// hands us — this test pins that we honour /registration cleanly.
+
+describe('getCardRegistrationStatus — accepts both /registration and /payment suffixes', () => {
+  it('forwards the /registration suffix as-is (registration-only shape)', async () => {
+    const fake = scriptedFetch({
+      id:           'chk-r',
+      paymentBrand: 'VISA',
+      result:       { code: '000.100.110' },
+      card:         { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030' },
+    });
+    const status = await getCardRegistrationStatus('/v1/checkouts/chk-r/registration');
+    expect(status.status).toBe('success');
+    expect(status.registrationId).toBe('chk-r');
+    const [url] = (fake.mock.calls[0] as unknown) as [string];
+    expect(url).toBe(`${RECURRING_URL}/v1/checkouts/chk-r/registration?entityId=entity-REC`);
+  });
+
+  it('still forwards the /payment suffix (paying-with-createRegistration shape)', async () => {
+    const fake = scriptedFetch({
+      id:             'chk-p',
+      registrationId: 'reg-p',
+      amount:         '100.00',
+      result:         { code: '000.100.110' },
+      card:           { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030' },
+    });
+    await getCardRegistrationStatus('/v1/checkouts/chk-p/payment');
+    const [url] = (fake.mock.calls[0] as unknown) as [string];
+    expect(url).toBe(`${RECURRING_URL}/v1/checkouts/chk-p/payment?entityId=entity-REC`);
+  });
+});
+
+// ─── PEACH REG STATUS RESPONSE log — greppable diagnostic ───────────
+//
+// The parsed response is logged under a fixed prefix so future
+// response-shape drift shows up in the logs before it takes down
+// the flow.
+
+describe('getCardRegistrationStatus — logs raw response under PEACH REG STATUS RESPONSE', () => {
+  it('emits the tag with the resolved registrationId and the raw body', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    scriptedFetch({
+      id:           'chk-log',
+      paymentBrand: 'VISA',
+      result:       { code: '000.100.110' },
+      card:         { paymentBrand: 'VISA', last4Digits: '4242', expiryMonth: '12', expiryYear: '2030' },
+    });
+    await getCardRegistrationStatus('/v1/checkouts/chk-log/registration');
+    const emitted = logSpy.mock.calls.map((c) => JSON.stringify(c)).join('\n');
+    expect(emitted).toContain('PEACH REG STATUS RESPONSE');
+    expect(emitted).toContain('chk-log');
+    logSpy.mockRestore();
   });
 });
