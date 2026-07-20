@@ -128,7 +128,9 @@ describe('COPYandPAY module — zero V2 imports / paths / env vars', () => {
     // hidden via page CSS since paymentWidgets renders them outside
     // its own iframe.
     expect(COPYANDPAY_WIDGET).toContain('brandDetection: true');
-    expect(COPYANDPAY_WIDGET).toContain('wpwl-container-brand');
+    // Docs recipe classes for hiding the brand-selector row.
+    expect(COPYANDPAY_WIDGET).toContain('.wpwl-wrapper-brand');
+    expect(COPYANDPAY_WIDGET).toContain('.wpwl-label-brand');
     expect(COPYANDPAY_WIDGET).toContain('display: none');
   });
 
@@ -136,6 +138,42 @@ describe('COPYandPAY module — zero V2 imports / paths / env vars', () => {
     expect(COPYANDPAY_WIDGET).toContain('.wpwl-button-pay');
     expect(COPYANDPAY_WIDGET).toContain('#13294B');
     expect(COPYANDPAY_WIDGET).toContain('#15A89E');
+  });
+
+  it('COPYandPAY widget does NOT set data-brands on the form (2026-07-20 fix)', () => {
+    // Root cause of the "Brand: Visa/Mastercard" dropdown bug: a
+    // data-brands attribute on the FORM element makes paymentWidgets
+    // render a manual selector even when brandDetection is on. The
+    // docs' registration example omits data-brands entirely. This pin
+    // protects against re-introducing the attribute in JSX (we tolerate
+    // it appearing inside code comments that document the fix history).
+    //
+    // Strip line-comments and block-comments before scanning.
+    const stripped = COPYANDPAY_WIDGET
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    expect(stripped).not.toMatch(/data-brands\s*=/);
+    // The `brands` prop is also gone from the component signature.
+    expect(stripped).not.toMatch(/brands\?:\s*string/);
+    expect(stripped).not.toMatch(/brands:\s*string/);
+  });
+
+  it('COPYandPAY widget configures iframeStyles + .wpwl-control-iframe height (defect 2 fix)', () => {
+    // Documented iframeStyles keys — placeholder styling inside the
+    // PCI iframe. Presence proves we're crossing the PCI boundary
+    // for placeholder color / font.
+    expect(COPYANDPAY_WIDGET).toContain('iframeStyles');
+    expect(COPYANDPAY_WIDGET).toContain("'card-number-placeholder'");
+    expect(COPYANDPAY_WIDGET).toContain("'cvv-placeholder'");
+    // Outer wrapper height — the only lever we have to keep typed
+    // digits from being clipped, since Peach doesn't expose height
+    // inside the iframe. Matches either a literal px value or a
+    // template-literal reference to the height constant, since
+    // grepping reads raw source (no template interpolation).
+    expect(COPYANDPAY_WIDGET).toContain('.wpwl-control-iframe');
+    expect(COPYANDPAY_WIDGET).toMatch(/min-height:\s*(?:\d+px|\$\{[A-Z_]+MIN_HEIGHT[A-Z_]*\}px)/);
+    // And the constant itself must be a sensible pixel value.
+    expect(COPYANDPAY_WIDGET).toMatch(/IFRAME_MIN_HEIGHT_PX\s*=\s*(3[6-9]|4\d|5\d)\b/);
   });
 
   it('the V2 widget stays purchase-shaped (uses checkout.js), COPYandPAY widget stays vault-shaped', () => {
