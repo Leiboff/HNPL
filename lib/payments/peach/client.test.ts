@@ -171,54 +171,17 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     expect(chkBody.nonce.length).toBeGreaterThan(10);
   });
 
-  it('Flow B zero-amount card verification — sends the full 5-param recipe', async () => {
-    // Peach V2 zero-amount card verification recipe (verified against
-    // the Peach Checkout tokenisation guide + support articles):
-    //   amount='0', paymentType='PA', createRegistration=true,
-    //   defaultPaymentMethod='CARD', forceDefaultMethod=true.
-    // amount + currency + paymentType MUST be present even for a
-    // 0-amount call — V2's validator rejects the body when they're
-    // missing.
-    const fake = scriptedFetch([
-      OAUTH_OK,
-      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg' } },
-    ]);
+  it('createCheckout REJECTS amountCents=0 — V2 is purchase-only; card vault → provider.createCardRegistration', async () => {
+    // Dual-door invariant: after the pivot back to COPYandPAY for
+    // Flow B, the V2 door must refuse to be used as a card-vault
+    // route. A caller regression that tries amount=0 through V2
+    // fails loud here rather than reaching Peach.
+    scriptedFetch([]);
     const p = new PeachProvider();
-    await p.createCheckout({
+    await expect(p.createCheckout({
       amountCents:           0,
-      merchantTransactionId: 'bnrABCDEFGHIJKLM',   // exactly 16 chars
-      currency:              'ZAR',
-      paymentType:           'PA',
-      createRegistration:    true,
-      defaultPaymentMethod:  'CARD',
-      forceDefaultMethod:    true,
-    });
-    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
-    // The five Flow-B parameters — one assertion per param.
-    expect(chkBody.amount).toBe('0');
-    expect(chkBody.paymentType).toBe('PA');
-    expect(chkBody.createRegistration).toBe(true);
-    expect(chkBody.defaultPaymentMethod).toBe('CARD');
-    expect(chkBody.forceDefaultMethod).toBe(true);
-    // Currency still present (V2 requires it).
-    expect(chkBody.currency).toBe('ZAR');
-  });
-
-  it('Flow B — paymentType defaults to PA when amountCents=0 and caller omits it', async () => {
-    const fake = scriptedFetch([
-      OAUTH_OK,
-      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg-2' } },
-    ]);
-    const p = new PeachProvider();
-    await p.createCheckout({
-      amountCents:           0,
-      merchantTransactionId: 'bnrDEFGHIJKLMNOP',
-      createRegistration:    true,
-    });
-    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
-    expect(chkBody.paymentType).toBe('PA');
-    expect(chkBody.amount).toBe('0');
-    expect(chkBody.currency).toBe('ZAR');
+      merchantTransactionId: 'bnrABCDEFGHIJKLM',
+    })).rejects.toThrow(/purchase-only|createCardRegistration/);
   });
 
   it('rejects a fractional / non-integer amount', async () => {

@@ -95,16 +95,15 @@ export type ChargeSavedCardParams = {
 };
 
 export type CheckoutCreateParams = {
-  amountCents:           number;      // Integer cents (ZAR) — server-computed only
+  // V2 door is PURCHASE-ONLY. Card vaulting lives on the separate
+  // COPYandPAY door — see CardRegistrationCreateParams below and
+  // lib/payments/peach/copyandpay/registration.ts. Zero-amount is
+  // rejected at the client boundary.
+  amountCents:           number;      // Integer cents (ZAR) — server-computed, MUST be > 0.
   merchantTransactionId: string;      // Must be ≤ 16 chars (Peach V2 limit; use mintPeachRef).
   currency?:             string;      // Defaults to 'ZAR'
-  paymentType?:          'DB' | 'PA'; // DB debit; PA preauth (Flow B zero-amount card verification).
-  createRegistration?:   boolean;     // true → widget also captures a reusable card
-  // Force the widget onto card entry (no wallet chooser, no other
-  // methods). Required by the Flow B card-verification recipe so a
-  // zero-amount PA reaches the correct rails.
-  defaultPaymentMethod?: 'CARD';
-  forceDefaultMethod?:   boolean;
+  paymentType?:          'DB' | 'PA'; // DB debit (default); PA reserved for future preauth flows.
+  createRegistration?:   boolean;     // true → widget also captures a reusable card (Flow A first CIT).
   standingInstruction?:  {
     mode:                  'INITIAL' | 'REPEATED';
     source:                'CIT' | 'MIT';
@@ -176,11 +175,37 @@ export type RefundResult = {
   raw?:                  unknown;
 };
 
+// ─── Card-registration surface (COPYandPAY, Flow B only) ────────────
+//
+// Card-vault flow lives on a SEPARATE door from Checkout V2 (Flow A).
+// See lib/payments/peach/copyandpay/registration.ts for the full
+// dual-door rationale. Distinct methods so a caller can't confuse
+// the two — e.g. accidentally passing an amount to a vault call.
+
+export type CardRegistrationCreateParams = {
+  merchantTransactionId: string;   // 1-16 chars — use mintPeachRef('r', ...).
+  shopperResultUrl:      string;   // Widget navigates browser here with ?resourcePath=...
+  customer?: {
+    email?:     string | null;
+    givenName?: string | null;
+    surname?:   string | null;
+  };
+  customParameters?: Record<string, string>;
+};
+
+export type CardRegistrationCreated = {
+  checkoutId: string;
+  raw?:       unknown;
+};
+
 export interface PaymentProvider {
   /**
    * Create a Checkout V2 session for the embedded widget. Server-only.
    * OAuth token is fetched + cached transparently inside the client.
    * Returns a checkoutId — the browser mounts checkout.js with this id.
+   *
+   * Purchase-shaped surface (Flow A). For the vault-only Flow B path,
+   * use createCardRegistration instead.
    */
   createCheckout(params: CheckoutCreateParams): Promise<CheckoutCreated>;
 
@@ -235,6 +260,25 @@ export interface PaymentProvider {
     merchantTransactionId: string,
     opts?: { paymentType?: 'RF' | 'RV' },
   ): Promise<RefundResult>;
+
+  /**
+   * Create a COPYandPAY registration-only checkout (Flow B — card vault).
+   * Distinct from createCheckout so callers cannot accidentally send
+   * a purchase-shaped body (with amount / paymentType) to a vault flow.
+   * Runs on the recurring credential family (SAME creds as MIT charges)
+   * against the recurring host. See
+   * lib/payments/peach/copyandpay/registration.ts for the dual-door
+   * rationale + params matrix.
+   */
+  createCardRegistration(params: CardRegistrationCreateParams): Promise<CardRegistrationCreated>;
+
+  /**
+   * Fetch status after a COPYandPAY registration widget returns. The
+   * widget appends `?resourcePath=/v1/checkouts/{id}/payment` on
+   * shopperResultUrl (same suffix as a payment status). The response
+   * carries registrationId + card metadata for a successful vault.
+   */
+  getCardRegistrationStatus(resourcePath: string): Promise<PaymentStatus>;
 }
 
 // ─── Provider singleton ─────────────────────────────────────────────
