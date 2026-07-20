@@ -485,6 +485,29 @@ export async function payWithSavedCard(
   // and stamp it as plan.peach_initial_transaction_id so subsequent
   // instalments upgrade to INSTALLMENT + initialTransactionId.
   const provider = getPaymentProvider();
+
+  // ── DIAGNOSTIC LOG — pay-with-saved-card ──────────────────────────
+  //
+  // Two failure modes were possible when this call stalled on the
+  // client "Charging…" state and we had no visibility:
+  //   • paymentMethod.token was null/empty (never got vaulted — the
+  //     COPYandPAY widget regression left plans with no card), OR
+  //   • Peach returned a decline/error that the client wasn't
+  //     surfacing.
+  // Logging the outbound token + amount + reference under a
+  // greppable prefix, and the raw provider response after, lets
+  // future occurrences show up in Vercel logs directly. Sensitive
+  // material (registrationId itself) is a token, not PAN — logging
+  // it is standard practice on the Peach recurring surface.
+  console.log('PEACH PAY-WITH-SAVED-CARD REQUEST:', {
+    planId,
+    paymentMethodId,
+    registrationId: paymentMethod.token,
+    hasToken:       !!paymentMethod.token,
+    amountCents,
+    merchantTransactionId: reference,
+  });
+
   const chargeResult = await provider.chargeSavedCard({
     registrationId:        paymentMethod.token,
     amountCents,
@@ -495,6 +518,15 @@ export async function payWithSavedCard(
       source: 'MIT',
       type:   'UNSCHEDULED',
     },
+  });
+
+  console.log('PEACH PAY-WITH-SAVED-CARD RESPONSE:', {
+    planId,
+    status:               chargeResult.status,
+    resultCode:           chargeResult.resultCode,
+    resultDescription:    chargeResult.resultDescription,
+    providerPaymentId:    chargeResult.providerPaymentId,
+    initialTransactionId: chargeResult.initialTransactionId,
   });
 
   if (chargeResult.status === 'error' || chargeResult.status === 'rejected') {

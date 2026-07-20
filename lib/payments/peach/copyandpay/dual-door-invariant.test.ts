@@ -91,6 +91,17 @@ describe('Flow B (card-vault) — uses COPYandPAY, not Checkout V2', () => {
     expect(PAYMENT_METHODS_RETURN).toContain("from 'next/navigation'");
     expect(PAYMENT_METHODS_RETURN).toMatch(/redirect\(`\/patient\/payment-methods\?added=/);
   });
+
+  it('payWithSavedCard emits the diagnostic request/response log (2026-07-20b)', () => {
+    // When a plan stalls on "Charging…" the log tells us WHY:
+    //   PEACH PAY-WITH-SAVED-CARD REQUEST:  registrationId + amount
+    //   PEACH PAY-WITH-SAVED-CARD RESPONSE: status + resultCode
+    // A null/empty token here would immediately explain a stall
+    // caused by a plan whose peach_registration_id never got
+    // populated (upstream widget failure).
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD REQUEST:');
+    expect(PATIENT_ACTIONS).toContain('PEACH PAY-WITH-SAVED-CARD RESPONSE:');
+  });
 });
 
 // ─── Invariant 2: COPYandPAY module quarantined from V2 ────────────
@@ -140,22 +151,47 @@ describe('COPYandPAY module — zero V2 imports / paths / env vars', () => {
     expect(COPYANDPAY_WIDGET).toContain('#15A89E');
   });
 
-  it('COPYandPAY widget does NOT set data-brands on the form (2026-07-20 fix)', () => {
-    // Root cause of the "Brand: Visa/Mastercard" dropdown bug: a
-    // data-brands attribute on the FORM element makes paymentWidgets
-    // render a manual selector even when brandDetection is on. The
-    // docs' registration example omits data-brands entirely. This pin
-    // protects against re-introducing the attribute in JSX (we tolerate
-    // it appearing inside code comments that document the fix history).
+  it('COPYandPAY widget SCOPES the form to card brands via data-brands (defect-fix 2026-07-20b)', () => {
+    // Corrects the 2026-07-20a pass: dropping data-brands entirely
+    // did NOT enable auto-detect; it removed the brand scope and
+    // caused paymentWidgets to fall back to its default catalogue
+    // (Visa, MC, SEPA, iDEAL, WERO, COD, Deutschland, ...) plus
+    // logging "No brands defined, displaying default brands".
     //
-    // Strip line-comments and block-comments before scanning.
+    // Correct config: data-brands PRESENT scopes to card brands,
+    // brandDetection PRESENT makes selection automatic within scope,
+    // the .wpwl-wrapper-brand CSS below hides any residual UI.
+    //
+    // Strip line/block comments so the pin measures actual JSX.
     const stripped = COPYANDPAY_WIDGET
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-    expect(stripped).not.toMatch(/data-brands\s*=/);
-    // The `brands` prop is also gone from the component signature.
-    expect(stripped).not.toMatch(/brands\?:\s*string/);
-    expect(stripped).not.toMatch(/brands:\s*string/);
+    // data-brands must be on the form element (JSX attribute form).
+    expect(stripped).toMatch(/data-brands\s*=/);
+    // Scope must include at least Visa + Mastercard (the docs' widget
+    // tokens are uppercase VISA / MASTER, whitespace-separated).
+    expect(stripped).toMatch(/VISA/);
+    expect(stripped).toMatch(/MASTER/);
+    // brandDetection stays on — that's what suppresses the manual
+    // dropdown when the scope contains 2+ brands.
+    expect(stripped).toMatch(/brandDetection:\s*true/);
+    // No non-card brand tokens slip into the scope. Presence of
+    // 'SEPA'/'IDEAL'/'WERO'/'COD' in this file would indicate the
+    // brand list has expanded beyond cards (and the widget would
+    // surface those payment methods again).
+    expect(stripped).not.toMatch(/\bSEPA\b/);
+    expect(stripped).not.toMatch(/\bIDEAL\b/);
+    expect(stripped).not.toMatch(/\bWERO\b/);
+    expect(stripped).not.toMatch(/\bCOD\b/);
+  });
+
+  it('COPYandPAY widget hides the residual brand selector row (belt-and-braces CSS)', () => {
+    // Detection ON + 2+ brands in scope still lets some widget
+    // builds render a hidden wrapper; the docs' recipe explicitly
+    // hides it so no picker footprint remains.
+    expect(COPYANDPAY_WIDGET).toContain('.wpwl-wrapper-brand');
+    expect(COPYANDPAY_WIDGET).toContain('.wpwl-label-brand');
+    expect(COPYANDPAY_WIDGET).toContain('display: none');
   });
 
   it('COPYandPAY widget configures iframeStyles + .wpwl-control-iframe height (defect 2 fix)', () => {

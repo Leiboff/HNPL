@@ -50,19 +50,43 @@ import { useEffect, useRef } from 'react';
 //     itself) + font-size in iframeStyles to keep the digits
 //     comfortably inside.
 //
-// ─── Defect 1 (2026-07-20) — brand selector root cause ─────────────
+// ─── Brand config — scope vs. detect ───────────────────────────────
 //
-// The prior mount set data-brands="VISA MASTER" on the form. When
-// that attribute is present, paymentWidgets renders the "Brand:"
-// dropdown regardless of brandDetection. The docs' registration-only
-// example OMITS data-brands entirely — that's the correct config for
-// automatic detection with NO manual selector. This file no longer
-// takes a brands prop and no longer renders data-brands on the form.
+// This tripped up the 2026-07-20 pass, so record the model in one
+// place. There are TWO independent knobs and both are needed:
+//
+//   1. data-brands="VISA MASTER" on the FORM
+//      — SCOPE. Tells the widget which brands it's ALLOWED to accept.
+//      With NO data-brands attribute at all, Peach falls back to its
+//      default catalogue: Visa, Mastercard, PLUS SEPA, iDEAL, WERO,
+//      COD, Deutschland, and other EU methods, and the console logs
+//      "No brands defined, displaying default brands". That is what
+//      was shipping when data-brands was omitted.
+//
+//   2. wpwlOptions.brandDetection = true
+//      — AUTOMATIC SELECTION within scope. Reads the BIN as the
+//      shopper types and picks the brand for them, so no manual
+//      dropdown UI is used.
+//
+//   3. Belt-and-braces CSS: .wpwl-wrapper-brand + .wpwl-label-brand
+//      display:none — makes sure any residual selector container the
+//      widget script renders (some builds render a hidden wrapper
+//      even with detection on) has no visual footprint.
+//
+// The three together = card-only, auto-detected from BIN, no picker,
+// no EU alternate-payment-method chips. This is the exact recipe the
+// customisation reference documents.
 
 type Props = {
   checkoutId:       string;
   shopperResultUrl: string;
 };
+
+// Card brands we accept and scope the widget to. Space-separated
+// tokens are what paymentWidgets.js expects on the form's data-brands
+// attribute. Kept as a constant so the tests can pin the value and
+// so any future addition (JCB, AMEX…) shows up as one line changed.
+const ACCEPTED_CARD_BRANDS = 'VISA MASTER';
 
 // Registration-only iframe metrics — matches our onboarding input
 // component (rounded-lg, py-2.5, text-sm) so the widget's card
@@ -94,10 +118,11 @@ export default function PeachCopyAndPayWidget({
     (window as any).wpwlOptions = {
       style:          'card',
       locale:         'en',
-      // Automatic detection from BIN — with NO data-brands on the
-      // form (see JSX below) the widget will NOT render a manual
-      // selector. This is the exact combo the customisation-guide
-      // registration example uses.
+      // Automatic selection WITHIN the data-brands scope (see the JSX
+      // form below). Reads the BIN as the shopper types and picks the
+      // brand for them; combined with data-brands scoped to
+      // ACCEPTED_CARD_BRANDS this means no manual dropdown and no
+      // EU alternate-payment-methods surface in the widget.
       brandDetection: true,
       // iframeStyles — inside-the-iframe styling of the sensitive
       // inputs. Placeholder selectors are docs-confirmed; typed-text
@@ -301,12 +326,18 @@ export default function PeachCopyAndPayWidget({
           cursor: not-allowed;
         }
       `}</style>
-      {/* No data-brands attribute — that's what triggers automatic
-          BIN-based detection with NO manual selector rendered
-          (docs-confirmed recipe). */}
+      {/* data-brands SCOPES the widget to the brands we accept —
+          without it, Peach falls back to its default catalogue and
+          renders SEPA / iDEAL / WERO / COD / Deutschland etc. plus
+          logs "No brands defined, displaying default brands". With
+          wpwlOptions.brandDetection=true above, selection within
+          this scope is automatic (BIN-inferred) so no manual
+          dropdown appears; the .wpwl-wrapper-brand /
+          .wpwl-label-brand CSS below hides any residual container. */}
       <form
         action={shopperResultUrl}
         className="paymentWidgets"
+        data-brands={ACCEPTED_CARD_BRANDS}
       />
     </div>
   );
