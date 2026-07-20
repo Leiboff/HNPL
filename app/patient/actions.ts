@@ -303,28 +303,22 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
     : '/patient/payment-methods/complete';
   const shopperResultUrl = `${appUrl}${safePath}`;
 
-  // Flow B — zero-amount card verification. Peach V2 recipe:
-  //   amountCents=0, paymentType='PA', createRegistration=true,
-  //   defaultPaymentMethod='CARD', forceDefaultMethod=true.
+  // Flow B — card-vault ONLY. Runs on the COPYandPAY "second door"
+  // (see lib/payments/peach/copyandpay/registration.ts). No debit,
+  // no PA hold, no shopper billing fields — the widget renders a
+  // minimal card form with a "Save card"-style button. Runs on the
+  // recurring credential family (same creds as Flow C MIT charges),
+  // NOT on Checkout V2 OAuth.
   //
-  // The PA is a scheme-standard card-verification authorisation with
-  // no funds captured. It auto-expires on the card issuer's normal
-  // authorisation-expiry schedule (Visa/Mastercard 7-30 days) with
-  // NO capture required — we do NOT need to issue an explicit RV
-  // (reversal) afterwards. The cardholder never sees a debit or a
-  // pending hold that would need visible undoing.
+  // The registrationId this produces has NO initial transaction —
+  // plans that use this card later will send their first MIT under
+  // standingInstruction.type=UNSCHEDULED (chain-root fallback
+  // implemented in chargeInstalment.ts + settle-actions.ts).
   const provider = getPaymentProvider();
   try {
-    const checkout = await provider.createCheckout({
-      amountCents:           0,
+    const registration = await provider.createCardRegistration({
       merchantTransactionId: reference,
-      currency:              'ZAR',
-      paymentType:           'PA',
-      createRegistration:    true,
-      defaultPaymentMethod:  'CARD',
-      forceDefaultMethod:    true,
       shopperResultUrl,
-      origin:                appUrl,
       customer: {
         email:     profile.email,
         givenName: profile.first_name ?? null,
@@ -335,7 +329,7 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
         SHOPPER_patientId: user.id,
       },
     });
-    return { error: null, checkoutId: checkout.checkoutId, shopperResultUrl };
+    return { error: null, checkoutId: registration.checkoutId, shopperResultUrl };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to initialize card registration.' };
   }

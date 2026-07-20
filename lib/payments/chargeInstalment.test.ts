@@ -280,6 +280,39 @@ describe('attemptChargeInstalment — successful charge', () => {
     });
   });
 
+  it('CHAIN-ROOT FALLBACK — a registration-only card (no peach_initial_transaction_id) charges under UNSCHEDULED without initialTransactionId', async () => {
+    // Regression pin for the dual-door architecture: a COPYandPAY
+    // registration-only vault produces a registrationId but NO
+    // initial CIT transaction. Plans that use such a card MUST send
+    // their first MIT charge under type=UNSCHEDULED without an
+    // initialTransactionId — else the acquirer rejects "invalid
+    // initial reference".
+    const state: StubState = {
+      payments: [{
+        id: 'p-orphan', status: 'scheduled', retry_count: 0, amount: 200,
+        plan_id: 'plan-orphan', patient_id: 'u1', due_date: '2026-06-14',
+      }],
+      plans: [{
+        id: 'plan-orphan',
+        peach_registration_id:        'REG_FROM_COPYANDPAY_VAULT',
+        peach_initial_transaction_id: null,  // vault path never populates this
+        patient_id: 'u1', status: 'active',
+      }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    stubSuccess();
+    const result = await attemptChargeInstalment(svc, 'p-orphan', { today: '2026-06-15' });
+    expect(result.kind).toBe('charged');
+    const [args] = chargeSavedCardSpy.mock.calls as [[{ standingInstruction: Record<string, unknown> }]];
+    expect(args[0].standingInstruction).toEqual({
+      mode:   'REPEATED',
+      source: 'MIT',
+      type:   'UNSCHEDULED',
+    });
+    expect(args[0].standingInstruction.initialTransactionId).toBeUndefined();
+  });
+
   it('on retry of a previously failed row, attemptNumber increments and reference reflects it', async () => {
     const state: StubState = {
       payments: [{

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import PeachCopyAndPayWidget from '@/app/_components/PeachCopyAndPayWidget';
 import type {
   CardRow,
   ChangeDefaultResult,
@@ -40,7 +41,14 @@ function CardThumbnail({ brand }: { brand: string }) {
 
 type Props = {
   initialCards:               CardRow[];
-  initializeCardRegistration: () => Promise<{ error: string | null; authorizationUrl?: string }>;
+  // Kicks off the COPYandPAY card-vault flow (Flow B). Returns
+  // { checkoutId, shopperResultUrl }; the sheet mounts the widget
+  // against those. No cross-page navigation.
+  initializeCardRegistration: () => Promise<{
+    error:            string | null;
+    checkoutId?:      string;
+    shopperResultUrl?: string;
+  }>;
   previewDefaultChange:       (cardId: string) => Promise<PreviewDefaultChange>;
   changeDefaultCard:          (cardId: string) => Promise<ChangeDefaultResult>;
   removeCard:                 (cardId: string) => Promise<RemoveCardResult>;
@@ -78,6 +86,12 @@ export default function PaymentMethods({
   // Add-card button state
   const [addLoading, setAddLoading] = useState(false);
   const [addError,   setAddError]   = useState<string | null>(null);
+  // Once initializeCardRegistration returns, hold checkoutId +
+  // shopperResultUrl so the sheet can mount the COPYandPAY widget.
+  const [addCardWidget, setAddCardWidget] = useState<{
+    checkoutId:       string;
+    shopperResultUrl: string;
+  } | null>(null);
 
   // Sync local state when the server re-renders (after router.refresh()).
   const initialCardsKey = initialCards
@@ -106,15 +120,15 @@ export default function PaymentMethods({
     setAddError(null);
     setAddLoading(true);
     const result = await initializeCardRegistration();
-    if (result.error) {
-      setAddError(result.error);
-      setAddLoading(false);
+    setAddLoading(false);
+    if (result.error || !result.checkoutId || !result.shopperResultUrl) {
+      setAddError(result.error ?? 'Failed to start card registration.');
       return;
     }
-    if (result.authorizationUrl) {
-      window.location.href = result.authorizationUrl;
-      // Keep loading spinner — page is navigating away.
-    }
+    setAddCardWidget({
+      checkoutId:       result.checkoutId,
+      shopperResultUrl: result.shopperResultUrl,
+    });
   }
 
   // ─── Make default ─────────────────────────────────────────────────────────
@@ -198,6 +212,37 @@ export default function PaymentMethods({
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────
+
+  // Once the patient hits "Add card", the COPYandPAY widget takes over
+  // the whole panel until they cancel or complete the flow. The widget
+  // POSTs to shopperResultUrl on success → /patient/payment-methods/
+  // complete?resourcePath=... which saves the card and redirects here.
+  if (addCardWidget) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <h2 className="text-base font-semibold text-gray-900">Add a card</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              We verify your card with your bank — no money is taken.
+            </p>
+          </div>
+          <PeachCopyAndPayWidget
+            checkoutId={addCardWidget.checkoutId}
+            shopperResultUrl={addCardWidget.shopperResultUrl}
+          />
+          <button
+            type="button"
+            onClick={() => setAddCardWidget(null)}
+            className="mt-3 text-xs text-gray-500 underline hover:text-gray-700"
+            data-testid="payment-methods-widget-cancel"
+          >
+            Cancel and go back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -380,7 +425,7 @@ export default function PaymentMethods({
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden>
           <path d="M12 5v14M5 12h14" />
         </svg>
-        {addLoading ? 'Redirecting…' : 'Add a card'}
+        {addLoading ? 'Opening card form…' : 'Add a card'}
       </button>
     </div>
   );
