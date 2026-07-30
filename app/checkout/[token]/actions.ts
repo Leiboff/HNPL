@@ -531,6 +531,224 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   return { ok: true, checkoutId, amountCents, shopperResultUrl };
 }
 
+// ─── resumeFirstInstalmentCapture — re-open the widget for an owner ────────
+//
+// The routing rule shipped in 5b7f719 sent every logged-in owner to
+// /patient/orders/{planId}/confirm. That page filters on status =
+// 'pending_acceptance' — a plan that reached 'pending_first_payment'
+// (i.e. initiateCheckout wrote its schedule) but never captured a card
+// (peach_registration_id still NULL) fails that filter and bounces to
+// /patient/orders, with no way to restart capture. Result observed
+// 2026-07-30: new customer signed up mid-flow, widget failed to mount
+// (mount-race, since fixed), account+plan persisted, patient stuck.
+//
+// This action re-opens the Peach V2 Checkout for the SAME plan +
+// SAME instalment-1 row that initiateCheckout wrote on attempt 1.
+// It is DELIBERATELY idempotent-for-resume:
+//
+//   • NO account creation. The auth user already exists (attempt 1
+//     ran svc.auth.admin.createUser). We look them up via the session.
+//   • NO profile upsert. Attempt 1 wrote the details; we read email +
+//     first_name + last_name for the Peach `customer` block only.
+//   • NO plan status/schedule rewrite. We do NOT touch plans.status,
+//     plans.plan_type, plans.instalment_amount, or the payments table
+//     (no delete-and-reinsert). Everything is a read.
+//   • Deterministic Peach ref via checkoutRef(payment.id). Because the
+//     payment.id is the same UUID initiateCheckout wrote on attempt 1
+//     (we do NOT re-generate it), the merchantTransactionId is
+//     BYTE-IDENTICAL across resume calls. Peach dedups on mtxid → a
+//     mid-flight retry never opens a second real transaction.
+//   • Only WRITE is stamping `peach_checkout_id` on the payment row
+//     (idempotent — same UUID target). Cookie is refreshed so
+//     /checkout/{token}/complete's cleanup path still reads it.
+//
+// Guards (in this order):
+//   1. session user exists.
+//   2. invitation row exists AND is unexpired AND unaccepted.
+//   3. plan row exists AND plan.patient_id === session user id.
+//      A non-owner never gets a checkout for a plan that isn't theirs.
+//   4. plan.status === 'pending_first_payment' AND
+//      plan.peach_registration_id IS NULL. This is the "uncaptured"
+//      definition. A plan that already has a token is a saved-card
+//      case and belongs on /confirm, not here.
+//   5. payments[instalment_number=1] exists (initiateCheckout wrote
+//      it on attempt 1; a missing row is a data-integrity bug).
+//
+// Returns the same shape as initiateCheckout's success branch so the
+// client (ResumeCapture) can mount PeachWidget with no adaptation.
+
+export type ResumeCaptureResult =
+  | {
+      ok:                 true;
+      checkoutId:         string;
+      amountCents:        number;
+      shopperResultUrl:   string;
+    }
+  | { ok: false; error: string };
+
+export async function resumeFirstInstalmentCapture(
+  token: string,
+): Promise<ResumeCaptureResult> {
+  if (!token) return { ok: false, error: 'Missing token.' };
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, error: 'You are not signed in — please open the emailed link again.' };
+  }
+
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  // ── 1. Validate the invitation (mirrors initiateCheckout guard) ──
+  const { data: invitation } = await svc
+    .from('patient_invitations')
+    .select('id, email, plan_id, practice_id')
+    .eq('token', token)
+    .gt('expires_at', new Date().toISOString())
+    .is('accepted_at', null)
+    .maybeSingle();
+
+  if (!invitation) return { ok: false, error: 'This invitation link is no longer valid.' };
+
+  // ── 2. Validate plan: owned by session user + uncaptured ─────────
+  const { data: plan } = await svc
+    .from('plans')
+    .select('id, patient_id, status, peach_registration_id, plan_type, total_amount')
+    .eq('id', invitation.plan_id)
+    .maybeSingle();
+
+  if (!plan) return { ok: false, error: 'This bill no longer exists.' };
+  if ((plan.patient_id as string | null) !== user.id) {
+    // A logged-in caller whose session doesn't own the plan should
+    // never be handed a Peach checkout for that plan. The routing
+    // rule in page.tsx already bounces this case; belt-and-braces
+    // reject at the action boundary too.
+    return { ok: false, error: 'This bill is not on your account.' };
+  }
+  if (plan.status !== 'pending_first_payment') {
+    return {
+      ok:    false,
+      error: 'This bill isn\'t waiting for a first payment. Please open it from your orders.',
+    };
+  }
+  if (plan.peach_registration_id) {
+    return {
+      ok:    false,
+      error: 'This bill already has a stored card. Please continue from your orders.',
+    };
+  }
+
+  // ── 3. Existing instalment-1 payment row (must exist post-attempt-1) ──
+  const { data: payment } = await svc
+    .from('payments')
+    .select('id, amount')
+    .eq('plan_id', plan.id)
+    .eq('instalment_number', 1)
+    .maybeSingle();
+
+  if (!payment) {
+    // If we're here, initiateCheckout on attempt 1 wrote the plan
+    // schedule (line 402) — a missing row is a data integrity bug,
+    // not a normal state.
+    return { ok: false, error: 'The first instalment record is missing. Please contact support.' };
+  }
+
+  // ── 4. Last instalment date for standingInstruction.expiry ───────
+  const { data: lastInstalment } = await svc
+    .from('payments')
+    .select('due_date')
+    .eq('plan_id', plan.id)
+    .order('instalment_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // ── 5. Profile for the Peach customer block ──────────────────────
+  const { data: profile } = await svc
+    .from('profiles')
+    .select('email, first_name, last_name')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (!profile?.email) return { ok: false, error: 'Account email not found.' };
+
+  // ── 6. Deterministic Peach ref (same across resume calls) ────────
+  //   Same instalment-1 id ⇒ same reference. Peach dedups on
+  //   merchantTransactionId, so hammering resume never opens
+  //   duplicate real transactions.
+  const reference   = checkoutRef(payment.id as string);
+  const amountCents = Math.round(Number(payment.amount) * 100);
+  const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? '';
+  const shopperResultUrl = `${appUrl}/checkout/${token}/complete`;
+
+  const lastDueDate = lastInstalment?.due_date as string | undefined;
+  const expiryDate  = lastDueDate
+    ? new Date(new Date(lastDueDate).getTime() + 30 * 24 * 60 * 60 * 1000)
+        .toISOString().slice(0, 10)
+    : '9999-12-31';
+  const planType    = ((plan.plan_type as 2 | 3 | null) ?? 2) as 2 | 3;
+
+  // ── 7. Create the Peach V2 checkout (same shape as initiateCheckout) ──
+  const provider = getPaymentProvider();
+  let checkoutId: string;
+  try {
+    const checkout = await provider.createCheckout({
+      amountCents,
+      merchantTransactionId: reference,
+      currency:              'ZAR',
+      paymentType:           'DB',
+      createRegistration:    true,
+      shopperResultUrl,
+      origin:                appUrl,
+      standingInstruction: {
+        mode:                 'INITIAL',
+        type:                 'INSTALLMENT',
+        expiry:               expiryDate,
+        frequency:            30,
+        numberOfInstallments: planType,
+      },
+      customer: {
+        email:     profile.email as string,
+        givenName: (profile.first_name as string | null) ?? null,
+        surname:   (profile.last_name  as string | null) ?? null,
+      },
+      customParameters: {
+        SHOPPER_purpose:   'checkout_resume_first_payment',
+        SHOPPER_token:     token,
+        SHOPPER_patientId: user.id,
+        SHOPPER_planId:    plan.id as string,
+        SHOPPER_paymentId: payment.id as string,
+      },
+    });
+    checkoutId = checkout.checkoutId;
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
+  }
+
+  // Idempotent stamp — same payment row on every call; the last
+  // successful checkoutId wins. Peach dedups the mtxid so this is
+  // never a race against a separate transaction.
+  await svc
+    .from('payments')
+    .update({ peach_checkout_id: checkoutId })
+    .eq('id', payment.id as string);
+
+  // Match initiateCheckout's cookie posture so /checkout/[token]/complete
+  // can read the token when the widget navigates back.
+  const cookieStore = await cookies();
+  cookieStore.set('hnpl_checkout_token', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure:   process.env.NODE_ENV === 'production',
+    maxAge:   60 * 60,
+    path:     '/checkout',
+  });
+
+  return { ok: true, checkoutId, amountCents, shopperResultUrl };
+}
+
 // ─── finalizePassword — set the patient's real password ────────────────────
 //
 // Called from /checkout/[token]/done after the patient picks a

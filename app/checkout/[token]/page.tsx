@@ -2,7 +2,13 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import CheckoutForm from './CheckoutForm';
-import { initiateCheckout, requestPhoneOtp, verifyPhoneOtp } from './actions';
+import ResumeCapture from './ResumeCapture';
+import {
+  initiateCheckout,
+  requestPhoneOtp,
+  verifyPhoneOtp,
+  resumeFirstInstalmentCapture,
+} from './actions';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 
@@ -156,20 +162,77 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
     { auth: { persistSession: false } },
   );
 
-  // Plan-side ownership signal. The get_invitation_by_token RPC does
-  // NOT return plan.patient_id (extending its signature would be a
-  // migration); a direct service-role read on plans is enough.
+  // Plan-side ownership signal + capture state. The RPC does NOT
+  // return these (extending its signature would be a migration); a
+  // direct service-role read on plans is enough.
+  //
+  // Additional fields beyond patient_id:
+  //   • status                — routes an "uncaptured" plan back to
+  //     the widget instead of to /confirm (which only accepts
+  //     pending_acceptance and would otherwise bounce to /patient/orders).
+  //   • peach_registration_id — presence means a card was tokenised
+  //     on a prior attempt; that plan belongs on the saved-card path.
+  //     Absence + pending_first_payment = "attempt 1 wrote the schedule
+  //     but never captured a card" = the resume case.
   const { data: planPatientRow } = await svcForLookup
     .from('plans')
-    .select('patient_id')
+    .select('patient_id, status, peach_registration_id')
     .eq('id', row.plan_id)
     .maybeSingle();
-  const planPatientId = (planPatientRow?.patient_id as string | null | undefined) ?? null;
+  const planPatientId      = (planPatientRow?.patient_id            as string | null | undefined) ?? null;
+  const planStatus         = (planPatientRow?.status                as string | null | undefined) ?? null;
+  const planRegistrationId = (planPatientRow?.peach_registration_id as string | null | undefined) ?? null;
+  const isUncapturedPlan   = planStatus === 'pending_first_payment' && !planRegistrationId;
 
   const { data: { user: sessionUser } } = await supabase.auth.getUser();
 
   if (sessionUser) {
     if (planPatientId === sessionUser.id) {
+      // Uncaptured plan — attempt 1 wrote plans.status='pending_first_payment'
+      // and payments[1].status='processing' but never minted a
+      // peach_registration_id (widget mount-race or user abort). The
+      // /confirm page's `.eq('status','pending_acceptance')` filter
+      // would send this owner to /patient/orders with no way to
+      // resume. Keep them on the checkout flow with a Resume CTA that
+      // re-opens the Peach V2 widget for the SAME instalment-1 row
+      // (deterministic ref → Peach dedups the transaction).
+      if (isUncapturedPlan) {
+        const { data: firstInstalment } = await svcForLookup
+          .from('payments')
+          .select('amount')
+          .eq('plan_id',           row.plan_id)
+          .eq('instalment_number', 1)
+          .maybeSingle();
+        const firstInstalmentAmount = Number(firstInstalment?.amount ?? row.plan_total_amount);
+
+        return (
+          <div className="min-h-screen bg-[#FAFBFD]">
+            <header className="bg-white border-b border-[#E5E9F0] sticky top-0 z-10">
+              <div className="mx-auto max-w-md px-5 py-4 flex items-center justify-between">
+                <span
+                  className="text-lg font-bold tracking-tight"
+                  style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
+                >
+                  <span style={{ color: '#13294B' }}>better</span>
+                  <span style={{ color: '#15A89E' }}>now</span>
+                </span>
+                <span className="text-[11px] uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
+                  Secure checkout
+                </span>
+              </div>
+            </header>
+            <main className="mx-auto max-w-md px-5 py-8 sm:py-10">
+              <ResumeCapture
+                token={token}
+                practiceName={practiceName}
+                totalAmount={Number(row.plan_total_amount)}
+                firstInstalmentAmount={firstInstalmentAmount}
+                resumeAction={resumeFirstInstalmentCapture}
+              />
+            </main>
+          </div>
+        );
+      }
       redirect(confirmPath);
     }
     // Session doesn't match — either plan.patient_id is another user
