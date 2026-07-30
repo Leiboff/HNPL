@@ -1,11 +1,13 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef, registrationRef } from '@/lib/payments/peach/refs';
 import { isCardValidForPlan } from '@/lib/cardValidity';
+import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import type { User } from '@supabase/supabase-js';
@@ -354,10 +356,13 @@ export async function payWithSavedCard(
     return { error: 'Invalid instalment count. Choose 2 or 3.' };
   }
 
-  // Verify plan belongs to this patient and is awaiting acceptance
+  // Verify plan belongs to this patient and is awaiting acceptance.
+  // provider_id is loaded up-front so activateFirstInstalment can
+  // route the payout to a provider payout destination when the
+  // practice_member elected that.
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, total_amount, practice_id, application_id')
+    .select('id, total_amount, practice_id, application_id, provider_id')
     .eq('id', planId)
     .eq('patient_id', user.id)
     .eq('status', 'pending_acceptance')
@@ -610,8 +615,67 @@ export async function payWithSavedCard(
         .is('peach_initial_transaction_id', null);
     }
 
-    // Charge is in-flight (pending) or succeeded — the webhook will
-    // activate the plan on the terminal PAYMENT event.
+    // ── STEP 6: activation write on SYNC success ─────────────────────
+    //
+    // Per lib/payments/provider.ts the SYNCHRONOUS MIT response is
+    // authoritative — we must NOT wait for the webhook to flip the
+    // plan/payment to terminal state. Prior to this landing, the
+    // sync path returned success without any activation write and
+    // relied entirely on the webhook, which produced the stuck
+    // 'pending_first_payment' / 'processing' state on 2026-07-22
+    // (Peach 000.100.110 success, DB never flipped).
+    //
+    // For 'success': activate inline via the shared helper. If the
+    // write fails, LOG LOUDLY and still return success — money moved,
+    // and the webhook is idempotent and will reconcile on delivery.
+    // For 'pending': DO NOT activate — the charge is genuinely queued
+    // and the webhook remains the terminal signal.
+    //
+    // Uses the service-role client so the payout insert (writes on a
+    // practice-scoped table) and the practices.fee_percent lookup
+    // aren't gated by patient RLS. The plan + payment writes are
+    // idempotent (precondition-guarded on status) so a webhook that
+    // lands in parallel is a no-op.
+    if (chargeResult.status === 'success') {
+      const svc = createServiceClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      );
+      const activateResult = await activateFirstInstalment(svc, {
+        paymentId: instalment1Id,
+        plan: {
+          id:           planId,
+          total_amount: plan.total_amount,
+          practice_id:  plan.practice_id,
+          provider_id:  (plan as { provider_id?: string | null }).provider_id ?? null,
+          patient_id:   user.id,
+        },
+      });
+      if (!activateResult.ok) {
+        // Money moved but the terminal write failed. Do NOT roll back
+        // the payment (Peach already succeeded — a rollback would leave
+        // the patient's card charged with no plan). Log LOUDLY with an
+        // alertable prefix so we can catch webhook-reconciled cases in
+        // Vercel logs and investigate any that DON'T reconcile.
+        console.error('PEACH PAY-WITH-SAVED-CARD ALERT SYNC-ACTIVATION-FAILED:', {
+          planId,
+          step:  activateResult.step,
+          error: activateResult.error,
+          note:  'money moved at Peach; awaiting webhook reconcile',
+        });
+      } else {
+        console.log('PEACH PAY-WITH-SAVED-CARD STEP 6 ACTIVATED:', { planId });
+      }
+    } else {
+      // status === 'pending' — Peach is holding this at the acquirer
+      // level. The webhook will land the terminal PAYMENT event and
+      // activate then.
+      console.log('PEACH PAY-WITH-SAVED-CARD STEP 6 PENDING:', {
+        planId,
+        resultCode: chargeResult.resultCode ?? null,
+      });
+    }
+
     console.log('PEACH PAY-WITH-SAVED-CARD STEP 6 SUCCESS:', { planId });
     revalidatePath('/patient', 'layout');
     return { error: null, planId };
