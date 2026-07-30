@@ -409,173 +409,222 @@ export async function payWithSavedCard(
     return { error: `This card expires before your final payment. Please add a card valid until at least ${deadlineStr}.` };
   }
 
-  // Move plan to pending_first_payment and record the chosen schedule
-  const { error: planError } = await supabase
-    .from('plans')
-    .update({
-      status:            'pending_first_payment',
-      plan_type:         planType,
-      instalment_amount: instalments[0],
-    })
-    .eq('id', planId)
-    .eq('patient_id', user.id);
-
-  if (planError) return { error: planError.message };
-
-  // Insert all payment rows — instalment 1 ID is pre-generated so we can use
-  // it in the Paystack reference and store it before charging.
-  const instalment1Id = crypto.randomUUID();
-  const paymentRows   = instalments.map((amount, i) => ({
-    id:                i === 0 ? instalment1Id : crypto.randomUUID(),
-    plan_id:           planId,
-    patient_id:        user.id,
-    instalment_number: i + 1,
-    amount,
-    due_date:          dates[i].toISOString().split('T')[0],
-    status:            i === 0 ? 'processing' : 'scheduled',
-  }));
-
-  const { error: paymentsError } = await supabase.from('payments').insert(paymentRows);
-  if (paymentsError) {
-    // Rollback plan
-    await supabase.from('plans')
-      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
-      .eq('id', planId);
-    return { error: paymentsError.message };
-  }
-
-  if (plan.application_id) {
-    await supabase
-      .from('applications')
-      .update({ plan_type: planType })
-      .eq('id', plan.application_id as string);
-  }
-
-  // Reference stamped on the payment row BEFORE the charge so the
-  // Peach webhook can reconcile even if our process crashes mid-flight.
-  // Compact 16-char ref per Peach V2 mandate; this is a Flow-C-style
-  // MIT charge but seeded off the instalment-1 id (not attempt-based —
-  // there's no attempt counter here, it's a one-shot silent charge).
-  const reference = checkoutRef(instalment1Id);
-
-  const { error: refErr } = await supabase
-    .from('payments')
-    .update({ peach_payment_id: reference })
-    .eq('id', instalment1Id)
-    .eq('patient_id', user.id);
-
-  if (refErr) {
-    await supabase.from('payments').delete().eq('plan_id', planId);
-    await supabase.from('plans')
-      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
-      .eq('id', planId);
-    return { error: refErr.message };
-  }
-
-  // Silent MIT charge against the saved card's registration id.
-  // paymentMethod.token holds the Peach registrationId for newly-added
-  // cards; the RPC-refresh path (0041) writes registrationIds into the
-  // same column so this works uniformly.
-  const amountCents = Math.round(instalments[0] * 100);
-
-  // No plan-level initialTransactionId yet — this is the very first
-  // MIT charge on this plan/card combination. UNSCHEDULED is Peach's
-  // recommended type when the stored credential has no initial
-  // reference to link to. On success we capture the payment id below
-  // and stamp it as plan.peach_initial_transaction_id so subsequent
-  // instalments upgrade to INSTALLMENT + initialTransactionId.
-  const provider = getPaymentProvider();
-
-  // ── DIAGNOSTIC LOG — pay-with-saved-card ──────────────────────────
+  // ─── DB-WRITE + CHARGE REGION (try/catch around the whole thing) ──
   //
-  // Two failure modes were possible when this call stalled on the
-  // client "Charging…" state and we had no visibility:
-  //   • paymentMethod.token was null/empty (never got vaulted — the
-  //     COPYandPAY widget regression left plans with no card), OR
-  //   • Peach returned a decline/error that the client wasn't
-  //     surfacing.
-  // Logging the outbound token + amount + reference under a
-  // greppable prefix, and the raw provider response after, lets
-  // future occurrences show up in Vercel logs directly. Sensitive
-  // material (registrationId itself) is a token, not PAN — logging
-  // it is standard practice on the Peach recurring surface.
-  console.log('PEACH PAY-WITH-SAVED-CARD REQUEST:', {
+  // Everything below this line writes state that leaves the plan in
+  // an incomplete/processing status if it isn't followed through with
+  // a successful (or explicitly-failed) charge. Prior to the 2026-07-21
+  // fix there was NO safety net here — any unhandled throw between
+  // the payment INSERT and provider.chargeSavedCard left the plan on
+  // pending_first_payment with a payment row perpetually stuck at
+  // status='processing' (visible in OrdersView as "Charging — was
+  // due …"). The PEACH PAY-WITH-SAVED-CARD log below never appeared
+  // in Vercel logs because execution died before it — either an
+  // unexpected throw or a function-timeout kill.
+  //
+  // The try/catch is a hard safety net. On ANY throw here we:
+  //   1. Delete the freshly-inserted payment rows so the plan has no
+  //      orphan 'processing' payment for the OrdersView badge.
+  //   2. Reset the plan back to 'pending_acceptance' so the patient
+  //      can retry from the confirm page (which requires that state).
+  //   3. Return a user-visible error to the client.
+  // No more silent processing-limbo state.
+  //
+  // We also log STEP tags at every hop so if this ever stalls again
+  // the exact line is unambiguous in Vercel logs.
+
+  console.log('PEACH PAY-WITH-SAVED-CARD STEP 0 ENTER:', {
     planId,
     paymentMethodId,
-    registrationId: paymentMethod.token,
-    hasToken:       !!paymentMethod.token,
-    amountCents,
-    merchantTransactionId: reference,
+    hasToken: !!paymentMethod.token,
   });
 
-  const chargeResult = await provider.chargeSavedCard({
-    registrationId:        paymentMethod.token,
-    amountCents,
-    merchantTransactionId: reference,
-    currency:              'ZAR',
-    standingInstruction: {
-      mode:   'REPEATED',
-      source: 'MIT',
-      type:   'UNSCHEDULED',
-    },
-  });
+  const instalment1Id = crypto.randomUUID();
 
-  console.log('PEACH PAY-WITH-SAVED-CARD RESPONSE:', {
-    planId,
-    status:               chargeResult.status,
-    resultCode:           chargeResult.resultCode,
-    resultDescription:    chargeResult.resultDescription,
-    providerPaymentId:    chargeResult.providerPaymentId,
-    initialTransactionId: chargeResult.initialTransactionId,
-  });
-
-  if (chargeResult.status === 'error' || chargeResult.status === 'rejected') {
-    await supabase.from('payments').delete().eq('plan_id', planId);
-    await supabase.from('plans')
-      .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
-      .eq('id', planId);
-    return { error: chargeResult.resultDescription ?? 'Card was declined. Please try a different card.' };
+  // Rollback helper — used from every catch in this region. Best-
+  // effort: if a rollback DB call ALSO fails, log + swallow so the
+  // caller still sees the original error.
+  async function rollbackPlanState(reason: string): Promise<void> {
+    console.error('PEACH PAY-WITH-SAVED-CARD ROLLBACK:', { planId, reason });
+    try {
+      await supabase.from('payments').delete().eq('plan_id', planId);
+      await supabase.from('plans')
+        .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
+        .eq('id', planId);
+    } catch (rbErr) {
+      console.error('PEACH PAY-WITH-SAVED-CARD ROLLBACK FAILED:', {
+        planId,
+        reason,
+        error: rbErr instanceof Error ? rbErr.message : String(rbErr),
+      });
+    }
   }
 
-  // Stamp the reusable registration id (idempotent — the webhook may
-  // land the same value in parallel).
-  await supabase
-    .from('plans')
-    .update({ peach_registration_id: paymentMethod.token })
-    .eq('id', planId)
-    .eq('patient_id', user.id)
-    .is('peach_registration_id', null);
+  try {
+    // ── STEP 1: move plan → pending_first_payment ────────────────────
+    console.log('PEACH PAY-WITH-SAVED-CARD STEP 1 PLAN UPDATE:', { planId });
+    const { error: planError } = await supabase
+      .from('plans')
+      .update({
+        status:            'pending_first_payment',
+        plan_type:         planType,
+        instalment_amount: instalments[0],
+      })
+      .eq('id', planId)
+      .eq('patient_id', user.id);
 
-  // Stamp peach_initial_transaction_id ONLY from Peach's echoed chain
-  // root (standingInstruction.initialTransactionId on the MIT response).
-  // Do NOT fall back to chargeResult.providerPaymentId — that is THIS
-  // MIT's own id, not the CIT root that established the credential.
-  // Threading an MIT-typed id as a later charge's `initialTransactionId`
-  // is a compliance-shaped bug: Peach validates the reference against
-  // the stored chain and rejects it, and because every writer of this
-  // column is .is(...null)-guarded (write-once) the wrong value would
-  // be locked in permanently.
-  //
-  // When the echo is absent, LEAVE THE COLUMN NULL. chargeInstalment
-  // and settle-actions both fall back safely to UNSCHEDULED when
-  // initialTransactionId is null — no data is better than wrong data.
-  //
-  // TODO(dina): confirm in sandbox which exact field Peach returns as
-  // the valid initialTransactionId, and whether payWithSavedCard
-  // should be REPEATED/CIT (customer present) rather than REPEATED/MIT.
-  if (chargeResult.initialTransactionId) {
+    if (planError) return { error: planError.message };
+
+    // ── STEP 2: insert payment rows (instalment 1 = 'processing') ────
+    const paymentRows = instalments.map((amount, i) => ({
+      id:                i === 0 ? instalment1Id : crypto.randomUUID(),
+      plan_id:           planId,
+      patient_id:        user.id,
+      instalment_number: i + 1,
+      amount,
+      due_date:          dates[i].toISOString().split('T')[0],
+      status:            i === 0 ? 'processing' : 'scheduled',
+    }));
+
+    console.log('PEACH PAY-WITH-SAVED-CARD STEP 2 PAYMENTS INSERT:', {
+      planId,
+      rowCount: paymentRows.length,
+      instalment1Id,
+    });
+    const { error: paymentsError } = await supabase.from('payments').insert(paymentRows);
+    if (paymentsError) {
+      // Rollback plan (payments never inserted; delete would be a no-op
+      // but we still reset the plan status).
+      await rollbackPlanState(`paymentsError: ${paymentsError.message}`);
+      return { error: paymentsError.message };
+    }
+
+    if (plan.application_id) {
+      await supabase
+        .from('applications')
+        .update({ plan_type: planType })
+        .eq('id', plan.application_id as string);
+    }
+
+    // ── STEP 3: stamp merchant reference on the payment row ─────────
+    // Compact 16-char peach ref, seeded off the instalment-1 id (Peach
+    // dedups on merchantTransactionId, so a retry produces the same
+    // ref and won't double-charge).
+    const reference = checkoutRef(instalment1Id);
+    console.log('PEACH PAY-WITH-SAVED-CARD STEP 3 REF STAMP:', {
+      planId,
+      instalment1Id,
+      merchantTransactionId: reference,
+    });
+
+    const { error: refErr } = await supabase
+      .from('payments')
+      .update({ peach_payment_id: reference })
+      .eq('id', instalment1Id)
+      .eq('patient_id', user.id);
+
+    if (refErr) {
+      await rollbackPlanState(`refErr: ${refErr.message}`);
+      return { error: refErr.message };
+    }
+
+    // ── STEP 4: silent MIT charge ────────────────────────────────────
+    //
+    // No plan-level initialTransactionId yet — this is the very first
+    // MIT charge on this plan/card combination. UNSCHEDULED is Peach's
+    // recommended type when the stored credential has no initial
+    // reference to link to.
+    const amountCents = Math.round(instalments[0] * 100);
+    const provider    = getPaymentProvider();
+
+    console.log('PEACH PAY-WITH-SAVED-CARD REQUEST:', {
+      planId,
+      paymentMethodId,
+      registrationId: paymentMethod.token,
+      hasToken:       !!paymentMethod.token,
+      amountCents,
+      merchantTransactionId: reference,
+    });
+
+    // Empty token guard — chargeSavedCard would just 404 at Peach,
+    // but the error UX is clearer if we short-circuit here with a
+    // human-readable message. Not a fix for a broken vault; a
+    // defense against the "no valid registrationId, silent stall"
+    // failure mode that the widget-regression era produced.
+    if (!paymentMethod.token) {
+      await rollbackPlanState('paymentMethod.token is null/empty');
+      return { error: 'This card is missing its payment token. Please remove it and add it again.' };
+    }
+
+    const chargeResult = await provider.chargeSavedCard({
+      registrationId:        paymentMethod.token,
+      amountCents,
+      merchantTransactionId: reference,
+      currency:              'ZAR',
+      standingInstruction: {
+        mode:   'REPEATED',
+        source: 'MIT',
+        type:   'UNSCHEDULED',
+      },
+    });
+
+    console.log('PEACH PAY-WITH-SAVED-CARD RESPONSE:', {
+      planId,
+      status:               chargeResult.status,
+      resultCode:           chargeResult.resultCode,
+      resultDescription:    chargeResult.resultDescription,
+      providerPaymentId:    chargeResult.providerPaymentId,
+      initialTransactionId: chargeResult.initialTransactionId,
+    });
+
+    if (chargeResult.status === 'error' || chargeResult.status === 'rejected') {
+      await rollbackPlanState(
+        `chargeSavedCard: status=${chargeResult.status} code=${chargeResult.resultCode ?? 'none'}`,
+      );
+      return { error: chargeResult.resultDescription ?? 'Card was declined. Please try a different card.' };
+    }
+
+    // ── STEP 5: stamp registration + chain-root ─────────────────────
+    // Stamp the reusable registration id (idempotent — the webhook may
+    // land the same value in parallel).
     await supabase
       .from('plans')
-      .update({ peach_initial_transaction_id: chargeResult.initialTransactionId })
+      .update({ peach_registration_id: paymentMethod.token })
       .eq('id', planId)
       .eq('patient_id', user.id)
-      .is('peach_initial_transaction_id', null);
-  }
+      .is('peach_registration_id', null);
 
-  // Charge is in-flight (pending) or succeeded — the webhook will
-  // activate the plan on the terminal PAYMENT event.
-  revalidatePath('/patient', 'layout');
-  return { error: null, planId };
+    // Stamp peach_initial_transaction_id ONLY from Peach's echoed chain
+    // root (standingInstruction.initialTransactionId on the MIT response).
+    // Do NOT fall back to chargeResult.providerPaymentId — that is THIS
+    // MIT's own id, not the CIT root that established the credential.
+    // When the echo is absent, LEAVE THE COLUMN NULL. chargeInstalment
+    // and settle-actions both fall back safely to UNSCHEDULED when
+    // initialTransactionId is null — no data is better than wrong data.
+    if (chargeResult.initialTransactionId) {
+      await supabase
+        .from('plans')
+        .update({ peach_initial_transaction_id: chargeResult.initialTransactionId })
+        .eq('id', planId)
+        .eq('patient_id', user.id)
+        .is('peach_initial_transaction_id', null);
+    }
+
+    // Charge is in-flight (pending) or succeeded — the webhook will
+    // activate the plan on the terminal PAYMENT event.
+    console.log('PEACH PAY-WITH-SAVED-CARD STEP 6 SUCCESS:', { planId });
+    revalidatePath('/patient', 'layout');
+    return { error: null, planId };
+  } catch (err) {
+    // The load-bearing safety net. Anything that throws in the
+    // DB-write region above lands here; the plan/payments get rolled
+    // back and the user sees an actionable error instead of a
+    // permanent "Charging…" limbo.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('PEACH PAY-WITH-SAVED-CARD UNCAUGHT:', { planId, error: msg });
+    await rollbackPlanState(`uncaught: ${msg}`);
+    return { error: `Payment could not be started (${msg}). Please try again.` };
+  }
 }
 
 export async function declinePlan(
