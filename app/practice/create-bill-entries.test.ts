@@ -90,6 +90,7 @@ describe('every dashboard entry point uses CreateBillButton', () => {
   it.each([
     'app/practice/page.tsx',
     'app/practice/BillsBlock.tsx',
+    'app/brand/branch/[practiceId]/page.tsx',
   ])('%s imports CreateBillButton and does not render a bare /practice/bills/new <a>', (path) => {
     const src = readSrc(path);
     expect(src).toMatch(/CreateBillButton/);
@@ -103,6 +104,35 @@ describe('every dashboard entry point uses CreateBillButton', () => {
     expect(emptyStateIdx).toBeGreaterThan(0);
     const emptyStateChunk = src.slice(emptyStateIdx, emptyStateIdx + 800);
     expect(emptyStateChunk).toMatch(/CreateBillButton/);
+  });
+});
+
+describe('/brand/branch/[practiceId] CTA is scoped to THE BRANCH', () => {
+  // A brand-admin with N≥2 branches must land on a bill scoped to the
+  // branch they were viewing — CreateBillButton forwards practiceId=X
+  // onto /practice/bills/new which reads searchParams.practiceId and
+  // then createBill (bills/new/actions.ts) writes plans.practice_id=X.
+  // The payout, patient-facing practice name, and refs all resolve
+  // through plans.practice_id, so scoping the CTA to the branch id is
+  // sufficient to attribute the bill correctly.
+
+  const SRC = readSrc('app/brand/branch/[practiceId]/page.tsx');
+
+  it('imports the shared trading-gate check and computes gate for this page', () => {
+    expect(SRC).toMatch(/import \{[^}]*checkTradingGate[^}]*\} from '@\/lib\/practice\/tradingGate'/);
+    expect(SRC).toMatch(/checkTradingGate\(s, practiceId\)/);
+  });
+
+  it('renders CreateBillButton with variant="primary" and forwards practiceId to scope the bill to THIS branch', () => {
+    expect(SRC).toMatch(/<CreateBillButton\s+gate=\{gate\}\s+variant="primary"\s+practiceId=\{practiceId\}\s*\/>/);
+  });
+
+  it('renders the co-located banking hint when the gate fails on banking (fix is on this same page)', () => {
+    expect(SRC).toMatch(/gate\.reason === 'no_banking'/);
+    expect(SRC).toMatch(/branch-banking-hint/);
+    expect(SRC).toMatch(/#banking/);
+    // BranchBankingForm is wrapped in the anchor target on the same page.
+    expect(SRC).toMatch(/id="banking"/);
   });
 });
 

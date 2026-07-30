@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
+import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
+import CreateBillButton from '@/app/practice/CreateBillButton';
 import {
   updateBranchDetails,
   updateBranchBanking,
@@ -153,26 +155,56 @@ export default async function BrandBranchEditPage({
   const feeByPractice = new Map<string, number>([[practiceId, Number(practice.fee_percent ?? 0)]]);
   const monthly = buildMonthlySeries(plans as PlanForTrend[], feeByPractice);
 
+  // ── Trading gate — governs the "Create a bill" CTA on this page ──
+  //
+  // Same three-condition check the practice dashboard and the
+  // bill-creation server action enforce (lib/practice/tradingGate.ts).
+  // Reuses the service-role client already built above at line 51.
+  // Server-side reject in bills/new/actions.ts remains authoritative;
+  // this drives the UI state only.
+  const gate: TradingGateResult = await checkTradingGate(s, practiceId);
+
   return (
     <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
-      <header>
-        <Link href="/brand" className="text-xs text-gray-500 hover:underline">← Back to my practices</Link>
-        <h1 className="text-2xl font-semibold mt-1" style={{ color: '#13294B' }}>{practice.name as string}</h1>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-          <span className={`px-2 py-0.5 rounded-full font-medium ${
-            practice.status === 'approved'  ? 'bg-green-100 text-green-700' :
-            practice.status === 'pending'   ? 'bg-amber-100 text-amber-700' :
-            practice.status === 'suspended' ? 'bg-red-100 text-red-700' :
-                                              'bg-gray-100 text-gray-500'
-          }`}>
-            {practice.status as string}
-          </span>
-          <span className="text-gray-500">Commission: {Number(practice.fee_percent ?? 0)}%</span>
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Link href="/brand" className="text-xs text-gray-500 hover:underline">← Back to my practices</Link>
+          <h1 className="text-2xl font-semibold mt-1" style={{ color: '#13294B' }}>{practice.name as string}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className={`px-2 py-0.5 rounded-full font-medium ${
+              practice.status === 'approved'  ? 'bg-green-100 text-green-700' :
+              practice.status === 'pending'   ? 'bg-amber-100 text-amber-700' :
+              practice.status === 'suspended' ? 'bg-red-100 text-red-700' :
+                                                'bg-gray-100 text-gray-500'
+            }`}>
+              {practice.status as string}
+            </span>
+            <span className="text-gray-500">Commission: {Number(practice.fee_percent ?? 0)}%</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Status and commission are set by BetterNow — contact support to change them.
+          </p>
         </div>
-        <p className="text-xs text-gray-400 mt-1">
-          Status and commission are set by BetterNow — contact support to change them.
-        </p>
+        <CreateBillButton gate={gate} variant="primary" practiceId={practiceId} />
       </header>
+
+      {/* Co-located hint when the gate fails on banking — BranchBankingForm
+          is on this same page, so anchor down to it rather than route
+          the admin off-page. */}
+      {!gate.ok && gate.reason === 'no_banking' && (
+        <div
+          role="status"
+          data-testid="branch-banking-hint"
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          <p>
+            Add banking below to enable billing.{' '}
+            <a href="#banking" className="font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+              Jump to Banking →
+            </a>
+          </p>
+        </div>
+      )}
 
       {/* Section 1 — Performance (net-only revenue + trend + per-doctor breakdown) */}
       <BranchPerformance
@@ -208,17 +240,19 @@ export default async function BrandBranchEditPage({
         saveAction={updateBranchDetails}
       />
 
-      <BranchBankingForm
-        practiceId={practiceId}
-        initial={{
-          bankName:          (practice.bank_name           as string | null) ?? null,
-          bankAccountNumber: (practice.bank_account_number as string | null) ?? null,
-          branchCode:        (practice.branch_code         as string | null) ?? null,
-          accountHolder:     (practice.account_holder      as string | null) ?? null,
-          accountType:       (practice.account_type        as 'current' | 'savings' | null) ?? null,
-        }}
-        saveAction={updateBranchBanking}
-      />
+      <div id="banking">
+        <BranchBankingForm
+          practiceId={practiceId}
+          initial={{
+            bankName:          (practice.bank_name           as string | null) ?? null,
+            bankAccountNumber: (practice.bank_account_number as string | null) ?? null,
+            branchCode:        (practice.branch_code         as string | null) ?? null,
+            accountHolder:     (practice.account_holder      as string | null) ?? null,
+            accountType:       (practice.account_type        as 'current' | 'savings' | null) ?? null,
+          }}
+          saveAction={updateBranchBanking}
+        />
+      </div>
     </div>
   );
 }
