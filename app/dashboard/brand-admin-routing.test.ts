@@ -93,8 +93,17 @@ describe('No other post-auth site bypasses the dispatcher', () => {
     expect(CONFIRMED).toMatch(/['"]\/login['"]/);
   });
 
-  it('/login funnels post-signin through /dashboard', () => {
-    expect(LOGIN).toMatch(/window\.location\.href\s*=\s*['"]\/dashboard['"]/);
+  it('/login funnels post-signin through /dashboard (via safeNext-clamped nextPath, default /dashboard)', () => {
+    // Post-2026-07-30 the /login page reads ?next= from the URL so
+    // the /checkout/[token] anonymous-only routing rule can send a
+    // logged-out existing patient to the correct plan-acceptance
+    // page after sign-in. The safeNextParam clamp keeps a missing/
+    // invalid ?next= at the historical /dashboard fallback, so the
+    // "post-signin funnels through the dispatcher" property still
+    // holds — it's just now expressed via a clamped variable.
+    expect(LOGIN).toMatch(/window\.location\.href\s*=\s*nextPath/);
+    expect(LOGIN).toMatch(/function safeNextParam/);
+    expect(LOGIN).toMatch(/const DEFAULT = ['"]\/dashboard['"]/);
   });
 
   it('/update-password funnels post-reset through /dashboard', () => {

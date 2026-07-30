@@ -4,6 +4,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import CheckoutForm from './CheckoutForm';
 import { initiateCheckout, requestPhoneOtp, verifyPhoneOtp } from './actions';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
+import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 
 // ─── /checkout/[token] ─────────────────────────────────────────────────────
 //
@@ -103,6 +104,107 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
 
   const row          = rows[0];
   const practiceName = row.practice_name ?? 'your practice';
+
+  // ── Anonymous-Checkout structural rule ────────────────────────────
+  //
+  // The anonymous multi-step Checkout below is for genuinely-new
+  // people ONLY. Anyone who already has a betternow account (however
+  // they signed up — password, Google, or a prior bill) MUST be sent
+  // through Sign In → the plan's saved-card acceptance page. That
+  // gets them the saved-card offer + avoids minting a duplicate Peach
+  // registration for the same physical card.
+  //
+  // Ownership signals (in priority order):
+  //   1. plan.patient_id (stamped at bill creation when the target
+  //      email resolves to an existing profile — see
+  //      app/practice/bills/new/actions.ts).
+  //   2. an existing auth account for the invitation's email (covers
+  //      the "bill was for a NEW email that then signed up organically
+  //      before clicking the link" #6 race — findExistingAuthUser).
+  //
+  // Session state (in priority order):
+  //   • logged-in owner (session.user.id === plan.patient_id)
+  //       → straight to /patient/orders/{planId}/confirm.
+  //   • logged-in non-owner
+  //       → /patient?reason=invitation_not_yours. We DO NOT drop them
+  //         into a plan they don't own, and we DO NOT sign them out
+  //         or force account re-onboarding. The confirm page's own
+  //         .eq('patient_id', user.id) guard is the second line of
+  //         defence.
+  //   • logged-out AND ownership signal present
+  //       → /login?next=/patient/orders/{planId}/confirm. The safeNext
+  //         validator on /auth/callback + the confirm page's own
+  //         ownership guard ensure only the right patient lands there.
+  //   • logged-out AND no ownership signal
+  //       → anonymous CheckoutForm renders (unchanged).
+  //
+  // Account-enumeration consideration:
+  //   The logged-out branch "existing-account vs truly-new" differs
+  //   visibly (redirect to login vs. rendered anonymous form). This
+  //   fits the app's existing posture — the invitation token in the
+  //   URL is proof of email possession (only the invited inbox sees
+  //   it), and /login already leaks account presence via "please
+  //   confirm your email" and passkey suggestions. See the report
+  //   for the tradeoff.
+  const confirmPath = `/patient/orders/${row.plan_id}/confirm`;
+
+  // Service-role client — used for BOTH the plan.patient_id lookup
+  // (RLS-scoped read that anon can't do) and findExistingAuthUser.
+  const svcForLookup = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  // Plan-side ownership signal. The get_invitation_by_token RPC does
+  // NOT return plan.patient_id (extending its signature would be a
+  // migration); a direct service-role read on plans is enough.
+  const { data: planPatientRow } = await svcForLookup
+    .from('plans')
+    .select('patient_id')
+    .eq('id', row.plan_id)
+    .maybeSingle();
+  const planPatientId = (planPatientRow?.patient_id as string | null | undefined) ?? null;
+
+  const { data: { user: sessionUser } } = await supabase.auth.getUser();
+
+  if (sessionUser) {
+    if (planPatientId === sessionUser.id) {
+      redirect(confirmPath);
+    }
+    // Session doesn't match — either plan.patient_id is another user
+    // (adversarial or wrong-account scenario) or is null AND the
+    // signed-in user's email doesn't match the invitation. Bounce to
+    // /patient with a reason code; the reason is informational only —
+    // we NEVER drop them into a plan they don't own.
+    redirect('/patient?reason=invitation_not_yours');
+  }
+
+  // Logged out — check for an existing account. Two signals:
+  //   1. plan.patient_id (bill was created for a matching email, or
+  //      a returning patient's second bill).
+  //   2. findExistingAuthUser by invitation email (covers the #6
+  //      race: bill created for a new email, patient signed up
+  //      organically before clicking the link).
+  let existingAccount = false;
+  if (planPatientId) {
+    existingAccount = true;
+  } else {
+    try {
+      const found = await findExistingAuthUser(svcForLookup, row.email);
+      existingAccount = !!found;
+    } catch (err) {
+      console.warn('[checkout] findExistingAuthUser failed (non-fatal)',
+        err instanceof Error ? err.message : err);
+      // Fall through — a lookup blip should not lock out a truly-new
+      // patient. The confirm page's own guard is the second line of
+      // defence for the wrong-owner path.
+    }
+  }
+
+  if (existingAccount) {
+    redirect(`/login?next=${encodeURIComponent(confirmPath)}`);
+  }
 
   // Post-0065: salary_day is a profile-first field. If a profile
   // already exists for the invitation's email AND has a salary_day
