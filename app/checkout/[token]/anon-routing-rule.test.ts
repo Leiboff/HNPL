@@ -39,20 +39,27 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
     expect(PAGE).toMatch(/import\s*\{\s*findExistingAuthUser\s*\}\s*from\s*'@\/lib\/auth\/findExistingAuthUser'/);
   });
 
-  it('looks up plan.patient_id via the service-role client (RPC does not expose it)', () => {
+  it('looks up plan.patient_id + status + peach_registration_id via the service-role client (RPC does not expose them)', () => {
     // The get_invitation_by_token RPC returns email/plan_id/etc but NOT
-    // plan.patient_id. Extending the RPC would be a migration; a direct
-    // service-role read on plans.patient_id gives us the ownership
-    // signal without one.
+    // plan.patient_id, plan.status, or plan.peach_registration_id.
+    // Extending the RPC would be a migration; a direct service-role
+    // read on plans gives us the three signals we need for the routing
+    // + uncaptured-resume decision without one.
     const idx = PAGE.indexOf('.from(\'plans\')');
     expect(idx).toBeGreaterThan(0);
-    // Assert the .select() targets patient_id on plans.
     const chunk = PAGE.slice(idx, idx + 400);
-    expect(chunk).toMatch(/select\(\s*['"]patient_id['"]\s*\)/);
+    // patient_id must remain in the select — it's the ownership signal.
+    expect(chunk).toMatch(/select\(\s*['"][^'"]*patient_id[^'"]*['"]\s*\)/);
+    // status + peach_registration_id are the uncaptured detection.
+    expect(chunk).toMatch(/select\(\s*['"][^'"]*status[^'"]*['"]\s*\)/);
+    expect(chunk).toMatch(/select\(\s*['"][^'"]*peach_registration_id[^'"]*['"]\s*\)/);
     expect(chunk).toMatch(/\.eq\(\s*['"]id['"]\s*,\s*row\.plan_id\s*\)/);
   });
 
-  it('logged-in owner (sessionUser.id === plan.patient_id) → redirect to /patient/orders/{planId}/confirm', () => {
+  it('logged-in owner + captured/pending_acceptance plan → redirect to /patient/orders/{planId}/confirm', () => {
+    // The ownership check is unchanged; the redirect to /confirm still
+    // fires for a session user who owns the plan AND whose plan is NOT
+    // in the uncaptured state (has a token, or in pending_acceptance).
     expect(PAGE).toMatch(/planPatientId === sessionUser\.id/);
     expect(PAGE).toMatch(/redirect\(confirmPath\)/);
   });
@@ -129,6 +136,156 @@ describe('ContinueWithGoogleButton forwards next through /auth/callback', () => 
 
   it('encodes next into the callback URL (never a raw interpolation that could break the URL)', () => {
     expect(GOOGLE_BUTTON).toMatch(/\/auth\/callback\?next=\$\{encodeURIComponent\(nextParam\)\}/);
+  });
+});
+
+describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not redirected to /confirm)', () => {
+  // The post-5b7f719 rule redirected every logged-in owner to /confirm.
+  // /confirm filters `.eq('status', 'pending_acceptance')` and bounces
+  // to /patient/orders for any other status — so a plan that reached
+  // pending_first_payment but never captured a card ended in a
+  // permanent stuck state. The refined rule keeps uncaptured plans on
+  // /checkout/[token], rendering ResumeCapture to re-open the Peach V2
+  // widget for the SAME instalment-1 row (deterministic Peach ref →
+  // Peach dedups the transaction).
+
+  const ACTIONS   = read('app/checkout/[token]/actions.ts');
+  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  it('page detects uncaptured plans via status + peach_registration_id', () => {
+    expect(PAGE).toMatch(/isUncapturedPlan/);
+    // The definition must be exactly pending_first_payment AND no
+    // peach_registration_id — anything else means the plan is in a
+    // saved-card-appropriate state (or never accepted).
+    expect(PAGE).toMatch(/planStatus === 'pending_first_payment'/);
+    expect(PAGE).toMatch(/&&\s*!planRegistrationId/);
+  });
+
+  it('page renders <ResumeCapture> for a logged-in owner of an uncaptured plan (does NOT redirect to /confirm)', () => {
+    // The uncaptured branch renders in-place; the redirect(confirmPath)
+    // is guarded by the else-of-isUncapturedPlan.
+    expect(PAGE).toMatch(/import ResumeCapture from '\.\/ResumeCapture'/);
+    expect(PAGE).toMatch(/if \(isUncapturedPlan\)\s*\{/);
+    expect(PAGE).toMatch(/<ResumeCapture[\s\S]{0,600}resumeAction=\{resumeFirstInstalmentCapture\}/);
+  });
+
+  it('page still redirects a logged-in owner to /confirm when the plan is NOT uncaptured', () => {
+    // The redirect(confirmPath) still exists — just moved inside the
+    // else of the uncaptured branch. The old behaviour (owner +
+    // pending_acceptance / with-token → /confirm) is preserved.
+    const idx = PAGE.indexOf('isUncapturedPlan');
+    expect(idx).toBeGreaterThan(0);
+    const chunk = PAGE.slice(idx, idx + 2500);
+    expect(chunk).toMatch(/redirect\(confirmPath\)/);
+  });
+
+  it('non-owner path unchanged: never routed into the plan (belt-and-braces on the resume path)', () => {
+    // The resume branch is inside the owner block (planPatientId ===
+    // sessionUser.id). A non-owner never reaches ResumeCapture.
+    // Pin this by locating ResumeCapture rendering and confirming it
+    // sits after the planPatientId === sessionUser.id check.
+    const ownerCheckIdx = PAGE.indexOf('planPatientId === sessionUser.id');
+    const resumeIdx     = PAGE.indexOf('<ResumeCapture');
+    expect(ownerCheckIdx).toBeGreaterThan(0);
+    expect(resumeIdx).toBeGreaterThan(ownerCheckIdx);
+    // The non-owner redirect must still be present after both.
+    expect(PAGE).toMatch(/redirect\(\s*['"]\/patient\?reason=invitation_not_yours['"]\s*\)/);
+  });
+});
+
+describe('resumeFirstInstalmentCapture — idempotent for the existing plan', () => {
+  const ACTIONS = read('app/checkout/[token]/actions.ts');
+
+  it('is exported and takes just the invitation token', () => {
+    expect(ACTIONS).toMatch(/export async function resumeFirstInstalmentCapture\(\s*token:\s*string/);
+  });
+
+  it('requires a signed-in user (session guard)', () => {
+    // Locate the action block and inspect its own content.
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    expect(startIdx).toBeGreaterThan(0);
+    // Grab up to the next top-level export — that's this function's body.
+    const rest        = ACTIONS.slice(startIdx);
+    const nextExport  = rest.indexOf('\nexport ', 1);
+    const body        = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+
+    expect(body).toMatch(/supabase\.auth\.getUser\(\)/);
+    expect(body).toMatch(/if\s*\(!user\)/);
+  });
+
+  it('rejects a non-owner: plan.patient_id !== session user id', () => {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    const rest     = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body     = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    expect(body).toMatch(/plan\.patient_id[^!]*!==\s*user\.id/);
+  });
+
+  it('requires plan.status === pending_first_payment AND peach_registration_id IS NULL', () => {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    const rest     = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body     = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    expect(body).toMatch(/plan\.status\s*!==\s*'pending_first_payment'/);
+    expect(body).toMatch(/if\s*\(plan\.peach_registration_id\)/);
+  });
+
+  it('does NOT create an account, upsert the profile, or delete/insert payments (no duplication)', () => {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    const rest     = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body     = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    // These are the DB-write / account-side-effect signatures that
+    // WOULD duplicate state. Their absence is the load-bearing
+    // idempotency contract.
+    expect(body).not.toMatch(/auth\.admin\.createUser/);
+    expect(body).not.toMatch(/from\('profiles'\)\.upsert/);
+    expect(body).not.toMatch(/from\('payments'\)\.delete/);
+    expect(body).not.toMatch(/from\('payments'\)\.insert/);
+    // The plan status/schedule columns must NOT be rewritten either
+    // (initiateCheckout writes them on attempt 1; resume must not
+    // touch them).
+    expect(body).not.toMatch(/from\('plans'\)[\s\S]{0,120}status:\s*'pending_first_payment'/);
+    expect(body).not.toMatch(/instalment_amount:/);
+  });
+
+  it('re-uses the SAME instalment-1 payment id and mints a deterministic Peach ref via checkoutRef(payment.id)', () => {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    const rest     = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body     = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    // Reads (does NOT insert) the existing instalment-1 row.
+    expect(body).toMatch(/from\('payments'\)[\s\S]{0,200}\.eq\(\s*'instalment_number'\s*,\s*1\s*\)/);
+    // Mints ref from that row's id — deterministic across resume calls.
+    expect(body).toMatch(/checkoutRef\(payment\.id as string\)/);
+  });
+
+  it('shopperResultUrl uses the token-based /checkout/[token]/complete route', () => {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    const rest     = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body     = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    expect(body).toMatch(/\/checkout\/\$\{token\}\/complete/);
+  });
+});
+
+describe('ResumeCapture — server action wired through, PeachWidget mounted on success', () => {
+  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  it('mounts PeachWidget with the checkoutId + shopperResultUrl returned by the resume action', () => {
+    expect(RESUME_UI).toMatch(/PeachWidget/);
+    expect(RESUME_UI).toMatch(/checkoutId=\{widget\.checkoutId\}/);
+    expect(RESUME_UI).toMatch(/shopperResultUrl=\{widget\.shopperResultUrl\}/);
+  });
+
+  it('calls the injected resumeAction (server action) with the token, sets widget state on ok', () => {
+    expect(RESUME_UI).toMatch(/resumeAction\(token\)/);
+    expect(RESUME_UI).toMatch(/setWidget\(\{\s*checkoutId:[^}]*shopperResultUrl:/);
+  });
+
+  it('surfaces a visible error alert when the resume action fails (no silent stuck state)', () => {
+    expect(RESUME_UI).toMatch(/data-testid="resume-capture-error"/);
+    expect(RESUME_UI).toMatch(/role="alert"/);
   });
 });
 
