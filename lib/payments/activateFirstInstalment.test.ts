@@ -1,0 +1,246 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { activateFirstInstalment } from './activateFirstInstalment';
+
+// ─── activateFirstInstalment — shared terminal activation ───────────
+//
+// The helper is called from TWO paths (payWithSavedCard sync success
+// and the Peach webhook), and MUST be idempotent under duplicate
+// delivery. These tests pin the essential guarantees:
+//
+//   1. On a fresh pending_first_payment plan + processing payment,
+//      the helper flips both to terminal state (active / collected)
+//      and inserts a single payouts row.
+//
+//   2. Preconditions gate each write — a duplicate call on a plan
+//      already 'active' or a payment already 'collected' MUST NOT
+//      double-stamp collected_at, double-insert a payout, or trip an
+//      error.
+//
+//   3. A payout row already existing for the plan is a signal that
+//      the peer path (sync-or-webhook) landed first; skip the payout
+//      insert entirely rather than duplicate it.
+//
+//   4. When plan.provider_id + practice_member.payout_destination =
+//      'provider', the payout snapshot fields carry the member's bank
+//      details, not the practice's.
+//
+//   5. A DB error on the payment update is reported (step='payment')
+//      so the caller can decide to log-loud rather than silently
+//      succeed.
+
+type Row = Record<string, unknown>;
+type Write =
+  | { table: string; op: 'update'; row: Row; filters: Array<[string, string, unknown]> }
+  | { table: string; op: 'insert'; row: Row };
+
+function makeSvc(seed: Record<string, Row[]>, options: { paymentUpdateFails?: string } = {}) {
+  const state: Record<string, Row[]> = JSON.parse(JSON.stringify(seed));
+  const writes: Write[] = [];
+
+  function table(name: string) {
+    return {
+      select(_cols?: string) {
+        const filters: Array<[string, string, unknown]> = [];
+        const b: Record<string, unknown> = {};
+        b.eq = (col: string, val: unknown) => { filters.push([col, 'eq', val]); return b; };
+        b.neq = (col: string, val: unknown) => { filters.push([col, 'neq', val]); return b; };
+        b.is  = (col: string, val: unknown) => { filters.push([col, 'is',  val]); return b; };
+        b.limit = (_n: number) => {
+          const rows = (state[name] ?? []).filter((r) =>
+            filters.every(([c, op, v]) =>
+              op === 'eq' ? r[c] === v : op === 'neq' ? r[c] !== v : r[c] === v,
+            ),
+          );
+          return Promise.resolve({ data: rows, error: null });
+        };
+        b.maybeSingle = () => Promise.resolve({
+          data: (state[name] ?? []).find((r) =>
+            filters.every(([c, op, v]) =>
+              op === 'eq' ? r[c] === v : op === 'neq' ? r[c] !== v : r[c] === v,
+            ),
+          ) ?? null,
+          error: null,
+        });
+        b.single = b.maybeSingle;
+        return b;
+      },
+      update(row: Row) {
+        const filters: Array<[string, string, unknown]> = [];
+        const b: Record<string, unknown> = {};
+        const finalize = () => {
+          if (options.paymentUpdateFails && name === 'payments') {
+            return { data: null, error: { message: options.paymentUpdateFails } };
+          }
+          writes.push({ table: name, op: 'update', row, filters });
+          const rows = state[name] ?? [];
+          for (const r of rows) {
+            const match = filters.every(([c, op, v]) =>
+              op === 'eq' ? r[c] === v : op === 'neq' ? r[c] !== v : r[c] === v,
+            );
+            if (match) Object.assign(r, row);
+          }
+          return { data: null, error: null };
+        };
+        b.eq  = (col: string, val: unknown) => { filters.push([col, 'eq', val]); return b; };
+        b.neq = (col: string, val: unknown) => { filters.push([col, 'neq', val]); return b; };
+        b.is  = (col: string, val: unknown) => { filters.push([col, 'is',  val]); return b; };
+        // Terminal `await`: return a plain object with the error via `.then`.
+        Object.assign(b, { then: (resolve: (v: unknown) => void) => resolve(finalize()) });
+        return b;
+      },
+      insert(row: Row) {
+        writes.push({ table: name, op: 'insert', row });
+        (state[name] ??= []).push({ ...row });
+        return Promise.resolve({ data: null, error: null });
+      },
+    };
+  }
+
+  return {
+    from: table,
+    writes,
+    state,
+  };
+}
+
+describe('activateFirstInstalment — happy path', () => {
+  it('flips payment→collected + plan→active + inserts one payout row', async () => {
+    const svc = makeSvc({
+      payments: [{ id: 'pay1', status: 'processing', collected_at: null }],
+      plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
+      practices:[{ id: 'prac1', fee_percent: 6 }],
+      payouts:  [],
+    });
+    const result = await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    expect(result).toEqual({ ok: true });
+    expect(svc.state.payments[0].status).toBe('collected');
+    expect(svc.state.payments[0].collected_at).toBe('2026-07-30T12:00:00.000Z');
+    expect(svc.state.plans[0].status).toBe('active');
+    expect(svc.state.payouts.length).toBe(1);
+    const payout = svc.state.payouts[0];
+    expect(payout.plan_id).toBe('plan1');
+    expect(payout.practice_id).toBe('prac1');
+    expect(payout.status).toBe('pending');
+    expect(payout.payout_destination).toBe('practice');
+  });
+});
+
+describe('activateFirstInstalment — idempotency (duplicate delivery)', () => {
+  it('skips the payout insert when a payout row for the plan already exists', async () => {
+    const svc = makeSvc({
+      payments: [{ id: 'pay1', status: 'collected', collected_at: '2026-07-30T11:00:00.000Z' }],
+      plans:    [{ id: 'plan1', status: 'active' }],
+      practices:[{ id: 'prac1', fee_percent: 6 }],
+      payouts:  [{ id: 'existing', plan_id: 'plan1', practice_id: 'prac1' }],
+    });
+    const result = await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    expect(result).toEqual({ ok: true });
+    expect(svc.state.payouts.length).toBe(1);
+    // Payment.collected_at was NOT overwritten with the second now-stamp
+    // because the update was guarded by neq('status', 'collected').
+    expect(svc.state.payments[0].collected_at).toBe('2026-07-30T11:00:00.000Z');
+  });
+});
+
+describe('activateFirstInstalment — provider payout snapshot', () => {
+  it('snapshots provider bank details when practice_member elected provider destination', async () => {
+    const svc = makeSvc({
+      payments: [{ id: 'pay1', status: 'processing' }],
+      plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
+      practices:[{ id: 'prac1', fee_percent: 6 }],
+      practice_members: [{
+        user_id:                'prov1',
+        practice_id:            'prac1',
+        payout_destination:     'provider',
+        personal_bank_name:     'FNB',
+        personal_account_holder:'Dr Smith',
+        personal_account_number:'1234567890',
+        personal_branch_code:   '250655',
+        personal_account_type:  'current',
+      }],
+      payouts: [],
+    });
+    const result = await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_id: 'prov1', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    expect(result).toEqual({ ok: true });
+    const payout = svc.state.payouts[0];
+    expect(payout.payout_destination).toBe('provider');
+    expect(payout.provider_id).toBe('prov1');
+    expect(payout.snapshot_bank_name).toBe('FNB');
+    expect(payout.snapshot_account_number).toBe('1234567890');
+  });
+});
+
+describe('activateFirstInstalment — error surfacing', () => {
+  it('reports { ok: false, step: "payment" } when the payment update errors', async () => {
+    const svc = makeSvc(
+      {
+        payments: [{ id: 'pay1', status: 'processing' }],
+        plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
+        practices:[{ id: 'prac1', fee_percent: 6 }],
+        payouts:  [],
+      },
+      { paymentUpdateFails: 'RLS deny' },
+    );
+    const result = await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', patient_id: 'pat1' },
+    });
+    expect(result).toMatchObject({ ok: false, step: 'payment', error: 'RLS deny' });
+    // Plan was NOT flipped since the payment write failed.
+    expect(svc.state.plans[0].status).toBe('pending_first_payment');
+  });
+});
+
+describe('activateFirstInstalment — pending status is NOT activated by caller', () => {
+  // Sanity check on the CONTRACT (not the helper itself): the sync path
+  // must only call this on Peach's 'success' branch. 'pending' — where
+  // Peach hasn't confirmed yet — should NOT hit this helper. Pin the
+  // downstream file so a future refactor doesn't add a `pending` call.
+  it('is only called from success paths — not pending', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('app/patient/actions.ts', 'utf8'),
+    );
+    // 'pending' branch logs but does not invoke activateFirstInstalment.
+    const pendingBranch = src.slice(src.indexOf('STEP 6 PENDING'));
+    expect(pendingBranch).not.toMatch(/activateFirstInstalment/);
+    // The 'success' branch DOES.
+    const successBranch = src.slice(
+      src.indexOf("chargeResult.status === 'success'"),
+      src.indexOf("STEP 6 PENDING"),
+    );
+    expect(successBranch).toMatch(/activateFirstInstalment/);
+  });
+});
+
+describe('sync + webhook cannot double-activate — pins on caller', () => {
+  it("webhook route uses the shared helper (won't drift from sync path)", async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('app/api/payments/peach/webhook/route.ts', 'utf8'),
+    );
+    expect(src).toMatch(/import\s*\{\s*activateFirstInstalment\s*\}\s*from\s*'@\/lib\/payments\/activateFirstInstalment'/);
+    // The old local activateFirstPayment must be gone.
+    expect(src).not.toMatch(/async function activateFirstPayment/);
+  });
+
+  it("sync path awaits activation BEFORE STEP 6 SUCCESS log so a throw doesn't succeed silently", async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('app/patient/actions.ts', 'utf8'),
+    );
+    const activateIdx = src.indexOf('await activateFirstInstalment');
+    const successIdx  = src.indexOf('STEP 6 SUCCESS');
+    expect(activateIdx).toBeGreaterThan(0);
+    expect(successIdx).toBeGreaterThan(activateIdx);
+  });
+});

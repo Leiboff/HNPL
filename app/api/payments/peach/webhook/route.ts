@@ -4,7 +4,6 @@ export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { calculateFee } from '@/lib/finance';
 import {
   verifyWebhookSignature,
   parseConfigWebhookBody,
@@ -23,7 +22,7 @@ import {
   notifyRecoverySucceeded,
 } from '@/lib/payments/dunningNotifications';
 import { getPaymentProvider } from '@/lib/payments/provider';
-import crypto from 'node:crypto';
+import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
 
 // ─── Peach Checkout webhook receiver ────────────────────────────────
 //
@@ -86,80 +85,13 @@ async function safePush(
   }
 }
 
-// ─── First-payment activation (shared by checkout + silent paths) ──
-
-async function activateFirstPayment(
-  supabase: ReturnType<typeof svc>,
-  payment:  { id: string },
-  plan:     { id: string; total_amount: unknown; practice_id: unknown; provider_id?: string | null },
-  now:      string,
-): Promise<boolean> {
-  const { error: pmtErr } = await supabase
-    .from('payments')
-    .update({ status: 'collected', collected_at: now })
-    .eq('id', payment.id);
-  if (pmtErr) {
-    console.error('[peach-webhook] activateFirstPayment: failed to mark instalment 1 collected', pmtErr.message);
-    return false;
-  }
-
-  const { error: planErr } = await supabase
-    .from('plans')
-    .update({ status: 'active' })
-    .eq('id', plan.id);
-  if (planErr) {
-    console.error('[peach-webhook] activateFirstPayment: failed to activate plan', planErr.message);
-    return false;
-  }
-
-  const { data: practice } = await supabase
-    .from('practices')
-    .select('fee_percent')
-    .eq('id', plan.practice_id as string)
-    .single();
-
-  const feePercent = Number(practice?.fee_percent ?? 6);
-  const { gross, fee, net } = calculateFee(Number(plan.total_amount), feePercent);
-
-  const payoutRow: Record<string, unknown> = {
-    id:           crypto.randomUUID(),
-    practice_id:  plan.practice_id as string,
-    plan_id:      plan.id,
-    gross_amount: gross,
-    fee_amount:   fee,
-    net_amount:   net,
-    status:       'pending',
-    payout_destination: 'practice',
-  };
-
-  if (plan.provider_id) {
-    payoutRow.provider_id = plan.provider_id;
-
-    const { data: member } = await supabase
-      .from('practice_members')
-      .select('payout_destination, personal_bank_name, personal_account_holder, personal_account_number, personal_branch_code, personal_account_type')
-      .eq('user_id', plan.provider_id)
-      .eq('practice_id', plan.practice_id as string)
-      .maybeSingle();
-
-    if (member?.payout_destination === 'provider') {
-      payoutRow.payout_destination        = 'provider';
-      payoutRow.snapshot_bank_name        = member.personal_bank_name        ?? null;
-      payoutRow.snapshot_account_holder   = member.personal_account_holder   ?? null;
-      payoutRow.snapshot_account_number   = member.personal_account_number   ?? null;
-      payoutRow.snapshot_branch_code      = member.personal_branch_code      ?? null;
-      payoutRow.snapshot_account_type     = member.personal_account_type     ?? null;
-    }
-  }
-
-  const { error: payoutErr } = await supabase.from('payouts').insert(payoutRow);
-  if (payoutErr) {
-    // Non-fatal
-    console.error('[peach-webhook] activateFirstPayment: failed to insert payout', payoutErr.message);
-  }
-
-  return true;
-}
+// ─── First-payment activation ──────────────────────────────────────
+//
+// The write logic lives in lib/payments/activateFirstInstalment.ts —
+// shared with payWithSavedCard's synchronous success path so the two
+// paths cannot diverge. Every write inside the helper is precondition-
+// guarded, so if the sync path landed first this reconciliation is a
+// no-op.
 
 // ─── Payment-success dispatch ──────────────────────────────────────
 
@@ -268,8 +200,18 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
         .is('peach_initial_transaction_id', null);
     }
 
-    const activated = await activateFirstPayment(supabase, payment, plan, now);
-    if (activated) {
+    const activateResult = await activateFirstInstalment(supabase, {
+      paymentId: payment.id,
+      plan: {
+        id:           plan.id,
+        total_amount: plan.total_amount,
+        practice_id:  plan.practice_id,
+        provider_id:  plan.provider_id ?? null,
+        patient_id:   plan.patient_id  ?? null,
+      },
+      now,
+    });
+    if (activateResult.ok) {
       console.log('[peach-webhook] payment.success: plan activated', { planId: plan.id, reference });
       await safePush(plan.patient_id, {
         type:  'plan',
@@ -277,6 +219,12 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
         body:  `Your ${formatRandCents(Number(plan.total_amount))} plan is live. We'll handle the rest.`,
         url:   `/patient/orders/${plan.id}`,
         tag:   `plan:${plan.id}:activated`,
+      });
+    } else {
+      console.error('[peach-webhook] activateFirstInstalment failed', {
+        planId: plan.id,
+        step:   activateResult.step,
+        error:  activateResult.error,
       });
     }
     return;
