@@ -15,7 +15,19 @@ export type ProviderOption = {
 
 type PracticeInfo = { id: string; name: string; fee_percent: number };
 
-export default async function NewBillPage() {
+// Search-params carry the ?practiceId= scope selector — same shape
+// the /practice dashboard reads. A brand-admin with N≥2 branches
+// picks the practice from the group dashboard, and the CreateBillButton
+// forwards that scope onto this route.
+type SearchParams = { practiceId?: string };
+
+export default async function NewBillPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const params = await searchParams;
+
   const { user, supabase } = await requireConfirmedUser({ next: '/practice/bills/new' });
 
   const { data: profile } = await supabase
@@ -30,49 +42,74 @@ export default async function NewBillPage() {
     else redirect('/login');
   }
 
-  const { data: membership } = await supabase
+  // ── Membership resolution — matches /practice dashboard pattern ──
+  //
+  // Post-0062 a brand-admin routinely has N≥2 practice_members rows.
+  // The old `.single()` here threw for that case and was the root
+  // cause of "group→practice bill issue never confirmed working".
+  //
+  // Pattern:
+  //   • Load ALL active memberships (with joined practice info).
+  //   • If ?practiceId= is supplied and matches one, use it.
+  //   • Else fall back to the oldest membership (solo case).
+  // Same fallback the /practice/page.tsx uses so both surfaces
+  // resolve to the same practice for the same URL.
+  const { data: rawMemberships } = await supabase
     .from('practice_members')
-    .select('practice_id, practices(id, name, fee_percent)')
+    .select('practice_id, created_at, practices(id, name, fee_percent)')
     .eq('user_id', user.id)
     .eq('active', true)
-    .single();
+    .order('created_at', { ascending: true });
 
-  if (!membership) redirect('/practice');
+  const memberRowsRaw = (rawMemberships ?? []) as unknown as Array<{
+    practice_id: string;
+    created_at:  string;
+    practices:   PracticeInfo | PracticeInfo[] | null;
+  }>;
+  const memberRows = memberRowsRaw.map((m) => ({
+    ...m,
+    practices: Array.isArray(m.practices) ? (m.practices[0] ?? null) : m.practices,
+  }));
 
-  const practice = membership.practices as unknown as PracticeInfo | null;
+  if (memberRows.length === 0) redirect('/practice');
+
+  const requestedId = params.practiceId;
+  const picked =
+    (requestedId && memberRows.find((m) => m.practice_id === requestedId)) ||
+    memberRows[0];
+
+  const practice = picked.practices;
   if (!practice) redirect('/practice');
 
-  const practiceId = membership.practice_id as string;
+  const practiceId = picked.practice_id;
 
-  // ── Trading gate ───────────────────────────────────────────────────────
-  // Mirror the gate the server action enforces. If the gate is closed we
-  // never render the form — we redirect to the dashboard, where the user
-  // sees a single source-of-truth status panel explaining which condition
-  // is unmet. Server-action call is still the authoritative reject path.
+  // ── Trading gate — scoped to the resolved practice ─────────────────
+  //
+  // If the caller supplied a ?practiceId= we couldn't match, the fallback
+  // just above picked their oldest membership rather than 404'ing. That
+  // matches the dashboard's tolerance for stale URL params. The gate
+  // runs against the resolved practiceId.
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
   const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
   if (!gate.ok) {
-    // A user-token caller can still reach this URL (typed in, stale tab,
-    // dashboard navigation that raced an admin action). Don't silently
-    // bounce to /practice — the dashboard would just look like a refresh.
-    // Append ?reason=trading_gate so the dashboard renders an explanatory
-    // banner above the gate panel.
-    redirect('/practice?reason=trading_gate');
+    // Bounce back to the dashboard for THIS practice (not a random one)
+    // so the trading-gate explanation lines up with the practice the
+    // user was trying to bill from.
+    redirect(`/practice?reason=trading_gate&practiceId=${practiceId}`);
   }
 
-  // Fetch active providers for this practice. We already know there is at
-  // least one (gate passed); this query produces the actual dropdown list.
-  const { data: memberRows } = await supabase
+  // Fetch active providers for this practice.
+  const { data: memberRowsForProviders } = await supabase
     .from('practice_members')
     .select('user_id, profiles(first_name, last_name)')
     .eq('practice_id', practiceId)
     .eq('active', true)
     .eq('role', 'provider');
 
-  const providers: ProviderOption[] = (memberRows ?? []).map((m: { user_id: string; profiles: unknown }) => {
+  const providers: ProviderOption[] = (memberRowsForProviders ?? []).map((m: { user_id: string; profiles: unknown }) => {
     const profileRow = Array.isArray(m.profiles)
       ? (m.profiles[0] as { first_name?: string; last_name?: string } | undefined)
       : (m.profiles as { first_name?: string; last_name?: string } | null);
@@ -93,7 +130,10 @@ export default async function NewBillPage() {
             </span>
             <span className="ml-2 text-sm text-gray-400">— {practice.name}</span>
           </div>
-          <a href="/practice" className="text-sm text-[#15A89E] hover:text-[#13294B]">
+          <a
+            href={`/practice?practiceId=${practiceId}`}
+            className="text-sm text-[#15A89E] hover:text-[#13294B]"
+          >
             ← Back to dashboard
           </a>
         </div>
@@ -111,6 +151,7 @@ export default async function NewBillPage() {
         <BillForm
           feePercent={Number(practice.fee_percent)}
           providers={providers}
+          practiceId={practiceId}
           createBill={createBill}
         />
       </main>

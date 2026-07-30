@@ -8,11 +8,20 @@ import BillWaitingPanel from './BillWaitingPanel';
 type Props = {
   feePercent: number;
   providers:  ProviderOption[];
+  /**
+   * The practice this form is scoped to. Threaded from the page's
+   * ?practiceId= resolution so the server-side createBill runs against
+   * the correct branch when the caller is a multi-membership user
+   * (brand-admin with N≥2 branches). See app/practice/bills/new/page.tsx
+   * + app/practice/bills/new/actions.ts for the resolution chain.
+   */
+  practiceId: string;
   createBill: (data: {
     patientEmail:      string;
     billAmount:        number;
     practiceReference?: string;
     providerId:        string;
+    practiceId:        string;
   }) => Promise<CreateBillResult>;
 };
 
@@ -159,7 +168,7 @@ function SuccessPanel({
   );
 }
 
-export default function BillForm({ feePercent, providers, createBill }: Props) {
+export default function BillForm({ feePercent, providers, practiceId, createBill }: Props) {
   const [patientEmail,     setPatientEmail]     = useState('');
   const [billAmountStr,    setBillAmountStr]    = useState('');
   const [practiceReference, setPracticeReference] = useState('');
@@ -194,6 +203,7 @@ export default function BillForm({ feePercent, providers, createBill }: Props) {
         billAmount,
         practiceReference: practiceReference.trim() || undefined,
         providerId,
+        practiceId,
       });
 
       if (result.error) {

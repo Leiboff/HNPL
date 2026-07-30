@@ -212,3 +212,165 @@ describe('Brand revenue page — counted-statuses regression vs the old practice
     expect(literal).not.toMatch(/'declined'/);
   });
 });
+
+// ─── SA banking validation on updateBranchBanking (Part A, 2026-07-21) ─
+//
+// A banking write must either be a full clear (all null → central-
+// billed fallback) OR a complete, SA-shape-valid tuple. Half-filled
+// banking is worse than none — settlements queue up against a row
+// that will always fail at the acquirer.
+
+describe('updateBranchBanking — SA banking shape validation', () => {
+  const FN_START = ACTIONS.indexOf('export async function updateBranchBanking');
+  const FN_BODY  = ACTIONS.slice(FN_START, FN_START + 3500);
+
+  it('branches on anySet — a full clear is permitted (drops banking)', () => {
+    // The guard reads `anySet` and skips per-field validation when
+    // every incoming field is empty — so a caller can null out the
+    // whole banking tuple without tripping a validation error.
+    expect(FN_BODY).toMatch(/const\s+anySet\s*=/);
+  });
+
+  it('rejects an account number that is non-numeric or the wrong length', () => {
+    // SA acquirer expectation: digits only, 6–13 chars. Regex must
+    // pin both aspects — a spaces-and-dashes account number would
+    // silently break Peach recurring settlement.
+    expect(FN_BODY).toMatch(/\/\^\\d\{6,13\}\$\//);
+  });
+
+  it('rejects a branch code that is not exactly 6 digits (SA universal code)', () => {
+    // 6-digit universal codes only. Old 5-digit legacy codes and any
+    // free-text entry are rejected.
+    expect(FN_BODY).toMatch(/\/\^\\d\{6\}\$\//);
+  });
+
+  it('requires all four core fields when any is set (holder / bank / account / branch code)', () => {
+    // Each required-field guard is a distinct `if (!<field>) return`;
+    // pin the four so a future edit that drops one immediately fails.
+    expect(FN_BODY).toMatch(/if \(!bankName\)/);
+    expect(FN_BODY).toMatch(/if \(!accountHolder\)/);
+    expect(FN_BODY).toMatch(/if \(!bankAccountNumber\)/);
+    expect(FN_BODY).toMatch(/if \(!branchCode\)/);
+    expect(FN_BODY).toMatch(/if \(!accountType\)/);
+  });
+});
+
+// ─── Practice-side sidebar nav — Part A UI (2026-07-21) ────────────────
+//
+// The /practice sidebar now shows a "Practice details" link that
+// deep-links into /brand/branch/{practiceId}. The link is
+// conditional on isBrandAdmin — a non-brand-admin practice_admin
+// would land on the brand page's notFound() guard, and hiding a
+// dead route is friendlier than surfacing it. Also — the trading
+// gate's "no_banking" CTA used to point to /practice/setup (dead
+// redirect for existing practices); it now points to the same
+// /brand/branch/{id} edit page.
+
+describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
+  const NAV        = read('app/practice/PracticeNav.tsx');
+  const SHELL      = read('app/practice/PracticeShell.tsx');
+  const DASHBOARD  = read('app/practice/page.tsx');
+
+  it('PracticeShell forwards practiceId + isBrandAdmin down to the nav', () => {
+    expect(SHELL).toMatch(/practiceId\?:\s*string/);
+    expect(SHELL).toMatch(/isBrandAdmin\?:\s*boolean/);
+    expect(SHELL).toMatch(/<PracticeNav\s+practiceId=/);
+  });
+
+  it('PracticeNav renders a Practice-details link ONLY when isBrandAdmin && practiceId', () => {
+    expect(NAV).toMatch(/isBrandAdmin\s*&&\s*practiceId/);
+    expect(NAV).toMatch(/\/brand\/branch\/\$\{practiceId\}/);
+  });
+
+  it('Dashboard resolves isBrandAdmin from practice_group_members membership', () => {
+    // Load-bearing gate for the sidebar link — must actually READ
+    // practice_group_members, not assume from role.
+    expect(DASHBOARD).toMatch(/practice_group_members/);
+    expect(DASHBOARD).toMatch(/isBrandAdmin/);
+  });
+
+  it('Dashboard trading-gate no-banking CTA points to /brand/branch/{practiceId} (not /practice/setup)', () => {
+    // /practice/setup is the initial-signup flow and redirects
+    // established users away. The banking edit lives on the brand
+    // branch page.
+    const noBankingBlockIdx = DASHBOARD.indexOf("gate.reason === 'no_banking'");
+    expect(noBankingBlockIdx).toBeGreaterThan(0);
+    const ctaBlock = DASHBOARD.slice(noBankingBlockIdx, noBankingBlockIdx + 800);
+    expect(ctaBlock).toMatch(/\/brand\/branch\/\$\{practiceId\}/);
+    expect(ctaBlock).not.toMatch(/href="\/practice\/setup"/);
+  });
+});
+
+// ─── Multi-membership group→practice bill flow — Part B (2026-07-21) ──
+//
+// Pin the specific regressions the fix addresses: the ?practiceId=
+// scope selector is threaded through page → form → server action,
+// and NONE of the practice-side pages call .single() on
+// practice_members any more (that was the root cause).
+
+describe('createBill + practice pages honour ?practiceId= scope (Part B)', () => {
+  const NEW_BILL_PAGE = read('app/practice/bills/new/page.tsx');
+  const NEW_BILL_ACT  = read('app/practice/bills/new/actions.ts');
+  const NEW_BILL_FORM = read('app/practice/bills/new/BillForm.tsx');
+  const PRAC_PAGE     = read('app/practice/page.tsx');
+  const MEMBERS_PAGE  = read('app/practice/members/page.tsx');
+
+  it('createBill accepts an optional practiceId in its input', () => {
+    expect(NEW_BILL_ACT).toMatch(/practiceId\?:\s*string/);
+  });
+
+  it('createBill verifies scoped membership when practiceId is supplied', () => {
+    // Server-side re-check: the caller must have an active
+    // membership on the resolved practice. A brand-admin cannot
+    // bill a practice outside their own brand — they have no
+    // practice_members row there.
+    expect(NEW_BILL_ACT).toMatch(/data\.practiceId/);
+    expect(NEW_BILL_ACT).toMatch(/You are not an active member of that practice\./);
+  });
+
+  it('createBill falls back to the caller\'s oldest membership when practiceId is absent', () => {
+    // Solo-caller path — mirrors /practice dashboard's fallback so
+    // the two surfaces converge on the same practice for the same
+    // URL. Must NOT use .single() (multi-membership 406).
+    expect(NEW_BILL_ACT).toMatch(/\.order\('created_at'/);
+    expect(NEW_BILL_ACT).toMatch(/\.limit\(1\)/);
+  });
+
+  it('/practice/bills/new page reads ?practiceId= from searchParams', () => {
+    expect(NEW_BILL_PAGE).toMatch(/searchParams/);
+    expect(NEW_BILL_PAGE).toMatch(/params\.practiceId/);
+    // And must NOT .single() on practice_members either. Strip line
+    // and block comments before scanning so the historical fix
+    // comments (which document what USED to be `.single()`) don't
+    // trip the regex.
+    const bodyStart = NEW_BILL_PAGE.indexOf('practice_members');
+    expect(bodyStart).toBeGreaterThan(0);
+    const bodyChunk = NEW_BILL_PAGE
+      .slice(bodyStart, bodyStart + 800)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    expect(bodyChunk).not.toMatch(/\.single\(/);
+  });
+
+  it('BillForm accepts + threads practiceId to createBill', () => {
+    expect(NEW_BILL_FORM).toMatch(/practiceId:\s*string/);
+    // Positive pin: the practiceId prop is present at the call site.
+    expect(NEW_BILL_FORM).toMatch(/practiceId,\s*[\s\S]*?\}\)/);
+  });
+
+  it('/practice/page.tsx and /practice/members/page.tsx do NOT .single() on practice_members', () => {
+    // Both pages migrated to .order().limit(1) with the ?practiceId=
+    // acting-context. Their .single() era was the multi-membership 406.
+    // Strip comments before checking so a comment referencing the
+    // historical `.single()` fix isn't mistaken for actual code.
+    for (const src of [PRAC_PAGE, MEMBERS_PAGE]) {
+      const chainIdx = src.indexOf("from('practice_members')");
+      expect(chainIdx).toBeGreaterThan(0);
+      const chunk = src
+        .slice(chainIdx, chainIdx + 800)
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+      expect(chunk).not.toMatch(/\.single\(\)/);
+    }
+  });
+});

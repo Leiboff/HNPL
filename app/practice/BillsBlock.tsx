@@ -27,6 +27,13 @@ type Props = {
   specialtyMap: Record<string, string>;
   practiceName: string;
   gate:         TradingGateResult;
+  /**
+   * Practice scope for the "+ Create a bill" / "+ New bill" CTAs.
+   * Forwarded from the dashboard so the CTA URL carries ?practiceId=,
+   * which lets the new-bill page resolve the right branch for a
+   * brand-admin with N≥2 branches. Optional — omit for the solo case.
+   */
+  practiceId?: string;
 };
 
 function LifecycleBadge({ status }: { status: BillLifecycleStatus }) {
@@ -76,6 +83,7 @@ export default function BillsBlock({
   specialtyMap,
   practiceName,
   gate,
+  practiceId,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -200,7 +208,7 @@ export default function BillsBlock({
 
         {totalCount > 0 && (
           <div className="flex items-center gap-3">
-            <CreateBillButton gate={gate} variant="subtle" />
+            <CreateBillButton gate={gate} variant="subtle" practiceId={practiceId} />
             <div ref={menuRef} className="relative">
               <button
                 onClick={() => setMenuOpen((o) => !o)}
@@ -231,7 +239,7 @@ export default function BillsBlock({
           <div className="py-20 text-center">
             <p className="font-medium text-gray-500">No bills yet</p>
             <p className="mt-1 text-sm text-gray-400">Create your first bill to get started.</p>
-            <CreateBillButton gate={gate} variant="cta" label="Create a bill" />
+            <CreateBillButton gate={gate} variant="cta" label="Create a bill" practiceId={practiceId} />
           </div>
         ) : plans.length === 0 ? (
           <div className="py-16 text-center">

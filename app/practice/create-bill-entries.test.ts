@@ -110,8 +110,11 @@ describe('/practice/bills/new redirects with an explanation when gated', () => {
   it('redirects to /practice?reason=trading_gate (not a bare /practice)', () => {
     const src = readSrc('app/practice/bills/new/page.tsx');
     // The redirect target on the gated branch carries the reason param so
-    // the dashboard can render its bounce-back banner.
-    expect(src).toMatch(/redirect\(['"]\/practice\?reason=trading_gate['"]\)/);
+    // the dashboard can render its bounce-back banner. May also carry
+    // &practiceId=… to preserve the scope selection when the caller has
+    // multiple branches; the important guarantee is that reason=trading_gate
+    // is present in the target URL.
+    expect(src).toMatch(/redirect\(`\/practice\?reason=trading_gate/);
   });
 
   it('dashboard renders the bounce-back banner when reason=trading_gate AND gate is closed', () => {
