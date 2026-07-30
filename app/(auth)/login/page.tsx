@@ -10,6 +10,16 @@ import { recordLoginLanding } from '@/app/patient/passkey-actions';
 import InstallCallout from '@/app/_pwa/InstallCallout';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 
+// Validate ?next= from the URL — must be origin-relative and not
+// protocol-relative. Mirrors the /auth/callback safeNext posture so
+// the two enforcement paths cannot disagree. Anything else → default.
+function safeNextParam(raw: string | null | undefined): string {
+  const DEFAULT = '/dashboard';
+  if (!raw) return DEFAULT;
+  if (!raw.startsWith('/') || raw.startsWith('//')) return DEFAULT;
+  return raw;
+}
+
 export default function LoginPage() {
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
@@ -20,17 +30,23 @@ export default function LoginPage() {
   const [notConfirmed, setNotConfirmed] = useState(false);
   const [resendState,  setResendState]  = useState<'idle' | 'sending' | 'sent'>('idle');
 
+  // Post-login destination. Read once on mount from ?next= and clamp
+  // to the same origin-relative allow-list used by /auth/callback.
+  // Defaults to /dashboard (the role dispatcher).
+  const [nextPath, setNextPath] = useState<string>('/dashboard');
+
   // Conditional UI + modal passkey sign-in. The hook starts a hanging
   // navigator.credentials.get() with mediation:'conditional' on mount; the
   // input below carries autocomplete="username webauthn" so the browser
   // surfaces the saved passkey as an autofill suggestion. Tapping the
   // suggestion → Face ID / fingerprint → signed in, no button required.
-  const onPasskeySuccess = useCallback(() => { window.location.href = '/dashboard'; }, []);
+  const onPasskeySuccess = useCallback(() => { window.location.href = nextPath; }, [nextPath]);
   const { supported: passkeySupport, signIn: signInWithPasskey, loading: passkeyLoading, error: passkeyError } =
     usePasskeySignIn({ onSuccess: onPasskeySuccess });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    setNextPath(safeNextParam(params.get('next')));
     const msg = params.get('message');
     if (msg) setNotice(decodeURIComponent(msg));
     // Inactivity auto-logout landing — informational, not an error.
@@ -84,7 +100,7 @@ export default function LoginPage() {
       // Swallow — prompt frequency capping is a nudge, not a gate.
     }
 
-    window.location.href = '/dashboard';
+    window.location.href = nextPath;
   }
 
   async function handleResend() {
@@ -177,7 +193,7 @@ export default function LoginPage() {
               via the dispatcher — see /auth/callback for the profile
               belt-and-braces + role-preservation logic. */}
           <div className="mb-5 space-y-2" data-testid="login-google-block">
-            <ContinueWithGoogleButton label="Sign in with Google" />
+            <ContinueWithGoogleButton label="Sign in with Google" next={nextPath} />
             <p className="text-center text-[11px] text-gray-400">
               For patients
             </p>

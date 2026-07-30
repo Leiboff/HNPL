@@ -31,11 +31,31 @@ type Props = {
   label?: string;
   /** Optional aria-label override for testability. */
   ariaLabel?: string;
+  /**
+   * Optional post-auth destination — plumbed through to
+   * `/auth/callback?next=…`. Must be an origin-relative path;
+   * anything else is clamped to '/dashboard' by /auth/callback's
+   * safeNext. Caller-supplied only in narrow flows (e.g. the
+   * emailed-bill-link routing rule, /login preserving its own
+   * ?next= param). Default: '/dashboard' — same as before.
+   */
+  next?: string;
 };
+
+// Origin-relative allow-list. Same posture as /auth/callback safeNext
+// so if the caller somehow hands us a tampered value, we still send
+// the user to /dashboard rather than an off-domain redirect.
+function safeNext(raw: string | undefined): string {
+  const DEFAULT = '/dashboard';
+  if (!raw) return DEFAULT;
+  if (!raw.startsWith('/') || raw.startsWith('//')) return DEFAULT;
+  return raw;
+}
 
 export default function ContinueWithGoogleButton({
   label = 'Continue with Google',
   ariaLabel,
+  next,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
@@ -49,11 +69,16 @@ export default function ContinueWithGoogleButton({
 
     // redirectTo must be allowed in the Supabase dashboard's Auth →
     // URL Configuration → Redirect URLs list. `/auth/callback` is the
-    // shared PKCE landing (see the password-reset build).
+    // shared PKCE landing (see the password-reset build). The `next`
+    // param is validated at BOTH ends — safeNext above blocks a
+    // tampered caller here, and /auth/callback::safeNext blocks a
+    // tampered Google-hosted round-trip. Belt-and-braces so no
+    // single edit can open a redirect vector.
+    const nextParam = safeNext(next);
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${origin}/auth/callback?next=/dashboard`,
+        redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(nextParam)}`,
       },
     });
 

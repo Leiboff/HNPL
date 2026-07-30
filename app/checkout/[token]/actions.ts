@@ -476,11 +476,14 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       createRegistration:    true,   // remember the card for MIT retries
       shopperResultUrl,
       origin:                appUrl,
-      // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
-      // capture via the V2 embedded widget.
+      // Peach V2 SI (developer.peachpayments.com/reference/post_v2-checkout).
+      // INITIAL + INSTALLMENT — fixed-instalment plan, first CIT
+      // capture via the embedded widget. V2 does NOT accept `source`
+      // (OPPWA-only vocabulary — the "unknown field" rejection from
+      // 2026-07-30). The Checkout V2 door is inherently CIT by design;
+      // no source flag needed.
       standingInstruction: {
         mode:                 'INITIAL',
-        source:               'CIT',
         type:                 'INSTALLMENT',
         expiry:               expiryDate,
         frequency:            30,        // days between authorisations

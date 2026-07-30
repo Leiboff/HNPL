@@ -346,14 +346,13 @@ describe('Part 4 — post-login passkey prompt', () => {
     expect(LOGIN_PAGE).toMatch(/recordLoginLanding/);
     // Find the sign-in flow specifically — anchor on the password
     // sign-in call, then look for the recordLoginLanding call after
-    // it, and the /dashboard nav after that. There are TWO
-    // window.location.href assignments in the file (one in the
-    // passkey callback earlier); this ordering probe uses indexes
-    // AFTER the signInWithPassword call to avoid the passkey one.
+    // it, and the nextPath nav after that. Post-2026-07-30 the
+    // navigation target is `nextPath` (safeNext-clamped, default
+    // /dashboard) rather than a hardcoded /dashboard string.
     const idxSignIn = LOGIN_PAGE.indexOf('signInWithPassword');
     expect(idxSignIn).toBeGreaterThan(0);
     const idxRecord = LOGIN_PAGE.indexOf('recordLoginLanding()', idxSignIn);
-    const idxNav    = LOGIN_PAGE.indexOf("window.location.href = '/dashboard'", idxSignIn);
+    const idxNav    = LOGIN_PAGE.indexOf('window.location.href = nextPath', idxSignIn);
     expect(idxRecord).toBeGreaterThan(idxSignIn);
     expect(idxNav).toBeGreaterThan(idxRecord);
   });

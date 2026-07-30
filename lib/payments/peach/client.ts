@@ -398,22 +398,33 @@ export class PeachProvider implements PaymentProvider {
     if (params.shopperResultUrl) body.shopperResultUrl = params.shopperResultUrl;
 
     if (params.standingInstruction) {
-      // Whitelist the fields we forward to Peach — Peach's V2 validator
-      // rejects unknown fields with "Invalid request body". Keeping
-      // this explicit rather than a spread means a typo in the caller
-      // (e.g. `expiryDate` instead of `expiry`) surfaces here, not as
-      // a mystery 400 from Peach.
+      // Whitelist the fields we forward to Peach V2 — the V2 validator
+      // rejects unknown fields with "unknown field" errors. V2's SI
+      // schema (developer.peachpayments.com/reference/post_v2-checkout)
+      // is DELIBERATELY narrower than the OPPWA/recurring one:
+      //
+      //   V2 accepts:   mode, type, expiry, frequency,
+      //                 numberOfInstallments, recurringType,
+      //                 industryPractice.
+      //   V2 rejects:   source (CIT/MIT) — OPPWA vocabulary.
+      //                 initialTransactionId — OPPWA vocabulary.
+      //
+      // Those two fields ARE valid on the recurring /v1/registrations
+      // path (see chargeSavedCard below), which uses the same-named
+      // param on ChargeSavedCardParams and is untouched. Keeping the
+      // filter explicit means a caller can still hand us OPPWA-shaped
+      // SI without breaking V2 — the client scrubs the OPPWA-only
+      // fields at the boundary.
       const src = params.standingInstruction;
       const si: Record<string, unknown> = {
-        mode:   src.mode,
-        source: src.source,
-        type:   src.type,
+        mode: src.mode,
+        type: src.type,
       };
-      if (src.initialTransactionId) si.initialTransactionId = src.initialTransactionId;
       if (src.expiry)               si.expiry               = src.expiry;
-      if (src.frequency)            si.frequency            = src.frequency;
+      if (typeof src.frequency === 'number')            si.frequency            = src.frequency;
       if (typeof src.numberOfInstallments === 'number') si.numberOfInstallments = src.numberOfInstallments;
       if (src.recurringType)        si.recurringType        = src.recurringType;
+      if (src.industryPractice)     si.industryPractice     = src.industryPractice;
       body.standingInstruction = si;
     }
 

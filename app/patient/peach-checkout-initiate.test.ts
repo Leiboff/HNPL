@@ -36,4 +36,15 @@ describe('initializeFirstPayment — Peach V2 standingInstruction shape', () => 
     expect(scope).toMatch(/frequency:\s*30\b/);
     expect(scope).not.toMatch(/frequency:\s*['"]0001['"]/);
   });
+
+  it('does NOT send OPPWA-only "source" or "initialTransactionId" on V2', () => {
+    // Same rejection as the /checkout/[token] initiate — V2 refuses
+    // these fields. Flow C (payWithSavedCard MIT below) still uses
+    // source: 'MIT' — that's on /v1/registrations and untouched.
+    const startIdx = actions.indexOf('export async function initializeFirstPayment');
+    const endIdx   = actions.indexOf('export async function', startIdx + 1);
+    const scope    = actions.slice(startIdx, endIdx > 0 ? endIdx : undefined);
+    expect(scope).not.toMatch(/source:\s*['"]CIT['"]/);
+    expect(scope).not.toMatch(/initialTransactionId:/);
+  });
 });

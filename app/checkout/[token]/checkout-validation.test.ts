@@ -118,6 +118,21 @@ describe('/checkout/[token] initiate — Peach V2 standingInstruction shape', ()
     expect(actions).toMatch(/frequency:\s*30\b/);
     expect(actions).not.toMatch(/frequency:\s*['"]0001['"]/);
   });
+
+  it('does NOT send the OPPWA-only "source" or "initialTransactionId" on V2 (rejected with "unknown field")', () => {
+    // 2026-07-30 regression: V2 Checkout does NOT accept source
+    // (CIT/MIT) or initialTransactionId — those are recurring API
+    // vocabulary. Peach V2 returns {"standingInstruction.source":
+    // "unknown field"} and the whole checkout body is rejected.
+    // Flow C (chargeSavedCard against /v1/registrations) legitimately
+    // uses source — that path is untouched. This pin is V2-only.
+    const initiateStart = actions.indexOf('provider.createCheckout');
+    expect(initiateStart).toBeGreaterThan(0);
+    const initiateEnd = actions.indexOf(');', initiateStart);
+    const body = actions.slice(initiateStart, initiateEnd);
+    expect(body).not.toMatch(/source:\s*['"]CIT['"]/);
+    expect(body).not.toMatch(/initialTransactionId:/);
+  });
 });
 
 describe('CheckoutForm — email is read-only (not in the schema)', () => {

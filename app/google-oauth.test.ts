@@ -36,12 +36,25 @@ describe('ContinueWithGoogleButton — Google OAuth initiation', () => {
     expect(BUTTON).toMatch(/signInWithOAuth\(\s*\{[\s\S]*?provider:\s*['"]google['"]/);
   });
 
-  it('sends the user back through /auth/callback with a hardcoded next=/dashboard', () => {
-    // origin-derived at click time (`${origin}/auth/callback?next=/dashboard`).
-    expect(BUTTON).toMatch(/\/auth\/callback\?next=\/dashboard/);
-    // The `next` value in the button is NEVER user-tampered — it's a
-    // literal so a click cannot smuggle an open-redirect target.
-    expect(BUTTON).not.toMatch(/searchParams|new URLSearchParams/);
+  it('sends the user back through /auth/callback with a safeNext-clamped next param', () => {
+    // Post-2026-07-30 the button accepts an optional `next` prop so
+    // the /checkout/[token] anonymous-only routing rule can carry a
+    // safeNext-validated destination (e.g. /patient/orders/{id}/confirm)
+    // across the OAuth round trip. Both ends validate:
+    //   • the button's own safeNext() clamps to /dashboard when the
+    //     prop is missing, non-relative, or protocol-relative.
+    //   • /auth/callback::safeNext re-validates the returned param.
+    //
+    // Pin the URL shape (variable, no longer a literal), the local
+    // safeNext validator, and the encodeURIComponent wrap. The button
+    // still forbids reading URLSearchParams directly — the value is
+    // always caller-supplied via a prop, never a raw window read.
+    expect(BUTTON).toMatch(/\/auth\/callback\?next=\$\{encodeURIComponent\(nextParam\)\}/);
+    expect(BUTTON).toMatch(/function safeNext/);
+    expect(BUTTON).toMatch(/const DEFAULT = ['"]\/dashboard['"]/);
+    // The button MUST NOT read the URL directly — its `next` prop is
+    // caller-controlled + validated.
+    expect(BUTTON).not.toMatch(/window\.location\.search|new URLSearchParams/);
   });
 
   it('uses the SSR browser client', () => {

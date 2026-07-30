@@ -241,11 +241,11 @@ export async function initializeFirstPayment(
       createRegistration:    true,
       shopperResultUrl,
       origin:                appUrl,
-      // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
-      // capture. The V2 embedded widget handles 3DS in-page.
+      // Peach V2 SI — INITIAL + INSTALLMENT, first CIT capture via the
+      // embedded widget. V2 does NOT accept `source` (OPPWA-only).
+      // See app/checkout/[token]/actions.ts for the full comment.
       standingInstruction: {
         mode:                 'INITIAL',
-        source:               'CIT',
         type:                 'INSTALLMENT',
         expiry:               expiryDate,
         frequency:            30,        // days between authorisations
