@@ -132,7 +132,7 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
       createRegistration: true,
       shopperResultUrl: 'https://app.test/checkout/tok/complete',
       origin: 'https://app.test',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
+      standingInstruction: { mode: 'INITIAL', type: 'INSTALLMENT' },
       customer: { email: 'u@x.com' },
     });
     expect(res.checkoutId).toBe('chk-1');
@@ -165,7 +165,7 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     expect(chkBody.paymentType).toBe('DB');
     expect(chkBody.createRegistration).toBe(true);
     expect(chkBody.shopperResultUrl).toBe('https://app.test/checkout/tok/complete');
-    expect(chkBody.standingInstruction).toEqual({ mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' });
+    expect(chkBody.standingInstruction).toEqual({ mode: 'INITIAL', type: 'INSTALLMENT' });
     expect(chkBody.customer).toEqual({ email: 'u@x.com' });
     expect(typeof chkBody.nonce).toBe('string');
     expect(chkBody.nonce.length).toBeGreaterThan(10);
@@ -190,7 +190,7 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     await expect(p.createCheckout({
       amountCents: 92.5 as unknown as number,
       merchantTransactionId: 'bnc1234567890abc',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
+      standingInstruction: { mode: 'INITIAL', type: 'INSTALLMENT' },
     })).rejects.toThrow(/positive integer/);
   });
 
@@ -200,20 +200,22 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     await expect(p.createCheckout({
       amountCents: 1000,
       merchantTransactionId: 'this-ref-is-way-too-long-for-peach-v2',
-      standingInstruction: { mode: 'INITIAL', source: 'CIT', type: 'INSTALLMENT' },
+      standingInstruction: { mode: 'INITIAL', type: 'INSTALLMENT' },
     })).rejects.toThrow(/1-16 chars/);
   });
 
-  it('Flow A — sends the extended standingInstruction (expiry, frequency INT, numberOfInstallments) for INSTALLMENT/INITIAL/CIT', async () => {
+  it('Flow A — V2 SI: mode + type + expiry + frequency INT + numberOfInstallments (NO source, NO initialTransactionId)', async () => {
     // Load-bearing pin per the Peach V2 /v2/checkout schema
     // (developer.peachpayments.com/reference/post_v2-checkout):
-    //   • frequency is an INTEGER 1-9999 (days between recurring
-    //     authorisations). Sending a string was the "Invalid request
-    //     body" root cause fixed on 2026-07-30.
-    //   • numberOfInstallments is INTEGER 1-999 and REQUIRED for
-    //     INSTALLMENT + INITIAL — both 2 and 3 are valid.
-    // Do NOT send recurringType for type=INSTALLMENT — reserved for
-    // type=RECURRING.
+    //
+    //   V2 accepts: mode, type, expiry, frequency, numberOfInstallments,
+    //               recurringType, industryPractice.
+    //   V2 REJECTS: `source` (CIT/MIT) and `initialTransactionId` —
+    //               those are OPPWA/recurring vocabulary that would
+    //               come back as {"standingInstruction.source":
+    //               "unknown field"} on 2026-07-30.
+    //
+    // Do NOT send recurringType for type=INSTALLMENT (only RECURRING).
     const fake = scriptedFetch([
       OAUTH_OK,
       { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-full' } },
@@ -227,7 +229,6 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
       createRegistration:    true,
       standingInstruction: {
         mode:                 'INITIAL',
-        source:               'CIT',
         type:                 'INSTALLMENT',
         expiry:               '2027-01-15',
         frequency:            30,
@@ -237,22 +238,19 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
     expect(chkBody.standingInstruction).toEqual({
       mode:                 'INITIAL',
-      source:               'CIT',
       type:                 'INSTALLMENT',
       expiry:               '2027-01-15',
       frequency:            30,
       numberOfInstallments: 3,
     });
+    // V2 REJECTIONS — must be absent from the wire body:
+    expect(chkBody.standingInstruction.source).toBeUndefined();
+    expect(chkBody.standingInstruction.initialTransactionId).toBeUndefined();
     // recurringType MUST NOT appear on an INSTALLMENT initiate.
     expect(chkBody.standingInstruction.recurringType).toBeUndefined();
   });
 
   it('Flow A — planType=2 sends numberOfInstallments=2 (was the "Invalid request body" case)', async () => {
-    // Regression pin — before 2026-07-30 the caller omitted
-    // numberOfInstallments for planType=2, believing it had to be in
-    // Peach's Budget Installment allowed set (a misreading of the
-    // Peach docs). The V2 schema accepts 1-999 as INTEGER, so 2 is
-    // valid and REQUIRED for INSTALLMENT + INITIAL.
     const fake = scriptedFetch([
       OAUTH_OK,
       { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-n2' } },
@@ -266,7 +264,6 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
       createRegistration:    true,
       standingInstruction: {
         mode:                 'INITIAL',
-        source:               'CIT',
         type:                 'INSTALLMENT',
         expiry:               '2027-01-15',
         frequency:            30,
@@ -277,6 +274,45 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     expect(chkBody.standingInstruction.numberOfInstallments).toBe(2);
     expect(chkBody.standingInstruction.frequency).toBe(30);
     expect(chkBody.standingInstruction.expiry).toBe('2027-01-15');
+    // Regression against the 2026-07-30 "unknown field" rejection:
+    expect(chkBody.standingInstruction.source).toBeUndefined();
+    expect(chkBody.standingInstruction.initialTransactionId).toBeUndefined();
+  });
+
+  it('Flow A — client BOUNDARY strips source/initialTransactionId if a caller regresses and passes them', async () => {
+    // Defense-in-depth: even if a caller is refactored back to pass
+    // OPPWA-shape SI (source/initialTransactionId), the V2 client
+    // MUST strip them at the boundary so Peach V2 accepts the body.
+    // The type is narrower than what we filter — TS blocks compile-
+    // time, this pin blocks runtime.
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-scrub' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({
+      amountCents:           1000,
+      merchantTransactionId: 'bncXYZXYZXYZXYZ',
+      createRegistration:    true,
+      // Cast — the type intentionally omits these, but the RUNTIME
+      // filter must strip them if a JS-only caller somehow includes
+      // them (or the type is loosened in a future edit).
+      standingInstruction: {
+        mode:                 'INITIAL',
+        type:                 'INSTALLMENT',
+        expiry:               '2027-01-15',
+        frequency:            30,
+        numberOfInstallments: 2,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        source:               'CIT',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        initialTransactionId: 'should-not-be-sent',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    });
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.standingInstruction.source).toBeUndefined();
+    expect(chkBody.standingInstruction.initialTransactionId).toBeUndefined();
   });
 
   it('logs "PEACH CHECKOUT INITIATE ERROR:" with raw body on a 400 from /v2/checkout', async () => {

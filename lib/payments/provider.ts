@@ -104,35 +104,31 @@ export type CheckoutCreateParams = {
   currency?:             string;      // Defaults to 'ZAR'
   paymentType?:          'DB' | 'PA'; // DB debit (default); PA reserved for future preauth flows.
   createRegistration?:   boolean;     // true → widget also captures a reusable card (Flow A first CIT).
+  // Peach V2 /v2/checkout standingInstruction — the V2 schema only
+  // (developer.peachpayments.com/reference/post_v2-checkout).
+  //
+  // CRITICAL: V2 Checkout does NOT accept the OPPWA fields `source`
+  // (CIT/MIT) or `initialTransactionId`. Those are recurring-API
+  // vocabulary — legitimately used on /v1/registrations/{id}/payments
+  // via ChargeSavedCardParams (Flow C), which lives on its own type
+  // below and is untouched. V2's rejection of source came through as
+  // {"standingInstruction.source": "unknown field"} on 2026-07-30.
+  //
+  //   type                 UNSCHEDULED | INSTALLMENT | RECURRING
+  //   mode                 INITIAL | REPEATED
+  //   expiry               YYYY-MM-DD — Mastercard default 9999-12-31
+  //   frequency            INTEGER 1-9999 (days between authorisations)
+  //   numberOfInstallments INTEGER 1-999 — required for INSTALLMENT+INITIAL
+  //   recurringType        SUBSCRIPTION | STANDING_ORDER — for RECURRING only
+  //   industryPractice     MIT-follow-up enum — N/A on our INITIAL/CIT
   standingInstruction?:  {
     mode:                  'INITIAL' | 'REPEATED';
-    source:                'CIT' | 'MIT';
     type:                  'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
-    initialTransactionId?: string;
-    // Fields required by Peach V2 /v2/checkout schema for standing
-    // instructions (per developer.peachpayments.com/reference/post_v2-checkout):
-    //   expiry               yyyy-MM-dd — future expiry date for the
-    //                        saved card. Mastercard default 9999-12-31.
-    //   frequency            INTEGER 1-9999 — number of DAYS between
-    //                        recurring authorisations. e.g. 30 = monthly.
-    //                        (NOT a scheme code — that misreading of the
-    //                        docs was the "Invalid request body" root
-    //                        cause fixed 2026-07-30; frequency previously
-    //                        sent as string '0001'.)
-    //   numberOfInstallments INTEGER 1-999 — max authorisations for the
-    //                        installment plan. REQUIRED when
-    //                        type=INSTALLMENT and mode=INITIAL. 2 and 3
-    //                        are both valid.
-    //   recurringType        NOT for type=INSTALLMENT — only for
-    //                        type=RECURRING (Mastercard SUBSCRIPTION vs
-    //                        STANDING_ORDER). Left in the type only so
-    //                        callers can send it if they ever use
-    //                        type=RECURRING; do NOT send for our
-    //                        fixed-instalment BNPL.
     expiry?:                string;
     frequency?:             number;
     numberOfInstallments?:  number;
     recurringType?:         'SUBSCRIPTION' | 'STANDING_ORDER';
+    industryPractice?:      'INCREMENTAL_AUTH' | 'RESUBMISSION' | 'REAUTHORIZATION' | 'DELAYED_CHARGES' | 'NO_SHOW';
   };
   customer?: {
     email?:    string | null;
