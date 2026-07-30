@@ -83,7 +83,7 @@ export default async function AdminPayoutsPage() {
         <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Payouts</h1>
         <p className="mt-1 text-sm text-gray-500">
           Money HNPL owes practices after collecting from patients.
-          The actual payout is settled via Paystack / banking — "Mark paid" is the bookkeeping flip.
+          The actual payout is settled via banking outside the app — "Mark paid" is the bookkeeping flip.
         </p>
       </div>
 

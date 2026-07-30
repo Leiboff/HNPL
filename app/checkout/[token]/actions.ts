@@ -437,31 +437,33 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   const shopperResultUrl = `${appUrl}/checkout/${token}/complete`;
   const amountCents = Math.round(instalments[0] * 100);
 
-  // Flow A standingInstruction fields for a fixed-amount fixed-duration
-  // instalment plan (Peach Budget Installment spec):
+  // Flow A standingInstruction fields per the Peach V2 /v2/checkout
+  // schema (developer.peachpayments.com/reference/post_v2-checkout):
   //   expiry               = last instalment date + 30d buffer (yyyy-MM-dd)
   //                          — covers late-collection retries within the
   //                          dunning ladder.
-  //   frequency            = '0001' (Mastercard scheme default meaning
-  //                          "monthly cadence"; our schedule is aligned to
-  //                          patient salary day, which is monthly).
-  //   numberOfInstallments = only sent when the value is in Peach's
-  //                          Budget Installment allowed set
-  //                          {0, 3, 6, 9, 12, 18, 24, 36}. Our 2-instalment
-  //                          plans are OMITTED — Peach's Budget Installment
-  //                          scheme doesn't offer a 2-count option, and
-  //                          omission is safe because type=INSTALLMENT
-  //                          already flags the credential as a fixed-term
-  //                          series.
-  //   recurringType        = NOT sent for type=INSTALLMENT. Peach reserves
-  //                          this field for type=RECURRING (SUBSCRIPTION
-  //                          vs STANDING_ORDER, i.e. open-ended series
-  //                          with fixed cadence). Our BNPL is closed-ended
+  //   frequency            = INTEGER 1-9999, days between recurring
+  //                          authorisations. Our schedule is monthly
+  //                          (aligned to salary day) → 30. Prior to
+  //                          2026-07-30 this was sent as the string
+  //                          '0001' (misread as a Mastercard scheme
+  //                          code) which caused Peach V2 to reject
+  //                          the whole body with "Invalid request body"
+  //                          — the entire checkout initiate failed and
+  //                          the widget never mounted.
+  //   numberOfInstallments = INTEGER 1-999, REQUIRED for INSTALLMENT +
+  //                          INITIAL. planType (2 or 3) is always
+  //                          within the allowed range; the previous
+  //                          "omit for planType=2" logic mistook the
+  //                          Peach Budget Installment scheme's
+  //                          acquirer-specific allowed set for the V2
+  //                          checkout constraint. Send as planType.
+  //   recurringType        = NOT sent for type=INSTALLMENT (only for
+  //                          type=RECURRING). Our BNPL is closed-ended
   //                          fixed-count → type=INSTALLMENT covers it.
   const lastInstalmentDate = dates[dates.length - 1];
   const expiryDate = new Date(lastInstalmentDate.getTime() + 30 * 24 * 60 * 60 * 1000)
     .toISOString().slice(0, 10);
-  const numberOfInstallments = planType === 3 ? 3 : undefined;
 
   const provider = getPaymentProvider();
   let checkoutId: string;
@@ -477,12 +479,12 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
       // capture via the V2 embedded widget.
       standingInstruction: {
-        mode:      'INITIAL',
-        source:    'CIT',
-        type:      'INSTALLMENT',
-        expiry:    expiryDate,
-        frequency: '0001',
-        ...(numberOfInstallments !== undefined ? { numberOfInstallments } : {}),
+        mode:                 'INITIAL',
+        source:               'CIT',
+        type:                 'INSTALLMENT',
+        expiry:               expiryDate,
+        frequency:            30,        // days between authorisations
+        numberOfInstallments: planType,  // 2 or 3, both valid (1-999)
       },
       customer: {
         email:     normalizedEmail,

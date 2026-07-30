@@ -43,7 +43,7 @@ export async function retryCollection(
   }
   if (result.kind === 'transport_error') {
     return {
-      error: `Paystack transport error: ${result.error}. Row left in 'processing' for manual reconciliation.`,
+      error: `Peach transport error: ${result.error}. Row left in 'processing' for manual reconciliation.`,
     };
   }
   // claim_lost

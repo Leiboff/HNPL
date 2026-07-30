@@ -109,13 +109,20 @@ export type CheckoutCreateParams = {
     source:                'CIT' | 'MIT';
     type:                  'UNSCHEDULED' | 'RECURRING' | 'INSTALLMENT';
     initialTransactionId?: string;
-    // Fields required by Peach for type=INSTALLMENT / mode=INITIAL /
-    // source=CIT chains, per the Peach "Budget Installment" spec:
-    //   expiry               yyyy-MM-dd (Mastercard default 9999-12-31)
-    //   frequency            {N4} scheme-specific frequency code
-    //                        (Mastercard default '0001' = monthly)
-    //   numberOfInstallments allowed values {0, 3, 6, 9, 12, 18, 24, 36};
-    //                        0 = straight debit / not applicable.
+    // Fields required by Peach V2 /v2/checkout schema for standing
+    // instructions (per developer.peachpayments.com/reference/post_v2-checkout):
+    //   expiry               yyyy-MM-dd — future expiry date for the
+    //                        saved card. Mastercard default 9999-12-31.
+    //   frequency            INTEGER 1-9999 — number of DAYS between
+    //                        recurring authorisations. e.g. 30 = monthly.
+    //                        (NOT a scheme code — that misreading of the
+    //                        docs was the "Invalid request body" root
+    //                        cause fixed 2026-07-30; frequency previously
+    //                        sent as string '0001'.)
+    //   numberOfInstallments INTEGER 1-999 — max authorisations for the
+    //                        installment plan. REQUIRED when
+    //                        type=INSTALLMENT and mode=INITIAL. 2 and 3
+    //                        are both valid.
     //   recurringType        NOT for type=INSTALLMENT — only for
     //                        type=RECURRING (Mastercard SUBSCRIPTION vs
     //                        STANDING_ORDER). Left in the type only so
@@ -123,7 +130,7 @@ export type CheckoutCreateParams = {
     //                        type=RECURRING; do NOT send for our
     //                        fixed-instalment BNPL.
     expiry?:                string;
-    frequency?:             string;
+    frequency?:             number;
     numberOfInstallments?:  number;
     recurringType?:         'SUBSCRIPTION' | 'STANDING_ORDER';
   };

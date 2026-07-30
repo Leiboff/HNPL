@@ -204,7 +204,7 @@ export default async function CollectionDetailPage({
           <Field label="Retry count"   value={String(payment.retry_count)} />
           <Field label="Collected at"  value={payment.collected_at ? formatDateTime(payment.collected_at) : '—'} />
           <Field label="Created at"    value={formatDateTime(payment.created_at)} />
-          <Field label="Paystack ref"  value={payment.peach_payment_id ?? '—'} mono />
+          <Field label="Peach ref"     value={payment.peach_payment_id ?? '—'} mono />
           <Field label="Failure reason" value={payment.failure_reason ?? '—'} />
         </Grid>
       </Section>

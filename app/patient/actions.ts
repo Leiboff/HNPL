@@ -225,8 +225,10 @@ export async function initializeFirstPayment(
   const expiryDate = lastDueDate
     ? new Date(new Date(lastDueDate).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
     : '9999-12-31'; // Mastercard scheme default when unknown
-  const planType = plan.plan_type as 2 | 3 | null;
-  const numberOfInstallments = planType === 3 ? 3 : undefined;
+  // planType is set on the plan when acceptPlan / checkout initiate
+  // wrote 'pending_first_payment'. If null (legacy row) default to 2 —
+  // any value 1-999 is accepted by the V2 schema.
+  const planType = ((plan.plan_type as 2 | 3 | null) ?? 2) as 2 | 3;
 
   const provider = getPaymentProvider();
   let checkoutId: string;
@@ -242,12 +244,12 @@ export async function initializeFirstPayment(
       // INITIAL / INSTALLMENT / CIT — fixed-instalment plan, first CIT
       // capture. The V2 embedded widget handles 3DS in-page.
       standingInstruction: {
-        mode:      'INITIAL',
-        source:    'CIT',
-        type:      'INSTALLMENT',
-        expiry:    expiryDate,
-        frequency: '0001',
-        ...(numberOfInstallments !== undefined ? { numberOfInstallments } : {}),
+        mode:                 'INITIAL',
+        source:               'CIT',
+        type:                 'INSTALLMENT',
+        expiry:               expiryDate,
+        frequency:            30,        // days between authorisations
+        numberOfInstallments: planType,  // 2 or 3, both valid (1-999)
       },
       customer: {
         email:     profile.email,
