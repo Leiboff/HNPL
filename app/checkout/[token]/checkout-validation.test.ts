@@ -84,6 +84,42 @@ describe('CheckoutForm — fields wired through the hook', () => {
   });
 });
 
+describe('CheckoutForm — processor-neutral copy (no Paystack lingo)', () => {
+  it('the footer no longer says "Secured by Paystack"', () => {
+    // 2026-07-30: swap left the stale Paystack line in the checkout
+    // footer even after the underlying processor became Peach. Pin the
+    // replacement copy so a future edit can't regress into the old wording.
+    expect(form).not.toMatch(/Secured by Paystack/i);
+    expect(form).toMatch(/Secure payments · Card details never touch betternow/);
+  });
+});
+
+describe('/checkout/[token] initiate — Peach V2 standingInstruction shape', () => {
+  const actions = readFileSync(resolve(ROOT, 'app/checkout/[token]/actions.ts'), 'utf8');
+
+  it('sends numberOfInstallments = planType (2 or 3), NOT the previous omit-for-2 pattern', () => {
+    // Pre-2026-07-30 the caller omitted numberOfInstallments for
+    // planType=2 based on a misread of the Peach docs (confusing
+    // Budget Installment acquirer scheme with the V2 standing-
+    // instruction schema). The V2 schema accepts 1-999 as INTEGER
+    // and REQUIRES numberOfInstallments for INSTALLMENT + INITIAL.
+    // Sending planType directly satisfies both.
+    expect(actions).toMatch(/numberOfInstallments:\s*planType/);
+    // The old omit pattern must be gone.
+    expect(actions).not.toMatch(/numberOfInstallments\s*=\s*planType\s*===\s*3\s*\?\s*3\s*:\s*undefined/);
+    expect(actions).not.toMatch(/numberOfInstallments\s*!==\s*undefined\s*\?\s*\{\s*numberOfInstallments\s*\}\s*:\s*\{\}/);
+  });
+
+  it('sends frequency as an INTEGER (30 = days), NOT the string "0001"', () => {
+    // Peach V2 schema: frequency is INTEGER 1-9999, days between
+    // recurring authorisations. The old '0001' string was a
+    // misidentification as a Mastercard scheme code — Peach's V2
+    // validator rejected the whole body with "Invalid request body".
+    expect(actions).toMatch(/frequency:\s*30\b/);
+    expect(actions).not.toMatch(/frequency:\s*['"]0001['"]/);
+  });
+});
+
 describe('CheckoutForm — email is read-only (not in the schema)', () => {
   it("there is no editable <input> for email in the form (the invitation pre-fills it)", () => {
     // The BillSummary renders `to {email}` as plain text. There must

@@ -497,7 +497,7 @@ export default function ConfirmForm({
                 disabled={busy || blocked}
                 className="inline-flex items-center text-sm font-semibold text-[#13294B] hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue →'}
+                {addCardLoading ? 'Opening card form…' : 'Add a card and continue →'}
               </button>
             </div>
           )}
@@ -537,7 +537,7 @@ export default function ConfirmForm({
             className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:shadow-lg"
             style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
-            {addCardLoading ? 'Redirecting to Paystack…' : 'Add a card and continue'}
+            {addCardLoading ? 'Opening card form…' : 'Add a card and continue'}
           </button>
         ) : (
           <button

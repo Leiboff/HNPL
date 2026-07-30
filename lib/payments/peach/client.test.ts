@@ -204,11 +204,16 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     })).rejects.toThrow(/1-16 chars/);
   });
 
-  it('Flow A — sends the extended standingInstruction (expiry, frequency, numberOfInstallments) for INSTALLMENT/INITIAL/CIT', async () => {
-    // Load-bearing pin: our fixed-instalment CIT MUST carry expiry +
-    // frequency at a minimum, and numberOfInstallments when in Peach's
-    // allowed set {3, 6, 9, 12, 18, 24, 36}. Do NOT send recurringType
-    // for type=INSTALLMENT — that field is reserved for type=RECURRING.
+  it('Flow A — sends the extended standingInstruction (expiry, frequency INT, numberOfInstallments) for INSTALLMENT/INITIAL/CIT', async () => {
+    // Load-bearing pin per the Peach V2 /v2/checkout schema
+    // (developer.peachpayments.com/reference/post_v2-checkout):
+    //   • frequency is an INTEGER 1-9999 (days between recurring
+    //     authorisations). Sending a string was the "Invalid request
+    //     body" root cause fixed on 2026-07-30.
+    //   • numberOfInstallments is INTEGER 1-999 and REQUIRED for
+    //     INSTALLMENT + INITIAL — both 2 and 3 are valid.
+    // Do NOT send recurringType for type=INSTALLMENT — reserved for
+    // type=RECURRING.
     const fake = scriptedFetch([
       OAUTH_OK,
       { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-full' } },
@@ -225,7 +230,7 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
         source:               'CIT',
         type:                 'INSTALLMENT',
         expiry:               '2027-01-15',
-        frequency:            '0001',
+        frequency:            30,
         numberOfInstallments: 3,
       },
     });
@@ -235,17 +240,22 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
       source:               'CIT',
       type:                 'INSTALLMENT',
       expiry:               '2027-01-15',
-      frequency:            '0001',
+      frequency:            30,
       numberOfInstallments: 3,
     });
     // recurringType MUST NOT appear on an INSTALLMENT initiate.
     expect(chkBody.standingInstruction.recurringType).toBeUndefined();
   });
 
-  it('Flow A — omits numberOfInstallments when caller does not supply it (planType=2 case)', async () => {
+  it('Flow A — planType=2 sends numberOfInstallments=2 (was the "Invalid request body" case)', async () => {
+    // Regression pin — before 2026-07-30 the caller omitted
+    // numberOfInstallments for planType=2, believing it had to be in
+    // Peach's Budget Installment allowed set (a misreading of the
+    // Peach docs). The V2 schema accepts 1-999 as INTEGER, so 2 is
+    // valid and REQUIRED for INSTALLMENT + INITIAL.
     const fake = scriptedFetch([
       OAUTH_OK,
-      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-noN' } },
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-A-n2' } },
     ]);
     const p = new PeachProvider();
     await p.createCheckout({
@@ -255,17 +265,18 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
       paymentType:           'DB',
       createRegistration:    true,
       standingInstruction: {
-        mode:      'INITIAL',
-        source:    'CIT',
-        type:      'INSTALLMENT',
-        expiry:    '2027-01-15',
-        frequency: '0001',
+        mode:                 'INITIAL',
+        source:               'CIT',
+        type:                 'INSTALLMENT',
+        expiry:               '2027-01-15',
+        frequency:            30,
+        numberOfInstallments: 2,
       },
     });
     const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
-    expect(chkBody.standingInstruction.numberOfInstallments).toBeUndefined();
+    expect(chkBody.standingInstruction.numberOfInstallments).toBe(2);
+    expect(chkBody.standingInstruction.frequency).toBe(30);
     expect(chkBody.standingInstruction.expiry).toBe('2027-01-15');
-    expect(chkBody.standingInstruction.frequency).toBe('0001');
   });
 
   it('logs "PEACH CHECKOUT INITIATE ERROR:" with raw body on a 400 from /v2/checkout', async () => {
