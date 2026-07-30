@@ -45,17 +45,28 @@ type Props = {
   variant:  Variant;
   /** Display text. Defaults match the legacy hardcoded labels per variant. */
   label?:   string;
+  /**
+   * The practice this CTA is scoped to. Forwarded onto
+   * /practice/bills/new as ?practiceId= so a brand-admin with N≥2
+   * branches gets a bill form scoped to the branch they were viewing
+   * (not their oldest membership). Solo callers (N=1) can omit — the
+   * new-bill page falls back to the caller's only membership.
+   */
+  practiceId?: string;
 };
 
-export default function CreateBillButton({ gate, variant, label }: Props) {
+export default function CreateBillButton({ gate, variant, label, practiceId }: Props) {
   const text = label ?? (variant === 'subtle' ? '+ New bill' : '+ Create a bill');
   const v    = VARIANT_CLASSES[variant];
   const usesGradient = variant !== 'subtle';
+  const href = practiceId
+    ? `/practice/bills/new?practiceId=${encodeURIComponent(practiceId)}`
+    : '/practice/bills/new';
 
   if (gate.ok) {
     return (
       <a
-        href="/practice/bills/new"
+        href={href}
         className={v.base}
         style={usesGradient ? { background: GRADIENT_BG } : undefined}
         data-testid={`create-bill-${variant}`}

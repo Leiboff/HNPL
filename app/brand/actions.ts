@@ -596,14 +596,55 @@ export async function updateBranchBanking(input: UpdateBranchBankingInput): Prom
     return { error: "Account type must be 'current' or 'savings'." };
   }
 
+  // ── SA banking shape validation ──────────────────────────────────
+  //
+  // Allow a full clear (all null → drops banking, e.g. brand switching
+  // from branch-billed to central-billed). But if ANY banking field
+  // is supplied, the whole tuple must be valid — otherwise payouts
+  // silently fail at settlement time.
+  //
+  // SA rules we enforce:
+  //   • Account number: digits only, 6–13 chars. Big-4 (Absa/FNB/
+  //     Nedbank/Standard) are 9–11 digits; Capitec 10; Discovery
+  //     11. Non-numeric characters (spaces, dashes) are rejected —
+  //     paste-safe strip on the client, hard error here as a
+  //     server-side backstop.
+  //   • Universal / branch code: exactly 6 digits (SA universal
+  //     branch codes are always 6 digits — 632005 Absa, 250655 FNB,
+  //     198765 Nedbank, 051001 Standard, 470010 Capitec).
+  //   • Account holder + bank name: non-empty trimmed strings.
+  //     Peach settlement + patient-visible descriptor both reference
+  //     the holder name; blank makes the payout untraceable.
+  const bankName          = input.bankName?.trim()          || null;
+  const bankAccountNumber = input.bankAccountNumber?.trim() || null;
+  const branchCode        = input.branchCode?.trim()        || null;
+  const accountHolder     = input.accountHolder?.trim()     || null;
+  const accountType       = input.accountType               || null;
+
+  const anySet = !!(bankName || bankAccountNumber || branchCode || accountHolder || accountType);
+  if (anySet) {
+    if (!bankName)          return { error: 'Bank name is required.' };
+    if (!accountHolder)     return { error: 'Account holder name is required.' };
+    if (!bankAccountNumber) return { error: 'Account number is required.' };
+    if (!branchCode)        return { error: 'Branch (universal) code is required.' };
+    if (!accountType)       return { error: "Account type must be 'current' or 'savings'." };
+
+    if (!/^\d{6,13}$/.test(bankAccountNumber)) {
+      return { error: 'Account number must be 6–13 digits, no spaces or dashes.' };
+    }
+    if (!/^\d{6}$/.test(branchCode)) {
+      return { error: 'Universal branch code must be exactly 6 digits.' };
+    }
+  }
+
   const { error } = await svc()
     .from('practices')
     .update({
-      bank_name:           input.bankName?.trim()           || null,
-      bank_account_number: input.bankAccountNumber?.trim()  || null,
-      branch_code:         input.branchCode?.trim()         || null,
-      account_holder:      input.accountHolder?.trim()      || null,
-      account_type:        input.accountType                || null,
+      bank_name:           bankName,
+      bank_account_number: bankAccountNumber,
+      branch_code:         branchCode,
+      account_holder:      accountHolder,
+      account_type:        accountType,
     })
     .eq('id', input.practiceId);
 

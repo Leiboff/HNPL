@@ -118,8 +118,38 @@ export default async function PracticeDashboardPage({
     }
   }
 
+  // ── Brand-admin gate for the "Practice details" sidebar link ─────
+  //
+  // Resolves whether the caller can reach /brand/branch/{practiceId}
+  // successfully — i.e. is an active practice_group_members row for
+  // this practice's brand. Post-0062 the solo owner is auto-brand-
+  // admin of their own 1-practice brand, so this is true for the
+  // standalone case. A branch-admin invited into someone else's
+  // brand returns false, and the sidebar link is hidden — matching
+  // the /brand/branch page's notFound() guard.
+  const { data: practiceGroupRow } = await supabase
+    .from('practices')
+    .select('group_id')
+    .eq('id', practiceId)
+    .maybeSingle();
+  let isBrandAdmin = false;
+  if (practiceGroupRow?.group_id) {
+    const { data: brandMembership } = await supabase
+      .from('practice_group_members')
+      .select('user_id')
+      .eq('group_id', practiceGroupRow.group_id)
+      .eq('user_id',  user.id)
+      .eq('active',   true)
+      .maybeSingle();
+    isBrandAdmin = !!brandMembership;
+  }
+
   return (
-    <PracticeShell practiceName={practiceName}>
+    <PracticeShell
+      practiceName={practiceName}
+      practiceId={practiceId}
+      isBrandAdmin={isBrandAdmin}
+    >
       <main className="px-4 sm:px-6 py-6 sm:py-10 space-y-6 sm:space-y-8">
 
         {/* Heading */}
@@ -144,7 +174,7 @@ export default async function PracticeDashboardPage({
               </a>
             </div>
           </div>
-          <CreateBillButton gate={gate} variant="primary" />
+          <CreateBillButton gate={gate} variant="primary" practiceId={practiceId} />
         </div>
 
         {/* Bounce-back banner — only shown when /practice/bills/new
@@ -184,8 +214,18 @@ export default async function PracticeDashboardPage({
               </a>
             )}
             {gate.reason === 'no_banking' && (
+              // /practice/setup is the initial-signup flow; it redirects
+              // away for anyone who already has a practice_members row
+              // (i.e. anyone hitting this panel). Send users to the
+              // brand-side branch edit page — the only place where the
+              // BankingForm lives and the only path with a working
+              // update action (updateBranchBanking). The page's own
+              // guard (practice_group_members membership) enforces
+              // brand-admin-only edit; a non-brand-admin lands on
+              // notFound() there, which is correct — they can't set
+              // their branch's banking.
               <a
-                href="/practice/setup"
+                href={`/brand/branch/${practiceId}`}
                 className="mt-2 inline-block font-semibold underline underline-offset-2"
                 style={{ color: '#13294B' }}
               >
@@ -202,6 +242,7 @@ export default async function PracticeDashboardPage({
           specialtyMap={specialtyMap}
           practiceName={practiceName}
           gate={gate}
+          practiceId={practiceId}
         />
 
       </main>

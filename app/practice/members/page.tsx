@@ -4,7 +4,15 @@ import PracticeShell from '../PracticeShell';
 import MembersView from './MembersView';
 import type { MemberRow } from './MembersView';
 
-export default async function MembersPage() {
+type SearchParams = { practiceId?: string };
+
+export default async function MembersPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const params = await searchParams;
+
   // ── Step 1: auth + email-confirmed gate ───────────────────────────────────
   const { user, supabase } = await requireConfirmedUser({ next: '/practice/members' });
 
@@ -21,20 +29,55 @@ export default async function MembersPage() {
     else redirect('/login');
   }
 
-  // ── Step 3: active membership ─────────────────────────────────────────────
-  const { data: membership } = await supabase
+  // ── Step 3: active membership — post-0062 a brand-admin has N≥2 rows.
+  // Match /practice dashboard's pattern (order+limit, not .single()).
+  const { data: rawMemberships } = await supabase
     .from('practice_members')
-    .select('practice_id, can_manage_practice, practices(name)')
+    .select('practice_id, can_manage_practice, created_at, practices(name)')
     .eq('user_id', user.id)
     .eq('active', true)
-    .single();
+    .order('created_at', { ascending: true });
 
-  if (!membership) redirect('/practice');
+  const memberRowsRaw = (rawMemberships ?? []) as unknown as Array<{
+    practice_id:         string;
+    can_manage_practice: boolean | null;
+    created_at:          string;
+    practices:           { name: string } | { name: string }[] | null;
+  }>;
+  const memberRows = memberRowsRaw.map((m) => ({
+    ...m,
+    practices: Array.isArray(m.practices) ? (m.practices[0] ?? null) : m.practices,
+  }));
 
-  const practiceId   = membership.practice_id as string;
-  const isManager    = (membership.can_manage_practice as boolean) ?? false;
-  const practiceInfo = membership.practices as unknown as { name: string } | null;
+  if (memberRows.length === 0) redirect('/practice');
+
+  const requestedId = params.practiceId;
+  const picked =
+    (requestedId && memberRows.find((m) => m.practice_id === requestedId)) ||
+    memberRows[0];
+
+  const practiceId   = picked.practice_id;
+  const isManager    = (picked.can_manage_practice as boolean) ?? false;
+  const practiceInfo = picked.practices;
   const practiceName = practiceInfo?.name ?? 'Practice';
+
+  // ── Brand-admin gate for the sidebar's "Practice details" link ────
+  const { data: practiceGroupRow } = await supabase
+    .from('practices')
+    .select('group_id')
+    .eq('id', practiceId)
+    .maybeSingle();
+  let isBrandAdmin = false;
+  if (practiceGroupRow?.group_id) {
+    const { data: brandMembership } = await supabase
+      .from('practice_group_members')
+      .select('user_id')
+      .eq('group_id', practiceGroupRow.group_id)
+      .eq('user_id',  user.id)
+      .eq('active',   true)
+      .maybeSingle();
+    isBrandAdmin = !!brandMembership;
+  }
 
   // ── Fetch all members (active + inactive) with profile join ───────────────
   const { data: rawMembers } = await supabase
@@ -54,7 +97,11 @@ export default async function MembersPage() {
   const members = (rawMembers ?? []) as MemberRow[];
 
   return (
-    <PracticeShell practiceName={practiceName}>
+    <PracticeShell
+      practiceName={practiceName}
+      practiceId={practiceId}
+      isBrandAdmin={isBrandAdmin}
+    >
       <main className="px-4 sm:px-6 py-6 sm:py-8 pb-20">
         <MembersView
           members={members}

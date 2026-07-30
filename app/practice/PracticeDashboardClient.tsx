@@ -14,6 +14,8 @@ type Props = {
   specialtyMap: Record<string, string>;
   practiceName: string;
   gate:         TradingGateResult;
+  /** Practice scope forwarded onto CreateBillButton URLs. */
+  practiceId?:  string;
 };
 
 export default function PracticeDashboardClient({
@@ -22,6 +24,7 @@ export default function PracticeDashboardClient({
   specialtyMap,
   practiceName,
   gate,
+  practiceId,
 }: Props) {
   const [fromDate,   setFromDate]   = useState('');
   const [toDate,     setToDate]     = useState('');
@@ -116,6 +119,7 @@ export default function PracticeDashboardClient({
         specialtyMap={specialtyMap}
         practiceName={practiceName}
         gate={gate}
+        practiceId={practiceId}
       />
 
     </div>

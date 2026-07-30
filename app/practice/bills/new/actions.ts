@@ -34,6 +34,21 @@ export type CreateBillInput = {
   billAmount:         number;
   practiceReference?: string;
   providerId:         string;
+  /**
+   * Which practice this bill is being issued for. REQUIRED when the
+   * caller has more than one active practice_members row (any brand-
+   * admin who's created multiple branches, and any staff member who
+   * happens to work at multiple practices in a brand). When absent,
+   * the server picks the caller's oldest active membership — the
+   * solo-practice case only.
+   *
+   * The server ALWAYS re-verifies that the caller has an active
+   * membership on the resolved practice, so this parameter is a scope
+   * selector, NOT an authorisation bypass. A brand-admin with 3
+   * branches cannot pass a practiceId belonging to some OTHER brand
+   * — the guard rejects it as "not a member".
+   */
+  practiceId?:        string;
 };
 
 /** Outcome of the auto-sent email. */
@@ -107,16 +122,54 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Session expired. Please log in again.' };
 
-  const { data: membership } = await supabase
-    .from('practice_members')
-    .select('practice_id')
-    .eq('user_id', user.id)
-    .eq('active', true)
-    .single();
+  // ── Practice scope resolution — group→practice acting context ────
+  //
+  // Pre-0062 there was one practice per user. Post-0062 a brand-admin
+  // routinely has N practice_members rows (one per branch they
+  // created + one per branch they were invited into). The original
+  // `.single()` here threw a 406 for N≥2 and surfaced as "You are not
+  // a member of any active practice." — the mis-diagnosed cause of
+  // "group→practice bill issue never confirmed working".
+  //
+  // Rule now: caller passes data.practiceId (from the ?practiceId=
+  // scope on the practice dashboard); we verify they have an ACTIVE
+  // membership on that specific practice. Absent input → pick the
+  // caller's oldest active membership (backward-compat for the solo
+  // case). Guard rejects any practice the caller isn't a member of —
+  // a brand-admin cannot bill a practice in someone else's brand
+  // because they wouldn't have a practice_members row there.
+  let practiceId: string;
 
-  if (!membership) return { error: 'You are not a member of any active practice.' };
+  if (data.practiceId) {
+    const { data: scopedMembership } = await supabase
+      .from('practice_members')
+      .select('practice_id')
+      .eq('user_id',     user.id)
+      .eq('practice_id', data.practiceId)
+      .eq('active',      true)
+      .maybeSingle();
 
-  const practiceId = membership.practice_id as string;
+    if (!scopedMembership) {
+      return { error: 'You are not an active member of that practice.' };
+    }
+    practiceId = scopedMembership.practice_id as string;
+  } else {
+    // No scope supplied — use the caller's oldest active membership.
+    // Matches the /practice dashboard's own fallback so a solo user
+    // (N=1) sees the same practice on both pages.
+    const { data: memberships } = await supabase
+      .from('practice_members')
+      .select('practice_id, created_at')
+      .eq('user_id', user.id)
+      .eq('active',  true)
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    if (!memberships || memberships.length === 0) {
+      return { error: 'You are not a member of any active practice.' };
+    }
+    practiceId = memberships[0].practice_id as string;
+  }
 
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
