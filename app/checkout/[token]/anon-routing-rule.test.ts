@@ -292,45 +292,47 @@ describe('ResumeCapture — server action wired through, PeachWidget mounted on 
   });
 });
 
-describe('ResumeCapture — first-capture vs return copy (no false "Resume" for first-timers)', () => {
-  // A brand-new patient who reaches this surface WITHOUT any prior
-  // Peach checkout on their plan (peach_checkout_id absent) is
-  // functionally on their first capture — the heading must read
-  // "Confirm and pay", NOT "Resume your payment". Only a plan that had
-  // a checkout created before (peach_checkout_id present) but didn't
-  // complete gets the "Resume" relabel.
+describe('ResumeCapture — single "Confirm and pay" surface (no first-vs-return copy split)', () => {
+  // The prior-attempt copy branch was removed: peach_checkout_id is
+  // stamped during the FIRST initiateCheckout — before this capture
+  // screen ever renders — so any priorAttempt flag derived from it was
+  // effectively always true and mislabelled brand-new first attempts
+  // as "Resume". The surface now reads "Confirm and pay" for BOTH a
+  // first attempt and a genuine re-entry.
   const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
   const PAGE_SRC  = read('app/checkout/[token]/page.tsx');
 
-  it('ResumeCapture takes a priorAttempt prop that drives the heading', () => {
-    expect(RESUME_UI).toMatch(/priorAttempt/);
-    // The heading is branched on priorAttempt: first-time = "Confirm
-    // and pay"; return = "Resume your payment".
-    expect(RESUME_UI).toMatch(/priorAttempt \? 'Resume your payment' : 'Confirm and pay'/);
-  });
-
-  it('default (priorAttempt=false) copy is the first-capture wording, not "Resume"', () => {
-    // Both strings present in source (the ternary), but the FALSE
-    // branch — the default a fresh patient sees — must be the
-    // first-capture wording.
-    expect(RESUME_UI).toMatch(/'Confirm and pay'/);
+  it('heading is a single static "Confirm and pay" — no "Resume your payment" anywhere', () => {
+    expect(RESUME_UI).toMatch(/Confirm and pay/);
+    expect(RESUME_UI).not.toMatch(/Resume your payment/);
     expect(RESUME_UI).toMatch(/Complete instalment 1 to activate your plan/);
   });
 
-  it('page.tsx derives priorAttempt from peach_checkout_id on the instalment-1 row', () => {
-    // The signal: a Peach checkout was created for this plan before
-    // (stamped on the payment row) → genuine re-entry. Absent → first
-    // working capture.
-    expect(PAGE_SRC).toMatch(/peach_checkout_id/);
-    expect(PAGE_SRC).toMatch(/priorAttempt\s*=\s*!!firstRow\?\.peach_checkout_id/);
-    // And it is forwarded into the component.
-    expect(PAGE_SRC).toMatch(/priorAttempt=\{priorAttempt\}/);
+  it('the priorAttempt prop + branch are gone from the component', () => {
+    expect(RESUME_UI).not.toMatch(/priorAttempt/);
+    // No copy ternary remains that could re-introduce a "Resume" label.
+    expect(RESUME_UI).not.toMatch(/'Resume/);
   });
 
-  it('the schedule is shown on the capture surface (unified with the fresh Pay step)', () => {
+  it('page.tsx no longer computes or passes priorAttempt (nor selects peach_checkout_id here)', () => {
+    expect(PAGE_SRC).not.toMatch(/priorAttempt/);
+    // The instalment-schedule fetch in the uncaptured branch must not
+    // re-add peach_checkout_id (it existed only for the removed copy).
+    const idx = PAGE_SRC.indexOf('if (isUncapturedPlan)');
+    expect(idx).toBeGreaterThan(0);
+    const branch = PAGE_SRC.slice(idx, idx + 1600);
+    expect(branch).not.toMatch(/peach_checkout_id/);
+  });
+
+  it('the schedule is still shown on the capture surface (unified with the fresh Pay step)', () => {
     expect(RESUME_UI).toMatch(/ScheduleStrip/);
     expect(PAGE_SRC).toMatch(/scheduleAmounts=\{scheduleAmounts\}/);
     expect(PAGE_SRC).toMatch(/scheduleDates=\{scheduleDates\}/);
+  });
+
+  it('the capture surface still renders for uncaptured plans (routing unchanged)', () => {
+    expect(PAGE_SRC).toMatch(/if \(isUncapturedPlan\)\s*\{/);
+    expect(PAGE_SRC).toMatch(/<ResumeCapture[\s\S]{0,600}resumeAction=\{resumeFirstInstalmentCapture\}/);
   });
 });
 

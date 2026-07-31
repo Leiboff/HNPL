@@ -211,31 +211,25 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
       // re-opens the Peach V2 widget for the SAME instalment-1 row
       // (deterministic ref → Peach dedups the transaction).
       if (isUncapturedPlan) {
-        // Full schedule for the capture surface + the prior-attempt
-        // signal. peach_checkout_id is stamped on the instalment-1 row
-        // ONLY after a Peach checkout was successfully created for it
-        // (initiateCheckout line ~513, or a prior resume). So:
-        //   • present  → a checkout WAS opened before but didn't
-        //     complete → this is a genuine RE-ENTRY → "Resume".
-        //   • absent   → no Peach checkout ever created for this plan
-        //     (e.g. the initial createCheckout itself failed) → this is
-        //     effectively the FIRST working capture → first-time copy.
-        // This is a copy/branch signal only; resumeFirstInstalmentCapture
-        // is idempotent either way.
+        // Full schedule for the capture surface. This is a single
+        // "Confirm and pay" surface — accurate for both a first attempt
+        // and a genuine re-entry. (An earlier version branched the copy
+        // on the stored-checkout id, but that column is stamped during
+        // the first initiateCheckout — before this screen renders — so
+        // it was effectively always set and mislabelled first attempts
+        // as "Resume". The distinction was removed.)
         const { data: paymentRows } = await svcForLookup
           .from('payments')
-          .select('amount, due_date, instalment_number, peach_checkout_id')
+          .select('amount, due_date, instalment_number')
           .eq('plan_id', row.plan_id)
           .order('instalment_number', { ascending: true });
         const rows2         = (paymentRows ?? []) as Array<{
           amount: number | string;
           due_date: string | null;
           instalment_number: number;
-          peach_checkout_id: string | null;
         }>;
         const firstRow      = rows2.find((r) => r.instalment_number === 1);
         const firstInstalmentAmount = Number(firstRow?.amount ?? row.plan_total_amount);
-        const priorAttempt  = !!firstRow?.peach_checkout_id;
         const scheduleAmounts = rows2.map((r) => Number(r.amount));
         const scheduleDates   = rows2.map((r) => r.due_date ?? '');
 
@@ -261,7 +255,6 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
                 practiceName={practiceName}
                 totalAmount={Number(row.plan_total_amount)}
                 firstInstalmentAmount={firstInstalmentAmount}
-                priorAttempt={priorAttempt}
                 scheduleAmounts={scheduleAmounts}
                 scheduleDates={scheduleDates}
                 resumeAction={resumeFirstInstalmentCapture}
