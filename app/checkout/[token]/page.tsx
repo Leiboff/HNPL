@@ -12,6 +12,20 @@ import {
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 
+// The fresh-vs-resume decision reads the session cookie + plan state
+// per request — the RSC output for this URL is different for the
+// same user before and after their first Pay click. Next.js's default
+// client-side router cache would happily serve the earlier (anonymous
+// CheckoutForm) RSC on a soft-nav back to /checkout/[token] and then
+// swap to the fresh (ResumeCapture) RSC after revalidation — that
+// swap is the flicker prod saw 2026-07-31. Marking the route dynamic
+// gives it staleTime=0 in the router cache, so soft-navs always
+// re-fetch and the client never renders the stale surface. The route
+// is already effectively dynamic (it reads cookies), but explicit
+// beats implicit here.
+export const dynamic  = 'force-dynamic';
+export const revalidate = 0;
+
 // ─── /checkout/[token] ─────────────────────────────────────────────────────
 //
 // Anonymous quasi-checkout / quasi-signup page for provider-initiated

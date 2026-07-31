@@ -104,6 +104,23 @@ export type CheckoutCreateParams = {
   currency?:             string;      // Defaults to 'ZAR'
   paymentType?:          'DB' | 'PA'; // DB debit (default); PA reserved for future preauth flows.
   createRegistration?:   boolean;     // true → widget also captures a reusable card (Flow A first CIT).
+  // ── Payment-method restriction (Peach V2 /v2/checkout) ────────────
+  //
+  // We are card-only by design. Wallet methods (Apple Pay, Google Pay)
+  // return SINGLE-USE tokens with no reusable registrationId — Peach
+  // won't allow the subsequent MIT charges on instalments 2-N against
+  // a wallet token, so a wallet-paid first instalment would leave the
+  // plan uncollectable. Force the V2 widget to card only.
+  //
+  // Field names per developer.peachpayments.com/reference/post_v2-checkout:
+  //   defaultPaymentMethod  — selects the default tab in the widget.
+  //   forceDefaultMethod    — when true, ONLY the default is shown
+  //                           (all other tabs / methods suppressed).
+  //
+  // We whitelist these at the client boundary alongside standingInstruction
+  // fields, so a caller can pass them without a client change.
+  defaultPaymentMethod?: 'CARD';
+  forceDefaultMethod?:   boolean;
   // Peach V2 /v2/checkout standingInstruction — the V2 schema only
   // (developer.peachpayments.com/reference/post_v2-checkout).
   //

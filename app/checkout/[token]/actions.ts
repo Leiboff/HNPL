@@ -476,6 +476,12 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       createRegistration:    true,   // remember the card for MIT retries
       shopperResultUrl,
       origin:                appUrl,
+      // Card-only. Wallet tokens (Apple Pay / Google Pay) are
+      // single-use — instalments 2-N would be uncollectable if the
+      // first CIT used a wallet. See CheckoutCreateParams for the full
+      // rationale.
+      defaultPaymentMethod: 'CARD',
+      forceDefaultMethod:   true,
       // Peach V2 SI (developer.peachpayments.com/reference/post_v2-checkout).
       // INITIAL + INSTALLMENT — fixed-instalment plan, first CIT
       // capture via the embedded widget. V2 does NOT accept `source`
@@ -702,6 +708,10 @@ export async function resumeFirstInstalmentCapture(
       createRegistration:    true,
       shopperResultUrl,
       origin:                appUrl,
+      // Card-only — same rationale as initiateCheckout. Wallet tokens
+      // are single-use; instalments 2-N would be uncollectable.
+      defaultPaymentMethod: 'CARD',
+      forceDefaultMethod:   true,
       standingInstruction: {
         mode:                 'INITIAL',
         type:                 'INSTALLMENT',

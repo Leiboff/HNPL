@@ -397,6 +397,18 @@ export class PeachProvider implements PaymentProvider {
 
     if (params.shopperResultUrl) body.shopperResultUrl = params.shopperResultUrl;
 
+    // Card-only enforcement — see CheckoutCreateParams docstring for
+    // rationale (wallet tokens are single-use; instalments 2-N would
+    // be uncollectable). Field names per V2 spec; the whitelist is
+    // explicit so a caller can't accidentally send `defaultPaymentMethod:
+    // 'APPLEPAY'` and get past the Peach validator.
+    if (params.defaultPaymentMethod === 'CARD') {
+      body.defaultPaymentMethod = 'CARD';
+    }
+    if (typeof params.forceDefaultMethod === 'boolean') {
+      body.forceDefaultMethod = params.forceDefaultMethod;
+    }
+
     if (params.standingInstruction) {
       // Whitelist the fields we forward to Peach V2 — the V2 validator
       // rejects unknown fields with "unknown field" errors. V2's SI
