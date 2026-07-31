@@ -27,7 +27,10 @@ import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 // deterministic Peach ref, Peach dedups), so firing it automatically is
 // safe — it's exactly what an immediate button tap would do.
 
-type ResumeAction = (token: string) => Promise<
+type ResumeAction = (
+  token: string,
+  opts?: { reuseExisting?: boolean },
+) => Promise<
   | { ok: true; checkoutId: string; amountCents: number; shopperResultUrl: string }
   | { ok: false; error: string }
 >;
@@ -86,7 +89,13 @@ export default function ResumeCapture({
     setError(null);
     setBusy(true);
     try {
-      const result = await resumeAction(token);
+      // reuseExisting mirrors autoStart. On the fresh post-Pay hand-off
+      // (autoStart=true) initiateCheckout just minted + stamped a
+      // checkout on the instalment-1 row; the action reuses it instead
+      // of minting a second, so the new-customer path is ONE
+      // createCheckout. A genuine re-entry (autoStart=false) mints fresh
+      // because the stored checkout is past its validity window.
+      const result = await resumeAction(token, { reuseExisting: autoStart });
       if (!result.ok) {
         setError(result.error);
         return;
