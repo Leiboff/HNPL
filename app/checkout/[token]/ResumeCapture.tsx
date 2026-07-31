@@ -12,23 +12,23 @@ import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 // ./actions.ts for the account/plan/schedule idempotency contract.
 //
 // Functionally this IS the first-instalment capture step — the same
-// widget capture the anonymous CheckoutForm runs. The ONLY thing that
-// differs between "brand-new, first time here" and "came back after an
-// earlier incomplete attempt" is COPY:
+// widget capture the anonymous CheckoutForm runs. It reads identically
+// whether the patient is here for the first time or came back after an
+// incomplete attempt: a SINGLE "Confirm and pay" surface, matching the
+// fresh CheckoutForm Pay step.
 //
-//   • priorAttempt === false → NO Peach checkout was ever created for
-//     this plan (e.g. the first createCheckout failed outright). To
-//     the patient this is their first working capture — show the
-//     normal "Confirm and pay" chrome, matching CheckoutForm's Pay step.
-//   • priorAttempt === true  → a Peach checkout WAS created before but
-//     didn't complete (widget abort / mount failure). Genuine re-entry
-//     — relabel the heading to "Resume your payment".
+// (Historical note: an earlier version branched the copy on a
+// first-vs-return flag derived from the stored-checkout id on the
+// instalment-1 payment row. That id is stamped during the FIRST
+// initiateCheckout — before this capture screen ever renders — so it
+// was effectively always set and mislabelled brand-new first attempts
+// as "Resume". The distinction was removed; the underlying resume
+// action is idempotent and works the same for a first pass or a
+// re-entry, so there is nothing for the copy to usefully distinguish.)
 //
-// The underlying action + widget behaviour are identical in both
-// cases; only the heading + subcopy change. Not auto-firing on mount:
-// an explicit "Pay Rx today" CTA matches the mental model of the Pay
-// step. A double-click is harmless — the resume action mints the same
-// deterministic Peach ref (Peach dedups).
+// Not auto-firing on mount: an explicit "Pay Rx today" CTA matches the
+// mental model of the Pay step. A double-click is harmless — the resume
+// action mints the same deterministic Peach ref (Peach dedups).
 
 type ResumeAction = (token: string) => Promise<
   | { ok: true; checkoutId: string; amountCents: number; shopperResultUrl: string }
@@ -40,12 +40,6 @@ type Props = {
   practiceName:          string;
   totalAmount:           number;
   firstInstalmentAmount: number;
-  /**
-   * true → a Peach checkout was created for this plan on an earlier
-   * visit that didn't complete (heading reads "Resume your payment").
-   * false → first working capture (heading reads "Confirm and pay").
-   */
-  priorAttempt:          boolean;
   /** Instalment amounts (Rands), in instalment order. */
   scheduleAmounts:       number[];
   /** Matching due dates as ISO strings ('' when unknown). */
@@ -63,7 +57,6 @@ export default function ResumeCapture({
   practiceName,
   totalAmount,
   firstInstalmentAmount,
-  priorAttempt,
   scheduleAmounts,
   scheduleDates,
   resumeAction,
@@ -72,16 +65,8 @@ export default function ResumeCapture({
   const [error,  setError]  = useState<string | null>(null);
   const [busy,   setBusy]   = useState(false);
 
-  // Copy differs only on prior-attempt. Everything else is identical.
-  const heading = priorAttempt ? 'Resume your payment' : 'Confirm and pay';
-  const subcopy = priorAttempt
-    ? 'You started this earlier — complete instalment 1 to activate your plan.'
-    : 'Complete instalment 1 to activate your plan.';
-  const cta     = busy
-    ? 'Setting up payment…'
-    : priorAttempt
-      ? `Resume — pay ${formatRand(firstInstalmentAmount)}`
-      : `Pay ${formatRand(firstInstalmentAmount)} today`;
+  // Single surface — accurate for both first attempt and re-entry.
+  const cta = busy ? 'Setting up payment…' : `Pay ${formatRand(firstInstalmentAmount)} today`;
 
   // Reconstruct Dates for the ScheduleStrip. Rows with an empty ISO
   // string (unknown due date) are dropped so the strip only shows the
@@ -143,7 +128,7 @@ export default function ResumeCapture({
   }
 
   return (
-    <div data-testid="resume-capture" data-prior-attempt={priorAttempt ? 'true' : 'false'}>
+    <div data-testid="resume-capture">
       <div className="mb-5">
         <BillChip practiceName={practiceName} totalAmount={totalAmount} />
       </div>
@@ -154,9 +139,9 @@ export default function ResumeCapture({
             className="text-xl font-semibold text-[#0F1F3A] tracking-[-0.01em]"
             data-testid="resume-capture-heading"
           >
-            {heading}
+            Confirm and pay
           </h1>
-          <p className="text-sm text-[#3A4B66]">{subcopy}</p>
+          <p className="text-sm text-[#3A4B66]">Complete instalment 1 to activate your plan.</p>
         </div>
 
         <div className="rounded-xl bg-[#FAFBFD] border border-[#E5E9F0] p-4">
