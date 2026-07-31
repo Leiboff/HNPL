@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import {
   normalizePhoneZA,
@@ -21,7 +22,6 @@ import {
   SecondaryButton,
 } from './_components/CheckoutChrome';
 import PlanPickerCards from './_components/PlanPickerCards';
-import PeachWidget from '@/app/_components/PeachWidget';
 
 // ─── Multi-step anonymous checkout ─────────────────────────────────────────
 //
@@ -302,16 +302,24 @@ export default function CheckoutForm({
   }
   const onBlur = (key: keyof DetailsFields) => () => handleBlur(key);
 
+  const router = useRouter();
+
   const [error,     setError]     = useState<string | null>(null);
   // When the server says "this email collides with an organic account",
   // we render a Log in CTA next to the error instead of bare red text.
   const [loginUrl,  setLoginUrl]  = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Post-Pay: the Peach checkout has been created and we mount the
-  // COPYandPAY widget inline. `null` means "still on the form"; a
-  // non-null value swaps the form for the widget.
-  const [widget, setWidget] = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
+  // Post-Pay: initiateCheckout has created the account + Peach checkout
+  // and signed the patient in. We hand off to the SINGLE confirm+widget
+  // surface (ResumeCapture, rendered by page.tsx for a signed-in owner
+  // of an uncaptured plan) via a navigation carrying ?capture=auto so
+  // that surface skips its own confirm and mounts the widget directly.
+  // This is why CheckoutForm no longer mounts PeachWidget itself — there
+  // is exactly ONE confirm screen (this form's Pay step) before the
+  // widget, not two. `redirecting` keeps the button in its pending state
+  // while the navigation swaps the page.
+  const [redirecting, setRedirecting] = useState(false);
 
   // Phone-OTP state lives entirely inside the shared <PhoneOtpStep />.
   // CheckoutForm only needs a remount-key — bumping it on
@@ -423,9 +431,17 @@ export default function CheckoutForm({
           setError('The payment service didn\'t return a checkout. Please try again in a moment.');
           return;
         }
-        // Peach COPYandPAY: mount the widget in-page. The widget owns
-        // card entry + 3DS and POSTs to shopperResultUrl on completion.
-        setWidget({ checkoutId: result.checkoutId, shopperResultUrl: result.shopperResultUrl });
+        // Account created + signed in + Peach checkout minted. Hand off
+        // to the single confirm+widget surface. initiateCheckout mutated
+        // cookies (sign-in + checkout token), so /checkout/[token] will
+        // re-render server-side as the "signed-in owner of an uncaptured
+        // plan" branch → ResumeCapture. The ?capture=auto param tells
+        // that surface this is the fresh post-Pay hand-off, so it mounts
+        // the widget immediately instead of showing a second confirm.
+        // (A plain re-entry via the emailed link carries no param and
+        // still shows one confirm → widget.)
+        setRedirecting(true);
+        router.replace(`/checkout/${token}?capture=auto`);
       } catch (err) {
         setError(
           err instanceof Error
@@ -436,36 +452,6 @@ export default function CheckoutForm({
     });
   }
 
-  // Once the widget is mounted the multi-step form is behind the
-  // widget UI. We keep the BillChip visible so the amount + practice
-  // stay in view while the patient enters their card.
-  if (widget) {
-    return (
-      <>
-        <div className="mb-5">
-          <BillChip practiceName={practiceName} totalAmount={totalAmount} />
-        </div>
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-sm text-gray-600">
-            Enter your card details to complete instalment 1. Your saved card will be used for the remaining payments on their due dates.
-          </p>
-          <PeachWidget
-            checkoutId={widget.checkoutId}
-            entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
-            shopperResultUrl={widget.shopperResultUrl}
-          />
-          <button
-            type="button"
-            onClick={() => setWidget(null)}
-            className="mt-3 text-xs text-gray-500 underline hover:text-gray-700"
-            data-testid="checkout-widget-cancel"
-          >
-            Cancel and go back
-          </button>
-        </div>
-      </>
-    );
-  }
 
   return (
     <>
@@ -729,15 +715,15 @@ export default function CheckoutForm({
           heading="Confirm and pay"
           actions={
             <div className="space-y-3">
-              <PrimaryButton onClick={submitPay} disabled={isPending}>
-                {isPending ? 'Setting up payment…' : `Pay ${formatRand(instalments[0])} today`}
+              <PrimaryButton onClick={submitPay} disabled={isPending || redirecting}>
+                {(isPending || redirecting) ? 'Setting up payment…' : `Pay ${formatRand(instalments[0])} today`}
               </PrimaryButton>
               <div className="flex justify-center">
                 {/* Back goes to Details (3), skipping the Verify step
                     on the return — the patient is already verified
                     when they're on Pay. Bouncing back through Verify
                     would re-fire the OTP unnecessarily. */}
-                <SecondaryButton onClick={() => setStep(3)} disabled={isPending}>← Back</SecondaryButton>
+                <SecondaryButton onClick={() => setStep(3)} disabled={isPending || redirecting}>← Back</SecondaryButton>
               </div>
             </div>
           }

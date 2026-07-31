@@ -295,8 +295,18 @@ describe('Flow A + Flow C — load-bearing lines still present', () => {
     expect(FLOW_A_COMPLETE).toContain('checkoutId');
   });
 
-  it('Flow A CheckoutForm still imports the V2 PeachWidget', () => {
-    expect(FLOW_A_FORM).toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
+  it('Flow A capture surface (ResumeCapture) mounts the V2 PeachWidget, not COPYandPAY', () => {
+    // The V2 widget host for Flow A moved from CheckoutForm to
+    // ResumeCapture: CheckoutForm now hands off to the single
+    // confirm+widget surface (page.tsx → ResumeCapture) after
+    // initiateCheckout, so there's exactly ONE confirm before the
+    // widget. Either way the widget MUST be the Checkout V2 one, never
+    // the Flow B COPYandPAY widget.
+    const RESUME_CAPTURE = read('app/checkout/[token]/ResumeCapture.tsx');
+    expect(RESUME_CAPTURE).toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
+    expect(RESUME_CAPTURE).not.toContain('PeachCopyAndPayWidget');
+    // And CheckoutForm no longer mounts a widget itself (single confirm).
+    expect(FLOW_A_FORM).not.toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
     expect(FLOW_A_FORM).not.toContain('PeachCopyAndPayWidget');
   });
 

@@ -332,7 +332,60 @@ describe('ResumeCapture — single "Confirm and pay" surface (no first-vs-return
 
   it('the capture surface still renders for uncaptured plans (routing unchanged)', () => {
     expect(PAGE_SRC).toMatch(/if \(isUncapturedPlan\)\s*\{/);
-    expect(PAGE_SRC).toMatch(/<ResumeCapture[\s\S]{0,600}resumeAction=\{resumeFirstInstalmentCapture\}/);
+    expect(PAGE_SRC).toMatch(/<ResumeCapture[\s\S]{0,700}resumeAction=\{resumeFirstInstalmentCapture\}/);
+  });
+});
+
+describe('checkout shows exactly ONE "Confirm and pay" before the widget (no double confirm)', () => {
+  // Before: CheckoutForm's Pay tap → initiateCheckout signs the patient
+  // in (mutates cookies) → /checkout/[token] re-renders as the signed-in-
+  // owner uncaptured-plan branch → ResumeCapture, a SECOND near-identical
+  // "Confirm and pay". The patient saw two confirms then the widget.
+  //
+  // After: CheckoutForm no longer mounts the widget itself. On a
+  // successful initiate it hands off with router.replace(?capture=auto);
+  // page.tsx reads that param and passes autoStart to ResumeCapture,
+  // which fires the capture immediately and mounts the widget — no second
+  // confirm. Plain re-entry (no param) still shows one confirm → widget.
+  const FORM_SRC   = read('app/checkout/[token]/CheckoutForm.tsx');
+  const PAGE_SRC   = read('app/checkout/[token]/page.tsx');
+  const RESUME_UI  = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  it('CheckoutForm no longer mounts PeachWidget inline (that was the source of the 2nd confirm/widget)', () => {
+    expect(FORM_SRC).not.toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
+    expect(FORM_SRC).not.toMatch(/<PeachWidget/);
+    // The inline widget state is gone.
+    expect(FORM_SRC).not.toMatch(/setWidget/);
+  });
+
+  it('CheckoutForm hands off to the single confirm+widget surface via router.replace(?capture=auto)', () => {
+    expect(FORM_SRC).toMatch(/useRouter/);
+    expect(FORM_SRC).toMatch(/router\.replace\(`\/checkout\/\$\{token\}\?capture=auto`\)/);
+  });
+
+  it('page.tsx reads ?capture=auto and forwards it as autoStart to ResumeCapture', () => {
+    expect(PAGE_SRC).toMatch(/searchParams/);
+    expect(PAGE_SRC).toMatch(/sp\.capture === 'auto'/);
+    expect(PAGE_SRC).toMatch(/autoStart=\{autoStartCapture\}/);
+  });
+
+  it('ResumeCapture auto-fires the capture once on mount when autoStart (skips its own confirm)', () => {
+    expect(RESUME_UI).toMatch(/autoStart/);
+    // Fires start() from an effect, guarded against double-invoke.
+    expect(RESUME_UI).toMatch(/autoFiredRef/);
+    expect(RESUME_UI).toMatch(/useEffect\(/);
+    // The auto-start path renders a "setting up" placeholder, NOT the
+    // confirm chrome — so the confirm never shows in the hand-off case.
+    expect(RESUME_UI).toMatch(/resume-capture-autostarting/);
+  });
+
+  it('re-entry (no ?capture=auto) still shows the single confirm → widget (autoStart=false path)', () => {
+    // The confirm view + button remain for the non-autoStart case.
+    expect(RESUME_UI).toMatch(/data-testid="resume-capture-button"/);
+    expect(RESUME_UI).toMatch(/Confirm and pay/);
+    // autoStart is a required prop, so page.tsx must pass it (true only
+    // on the hand-off); default rendering is the confirm.
+    expect(RESUME_UI).toMatch(/autoStart:\s*boolean/);
   });
 });
 
