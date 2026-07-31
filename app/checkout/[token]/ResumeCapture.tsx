@@ -2,21 +2,33 @@
 
 import { useState } from 'react';
 import PeachWidget from '@/app/_components/PeachWidget';
-import { BillChip } from './_components/CheckoutChrome';
+import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 
-// ─── ResumeCapture — logged-in owner, first-instalment capture retry ───
+// ─── ResumeCapture — logged-in owner, first-instalment capture ─────────
 //
 // Rendered by /checkout/[token]/page.tsx for a session user who owns
 // an UNCAPTURED plan (status = 'pending_first_payment' AND
 // peach_registration_id IS NULL). See resumeFirstInstalmentCapture in
 // ./actions.ts for the account/plan/schedule idempotency contract.
 //
-// Not auto-firing on mount: an owner returning to a stuck plan should
-// see an explicit "Pay Rx today"-shaped CTA + the amount, matching the
-// mental model of the attempt-1 UI they saw on their first pass. A
-// single click re-opens the Peach V2 widget with the SAME
-// merchantTransactionId (Peach dedups), so a mid-flight click twice is
-// harmless.
+// Functionally this IS the first-instalment capture step — the same
+// widget capture the anonymous CheckoutForm runs. The ONLY thing that
+// differs between "brand-new, first time here" and "came back after an
+// earlier incomplete attempt" is COPY:
+//
+//   • priorAttempt === false → NO Peach checkout was ever created for
+//     this plan (e.g. the first createCheckout failed outright). To
+//     the patient this is their first working capture — show the
+//     normal "Confirm and pay" chrome, matching CheckoutForm's Pay step.
+//   • priorAttempt === true  → a Peach checkout WAS created before but
+//     didn't complete (widget abort / mount failure). Genuine re-entry
+//     — relabel the heading to "Resume your payment".
+//
+// The underlying action + widget behaviour are identical in both
+// cases; only the heading + subcopy change. Not auto-firing on mount:
+// an explicit "Pay Rx today" CTA matches the mental model of the Pay
+// step. A double-click is harmless — the resume action mints the same
+// deterministic Peach ref (Peach dedups).
 
 type ResumeAction = (token: string) => Promise<
   | { ok: true; checkoutId: string; amountCents: number; shopperResultUrl: string }
@@ -28,6 +40,16 @@ type Props = {
   practiceName:          string;
   totalAmount:           number;
   firstInstalmentAmount: number;
+  /**
+   * true → a Peach checkout was created for this plan on an earlier
+   * visit that didn't complete (heading reads "Resume your payment").
+   * false → first working capture (heading reads "Confirm and pay").
+   */
+  priorAttempt:          boolean;
+  /** Instalment amounts (Rands), in instalment order. */
+  scheduleAmounts:       number[];
+  /** Matching due dates as ISO strings ('' when unknown). */
+  scheduleDates:         string[];
   resumeAction:          ResumeAction;
 };
 
@@ -41,11 +63,35 @@ export default function ResumeCapture({
   practiceName,
   totalAmount,
   firstInstalmentAmount,
+  priorAttempt,
+  scheduleAmounts,
+  scheduleDates,
   resumeAction,
 }: Props) {
   const [widget, setWidget] = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
   const [error,  setError]  = useState<string | null>(null);
   const [busy,   setBusy]   = useState(false);
+
+  // Copy differs only on prior-attempt. Everything else is identical.
+  const heading = priorAttempt ? 'Resume your payment' : 'Confirm and pay';
+  const subcopy = priorAttempt
+    ? 'You started this earlier — complete instalment 1 to activate your plan.'
+    : 'Complete instalment 1 to activate your plan.';
+  const cta     = busy
+    ? 'Setting up payment…'
+    : priorAttempt
+      ? `Resume — pay ${formatRand(firstInstalmentAmount)}`
+      : `Pay ${formatRand(firstInstalmentAmount)} today`;
+
+  // Reconstruct Dates for the ScheduleStrip. Rows with an empty ISO
+  // string (unknown due date) are dropped so the strip only shows the
+  // dates we actually have.
+  const scheduleParsed = scheduleAmounts
+    .map((amount, i) => ({ amount, iso: scheduleDates[i] ?? '' }))
+    .filter((r) => r.iso !== '');
+  const stripAmounts = scheduleParsed.map((r) => r.amount);
+  const stripDates   = scheduleParsed.map((r) => new Date(r.iso));
+  const showSchedule = stripAmounts.length > 0;
 
   async function start(): Promise<void> {
     setError(null);
@@ -97,17 +143,20 @@ export default function ResumeCapture({
   }
 
   return (
-    <div data-testid="resume-capture">
+    <div data-testid="resume-capture" data-prior-attempt={priorAttempt ? 'true' : 'false'}>
       <div className="mb-5">
         <BillChip practiceName={practiceName} totalAmount={totalAmount} />
       </div>
 
       <div className="rounded-2xl border border-[#E5E9F0] bg-white p-6 shadow-sm space-y-4">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold text-[#0F1F3A] tracking-[-0.01em]">Resume your payment</h1>
-          <p className="text-sm text-[#3A4B66]">
-            Your account is set up — just complete instalment 1 to activate your plan.
-          </p>
+          <h1
+            className="text-xl font-semibold text-[#0F1F3A] tracking-[-0.01em]"
+            data-testid="resume-capture-heading"
+          >
+            {heading}
+          </h1>
+          <p className="text-sm text-[#3A4B66]">{subcopy}</p>
         </div>
 
         <div className="rounded-xl bg-[#FAFBFD] border border-[#E5E9F0] p-4">
@@ -118,6 +167,10 @@ export default function ResumeCapture({
             {formatRand(firstInstalmentAmount)}
           </p>
         </div>
+
+        {showSchedule && (
+          <ScheduleStrip instalments={stripAmounts} dates={stripDates} />
+        )}
 
         {error && (
           <div
@@ -137,7 +190,7 @@ export default function ResumeCapture({
           className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 hover:shadow-lg transition-shadow"
           style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
         >
-          {busy ? 'Setting up payment…' : `Pay ${formatRand(firstInstalmentAmount)} today`}
+          {cta}
         </button>
       </div>
 

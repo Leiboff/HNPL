@@ -4,6 +4,12 @@ import crypto from 'crypto';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { calculateFee } from '@/lib/finance';
+import {
+  isAllowedBillAmount,
+  MIN_BILL_AMOUNT,
+  MAX_BILL_AMOUNT,
+  formatRandLimit,
+} from '@/lib/config/billAmountLimits';
 import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { sendPatientInvitationEmail } from '@/lib/email/templates/patientInvitation';
 import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPatientBill';
@@ -110,8 +116,10 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   if (!patientEmail || typeof patientEmail !== 'string') {
     return { error: 'Patient email is required.' };
   }
-  if (!Number.isFinite(billAmount) || billAmount < 500 || billAmount > 50000) {
-    return { error: 'Bill amount must be between R500 and R50 000.' };
+  if (!isAllowedBillAmount(billAmount)) {
+    return {
+      error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`,
+    };
   }
   if (!providerId) {
     return { error: 'A healthcare provider must be selected.' };

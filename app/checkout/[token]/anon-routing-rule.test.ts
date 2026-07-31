@@ -175,7 +175,10 @@ describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not
     // pending_acceptance / with-token → /confirm) is preserved.
     const idx = PAGE.indexOf('isUncapturedPlan');
     expect(idx).toBeGreaterThan(0);
-    const chunk = PAGE.slice(idx, idx + 2500);
+    // Widened window: the uncaptured branch now also fetches the full
+    // schedule + prior-attempt signal before the else-redirect, so
+    // redirect(confirmPath) sits further down.
+    const chunk = PAGE.slice(idx, idx + 4000);
     expect(chunk).toMatch(/redirect\(confirmPath\)/);
   });
 
@@ -286,6 +289,77 @@ describe('ResumeCapture — server action wired through, PeachWidget mounted on 
   it('surfaces a visible error alert when the resume action fails (no silent stuck state)', () => {
     expect(RESUME_UI).toMatch(/data-testid="resume-capture-error"/);
     expect(RESUME_UI).toMatch(/role="alert"/);
+  });
+});
+
+describe('ResumeCapture — first-capture vs return copy (no false "Resume" for first-timers)', () => {
+  // A brand-new patient who reaches this surface WITHOUT any prior
+  // Peach checkout on their plan (peach_checkout_id absent) is
+  // functionally on their first capture — the heading must read
+  // "Confirm and pay", NOT "Resume your payment". Only a plan that had
+  // a checkout created before (peach_checkout_id present) but didn't
+  // complete gets the "Resume" relabel.
+  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
+  const PAGE_SRC  = read('app/checkout/[token]/page.tsx');
+
+  it('ResumeCapture takes a priorAttempt prop that drives the heading', () => {
+    expect(RESUME_UI).toMatch(/priorAttempt/);
+    // The heading is branched on priorAttempt: first-time = "Confirm
+    // and pay"; return = "Resume your payment".
+    expect(RESUME_UI).toMatch(/priorAttempt \? 'Resume your payment' : 'Confirm and pay'/);
+  });
+
+  it('default (priorAttempt=false) copy is the first-capture wording, not "Resume"', () => {
+    // Both strings present in source (the ternary), but the FALSE
+    // branch — the default a fresh patient sees — must be the
+    // first-capture wording.
+    expect(RESUME_UI).toMatch(/'Confirm and pay'/);
+    expect(RESUME_UI).toMatch(/Complete instalment 1 to activate your plan/);
+  });
+
+  it('page.tsx derives priorAttempt from peach_checkout_id on the instalment-1 row', () => {
+    // The signal: a Peach checkout was created for this plan before
+    // (stamped on the payment row) → genuine re-entry. Absent → first
+    // working capture.
+    expect(PAGE_SRC).toMatch(/peach_checkout_id/);
+    expect(PAGE_SRC).toMatch(/priorAttempt\s*=\s*!!firstRow\?\.peach_checkout_id/);
+    // And it is forwarded into the component.
+    expect(PAGE_SRC).toMatch(/priorAttempt=\{priorAttempt\}/);
+  });
+
+  it('the schedule is shown on the capture surface (unified with the fresh Pay step)', () => {
+    expect(RESUME_UI).toMatch(/ScheduleStrip/);
+    expect(PAGE_SRC).toMatch(/scheduleAmounts=\{scheduleAmounts\}/);
+    expect(PAGE_SRC).toMatch(/scheduleDates=\{scheduleDates\}/);
+  });
+});
+
+describe('bill-amount floor is configurable + allows sandbox test totals (R276 / R184)', () => {
+  const LIMITS      = read('lib/config/billAmountLimits.ts');
+  const BILL_ACTION = read('app/practice/bills/new/actions.ts');
+  const BILL_FORM   = read('app/practice/bills/new/BillForm.tsx');
+
+  it('exposes MIN/MAX constants + isAllowedBillAmount from a single shared module', () => {
+    expect(LIMITS).toMatch(/export const MIN_BILL_AMOUNT/);
+    expect(LIMITS).toMatch(/export const MAX_BILL_AMOUNT/);
+    expect(LIMITS).toMatch(/export function isAllowedBillAmount/);
+    // Env-configurable (NEXT_PUBLIC_ so client + server read the same).
+    expect(LIMITS).toMatch(/NEXT_PUBLIC_MIN_BILL_AMOUNT/);
+    expect(LIMITS).toMatch(/NEXT_PUBLIC_MAX_BILL_AMOUNT/);
+  });
+
+  it('default floor is R1 (allows R184/R276; the old R500 floor is gone)', () => {
+    // Default fallback is 1, not 500.
+    expect(LIMITS).toMatch(/'NEXT_PUBLIC_MIN_BILL_AMOUNT',\s*1\s*\)/);
+    // The hardcoded 500-floor comparison must be gone from BOTH
+    // validators.
+    expect(BILL_ACTION).not.toMatch(/billAmount < 500/);
+    expect(BILL_FORM).not.toMatch(/billAmount >= 500/);
+  });
+
+  it('server + client both validate via the shared isAllowedBillAmount', () => {
+    expect(BILL_ACTION).toMatch(/isAllowedBillAmount\(billAmount\)/);
+    expect(BILL_FORM).toMatch(/isAllowedBillAmount\(billAmount\)/);
   });
 });
 

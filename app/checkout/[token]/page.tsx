@@ -211,13 +211,33 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
       // re-opens the Peach V2 widget for the SAME instalment-1 row
       // (deterministic ref → Peach dedups the transaction).
       if (isUncapturedPlan) {
-        const { data: firstInstalment } = await svcForLookup
+        // Full schedule for the capture surface + the prior-attempt
+        // signal. peach_checkout_id is stamped on the instalment-1 row
+        // ONLY after a Peach checkout was successfully created for it
+        // (initiateCheckout line ~513, or a prior resume). So:
+        //   • present  → a checkout WAS opened before but didn't
+        //     complete → this is a genuine RE-ENTRY → "Resume".
+        //   • absent   → no Peach checkout ever created for this plan
+        //     (e.g. the initial createCheckout itself failed) → this is
+        //     effectively the FIRST working capture → first-time copy.
+        // This is a copy/branch signal only; resumeFirstInstalmentCapture
+        // is idempotent either way.
+        const { data: paymentRows } = await svcForLookup
           .from('payments')
-          .select('amount')
-          .eq('plan_id',           row.plan_id)
-          .eq('instalment_number', 1)
-          .maybeSingle();
-        const firstInstalmentAmount = Number(firstInstalment?.amount ?? row.plan_total_amount);
+          .select('amount, due_date, instalment_number, peach_checkout_id')
+          .eq('plan_id', row.plan_id)
+          .order('instalment_number', { ascending: true });
+        const rows2         = (paymentRows ?? []) as Array<{
+          amount: number | string;
+          due_date: string | null;
+          instalment_number: number;
+          peach_checkout_id: string | null;
+        }>;
+        const firstRow      = rows2.find((r) => r.instalment_number === 1);
+        const firstInstalmentAmount = Number(firstRow?.amount ?? row.plan_total_amount);
+        const priorAttempt  = !!firstRow?.peach_checkout_id;
+        const scheduleAmounts = rows2.map((r) => Number(r.amount));
+        const scheduleDates   = rows2.map((r) => r.due_date ?? '');
 
         return (
           <div className="min-h-screen bg-[#FAFBFD]">
@@ -241,6 +261,9 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
                 practiceName={practiceName}
                 totalAmount={Number(row.plan_total_amount)}
                 firstInstalmentAmount={firstInstalmentAmount}
+                priorAttempt={priorAttempt}
+                scheduleAmounts={scheduleAmounts}
+                scheduleDates={scheduleDates}
                 resumeAction={resumeFirstInstalmentCapture}
               />
             </main>

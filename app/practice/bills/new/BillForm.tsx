@@ -2,6 +2,12 @@
 
 import { useState } from 'react';
 import { calculateFee } from '@/lib/finance';
+import {
+  isAllowedBillAmount,
+  MIN_BILL_AMOUNT,
+  MAX_BILL_AMOUNT,
+  formatRandLimit,
+} from '@/lib/config/billAmountLimits';
 import type { CreateBillResult, CreateBillSummary, ProviderOption } from './page';
 import BillWaitingPanel from './BillWaitingPanel';
 
@@ -178,7 +184,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
   const [summary,          setSummary]          = useState<CreateBillSummary | null>(null);
 
   const billAmount = parseFloat(billAmountStr);
-  const validAmount = !isNaN(billAmount) && billAmount >= 500 && billAmount <= 50000;
+  const validAmount = isAllowedBillAmount(billAmount);
   const preview = validAmount ? calculateFee(billAmount, feePercent) : null;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -302,8 +308,8 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
               id="billAmount"
               type="number"
               required
-              min={500}
-              max={50000}
+              min={MIN_BILL_AMOUNT}
+              max={MAX_BILL_AMOUNT}
               step="0.01"
               value={billAmountStr}
               onChange={e => setBillAmountStr(e.target.value)}
@@ -311,7 +317,9 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
               className="w-full rounded-lg border border-gray-300 pl-7 pr-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
-          <p className="mt-1 text-xs text-gray-400">Between R500 and R50 000</p>
+          <p className="mt-1 text-xs text-gray-400">
+            Between {formatRandLimit(MIN_BILL_AMOUNT)} and {formatRandLimit(MAX_BILL_AMOUNT)}
+          </p>
         </div>
 
         {/* Practice reference */}
