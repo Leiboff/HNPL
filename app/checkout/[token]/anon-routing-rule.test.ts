@@ -289,6 +289,111 @@ describe('ResumeCapture — server action wired through, PeachWidget mounted on 
   });
 });
 
+describe('/checkout/[token] — card-only widget (no Apple Pay / Google Pay)', () => {
+  // Wallet-issued tokens are SINGLE-USE — instalments 2..N would be
+  // uncollectable if the first CIT captured a wallet token instead of
+  // a reusable card registration. Force the V2 widget to card-only on
+  // both entry points (fresh capture + resume). The provider/client
+  // layer whitelists these fields at the boundary so a caller can't
+  // pass an unsupported method through.
+  //
+  // V2 field names: defaultPaymentMethod + forceDefaultMethod. If a
+  // future Peach V2 change renames these, the failure is loud — the
+  // /v2/checkout endpoint returns an "unknown field" 400 (same shape
+  // as the source-field failure on 2026-07-30) and PEACH CHECKOUT
+  // INITIATE ERROR will log it.
+
+  const ACTIONS  = read('app/checkout/[token]/actions.ts');
+  const PROVIDER = read('lib/payments/provider.ts');
+  const CLIENT   = read('lib/payments/peach/client.ts');
+
+  it('CheckoutCreateParams exposes defaultPaymentMethod=\'CARD\' + forceDefaultMethod:boolean', () => {
+    expect(PROVIDER).toMatch(/defaultPaymentMethod\?:\s*'CARD'/);
+    expect(PROVIDER).toMatch(/forceDefaultMethod\?:\s*boolean/);
+  });
+
+  it('client.ts serialises defaultPaymentMethod + forceDefaultMethod into the /v2/checkout body', () => {
+    // Both fields must be whitelisted at the boundary. Assert both
+    // the input read AND the body write so a future refactor that
+    // forgets the second half will break the test.
+    expect(CLIENT).toMatch(/params\.defaultPaymentMethod === 'CARD'/);
+    expect(CLIENT).toMatch(/body\.defaultPaymentMethod\s*=\s*'CARD'/);
+    expect(CLIENT).toMatch(/typeof params\.forceDefaultMethod === 'boolean'/);
+    expect(CLIENT).toMatch(/body\.forceDefaultMethod\s*=\s*params\.forceDefaultMethod/);
+  });
+
+  it('initiateCheckout (fresh) passes defaultPaymentMethod=\'CARD\' + forceDefaultMethod=true', () => {
+    const startIdx = ACTIONS.indexOf('export async function initiateCheckout');
+    expect(startIdx).toBeGreaterThan(0);
+    const rest       = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body       = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    // Both card-only fields present in the createCheckout call body.
+    expect(body).toMatch(/defaultPaymentMethod:\s*'CARD'/);
+    expect(body).toMatch(/forceDefaultMethod:\s*true/);
+  });
+
+  it('resumeFirstInstalmentCapture (resume) also passes card-only fields', () => {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    expect(startIdx).toBeGreaterThan(0);
+    const rest       = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    const body       = nextExport > 0 ? rest.slice(0, nextExport) : rest;
+    expect(body).toMatch(/defaultPaymentMethod:\s*'CARD'/);
+    expect(body).toMatch(/forceDefaultMethod:\s*true/);
+  });
+});
+
+describe('/checkout/[token] — no fresh-vs-resume flicker on soft-nav back to the page', () => {
+  // The routing decision (fresh CheckoutForm vs ResumeCapture) is
+  // server-side in page.tsx. To ensure a soft-nav back to
+  // /checkout/[token] (e.g. from the /complete "Try again" link)
+  // ALWAYS re-runs that decision and never serves a stale RSC from
+  // the client-side router cache, the page is marked force-dynamic +
+  // revalidate=0, and the /complete retry uses a plain <a> tag
+  // (hard reload) instead of a next/link soft-nav.
+  //
+  // Together these guarantee the first paint after any return trip
+  // is the CORRECT surface, not a flash of the earlier one.
+
+  const COMPLETE = read('app/checkout/[token]/complete/page.tsx');
+
+  it('page opts into force-dynamic + revalidate=0 (client staleTime=0)', () => {
+    expect(PAGE).toMatch(/export const dynamic\s*=\s*'force-dynamic'/);
+    expect(PAGE).toMatch(/export const revalidate\s*=\s*0/);
+  });
+
+  it('/complete Try-again is a plain <a> (hard reload), not a next/link soft-nav', () => {
+    // If we used next/link here, the router cache MIGHT serve the
+    // pre-attempt RSC of /checkout/[token] (which rendered
+    // CheckoutForm) before revalidating to the fresh ResumeCapture
+    // RSC — that swap is the flicker.
+    expect(COMPLETE).toMatch(/<a[\s\S]*?data-testid="checkout-complete-retry"/);
+    expect(COMPLETE).not.toMatch(/<Link[\s\S]*?data-testid="checkout-complete-retry"/);
+    // next/link should not be imported at all — it was only used for
+    // this button.
+    expect(COMPLETE).not.toMatch(/from 'next\/link'/);
+  });
+
+  it('isUncapturedPlan does not mislabel a genuinely fresh plan as resume', () => {
+    // A fresh plan is 'pending_acceptance' (bill not yet accepted).
+    // isUncapturedPlan requires 'pending_first_payment' — i.e. the
+    // schedule has been written AND the CIT has not landed. The two
+    // are mutually exclusive by construction: initiateCheckout /
+    // acceptPlan / payWithSavedCard are the only writers of
+    // 'pending_first_payment', and each ONLY runs after the patient
+    // consented to a plan. A fresh plan therefore never satisfies
+    // isUncapturedPlan and never sees the "Resume your payment"
+    // surface.
+    expect(PAGE).toMatch(/planStatus === 'pending_first_payment'/);
+    // The uncaptured render is gated inside `if (isUncapturedPlan)`;
+    // the else path (`redirect(confirmPath)`) handles fresh
+    // pending_acceptance plans exactly as before.
+    expect(PAGE).toMatch(/if \(isUncapturedPlan\)\s*\{/);
+    expect(PAGE).toMatch(/redirect\(confirmPath\)/);
+  });
+});
+
 describe('Confirm page ownership guard is the second line of defence', () => {
   // Even if the routing rule ever regresses, the confirm page itself
   // must never render for a non-owner. This pin locks the .eq('patient_id', user.id)

@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
@@ -41,13 +40,19 @@ function ErrorCard({ reason, token }: { reason: string; token: string }) {
           Your account is set up but the bill is still unpaid. Try again with the same or a
           different card — no new account will be created.
         </p>
-        <Link
+        {/* Plain anchor (NOT next/link) — this is a return-to-checkout
+            after a failure and we want a HARD navigation so any
+            client-side router cache holding the pre-attempt RSC of
+            /checkout/[token] (which would flash the CheckoutForm
+            before revalidating to ResumeCapture) is bypassed
+            entirely. See page.tsx for the corresponding force-dynamic. */}
+        <a
           href={`/checkout/${encodeURIComponent(token)}`}
           className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
           data-testid="checkout-complete-retry"
         >
           Try again
-        </Link>
+        </a>
       </div>
     </div>
   );
