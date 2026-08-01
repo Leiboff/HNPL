@@ -133,10 +133,6 @@ function formatRand(n: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
-function formatDateLong(d: Date): string {
-  return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' });
-}
-
 // ─── Tiny client-side schedule preview ─────────────────────────────────────
 //
 // Mirrors lib/finance.ts splitInstalments + calculatePaymentDates so
@@ -353,6 +349,17 @@ export default function CheckoutForm({
   function handleChangeNumber() {
     resetOtpStep();
     setStep(3);
+  }
+
+  // After OTP verification we go STRAIGHT to the payment hand-off — no
+  // interstitial "Continue to payment" screen (that redundant screen (1)
+  // is collapsed). submitPay creates the account + checkout and redirects
+  // to the single pre-card confirm (ResumeCapture: schedule + amount +
+  // Pay). Step 5 renders only a brief loading state (or an error + retry
+  // if initiateCheckout fails / bounces).
+  function handleVerified() {
+    setStep(5);
+    submitPay();
   }
 
   function submitPay() {
@@ -690,7 +697,7 @@ export default function CheckoutForm({
           phoneDisplay={details.phone}
           requestCode={() => requestPhoneOtp(token, details.phone)}
           verifyCode={(c) => verifyPhoneOtp(token, details.phone, c)}
-          onVerified={() => setStep(5)}
+          onVerified={handleVerified}
           onChangeNumber={handleChangeNumber}
           shell={(body, actions) => (
             <StepShell
@@ -705,52 +712,49 @@ export default function CheckoutForm({
         />
       )}
 
-      {/* ── Step 5: continue to payment ───────────────────────────────
-          NOT a payment confirm. The money confirm (schedule + amount +
-          Pay) lives on ResumeCapture, the surface that mounts the widget
-          — so there is exactly ONE confirm in the flow. This step just
-          creates the account + checkout (initiateCheckout) and hands the
-          patient to that confirm. */}
+      {/* ── Step 5: payment hand-off (brief loading, no interstitial) ──
+          The redundant "Continue to payment" screen is collapsed: OTP
+          verification fires submitPay directly (handleVerified), so this
+          step is only a short loading state while the account + checkout
+          are created, then a server redirect to the SINGLE pre-card
+          confirm (ResumeCapture: schedule + amount + Pay → widget). If
+          initiateCheckout errors, we surface it here with a retry. */}
       {step === 5 && (
         <StepShell
           icon="card"
-          heading="You're all set"
-          subhead="Create your account and continue to secure payment."
+          heading={error ? 'Let’s try that again' : 'Setting up your payment…'}
+          subhead={error ? undefined : 'One moment — creating your account and secure checkout.'}
           actions={
-            <div className="space-y-3">
-              <PrimaryButton onClick={submitPay} disabled={isPending || redirecting}>
-                {(isPending || redirecting) ? 'Setting up payment…' : 'Continue to payment'}
-              </PrimaryButton>
-              <div className="flex justify-center">
-                {/* Back goes to Details (3), skipping the Verify step
-                    on the return — the patient is already verified
-                    here. Bouncing back through Verify would re-fire the
-                    OTP unnecessarily. */}
-                <SecondaryButton onClick={() => setStep(3)} disabled={isPending || redirecting}>← Back</SecondaryButton>
+            error ? (
+              <div className="space-y-3">
+                <PrimaryButton onClick={submitPay} disabled={isPending || redirecting}>
+                  {(isPending || redirecting) ? 'Setting up payment…' : 'Try again'}
+                </PrimaryButton>
+                <div className="flex justify-center">
+                  {/* Back goes to Details (3), skipping Verify on the
+                      return — the patient is already verified here. */}
+                  <SecondaryButton onClick={() => setStep(3)} disabled={isPending || redirecting}>← Back</SecondaryButton>
+                </div>
               </div>
-            </div>
+            ) : undefined
           }
         >
-          <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6 space-y-2">
-            <p className="text-sm text-[#3A4B66]">
-              You&apos;ll confirm your plan and enter your card on the next screen — your{' '}
-              <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span> first
-              instalment is due today, interest-free.
-            </p>
-            {dates[1] && (
-              <p className="text-xs text-[#7A8AA0]">
-                Then{' '}
-                <span className="tabular-nums">{formatRand(instalments[1])}</span> on {formatDateLong(dates[1])}
-                {dates[2] && (
-                  <>
-                    , and{' '}
-                    <span className="tabular-nums">{formatRand(instalments[2])}</span> on {formatDateLong(dates[2])}
-                  </>
-                )}
-                .
+          {!error && (
+            <div
+              className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-6 flex items-center gap-3"
+              data-testid="checkout-handoff-loading"
+            >
+              <svg className="w-5 h-5 text-[#15A89E] animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
+              </svg>
+              <p className="text-sm text-[#3A4B66]">
+                No charge yet — you&apos;ll confirm your{' '}
+                <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span> first
+                instalment and enter your card on the next screen.
               </p>
-            )}
-          </div>
+            </div>
+          )}
 
           {error && (
             <div
