@@ -5,6 +5,7 @@ import { getPaymentProvider } from '@/lib/payments/provider';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
+import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import PendingAutoRefresh from './PendingAutoRefresh';
 
 // ─── /checkout/[token]/complete — Peach Checkout V2 return route ────
@@ -138,8 +139,20 @@ export default async function CheckoutCompletePage({
 
   // Merchant transaction id — echoed back on the checkout. We rely on
   // it to look up the payment row and the patient.
+  //
+  // Purpose gate: the ref must be a Flow A checkout CIT. Refs are now the
+  // compact 16-char format `bnc<13>` (mintPeachRef('c', …) via
+  // checkoutRef) — purpose char 'c'. The old check `startsWith('hnpl_co_')`
+  // was a STALE legacy-prefix guard that never matches a compact ref, so
+  // every successful checkout was falsely rejected here with "isn't from a
+  // checkout flow" AFTER classification already said success (observed for
+  // checkout 03e9c095…, ref bnc26xa9mdv8z0yi). Read the purpose via
+  // peachRefPurpose, tolerating any in-flight legacy hnpl_co_ ref — same
+  // idiom the webhook uses for registration refs.
   const reference = status.merchantTransactionId;
-  if (!reference || !reference.startsWith('hnpl_co_')) {
+  const isCheckoutRef =
+    peachRefPurpose(reference) === 'c' || (reference?.startsWith('hnpl_co_') ?? false);
+  if (!reference || !isCheckoutRef) {
     return <ErrorCard token={token} reason="This payment reference isn't from a checkout flow." />;
   }
 
