@@ -282,7 +282,9 @@ describe('ResumeCapture — server action wired through, PeachWidget mounted on 
   });
 
   it('calls the injected resumeAction (server action) with the token, sets widget state on ok', () => {
-    expect(RESUME_UI).toMatch(/resumeAction\(token\)/);
+    // reuseExisting mirrors autoStart — see the single-createCheckout
+    // describe below for why. The token is always the first arg.
+    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*autoStart\s*\}\)/);
     expect(RESUME_UI).toMatch(/setWidget\(\{\s*checkoutId:[^}]*shopperResultUrl:/);
   });
 
@@ -332,7 +334,132 @@ describe('ResumeCapture — single "Confirm and pay" surface (no first-vs-return
 
   it('the capture surface still renders for uncaptured plans (routing unchanged)', () => {
     expect(PAGE_SRC).toMatch(/if \(isUncapturedPlan\)\s*\{/);
-    expect(PAGE_SRC).toMatch(/<ResumeCapture[\s\S]{0,600}resumeAction=\{resumeFirstInstalmentCapture\}/);
+    expect(PAGE_SRC).toMatch(/<ResumeCapture[\s\S]{0,700}resumeAction=\{resumeFirstInstalmentCapture\}/);
+  });
+});
+
+describe('checkout shows exactly ONE "Confirm and pay" before the widget (no double confirm)', () => {
+  // Before: CheckoutForm's Pay tap → initiateCheckout signs the patient
+  // in (mutates cookies) → /checkout/[token] re-renders as the signed-in-
+  // owner uncaptured-plan branch → ResumeCapture, a SECOND near-identical
+  // "Confirm and pay". The patient saw two confirms then the widget.
+  //
+  // After: CheckoutForm no longer mounts the widget itself. On a
+  // successful initiate it hands off with router.replace(?capture=auto);
+  // page.tsx reads that param and passes autoStart to ResumeCapture,
+  // which fires the capture immediately and mounts the widget — no second
+  // confirm. Plain re-entry (no param) still shows one confirm → widget.
+  const FORM_SRC   = read('app/checkout/[token]/CheckoutForm.tsx');
+  const PAGE_SRC   = read('app/checkout/[token]/page.tsx');
+  const RESUME_UI  = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  it('CheckoutForm no longer mounts PeachWidget inline (that was the source of the 2nd confirm/widget)', () => {
+    expect(FORM_SRC).not.toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
+    expect(FORM_SRC).not.toMatch(/<PeachWidget/);
+    // The inline widget state is gone.
+    expect(FORM_SRC).not.toMatch(/setWidget/);
+  });
+
+  it('CheckoutForm hands off to the single confirm+widget surface via router.replace(?capture=auto)', () => {
+    expect(FORM_SRC).toMatch(/useRouter/);
+    expect(FORM_SRC).toMatch(/router\.replace\(`\/checkout\/\$\{token\}\?capture=auto`\)/);
+  });
+
+  it('page.tsx reads ?capture=auto and forwards it as autoStart to ResumeCapture', () => {
+    expect(PAGE_SRC).toMatch(/searchParams/);
+    expect(PAGE_SRC).toMatch(/sp\.capture === 'auto'/);
+    expect(PAGE_SRC).toMatch(/autoStart=\{autoStartCapture\}/);
+  });
+
+  it('ResumeCapture auto-fires the capture once on mount when autoStart (skips its own confirm)', () => {
+    expect(RESUME_UI).toMatch(/autoStart/);
+    // Fires start() from an effect, guarded against double-invoke.
+    expect(RESUME_UI).toMatch(/autoFiredRef/);
+    expect(RESUME_UI).toMatch(/useEffect\(/);
+    // The auto-start path renders a "setting up" placeholder, NOT the
+    // confirm chrome — so the confirm never shows in the hand-off case.
+    expect(RESUME_UI).toMatch(/resume-capture-autostarting/);
+  });
+
+  it('re-entry (no ?capture=auto) still shows the single confirm → widget (autoStart=false path)', () => {
+    // The confirm view + button remain for the non-autoStart case.
+    expect(RESUME_UI).toMatch(/data-testid="resume-capture-button"/);
+    expect(RESUME_UI).toMatch(/Confirm and pay/);
+    // autoStart is a required prop, so page.tsx must pass it (true only
+    // on the hand-off); default rendering is the confirm.
+    expect(RESUME_UI).toMatch(/autoStart:\s*boolean/);
+  });
+});
+
+describe('new-customer signup makes exactly ONE createCheckout (auto-start reuses, does not re-mint)', () => {
+  // Before: the new-customer path called createCheckout TWICE — once in
+  // initiateCheckout (CheckoutForm's Pay), then again in the auto-start
+  // resumeFirstInstalmentCapture after the ?capture=auto hand-off —
+  // deduped to one real transaction only by the deterministic
+  // merchantTransactionId. On a money path the normal flow should make
+  // ONE checkout call, not two-that-dedup.
+  //
+  // After: the auto-start hand-off carries reuseExisting=true. The
+  // resume action detects the checkout initiateCheckout already minted
+  // + stamped on the instalment-1 row (peach_checkout_id) and MOUNTS
+  // THE WIDGET ON THAT SAME CHECKOUT — no second createCheckout. A
+  // genuine re-entry (reuseExisting=false) still mints fresh (the
+  // stored checkout is past its validity window). The deterministic
+  // ref stays as the safety net for the mint path only.
+  const ACTIONS   = read('app/checkout/[token]/actions.ts');
+  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  function resumeBody(): string {
+    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+    expect(startIdx).toBeGreaterThan(0);
+    const rest       = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    return nextExport > 0 ? rest.slice(0, nextExport) : rest;
+  }
+
+  it('resumeFirstInstalmentCapture accepts a reuseExisting option', () => {
+    expect(ACTIONS).toMatch(/export async function resumeFirstInstalmentCapture\(\s*token:\s*string\s*,\s*opts\?:\s*\{\s*reuseExisting\?:\s*boolean\s*\}/);
+    const body = resumeBody();
+    expect(body).toMatch(/const reuseExisting = opts\?\.reuseExisting === true/);
+  });
+
+  it('reads the already-stamped peach_checkout_id off the instalment-1 row', () => {
+    const body = resumeBody();
+    // The instalment-1 select now includes peach_checkout_id (the id
+    // initiateCheckout stamped) so the reuse branch has something to
+    // reuse.
+    expect(body).toMatch(/select\(\s*['"]id,\s*amount,\s*peach_checkout_id['"]\s*\)/);
+    expect(body).toMatch(/const existingCheckoutId = \(payment\.peach_checkout_id as string \| null\) \?\? null/);
+  });
+
+  it('reuse branch mounts the SAME checkout (no createCheckout) when reuseExisting + a stamped id exist', () => {
+    const body = resumeBody();
+    // The mint call is now GATED behind the else of the reuse branch —
+    // so the auto-start (reuseExisting=true) path skips it entirely.
+    expect(body).toMatch(/if\s*\(reuseExisting && existingCheckoutId\)\s*\{\s*checkoutId = existingCheckoutId;/);
+    // createCheckout still exists (for the mint/re-entry branch) but
+    // sits inside the else.
+    const reuseIdx = body.indexOf('if (reuseExisting && existingCheckoutId)');
+    const mintIdx  = body.indexOf('provider.createCheckout');
+    expect(reuseIdx).toBeGreaterThan(0);
+    expect(mintIdx).toBeGreaterThan(reuseIdx);
+    // The createCheckout lives under an `else {` opened after the reuse
+    // branch — proving it's skipped on reuse.
+    const between = body.slice(reuseIdx, mintIdx);
+    expect(between).toMatch(/\}\s*else\s*\{/);
+  });
+
+  it('ResumeCapture forwards reuseExisting=autoStart into the action', () => {
+    // autoStart=true (fresh hand-off) → reuse; autoStart=false
+    // (re-entry) → mint fresh. A single flag threads the intent.
+    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*autoStart\s*\}\)/);
+  });
+
+  it('the deterministic ref stays as the mint-path safety net (not removed)', () => {
+    const body = resumeBody();
+    // checkoutRef(payment.id) is still built — it dedups a mid-flight
+    // double-mint on the re-entry path.
+    expect(body).toMatch(/checkoutRef\(payment\.id as string\)/);
   });
 });
 

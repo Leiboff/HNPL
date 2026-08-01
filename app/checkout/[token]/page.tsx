@@ -84,8 +84,21 @@ function InvalidLinkCard({ reason }: { reason: string }) {
   );
 }
 
-export default async function CheckoutPage({ params }: { params: Promise<Params> }) {
+export default async function CheckoutPage({
+  params,
+  searchParams,
+}: {
+  params:       Promise<Params>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { token } = await params;
+  const sp        = await searchParams;
+  // Set by CheckoutForm's post-Pay hand-off (router.replace(?capture=auto)).
+  // When present, the signed-in-owner uncaptured-plan surface below
+  // mounts the widget IMMEDIATELY instead of showing a second confirm —
+  // the patient already confirmed on CheckoutForm's Pay step. A plain
+  // re-entry via the emailed link carries no param → one confirm → widget.
+  const autoStartCapture = sp.capture === 'auto';
 
   if (!token || token.length < 16) {
     return <InvalidLinkCard reason="The checkout link is missing or malformed." />;
@@ -257,6 +270,7 @@ export default async function CheckoutPage({ params }: { params: Promise<Params>
                 firstInstalmentAmount={firstInstalmentAmount}
                 scheduleAmounts={scheduleAmounts}
                 scheduleDates={scheduleDates}
+                autoStart={autoStartCapture}
                 resumeAction={resumeFirstInstalmentCapture}
               />
             </main>

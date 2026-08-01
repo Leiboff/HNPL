@@ -594,8 +594,15 @@ export type ResumeCaptureResult =
 
 export async function resumeFirstInstalmentCapture(
   token: string,
+  opts?: { reuseExisting?: boolean },
 ): Promise<ResumeCaptureResult> {
   if (!token) return { ok: false, error: 'Missing token.' };
+
+  // reuseExisting is set ONLY by the fresh post-Pay hand-off
+  // (ResumeCapture autoStart, ?capture=auto). See the mint-vs-reuse
+  // branch below — it lets the new-customer signup path make exactly
+  // ONE createCheckout call instead of two-that-Peach-dedups.
+  const reuseExisting = opts?.reuseExisting === true;
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -651,7 +658,7 @@ export async function resumeFirstInstalmentCapture(
   // ── 3. Existing instalment-1 payment row (must exist post-attempt-1) ──
   const { data: payment } = await svc
     .from('payments')
-    .select('id, amount')
+    .select('id, amount, peach_checkout_id')
     .eq('plan_id', plan.id)
     .eq('instalment_number', 1)
     .maybeSingle();
@@ -696,54 +703,78 @@ export async function resumeFirstInstalmentCapture(
     : '9999-12-31';
   const planType    = ((plan.plan_type as 2 | 3 | null) ?? 2) as 2 | 3;
 
-  // ── 7. Create the Peach V2 checkout (same shape as initiateCheckout) ──
-  const provider = getPaymentProvider();
-  let checkoutId: string;
-  try {
-    const checkout = await provider.createCheckout({
-      amountCents,
-      merchantTransactionId: reference,
-      currency:              'ZAR',
-      paymentType:           'DB',
-      createRegistration:    true,
-      shopperResultUrl,
-      origin:                appUrl,
-      // Card-only — same rationale as initiateCheckout. Wallet tokens
-      // are single-use; instalments 2-N would be uncollectable.
-      defaultPaymentMethod: 'CARD',
-      forceDefaultMethod:   true,
-      standingInstruction: {
-        mode:                 'INITIAL',
-        type:                 'INSTALLMENT',
-        expiry:               expiryDate,
-        frequency:            30,
-        numberOfInstallments: planType,
-      },
-      customer: {
-        email:     profile.email as string,
-        givenName: (profile.first_name as string | null) ?? null,
-        surname:   (profile.last_name  as string | null) ?? null,
-      },
-      customParameters: {
-        SHOPPER_purpose:   'checkout_resume_first_payment',
-        SHOPPER_token:     token,
-        SHOPPER_patientId: user.id,
-        SHOPPER_planId:    plan.id as string,
-        SHOPPER_paymentId: payment.id as string,
-      },
-    });
-    checkoutId = checkout.checkoutId;
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
-  }
+  // ── 7. Reuse or mint the Peach V2 checkout ───────────────────────
+  // On the fresh post-Pay hand-off (reuseExisting), initiateCheckout
+  // minted a checkout <1s ago and stamped its id on THIS instalment-1
+  // row (actions.ts step 8, before it returned). Mount the widget on
+  // that SAME checkout rather than calling createCheckout again — that
+  // is what makes the new-customer signup path exactly ONE createCheckout
+  // instead of two-that-Peach-dedups.
+  //
+  // A genuine re-entry (reuseExisting=false — the emailed link with no
+  // ?capture=auto) always mints fresh: a checkout stamped in a prior
+  // session is past its short validity window, so reusing it would
+  // fail. The deterministic merchantTransactionId (built above from the
+  // same instalment-1 id) stays the safety net for THAT mint path — a
+  // mid-flight double-mint Peach-dedups to one real transaction.
+  //
+  // Defensive fallback: if reuseExisting is set but nothing was stamped
+  // (shouldn't happen — initiateCheckout always stamps before handing
+  // off), we fall through to the mint branch rather than fail.
+  const existingCheckoutId = (payment.peach_checkout_id as string | null) ?? null;
 
-  // Idempotent stamp — same payment row on every call; the last
-  // successful checkoutId wins. Peach dedups the mtxid so this is
-  // never a race against a separate transaction.
-  await svc
-    .from('payments')
-    .update({ peach_checkout_id: checkoutId })
-    .eq('id', payment.id as string);
+  let checkoutId: string;
+  if (reuseExisting && existingCheckoutId) {
+    checkoutId = existingCheckoutId;
+  } else {
+    const provider = getPaymentProvider();
+    try {
+      const checkout = await provider.createCheckout({
+        amountCents,
+        merchantTransactionId: reference,
+        currency:              'ZAR',
+        paymentType:           'DB',
+        createRegistration:    true,
+        shopperResultUrl,
+        origin:                appUrl,
+        // Card-only — same rationale as initiateCheckout. Wallet tokens
+        // are single-use; instalments 2-N would be uncollectable.
+        defaultPaymentMethod: 'CARD',
+        forceDefaultMethod:   true,
+        standingInstruction: {
+          mode:                 'INITIAL',
+          type:                 'INSTALLMENT',
+          expiry:               expiryDate,
+          frequency:            30,
+          numberOfInstallments: planType,
+        },
+        customer: {
+          email:     profile.email as string,
+          givenName: (profile.first_name as string | null) ?? null,
+          surname:   (profile.last_name  as string | null) ?? null,
+        },
+        customParameters: {
+          SHOPPER_purpose:   'checkout_resume_first_payment',
+          SHOPPER_token:     token,
+          SHOPPER_patientId: user.id,
+          SHOPPER_planId:    plan.id as string,
+          SHOPPER_paymentId: payment.id as string,
+        },
+      });
+      checkoutId = checkout.checkoutId;
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Payment initialization failed.' };
+    }
+
+    // Idempotent stamp — same payment row on every call; the last
+    // successful checkoutId wins. Peach dedups the mtxid so this is
+    // never a race against a separate transaction. Skipped on the reuse
+    // path: the id is already the one initiateCheckout stamped.
+    await svc
+      .from('payments')
+      .update({ peach_checkout_id: checkoutId })
+      .eq('id', payment.id as string);
+  }
 
   // Match initiateCheckout's cookie posture so /checkout/[token]/complete
   // can read the token when the widget navigates back.

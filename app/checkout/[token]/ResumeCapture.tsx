@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PeachWidget from '@/app/_components/PeachWidget';
 import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 
@@ -11,26 +11,26 @@ import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 // peach_registration_id IS NULL). See resumeFirstInstalmentCapture in
 // ./actions.ts for the account/plan/schedule idempotency contract.
 //
-// Functionally this IS the first-instalment capture step — the same
-// widget capture the anonymous CheckoutForm runs. It reads identically
-// whether the patient is here for the first time or came back after an
-// incomplete attempt: a SINGLE "Confirm and pay" surface, matching the
-// fresh CheckoutForm Pay step.
+// This is the SINGLE confirm+widget surface for the signed-in-owner
+// uncaptured-plan case. Two entry paths, distinguished by `autoStart`:
 //
-// (Historical note: an earlier version branched the copy on a
-// first-vs-return flag derived from the stored-checkout id on the
-// instalment-1 payment row. That id is stamped during the FIRST
-// initiateCheckout — before this capture screen ever renders — so it
-// was effectively always set and mislabelled brand-new first attempts
-// as "Resume". The distinction was removed; the underlying resume
-// action is idempotent and works the same for a first pass or a
-// re-entry, so there is nothing for the copy to usefully distinguish.)
+//   • autoStart=true — the patient just tapped Pay on CheckoutForm's
+//     Pay step (which navigated here with ?capture=auto). They ALREADY
+//     confirmed there, so we skip this surface's confirm and fire the
+//     capture immediately → the widget mounts. Net: exactly ONE confirm
+//     (CheckoutForm's) before the widget, no near-identical repeat.
+//   • autoStart=false — a genuine re-entry via the emailed link (no
+//     param). They have NOT confirmed in this session, so we show the
+//     one confirm ("Confirm and pay" + schedule + amount) → tap → widget.
 //
-// Not auto-firing on mount: an explicit "Pay Rx today" CTA matches the
-// mental model of the Pay step. A double-click is harmless — the resume
-// action mints the same deterministic Peach ref (Peach dedups).
+// The underlying resume action is idempotent (mints the same
+// deterministic Peach ref, Peach dedups), so firing it automatically is
+// safe — it's exactly what an immediate button tap would do.
 
-type ResumeAction = (token: string) => Promise<
+type ResumeAction = (
+  token: string,
+  opts?: { reuseExisting?: boolean },
+) => Promise<
   | { ok: true; checkoutId: string; amountCents: number; shopperResultUrl: string }
   | { ok: false; error: string }
 >;
@@ -44,6 +44,12 @@ type Props = {
   scheduleAmounts:       number[];
   /** Matching due dates as ISO strings ('' when unknown). */
   scheduleDates:         string[];
+  /**
+   * true → fresh post-Pay hand-off from CheckoutForm (?capture=auto):
+   * skip this surface's confirm and mount the widget immediately.
+   * false → re-entry via the emailed link: show one confirm first.
+   */
+  autoStart:             boolean;
   resumeAction:          ResumeAction;
 };
 
@@ -59,6 +65,7 @@ export default function ResumeCapture({
   firstInstalmentAmount,
   scheduleAmounts,
   scheduleDates,
+  autoStart,
   resumeAction,
 }: Props) {
   const [widget, setWidget] = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
@@ -82,7 +89,13 @@ export default function ResumeCapture({
     setError(null);
     setBusy(true);
     try {
-      const result = await resumeAction(token);
+      // reuseExisting mirrors autoStart. On the fresh post-Pay hand-off
+      // (autoStart=true) initiateCheckout just minted + stamped a
+      // checkout on the instalment-1 row; the action reuses it instead
+      // of minting a second, so the new-customer path is ONE
+      // createCheckout. A genuine re-entry (autoStart=false) mints fresh
+      // because the stored checkout is past its validity window.
+      const result = await resumeAction(token, { reuseExisting: autoStart });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -98,6 +111,22 @@ export default function ResumeCapture({
       setBusy(false);
     }
   }
+
+  // Fresh post-Pay hand-off (?capture=auto): fire the capture once on
+  // mount so the widget appears immediately — no second confirm. Guarded
+  // by a ref so React's dev double-invoke (StrictMode) can't fire it
+  // twice. If it errors, the catch in start() surfaces the alert and the
+  // manual retry button below becomes available.
+  const autoFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoStart) return;
+    if (autoFiredRef.current) return;
+    autoFiredRef.current = true;
+    void start();
+    // start is stable for the component's lifetime; deps intentionally
+    // limited to autoStart so this fires exactly once on a fresh mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
 
   if (widget) {
     return (
@@ -124,6 +153,29 @@ export default function ResumeCapture({
           </button>
         </div>
       </>
+    );
+  }
+
+  // Auto-start hand-off — show a quiet "setting up" state instead of the
+  // confirm chrome (the patient already confirmed on CheckoutForm). This
+  // covers the first render (before the mount effect fires) AND the
+  // in-flight window, so the confirm never flashes. If the auto-fire
+  // errors, we fall through to the confirm view below, which surfaces
+  // the error + a manual retry button.
+  if (autoStart && !error) {
+    return (
+      <div data-testid="resume-capture-autostarting">
+        <div className="mb-5">
+          <BillChip practiceName={practiceName} totalAmount={totalAmount} />
+        </div>
+        <div className="rounded-2xl border border-[#E5E9F0] bg-white p-6 shadow-sm flex items-center gap-3">
+          <svg className="w-5 h-5 text-[#15A89E] animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden>
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
+          </svg>
+          <p className="text-sm text-[#3A4B66]">Setting up your payment…</p>
+        </div>
+      </div>
     );
   }
 
