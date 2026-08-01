@@ -92,13 +92,7 @@ export default async function CheckoutPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { token } = await params;
-  const sp        = await searchParams;
-  // Set by CheckoutForm's post-Pay hand-off (router.replace(?capture=auto)).
-  // When present, the signed-in-owner uncaptured-plan surface below
-  // mounts the widget IMMEDIATELY instead of showing a second confirm —
-  // the patient already confirmed on CheckoutForm's Pay step. A plain
-  // re-entry via the emailed link carries no param → one confirm → widget.
-  const autoStartCapture = sp.capture === 'auto';
+  await searchParams; // no query params drive this route anymore
 
   if (!token || token.length < 16) {
     return <InvalidLinkCard reason="The checkout link is missing or malformed." />;
@@ -224,13 +218,11 @@ export default async function CheckoutPage({
       // re-opens the Peach V2 widget for the SAME instalment-1 row
       // (deterministic ref → Peach dedups the transaction).
       if (isUncapturedPlan) {
-        // Full schedule for the capture surface. This is a single
-        // "Confirm and pay" surface — accurate for both a first attempt
-        // and a genuine re-entry. (An earlier version branched the copy
-        // on the stored-checkout id, but that column is stamped during
-        // the first initiateCheckout — before this screen renders — so
-        // it was effectively always set and mislabelled first attempts
-        // as "Resume". The distinction was removed.)
+        // Full schedule for the capture surface. This is THE single
+        // "Confirm and pay" surface — the only confirm in the flow, for
+        // both the fresh signup journey (CheckoutForm → "Continue to
+        // payment" → initiateCheckout → redirect here) and a genuine
+        // re-entry via the emailed link. No query param, no auto-start.
         const { data: paymentRows } = await svcForLookup
           .from('payments')
           .select('amount, due_date, instalment_number')
@@ -270,7 +262,6 @@ export default async function CheckoutPage({
                 firstInstalmentAmount={firstInstalmentAmount}
                 scheduleAmounts={scheduleAmounts}
                 scheduleDates={scheduleDates}
-                autoStart={autoStartCapture}
                 resumeAction={resumeFirstInstalmentCapture}
               />
             </main>

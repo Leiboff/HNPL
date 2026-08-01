@@ -5,6 +5,7 @@ import { getPaymentProvider } from '@/lib/payments/provider';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
+import PendingAutoRefresh from './PendingAutoRefresh';
 
 // ─── /checkout/[token]/complete — Peach Checkout V2 return route ────
 //
@@ -69,8 +70,11 @@ function PendingCard() {
         </div>
         <h1 className="text-xl font-semibold text-gray-900">Just a moment…</h1>
         <p className="text-sm text-gray-600">
-          Your card is still being processed. This usually resolves in a few seconds — refresh in a bit or check your email for a confirmation.
+          Your card is still being processed. This page will update automatically — you can also check your email for a confirmation.
         </p>
+        {/* Poll the V2 status by reloading this page; each reload re-runs
+            getCheckoutStatus so a pending result advances on its own. */}
+        <PendingAutoRefresh />
       </div>
     </div>
   );
@@ -106,6 +110,24 @@ export default async function CheckoutCompletePage({
   }
 
   const classified = classifyResultCode(status.resultCode);
+
+  // Verbatim, greppable log of the FULL raw V2 status response. A future
+  // misclassification (a success code we don't yet cover; a field we
+  // misread) is then diagnosable from Vercel logs in one look — grep
+  // "PEACH CHECKOUT STATUS RESPONSE:". status.raw is the untouched V2
+  // response body (see toPaymentStatus in the client). We surface the
+  // derived resultCode + our verdict alongside so the code→verdict step
+  // is visible without re-deriving it.
+  console.log('PEACH CHECKOUT STATUS RESPONSE:', {
+    checkoutId,
+    resultCode:        status.resultCode,
+    resultDescription: status.resultDescription,
+    classified,
+    merchantTransactionId: status.merchantTransactionId,
+    hasRegistrationId: !!status.registrationId,
+    raw:               status.raw,
+  });
+
   if (classified === 'pending') {
     return <PendingCard />;
   }
