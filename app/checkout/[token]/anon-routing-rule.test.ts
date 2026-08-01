@@ -551,6 +551,28 @@ describe('checkout completion classifies V2 status correctly (FIX 1: no false de
     expect(COMPLETE).toMatch(/status:\s*'collected'/);
     expect(COMPLETE).toMatch(/\.update\(\{ status: 'active' \}\)/);
   });
+
+  it('purpose gate uses peachRefPurpose(ref) === \'c\' (NOT the stale hnpl_co_ literal prefix)', () => {
+    // The compact ref format is bnc<13> (purpose 'c'); the old
+    // startsWith('hnpl_co_') guard falsely rejected every compact-ref
+    // success AFTER classification said success. Gate on the ref purpose,
+    // tolerating any in-flight legacy hnpl_co_ ref.
+    expect(COMPLETE).toMatch(/import \{ peachRefPurpose \} from '@\/lib\/payments\/peach\/refs'/);
+    expect(COMPLETE).toMatch(/peachRefPurpose\(reference\) === 'c'/);
+    // The legacy prefix may only appear as a tolerated fallback, never as
+    // the SOLE gate — there must be no `!reference.startsWith('hnpl_co_')`
+    // used on its own as the rejection condition.
+    expect(COMPLETE).not.toMatch(/if \(!reference \|\| !reference\.startsWith\('hnpl_co_'\)\)/);
+  });
+
+  it('completion path reads NO customParameters (activation keys off merchantTransactionId → payment row)', () => {
+    // Audit: none of SHOPPER_planId/paymentId/patientId/token are read on
+    // the status path, so the bracketed-flat-key gotcha does not apply
+    // here. The reference is the ONLY status field used to find the row.
+    expect(COMPLETE).not.toMatch(/customParameters/);
+    expect(COMPLETE).not.toMatch(/SHOPPER_/);
+    expect(COMPLETE).toMatch(/\.eq\('peach_payment_id', reference\)/);
+  });
 });
 
 describe('bill-amount floor is configurable + allows sandbox test totals (R276 / R184)', () => {

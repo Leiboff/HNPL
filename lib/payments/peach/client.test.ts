@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { __internals, __resetPeachTokenCache, PeachProvider, pickField } from './client';
+import { peachRefPurpose } from './refs';
 
 // ─── Peach Checkout V2 + recurring client unit tests ────────────────
 //
@@ -481,6 +482,53 @@ describe('PeachProvider.getCheckoutStatus — V2 status API', () => {
     const st = await p.getCheckoutStatus('chk-flat-decline');
     expect(st.status).toBe('rejected');
     expect(st.resultCode).toBe('800.100.152');
+  });
+
+  // ── Completion purpose guard — real prod fixture 03e9c095… ──────────
+  //
+  // The V2 status body returns customParameters as BRACKETED FLAT keys
+  // ('customParameters[SHOPPER_purpose]'). The completion page does NOT
+  // read them — it derives the reference from merchantTransactionId and
+  // gates on peachRefPurpose(ref) === 'c'. This fixture proves the full
+  // flat body (bracketed customParameters included) parses to the compact
+  // checkout ref, and that ref classifies as a checkout ('c') so the
+  // completion path reaches activation instead of the "isn't from a
+  // checkout flow" rejection.
+  it('parses the full prod flat body (bracketed customParameters) → checkout-purpose ref', async () => {
+    const PROD_FLAT_BODY: Record<string, unknown> = {
+      'result.code':        '000.100.110',
+      'result.description': "Request successfully processed in 'Merchant in Integrator Test Mode'",
+      id:                    'pay-03e9c095',
+      merchantTransactionId: 'bnc26xa9mdv8z0yi',
+      amount:                '92.00',
+      currency:              'ZAR',
+      'card.bin':            '400000',
+      'card.last4Digits':    '0042',
+      'card.paymentBrand':   'VISA',
+      registrationId:        '8ac7a49f9fb7fec7019fbf26b73e7852',
+      // customParameters echoed back as bracketed flat keys — present in
+      // the body but NOT read by the completion path.
+      'customParameters[SHOPPER_purpose]':   'checkout_first_payment',
+      'customParameters[SHOPPER_planId]':    '43dd8174-0000-0000-0000-000000000000',
+      'customParameters[SHOPPER_paymentId]': 'pmt-1',
+      'customParameters[SHOPPER_patientId]': 'usr-1',
+      'customParameters[SHOPPER_token]':     'tok-1',
+    };
+    scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout\/chk-03e9\/status/, body: PROD_FLAT_BODY },
+    ]);
+    const p = new PeachProvider();
+    const st = await p.getCheckoutStatus('chk-03e9');
+
+    expect(st.status).toBe('success');
+    expect(st.merchantTransactionId).toBe('bnc26xa9mdv8z0yi');
+    expect(st.registrationId).toBe('8ac7a49f9fb7fec7019fbf26b73e7852');
+    // The completion guard input: this compact ref is a checkout CIT ('c'),
+    // so the page passes the purpose gate and reaches activation.
+    expect(peachRefPurpose(st.merchantTransactionId)).toBe('c');
+    // The legacy prefix check would have FALSELY rejected it — the bug.
+    expect(st.merchantTransactionId?.startsWith('hnpl_co_')).toBe(false);
   });
 });
 
