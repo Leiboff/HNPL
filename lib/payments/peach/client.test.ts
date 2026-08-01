@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { __internals, __resetPeachTokenCache, PeachProvider } from './client';
+import { __internals, __resetPeachTokenCache, PeachProvider, pickField } from './client';
 
 // ─── Peach Checkout V2 + recurring client unit tests ────────────────
 //
@@ -387,6 +387,119 @@ describe('PeachProvider.getCheckoutStatus — V2 status API', () => {
     expect(url).toBe(`${CHECKOUT_URL}/v2/checkout/chk-1/status`);
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer checkout-tok-1');
+  });
+
+  // ── FLAT dot-notation body (prod false-decline regression) ──────────
+  //
+  // The GET /v2/checkout/{id}/status body is FLAT — keys are literal
+  // "result.code", "card.last4Digits" etc, NOT nested objects. Reading
+  // body.result?.code returned undefined → a SUCCESSFUL charge classified
+  // 'rejected'. Real prod fixture: checkout 0ea34011d7924ed9aa4ede361c758e5e,
+  // result.code 000.100.110, registrationId 8ac7a49f…, card.last4Digits
+  // 0042, ref bnc2b23vwkixm97y. toPaymentStatus must tolerate flat AND
+  // nested via pickField.
+
+  // The exact flat shape from the production log.
+  const FLAT_SUCCESS_BODY: Record<string, unknown> = {
+    'result.code':        '000.100.110',
+    'result.description': "Request successfully processed in 'Merchant in Integrator Test Mode'",
+    id:                    'pay-flat-0ea3',
+    merchantTransactionId: 'bnc2b23vwkixm97y',
+    amount:                '92.00',
+    currency:              'ZAR',
+    'card.bin':            '400000',
+    'card.last4Digits':    '0042',
+    'card.holder':         'Jane Doe',
+    'card.expiryMonth':    '12',
+    'card.expiryYear':     '2030',
+    'card.paymentBrand':   'VISA',
+    registrationId:        '8ac7a49f9fb7fec7019fbf26b73e7852',
+  };
+
+  it('parses the REAL flat prod body → success + registrationId + code + card', async () => {
+    scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout\/chk-flat\/status/, body: FLAT_SUCCESS_BODY },
+    ]);
+    const p = new PeachProvider();
+    const st = await p.getCheckoutStatus('chk-flat');
+    expect(st.status).toBe('success');                 // was 'rejected' — the bug
+    expect(st.resultCode).toBe('000.100.110');
+    expect(st.registrationId).toBe('8ac7a49f9fb7fec7019fbf26b73e7852');
+    expect(st.providerPaymentId).toBe('pay-flat-0ea3');
+    expect(st.merchantTransactionId).toBe('bnc2b23vwkixm97y');
+    expect(st.amountCents).toBe(9200);
+    expect(st.card?.last4).toBe('0042');
+    expect(st.card?.brand).toBe('VISA');
+    expect(st.card?.expiryMonth).toBe(12);
+    expect(st.resultDescription).toMatch(/Integrator Test Mode/);
+  });
+
+  it('parses the equivalent NESTED body → identical result (both shapes tolerated)', async () => {
+    const NESTED_SUCCESS_BODY = {
+      result: {
+        code:        '000.100.110',
+        description: "Request successfully processed in 'Merchant in Integrator Test Mode'",
+      },
+      id:                    'pay-flat-0ea3',
+      merchantTransactionId: 'bnc2b23vwkixm97y',
+      amount:                '92.00',
+      currency:              'ZAR',
+      card: {
+        bin: '400000', last4Digits: '0042', holder: 'Jane Doe',
+        expiryMonth: '12', expiryYear: '2030', paymentBrand: 'VISA',
+      },
+      registrationId: '8ac7a49f9fb7fec7019fbf26b73e7852',
+    };
+    scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout\/chk-nested\/status/, body: NESTED_SUCCESS_BODY },
+    ]);
+    const p = new PeachProvider();
+    const st = await p.getCheckoutStatus('chk-nested');
+    expect(st.status).toBe('success');
+    expect(st.resultCode).toBe('000.100.110');
+    expect(st.registrationId).toBe('8ac7a49f9fb7fec7019fbf26b73e7852');
+    expect(st.card?.last4).toBe('0042');
+    expect(st.card?.brand).toBe('VISA');
+  });
+
+  it('a FLAT body with a decline code → rejected (parse fix does not over-accept)', async () => {
+    scriptedFetch([
+      OAUTH_OK,
+      {
+        url: /\/v2\/checkout\/chk-flat-decline\/status/,
+        body: {
+          'result.code':        '800.100.152',
+          'result.description': 'Transaction declined by authorization system',
+          id:                    'pay-flat-decl',
+          merchantTransactionId: 'bncdeclinexxxxx',
+        },
+      },
+    ]);
+    const p = new PeachProvider();
+    const st = await p.getCheckoutStatus('chk-flat-decline');
+    expect(st.status).toBe('rejected');
+    expect(st.resultCode).toBe('800.100.152');
+  });
+});
+
+describe('pickField — flat-or-nested reader (V2 status only)', () => {
+  it('reads a flat literal dotted key', () => {
+    expect(pickField({ 'result.code': '000.100.110' }, 'result.code')).toBe('000.100.110');
+    expect(pickField({ 'card.last4Digits': '0042' }, 'card.last4Digits')).toBe('0042');
+  });
+  it('falls back to a nested walk', () => {
+    expect(pickField({ result: { code: '000.100.110' } }, 'result.code')).toBe('000.100.110');
+    expect(pickField({ card: { last4Digits: '0042' } }, 'card.last4Digits')).toBe('0042');
+  });
+  it('prefers the flat key when BOTH are present', () => {
+    expect(pickField({ 'result.code': 'FLAT', result: { code: 'NESTED' } }, 'result.code')).toBe('FLAT');
+  });
+  it('returns undefined for a missing path (no throw on non-objects)', () => {
+    expect(pickField({ result: 'not-an-object' }, 'result.code')).toBeUndefined();
+    expect(pickField({}, 'result.code')).toBeUndefined();
+    expect(pickField(null, 'result.code')).toBeUndefined();
   });
 });
 

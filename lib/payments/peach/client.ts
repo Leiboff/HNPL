@@ -334,23 +334,76 @@ function nonce(): string {
   return globalThis.crypto.randomUUID().replace(/-/g, '');
 }
 
-function toPaymentStatus(body: PeachPaymentBody): PaymentStatus {
-  const code = body.result?.code;
+// ─── Flat-vs-nested field reader (V2 STATUS ONLY) ───────────────────
+//
+// The GET /v2/checkout/{id}/status body is FLAT dot-notation — the keys
+// are literal strings like "result.code" and "card.last4Digits", NOT
+// nested objects. Reading body.result?.code therefore returns undefined,
+// and a SUCCESSFUL charge (000.100.110, registrationId present) was
+// classified 'rejected' → false decline. Proven in prod for checkout
+// 0ea34011d7924ed9aa4ede361c758e5e.
+//
+// Some responses (and our own tests / older sandbox modes) ARE nested,
+// so we tolerate BOTH: try the literal flat key first, then walk the
+// nested path. Used ONLY on the V2 status path (toPaymentStatus). The
+// recurring /v1 surface returns nested objects and is parsed directly
+// in chargeSavedCard/refund — it is deliberately NOT routed through here.
+export function pickField(
+  body: Record<string, unknown> | null | undefined,
+  path: string,
+): unknown {
+  if (!body) return undefined;
+  // Flat literal key first: body["result.code"].
+  if (Object.prototype.hasOwnProperty.call(body, path)) return body[path];
+  // Fall back to a nested walk: body.result.code.
+  let cur: unknown = body;
+  for (const part of path.split('.')) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+function pickStr(body: Record<string, unknown>, path: string): string | undefined {
+  const v = pickField(body, path);
+  return v == null ? undefined : String(v);
+}
+
+function toPaymentStatus(body: Record<string, unknown>): PaymentStatus {
+  // Every field below is read flat-or-nested via pickField — see the
+  // helper's docstring for why (the V2 status body is flat dot-notation).
+  const code            = pickStr(body, 'result.code');
+  const description     = pickStr(body, 'result.description');
+  const providerId      = pickStr(body, 'id');
+  const merchantTxId    = pickStr(body, 'merchantTransactionId');
+  const amount          = pickStr(body, 'amount');
+  const registrationId  = pickStr(body, 'registrationId');
+
+  const cardBrand   = pickStr(body, 'card.paymentBrand');
+  const cardLast4   = pickStr(body, 'card.last4Digits');
+  const cardHolder  = pickStr(body, 'card.holder');
+  const cardExpM    = pickStr(body, 'card.expiryMonth');
+  const cardExpY    = pickStr(body, 'card.expiryYear');
+  const cardBinC    = pickStr(body, 'card.binCountry');
+  const hasCard =
+    cardBrand !== undefined || cardLast4 !== undefined || cardHolder !== undefined ||
+    cardExpM !== undefined || cardExpY !== undefined || cardBinC !== undefined;
+
   return {
     status:                classifyResultCode(code),
-    providerPaymentId:     body.id,
-    merchantTransactionId: body.merchantTransactionId,
-    amountCents:           body.amount ? Math.round(Number(body.amount) * 100) : undefined,
+    providerPaymentId:     providerId,
+    merchantTransactionId: merchantTxId,
+    amountCents:           amount ? Math.round(Number(amount) * 100) : undefined,
     resultCode:            code,
-    resultDescription:     body.result?.description,
-    registrationId:        body.registrationId,
-    card: body.card ? {
-      brand:       body.card.paymentBrand ?? null,
-      last4:       body.card.last4Digits  ?? null,
-      expiryMonth: body.card.expiryMonth  ? Number(body.card.expiryMonth) : null,
-      expiryYear:  body.card.expiryYear   ? Number(body.card.expiryYear)  : null,
-      holder:      body.card.holder       ?? null,
-      binCountry:  body.card.binCountry   ?? null,
+    resultDescription:     description,
+    registrationId:        registrationId,
+    card: hasCard ? {
+      brand:       cardBrand  ?? null,
+      last4:       cardLast4  ?? null,
+      expiryMonth: cardExpM ? Number(cardExpM) : null,
+      expiryYear:  cardExpY ? Number(cardExpY) : null,
+      holder:      cardHolder ?? null,
+      binCountry:  cardBinC   ?? null,
     } : undefined,
     raw: body,
   };
@@ -471,7 +524,7 @@ export class PeachProvider implements PaymentProvider {
     const res = await checkoutFetch(
       'GET',
       `/v2/checkout/${encodeURIComponent(checkoutId)}/status`,
-    ) as PeachPaymentBody;
+    ) as Record<string, unknown>;
     return toPaymentStatus(res);
   }
 
