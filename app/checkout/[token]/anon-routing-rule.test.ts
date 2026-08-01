@@ -281,11 +281,11 @@ describe('ResumeCapture — server action wired through, PeachWidget mounted on 
     expect(RESUME_UI).toMatch(/shopperResultUrl=\{widget\.shopperResultUrl\}/);
   });
 
-  it('calls the injected resumeAction (server action) with the token, sets widget state on ok', () => {
-    // The capture runs through runCapture(reuse), which passes the flag
-    // as reuseExisting. Auto-start calls runCapture(true) (reuse the
-    // stamped checkout); re-entry calls runCapture(false) (mint fresh).
-    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*reuse\s*\}\)/);
+  it('calls the injected resumeAction with the token + reuseExisting:true, sets widget state on ok', () => {
+    // Pay always passes reuseExisting:true — "reuse the freshly-minted
+    // checkout if you safely can". The action gates the actual reuse on
+    // its fresh-checkout cookie (normal flow reuses; re-entry mints).
+    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*true\s*\}\)/);
     expect(RESUME_UI).toMatch(/setWidget\(\{\s*checkoutId:[^}]*shopperResultUrl:/);
   });
 
@@ -339,221 +339,135 @@ describe('ResumeCapture — single "Confirm and pay" surface (no first-vs-return
   });
 });
 
-describe('checkout shows exactly ONE "Confirm and pay" before the widget (no double confirm)', () => {
-  // Before: CheckoutForm's Pay tap → initiateCheckout signs the patient
-  // in (mutates cookies) → /checkout/[token] re-renders as the signed-in-
-  // owner uncaptured-plan branch → ResumeCapture, a SECOND near-identical
-  // "Confirm and pay". The patient saw two confirms then the widget.
-  //
-  // After: CheckoutForm no longer mounts the widget itself. On a
-  // successful initiate it hands off with router.replace(?capture=auto);
-  // page.tsx reads that param and passes autoStart to ResumeCapture,
-  // which fires the capture immediately and mounts the widget — no second
-  // confirm. Plain re-entry (no param) still shows one confirm → widget.
+describe('single confirm owned by ResumeCapture (CheckoutForm has NO confirm/pay step)', () => {
+  // The double-confirm is removed by DELETION, not a silent hand-off:
+  // CheckoutForm's final step is "Continue to payment" (it runs
+  // initiateCheckout and redirects to /checkout/[token] with NO query
+  // param). The one and only payment confirm — schedule + amount + Pay —
+  // lives on ResumeCapture, the surface that demonstrably mounts the
+  // widget. No ?capture=auto, no autoStart, no auto-fire, anywhere.
   const FORM_SRC   = read('app/checkout/[token]/CheckoutForm.tsx');
   const PAGE_SRC   = read('app/checkout/[token]/page.tsx');
   const RESUME_UI  = read('app/checkout/[token]/ResumeCapture.tsx');
 
-  it('CheckoutForm no longer mounts PeachWidget inline (that was the source of the 2nd confirm/widget)', () => {
+  it('CheckoutForm final step is "Continue to payment", not a payment confirm', () => {
+    expect(FORM_SRC).toMatch(/Continue to payment/);
+    // The old confirm-step chrome is gone: no "Pay Rx today" button, no
+    // "First instalment — due today" eyebrow, no "Confirm and pay" heading.
+    expect(FORM_SRC).not.toMatch(/Pay \$\{formatRand\(instalments\[0\]\)\} today/);
+    expect(FORM_SRC).not.toMatch(/heading="Confirm and pay"/);
+    // CheckoutForm still mounts NO widget (that's ResumeCapture's job).
     expect(FORM_SRC).not.toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
     expect(FORM_SRC).not.toMatch(/<PeachWidget/);
-    // The inline widget state is gone.
-    expect(FORM_SRC).not.toMatch(/setWidget/);
   });
 
-  it('CheckoutForm hands off to the single confirm+widget surface via router.replace(?capture=auto)', () => {
-    expect(FORM_SRC).toMatch(/useRouter/);
-    expect(FORM_SRC).toMatch(/router\.replace\(`\/checkout\/\$\{token\}\?capture=auto`\)/);
+  it('CheckoutForm redirects to /checkout/[token] WITHOUT ?capture=auto', () => {
+    expect(FORM_SRC).toMatch(/router\.replace\(`\/checkout\/\$\{token\}`\)/);
+    expect(FORM_SRC).not.toMatch(/capture=auto/);
   });
 
-  it('page.tsx reads ?capture=auto and forwards it as autoStart to ResumeCapture', () => {
-    expect(PAGE_SRC).toMatch(/searchParams/);
-    expect(PAGE_SRC).toMatch(/sp\.capture === 'auto'/);
-    expect(PAGE_SRC).toMatch(/autoStart=\{autoStartCapture\}/);
+  it('no ?capture=auto / autoStart machinery anywhere (page, form, or capture surface)', () => {
+    for (const src of [FORM_SRC, PAGE_SRC, RESUME_UI]) {
+      expect(src).not.toMatch(/capture=auto/);
+      expect(src).not.toMatch(/autoStart/);
+      expect(src).not.toMatch(/autoFired/);
+      expect(src).not.toMatch(/autoFailed/);
+      expect(src).not.toMatch(/resume-capture-autostart/);
+    }
   });
 
-  it('ResumeCapture auto-fires the capture once on mount when autoStart (skips its own confirm)', () => {
-    expect(RESUME_UI).toMatch(/autoStart/);
-    // Fires start() from an effect, guarded against double-invoke.
-    expect(RESUME_UI).toMatch(/autoFiredRef/);
-    expect(RESUME_UI).toMatch(/useEffect\(/);
-    // The auto-start path renders a "setting up" placeholder, NOT the
-    // confirm chrome — so the confirm never shows in the hand-off case.
-    expect(RESUME_UI).toMatch(/resume-capture-autostarting/);
+  it('page.tsx no longer reads a capture query param', () => {
+    expect(PAGE_SRC).not.toMatch(/sp\.capture/);
+    // The uncaptured branch still renders ResumeCapture (routing intact).
+    expect(PAGE_SRC).toMatch(/if \(isUncapturedPlan\)\s*\{/);
+    expect(PAGE_SRC).toMatch(/<ResumeCapture[\s\S]{0,700}resumeAction=\{resumeFirstInstalmentCapture\}/);
   });
 
-  it('re-entry (no ?capture=auto) still shows the single confirm → widget (autoStart=false path)', () => {
-    // The confirm view + button remain for the non-autoStart case.
+  it('ResumeCapture is a single confirm → widget: one Pay button, no auto-fire effect', () => {
+    // One confirm view with the Pay button; the widget mounts on tap.
     expect(RESUME_UI).toMatch(/data-testid="resume-capture-button"/);
     expect(RESUME_UI).toMatch(/Confirm and pay/);
-    // autoStart is a required prop, so page.tsx must pass it (true only
-    // on the hand-off); default rendering is the confirm.
-    expect(RESUME_UI).toMatch(/autoStart:\s*boolean/);
+    // No effect-driven auto-fire remains.
+    expect(RESUME_UI).not.toMatch(/useEffect/);
+    // Pay tap calls start() → the resume action.
+    expect(RESUME_UI).toMatch(/onClick=\{\(\)\s*=>\s*void start\(\)\}/);
   });
 });
 
-describe('new-customer signup makes exactly ONE createCheckout (auto-start reuses, does not re-mint)', () => {
-  // Before: the new-customer path called createCheckout TWICE — once in
-  // initiateCheckout (CheckoutForm's Pay), then again in the auto-start
-  // resumeFirstInstalmentCapture after the ?capture=auto hand-off —
-  // deduped to one real transaction only by the deterministic
-  // merchantTransactionId. On a money path the normal flow should make
-  // ONE checkout call, not two-that-dedup.
-  //
-  // After: the auto-start hand-off carries reuseExisting=true. The
-  // resume action detects the checkout initiateCheckout already minted
-  // + stamped on the instalment-1 row (peach_checkout_id) and MOUNTS
-  // THE WIDGET ON THAT SAME CHECKOUT — no second createCheckout. A
-  // genuine re-entry (reuseExisting=false) still mints fresh (the
-  // stored checkout is past its validity window). The deterministic
-  // ref stays as the safety net for the mint path only.
+describe('normal signup makes exactly ONE createCheckout (fresh-cookie reuse)', () => {
+  // initiateCheckout mints + stamps a checkout AND drops a short-lived
+  // fresh-checkout cookie. The ResumeCapture Pay that immediately follows
+  // reuses THAT checkout (cookie value === stamped id) → one
+  // createCheckout on the normal path. A genuine re-entry days later has
+  // no fresh cookie → the action mints fresh (deterministic ref dedups),
+  // so the widget always works. This replaces the deleted ?capture=auto
+  // signal without any auto-start UI.
   const ACTIONS   = read('app/checkout/[token]/actions.ts');
   const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
 
-  function resumeBody(): string {
-    const startIdx = ACTIONS.indexOf('export async function resumeFirstInstalmentCapture');
+  function actionBody(name: string): string {
+    const startIdx = ACTIONS.indexOf(`export async function ${name}`);
     expect(startIdx).toBeGreaterThan(0);
     const rest       = ACTIONS.slice(startIdx);
     const nextExport = rest.indexOf('\nexport ', 1);
     return nextExport > 0 ? rest.slice(0, nextExport) : rest;
   }
 
-  it('resumeFirstInstalmentCapture accepts a reuseExisting option', () => {
-    expect(ACTIONS).toMatch(/export async function resumeFirstInstalmentCapture\(\s*token:\s*string\s*,\s*opts\?:\s*\{\s*reuseExisting\?:\s*boolean\s*\}/);
-    const body = resumeBody();
-    expect(body).toMatch(/const reuseExisting = opts\?\.reuseExisting === true/);
+  it('initiateCheckout drops the fresh-checkout cookie carrying the minted checkoutId', () => {
+    const body = actionBody('initiateCheckout');
+    expect(body).toMatch(/cookieStore\.set\(FRESH_CHECKOUT_COOKIE,\s*checkoutId/);
   });
 
-  it('reads the already-stamped peach_checkout_id off the instalment-1 row', () => {
-    const body = resumeBody();
-    // The instalment-1 select now includes peach_checkout_id (the id
-    // initiateCheckout stamped) so the reuse branch has something to
-    // reuse.
-    expect(body).toMatch(/select\(\s*['"]id,\s*amount,\s*peach_checkout_id['"]\s*\)/);
+  it('resume reuses ONLY when the fresh cookie matches the stamped id (else mints)', () => {
+    const body = actionBody('resumeFirstInstalmentCapture');
+    // Reads the fresh cookie + the stamped id, and gates reuse on a match.
+    expect(body).toMatch(/cookieStore\.get\(FRESH_CHECKOUT_COOKIE\)\?\.value/);
     expect(body).toMatch(/const existingCheckoutId = \(payment\.peach_checkout_id as string \| null\) \?\? null/);
-  });
-
-  it('reuse branch mounts the SAME checkout (no createCheckout) when reuseExisting + a stamped id exist', () => {
-    const body = resumeBody();
-    // The mint call is now GATED behind the else of the reuse branch —
-    // so the auto-start (reuseExisting=true) path skips it entirely.
-    expect(body).toMatch(/if\s*\(reuseExisting && existingCheckoutId\)\s*\{\s*checkoutId = existingCheckoutId;/);
-    // createCheckout still exists (for the mint/re-entry branch) but
-    // sits inside the else.
-    const reuseIdx = body.indexOf('if (reuseExisting && existingCheckoutId)');
+    expect(body).toMatch(/freshCheckoutId === existingCheckoutId/);
+    // createCheckout is gated behind the else of canReuse — skipped on reuse.
+    const reuseIdx = body.indexOf('if (canReuse)');
     const mintIdx  = body.indexOf('provider.createCheckout');
     expect(reuseIdx).toBeGreaterThan(0);
     expect(mintIdx).toBeGreaterThan(reuseIdx);
-    // The createCheckout lives under an `else {` opened after the reuse
-    // branch — proving it's skipped on reuse.
-    const between = body.slice(reuseIdx, mintIdx);
-    expect(between).toMatch(/\}\s*else\s*\{/);
+    expect(body.slice(reuseIdx, mintIdx)).toMatch(/\}\s*else\s*\{/);
   });
 
-  it('ResumeCapture reuses on auto-start (runCapture(true)) and mints on re-entry (runCapture(false))', () => {
-    // Auto-start fires runCapture(true) → reuseExisting=true → reuse the
-    // stamped checkout. Re-entry's manual button fires runCapture(false)
-    // → mint fresh. runCapture threads the flag as reuseExisting.
-    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*reuse\s*\}\)/);
-    // Auto-start effect uses reuse=true (both the first attempt and the
-    // single automatic retry).
-    expect(RESUME_UI).toMatch(/runCapture\(true\)/);
-    // Re-entry confirm button mints fresh.
-    expect(RESUME_UI).toMatch(/runCapture\(false\)/);
+  it('the instalment-1 select carries peach_checkout_id (so reuse has something to reuse)', () => {
+    const body = actionBody('resumeFirstInstalmentCapture');
+    expect(body).toMatch(/select\(\s*['"]id,\s*amount,\s*peach_checkout_id['"]\s*\)/);
+  });
+
+  it('ResumeCapture Pay always passes reuseExisting:true (reuse-if-safe hint)', () => {
+    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*true\s*\}\)/);
   });
 
   it('the deterministic ref stays as the mint-path safety net (not removed)', () => {
-    const body = resumeBody();
-    // checkoutRef(payment.id) is still built — it dedups a mid-flight
-    // double-mint on the re-entry path.
+    const body = actionBody('resumeFirstInstalmentCapture');
     expect(body).toMatch(/checkoutRef\(payment\.id as string\)/);
   });
 });
 
-describe('auto-start failure never degrades into a second confirm (FIX 1: retry then inline error)', () => {
-  // Observed: new customer taps Pay → ?capture=auto hand-off hit a
-  // transient Peach/network failure → user was dropped on the manual
-  // "Confirm and pay" surface (the second confirm), which then worked on
-  // a second tap. The double-confirm we removed was still reachable via
-  // the auto-start ERROR path. Fix: retry once automatically (reuse path
-  // is idempotent), then show a COMPACT inline error + single "Try again"
-  // — never the full confirm chrome.
-  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
-
-  it('the ENTIRE autoStart case is handled before the manual confirm view (confirm unreachable on hand-off)', () => {
-    // A single `if (autoStart) { ... return ... }` wraps both the
-    // in-flight placeholder and the error card, and always returns — so
-    // execution never reaches the manual confirm markup when autoStart.
-    expect(RESUME_UI).toMatch(/if \(autoStart\)\s*\{/);
-    // The manual confirm button lives AFTER (below) the autoStart block.
-    const autoIdx    = RESUME_UI.indexOf('if (autoStart) {');
-    const confirmIdx = RESUME_UI.indexOf('data-testid="resume-capture-button"');
-    expect(autoIdx).toBeGreaterThan(0);
-    expect(confirmIdx).toBeGreaterThan(autoIdx);
-  });
-
-  it('retries the capture ONCE automatically on failure before surfacing anything', () => {
-    // The effect fires runCapture(true), and on failure retries
-    // runCapture(true) a second time after a backoff, only THEN setting
-    // the terminal autoFailed flag.
-    expect(RESUME_UI).toMatch(/AUTO_RETRY_DELAY_MS/);
-    expect(RESUME_UI).toMatch(/setTimeout\(resolve, AUTO_RETRY_DELAY_MS\)/);
-    expect(RESUME_UI).toMatch(/setAutoFailed\(true\)/);
-    // Two runCapture(true) calls in the effect (attempt + retry) — count
-    // occurrences to prove the retry exists.
-    const reuseCalls = RESUME_UI.match(/runCapture\(true\)/g) ?? [];
-    expect(reuseCalls.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('terminal failure renders a compact error + "Try again" (NOT the manual confirm heading)', () => {
-    // The autoFailed branch shows the error alert + a retry button whose
-    // handler re-fires the reuse capture — and crucially does NOT render
-    // the "Confirm and pay" heading (that heading is only in the
-    // non-autoStart manual view).
-    expect(RESUME_UI).toMatch(/data-testid="resume-capture-autostart-error"/);
-    expect(RESUME_UI).toMatch(/data-testid="resume-capture-retry"/);
-    expect(RESUME_UI).toMatch(/retryAutoStart/);
-    // The error card block must not contain the confirm heading text —
-    // slice from the autostart-error testid to the next return.
-    const errIdx = RESUME_UI.indexOf('resume-capture-autostart-error');
-    const card   = RESUME_UI.slice(errIdx, errIdx + 900);
-    expect(card).not.toMatch(/Confirm and pay/);
-  });
-
-  it('retryAutoStart re-fires the reuse capture (idempotent — same checkoutId/ref, no double-charge)', () => {
-    // The manual Try-again handler calls runCapture(true) → reuseExisting
-    // true → the resume action reuses the stamped checkoutId (or, in the
-    // fallback-mint case, the deterministic ref dedups). A retry cannot
-    // create a second checkout or double-charge.
-    const idx  = RESUME_UI.indexOf('async function retryAutoStart');
-    expect(idx).toBeGreaterThan(0);
-    const body = RESUME_UI.slice(idx, idx + 300);
-    expect(body).toMatch(/runCapture\(true\)/);
-  });
-});
-
-describe('pre-card confirm copy does not claim a charge is already in progress (FIX 2)', () => {
-  // The pre-card confirm screen previously read "CHARGING YOUR CARD NOW"
-  // before any card had been entered. Both the fresh CheckoutForm confirm
-  // step AND the ResumeCapture re-entry confirm are pre-card screens —
-  // neither may claim a charge is happening.
+describe('no pre-card screen claims a charge is already in progress', () => {
+  // No pre-card surface may read "CHARGING YOUR CARD NOW" before any card
+  // has been entered. CheckoutForm's final step is now "Continue to
+  // payment" (no charge claim at all); ResumeCapture's confirm reads
+  // "First instalment — due today" and its CTA is "Pay Rx today".
   const FORM_SRC  = read('app/checkout/[token]/CheckoutForm.tsx');
   const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
 
-  it('CheckoutForm confirm step no longer says "charging your card now"', () => {
+  it('neither surface says "charging your card now"', () => {
     expect(FORM_SRC).not.toMatch(/[Cc]harging your card now/);
-    expect(FORM_SRC).toMatch(/First instalment — due today/);
-  });
-
-  it('ResumeCapture confirm no longer says "charging your card now"', () => {
     expect(RESUME_UI).not.toMatch(/[Cc]harging your card now/);
-    expect(RESUME_UI).toMatch(/First instalment — due today/);
   });
 
-  it('the CTA still commits to paying today (unchanged)', () => {
-    // "Pay Rx today" remains the button copy on both surfaces.
-    expect(FORM_SRC).toMatch(/Pay \$\{formatRand\(instalments\[0\]\)\} today/);
+  it('ResumeCapture confirm reads "First instalment — due today" + "Pay Rx today"', () => {
+    expect(RESUME_UI).toMatch(/First instalment — due today/);
     expect(RESUME_UI).toMatch(/Pay \$\{formatRand\(firstInstalmentAmount\)\} today/);
+  });
+
+  it('CheckoutForm makes no charge claim (its final step is Continue to payment)', () => {
+    expect(FORM_SRC).toMatch(/Continue to payment/);
+    expect(FORM_SRC).not.toMatch(/Pay \$\{formatRand\(instalments\[0\]\)\} today/);
   });
 });
 
@@ -597,6 +511,45 @@ describe('embedded checkout widget is card-only — no billing-address form (FIX
       expect(body).toMatch(/givenName:/);
       expect(body).toMatch(/surname:/);
     }
+  });
+});
+
+describe('checkout completion classifies V2 status correctly (FIX 1: no false decline)', () => {
+  // /checkout/[token]/complete fetches the V2 status, classifies
+  // result.code, and: success → activate (save card + plan active),
+  // pending → processing/poll (NOT a decline), decline → declined UI.
+  // The false-decline fix lives in the shared classifier (resultCodes),
+  // so BOTH this page and the webhook benefit; here we pin the wiring.
+  const COMPLETE = read('app/checkout/[token]/complete/page.tsx');
+  const POLL     = read('app/checkout/[token]/complete/PendingAutoRefresh.tsx');
+
+  it('classifies via the shared classifier (which now covers risk-flagged successes)', () => {
+    expect(COMPLETE).toMatch(/import \{ classifyResultCode \} from '@\/lib\/payments\/peach\/resultCodes'/);
+    expect(COMPLETE).toMatch(/classifyResultCode\(status\.resultCode\)/);
+  });
+
+  it('logs the FULL raw V2 status response under a greppable tag', () => {
+    expect(COMPLETE).toMatch(/console\.log\('PEACH CHECKOUT STATUS RESPONSE:'/);
+    // The untouched V2 body must be in the log payload (only occurrence).
+    expect(COMPLETE).toMatch(/raw:\s*status\.raw/);
+  });
+
+  it('pending → a processing state that POLLS (PendingAutoRefresh), never a decline', () => {
+    // classified === 'pending' returns <PendingCard/> which mounts the
+    // auto-refresh poller — not the ErrorCard.
+    expect(COMPLETE).toMatch(/if \(classified === 'pending'\)\s*\{\s*return <PendingCard/);
+    expect(COMPLETE).toMatch(/<PendingAutoRefresh\s*\/>/);
+    // The poller reloads the page (re-runs getCheckoutStatus), bounded.
+    expect(POLL).toMatch(/window\.location\.replace/);
+    expect(POLL).toMatch(/MAX_RELOADS/);
+  });
+
+  it('rejected → the declined ErrorCard; success → plan activation (status active)', () => {
+    expect(COMPLETE).toMatch(/if \(classified === 'rejected'\)\s*\{\s*return <ErrorCard/);
+    // SUCCESS branch (below the pending/rejected returns) performs the
+    // idempotent activation: instalment collected + plan active.
+    expect(COMPLETE).toMatch(/status:\s*'collected'/);
+    expect(COMPLETE).toMatch(/\.update\(\{ status: 'active' \}\)/);
   });
 });
 

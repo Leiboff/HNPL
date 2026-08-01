@@ -55,6 +55,25 @@ import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 
 const MIN_AGE = 18;
 
+// ─── Fresh-checkout reuse signal ───────────────────────────────────────
+// initiateCheckout mints a V2 checkout and stamps its id on the
+// instalment-1 row. The very next step is the ResumeCapture confirm →
+// Pay, which should REUSE that same checkout so the normal flow makes
+// exactly ONE createCheckout. We can't tell "reuse the stamped checkout"
+// (fresh, seconds old) from "the stamped checkout is stale" (a re-entry
+// via the emailed link days later — a Peach checkout session has a short
+// validity window) from the DB alone: the payments row has no
+// updated_at, and peach_checkout_id persists on an uncaptured plan.
+//
+// So initiateCheckout drops a short-lived cookie carrying the fresh
+// checkoutId. resumeFirstInstalmentCapture reuses the stamped checkout
+// ONLY when this cookie is present AND matches — i.e. we're in the same
+// fresh journey. On a genuine re-entry the cookie has expired, so the
+// action mints fresh (the deterministic ref stays the dedup net). This
+// replaces the earlier query-param hand-off signal, with no auto-start UI.
+const FRESH_CHECKOUT_COOKIE   = 'hnpl_fresh_checkout';
+const FRESH_CHECKOUT_MAX_AGE_S = 15 * 60; // conservative vs the V2 checkout session TTL
+
 // generateTempPassword now lives in lib/auth/tempPassword.ts — the
 // helper has to guarantee a string that satisfies Supabase's project
 // password policy (lowercase, uppercase, digit, symbol) because the
@@ -534,6 +553,17 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     path:     '/checkout',
   });
 
+  // Fresh-checkout reuse signal — the ResumeCapture Pay that immediately
+  // follows this redirect reuses THIS checkout (one createCheckout on the
+  // normal path). See FRESH_CHECKOUT_COOKIE above.
+  cookieStore.set(FRESH_CHECKOUT_COOKIE, checkoutId, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure:   process.env.NODE_ENV === 'production',
+    maxAge:   FRESH_CHECKOUT_MAX_AGE_S,
+    path:     '/checkout',
+  });
+
   return { ok: true, checkoutId, amountCents, shopperResultUrl };
 }
 
@@ -598,10 +628,11 @@ export async function resumeFirstInstalmentCapture(
 ): Promise<ResumeCaptureResult> {
   if (!token) return { ok: false, error: 'Missing token.' };
 
-  // reuseExisting is set ONLY by the fresh post-Pay hand-off
-  // (ResumeCapture autoStart, ?capture=auto). See the mint-vs-reuse
-  // branch below — it lets the new-customer signup path make exactly
-  // ONE createCheckout call instead of two-that-Peach-dedups.
+  // reuseExisting is the caller's "reuse the freshly-minted checkout if
+  // you safely can" hint (ResumeCapture always passes true). See the
+  // mint-vs-reuse branch below — gated on the fresh-checkout cookie, it
+  // lets the normal signup path make exactly ONE createCheckout call
+  // instead of two-that-Peach-dedups, while a genuine re-entry mints.
   const reuseExisting = opts?.reuseExisting === true;
 
   const supabase = await createClient();
@@ -704,28 +735,32 @@ export async function resumeFirstInstalmentCapture(
   const planType    = ((plan.plan_type as 2 | 3 | null) ?? 2) as 2 | 3;
 
   // ── 7. Reuse or mint the Peach V2 checkout ───────────────────────
-  // On the fresh post-Pay hand-off (reuseExisting), initiateCheckout
-  // minted a checkout <1s ago and stamped its id on THIS instalment-1
-  // row (actions.ts step 8, before it returned). Mount the widget on
-  // that SAME checkout rather than calling createCheckout again — that
-  // is what makes the new-customer signup path exactly ONE createCheckout
-  // instead of two-that-Peach-dedups.
+  // Reuse the checkout initiateCheckout already minted + stamped on THIS
+  // instalment-1 row ONLY when the fresh-checkout cookie confirms we're
+  // in the same fresh journey (Continue-to-payment → this Pay, seconds
+  // apart) AND its value matches the stamped id. That keeps the normal
+  // flow at exactly ONE createCheckout.
   //
-  // A genuine re-entry (reuseExisting=false — the emailed link with no
-  // ?capture=auto) always mints fresh: a checkout stamped in a prior
-  // session is past its short validity window, so reusing it would
-  // fail. The deterministic merchantTransactionId (built above from the
-  // same instalment-1 id) stays the safety net for THAT mint path — a
-  // mid-flight double-mint Peach-dedups to one real transaction.
+  // A genuine re-entry via the emailed link days later carries no fresh
+  // cookie (it's expired), so we mint fresh — a checkout stamped in a
+  // prior session is past its short validity window and reusing it would
+  // dead-loop the widget on expiry. The deterministic merchantTransactionId
+  // (built above from the same instalment-1 id) stays the safety net for
+  // the mint path — a double-mint Peach-dedups to one real transaction.
   //
-  // Defensive fallback: if reuseExisting is set but nothing was stamped
-  // (shouldn't happen — initiateCheckout always stamps before handing
-  // off), we fall through to the mint branch rather than fail.
+  // reuseExisting is the caller's "reuse if you safely can" hint
+  // (ResumeCapture always passes true); the cookie is what makes it safe.
+  const cookieStore        = await cookies();
+  const freshCheckoutId    = cookieStore.get(FRESH_CHECKOUT_COOKIE)?.value ?? null;
   const existingCheckoutId = (payment.peach_checkout_id as string | null) ?? null;
+  const canReuse =
+    reuseExisting &&
+    !!existingCheckoutId &&
+    freshCheckoutId === existingCheckoutId;
 
   let checkoutId: string;
-  if (reuseExisting && existingCheckoutId) {
-    checkoutId = existingCheckoutId;
+  if (canReuse) {
+    checkoutId = existingCheckoutId as string;
   } else {
     const provider = getPaymentProvider();
     try {
@@ -774,11 +809,21 @@ export async function resumeFirstInstalmentCapture(
       .from('payments')
       .update({ peach_checkout_id: checkoutId })
       .eq('id', payment.id as string);
+
+    // Refresh the fresh-checkout cookie to the newly-minted id so a
+    // re-tap of Pay in THIS session reuses it (no triple-mint) — while a
+    // future re-entry still starts cold.
+    cookieStore.set(FRESH_CHECKOUT_COOKIE, checkoutId, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production',
+      maxAge:   FRESH_CHECKOUT_MAX_AGE_S,
+      path:     '/checkout',
+    });
   }
 
   // Match initiateCheckout's cookie posture so /checkout/[token]/complete
   // can read the token when the widget navigates back.
-  const cookieStore = await cookies();
   cookieStore.set('hnpl_checkout_token', token, {
     httpOnly: true,
     sameSite: 'lax',

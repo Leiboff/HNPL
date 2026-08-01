@@ -310,14 +310,12 @@ export default function CheckoutForm({
   const [loginUrl,  setLoginUrl]  = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Post-Pay: initiateCheckout has created the account + Peach checkout
-  // and signed the patient in. We hand off to the SINGLE confirm+widget
-  // surface (ResumeCapture, rendered by page.tsx for a signed-in owner
-  // of an uncaptured plan) via a navigation carrying ?capture=auto so
-  // that surface skips its own confirm and mounts the widget directly.
-  // This is why CheckoutForm no longer mounts PeachWidget itself — there
-  // is exactly ONE confirm screen (this form's Pay step) before the
-  // widget, not two. `redirecting` keeps the button in its pending state
+  // Post-"Continue to payment": initiateCheckout has created the account
+  // + Peach checkout and signed the patient in. We redirect to
+  // /checkout/[token], which renders the SINGLE confirm+widget surface
+  // (ResumeCapture, for a signed-in owner of an uncaptured plan). This
+  // form deliberately shows no payment confirm — the one confirm lives on
+  // that surface. `redirecting` keeps the button in its pending state
   // while the navigation swaps the page.
   const [redirecting, setRedirecting] = useState(false);
 
@@ -431,17 +429,16 @@ export default function CheckoutForm({
           setError('The payment service didn\'t return a checkout. Please try again in a moment.');
           return;
         }
-        // Account created + signed in + Peach checkout minted. Hand off
-        // to the single confirm+widget surface. initiateCheckout mutated
-        // cookies (sign-in + checkout token), so /checkout/[token] will
-        // re-render server-side as the "signed-in owner of an uncaptured
-        // plan" branch → ResumeCapture. The ?capture=auto param tells
-        // that surface this is the fresh post-Pay hand-off, so it mounts
-        // the widget immediately instead of showing a second confirm.
-        // (A plain re-entry via the emailed link carries no param and
-        // still shows one confirm → widget.)
+        // Account created + signed in + Peach checkout minted. Redirect
+        // to /checkout/[token] — initiateCheckout mutated cookies (sign-in
+        // + checkout token + fresh-checkout), so the route re-renders
+        // server-side as the "signed-in owner of an uncaptured plan"
+        // branch → ResumeCapture, which owns THE single confirm (schedule
+        // + amount + Pay) → widget. This form never showed a payment
+        // confirm, so there is exactly one confirm and it lives on the
+        // surface that mounts the widget.
         setRedirecting(true);
-        router.replace(`/checkout/${token}?capture=auto`);
+        router.replace(`/checkout/${token}`);
       } catch (err) {
         setError(
           err instanceof Error
@@ -708,45 +705,46 @@ export default function CheckoutForm({
         />
       )}
 
-      {/* ── Step 5: pay ──────────────────────────────────────────────── */}
+      {/* ── Step 5: continue to payment ───────────────────────────────
+          NOT a payment confirm. The money confirm (schedule + amount +
+          Pay) lives on ResumeCapture, the surface that mounts the widget
+          — so there is exactly ONE confirm in the flow. This step just
+          creates the account + checkout (initiateCheckout) and hands the
+          patient to that confirm. */}
       {step === 5 && (
         <StepShell
           icon="card"
-          heading="Confirm and pay"
+          heading="You're all set"
+          subhead="Create your account and continue to secure payment."
           actions={
             <div className="space-y-3">
               <PrimaryButton onClick={submitPay} disabled={isPending || redirecting}>
-                {(isPending || redirecting) ? 'Setting up payment…' : `Pay ${formatRand(instalments[0])} today`}
+                {(isPending || redirecting) ? 'Setting up payment…' : 'Continue to payment'}
               </PrimaryButton>
               <div className="flex justify-center">
                 {/* Back goes to Details (3), skipping the Verify step
                     on the return — the patient is already verified
-                    when they're on Pay. Bouncing back through Verify
-                    would re-fire the OTP unnecessarily. */}
+                    here. Bouncing back through Verify would re-fire the
+                    OTP unnecessarily. */}
                 <SecondaryButton onClick={() => setStep(3)} disabled={isPending || redirecting}>← Back</SecondaryButton>
               </div>
             </div>
           }
         >
-          <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6">
-            <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
-              First instalment — due today
-            </p>
-            <p className="mt-2 text-4xl font-semibold tabular-nums text-[#13294B]">
-              {formatRand(instalments[0])}
+          <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6 space-y-2">
+            <p className="text-sm text-[#3A4B66]">
+              You&apos;ll confirm your plan and enter your card on the next screen — your{' '}
+              <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span> first
+              instalment is due today, interest-free.
             </p>
             {dates[1] && (
-              <p className="mt-3 text-sm text-[#3A4B66]">
-                Next:{' '}
-                <span className="font-medium text-[#0F1F3A] tabular-nums">{formatRand(instalments[1])}</span>
-                {' '}on{' '}
-                <span className="font-medium text-[#0F1F3A]">{formatDateLong(dates[1])}</span>
+              <p className="text-xs text-[#7A8AA0]">
+                Then{' '}
+                <span className="tabular-nums">{formatRand(instalments[1])}</span> on {formatDateLong(dates[1])}
                 {dates[2] && (
                   <>
-                    , then{' '}
-                    <span className="font-medium text-[#0F1F3A] tabular-nums">{formatRand(instalments[2])}</span>
-                    {' '}on{' '}
-                    <span className="font-medium text-[#0F1F3A]">{formatDateLong(dates[2])}</span>
+                    , and{' '}
+                    <span className="tabular-nums">{formatRand(instalments[2])}</span> on {formatDateLong(dates[2])}
                   </>
                 )}
                 .
