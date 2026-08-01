@@ -40,6 +40,9 @@ const STUB_SRC = 'https://sandbox.example.test/checkout.js';
 type CheckoutOpts = {
   key:        string;
   checkoutId: string;
+  customisations?: {
+    card?: { showBillingFields?: boolean };
+  };
   events: {
     onCompleted: () => void;
     onCancelled: () => void;
@@ -59,6 +62,7 @@ type RenderLog = {
   targetElement:           Element | null;
   key:                     string;
   checkoutId:              string;
+  showBillingFields?:      boolean;
 };
 
 function installFakeCheckoutGlobal(renderLog: RenderLog[]): FakeCheckoutGlobal {
@@ -73,6 +77,7 @@ function installFakeCheckoutGlobal(renderLog: RenderLog[]): FakeCheckoutGlobal {
             targetElement:         el,
             key:                   opts.key,
             checkoutId:            opts.checkoutId,
+            showBillingFields:     opts.customisations?.card?.showBillingFields,
           });
         },
       };
@@ -178,6 +183,27 @@ describe('PeachWidget — render() is only called once both script-ready AND tar
     expect(renderLog[0].targetElement).not.toBeNull();
     expect(renderLog[0].checkoutId).toBe(CHECKOUT_ID);
     expect(renderLog[0].key).toBe(ENTITY_ID);
+  });
+
+  it('initiates the widget card-only: customisations.card.showBillingFields === false', () => {
+    // FIX 3 — the embedded checkout collects card details only (number,
+    // expiry, CVV, cardholder), NO billing-address form. This is the
+    // SDK's customisations.card.showBillingFields option ("overrides the
+    // backend configuration"), passed at render time — never on the
+    // server /v2/checkout body.
+    const renderLog: RenderLog[] = [];
+    render(
+      <PeachWidget
+        checkoutId={CHECKOUT_ID}
+        entityId={ENTITY_ID}
+        shopperResultUrl={SHOPPER_RESULT}
+      />,
+    );
+    installFakeCheckoutGlobal(renderLog);
+    act(() => { fireLatestScriptOnLoad(); });
+
+    expect(renderLog).toHaveLength(1);
+    expect(renderLog[0].showBillingFields).toBe(false);
   });
 
   it('short-circuits the script inject when window.Checkout is already present', () => {

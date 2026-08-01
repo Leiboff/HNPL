@@ -282,9 +282,10 @@ describe('ResumeCapture — server action wired through, PeachWidget mounted on 
   });
 
   it('calls the injected resumeAction (server action) with the token, sets widget state on ok', () => {
-    // reuseExisting mirrors autoStart — see the single-createCheckout
-    // describe below for why. The token is always the first arg.
-    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*autoStart\s*\}\)/);
+    // The capture runs through runCapture(reuse), which passes the flag
+    // as reuseExisting. Auto-start calls runCapture(true) (reuse the
+    // stamped checkout); re-entry calls runCapture(false) (mint fresh).
+    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*reuse\s*\}\)/);
     expect(RESUME_UI).toMatch(/setWidget\(\{\s*checkoutId:[^}]*shopperResultUrl:/);
   });
 
@@ -449,10 +450,16 @@ describe('new-customer signup makes exactly ONE createCheckout (auto-start reuse
     expect(between).toMatch(/\}\s*else\s*\{/);
   });
 
-  it('ResumeCapture forwards reuseExisting=autoStart into the action', () => {
-    // autoStart=true (fresh hand-off) → reuse; autoStart=false
-    // (re-entry) → mint fresh. A single flag threads the intent.
-    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*autoStart\s*\}\)/);
+  it('ResumeCapture reuses on auto-start (runCapture(true)) and mints on re-entry (runCapture(false))', () => {
+    // Auto-start fires runCapture(true) → reuseExisting=true → reuse the
+    // stamped checkout. Re-entry's manual button fires runCapture(false)
+    // → mint fresh. runCapture threads the flag as reuseExisting.
+    expect(RESUME_UI).toMatch(/resumeAction\(token,\s*\{\s*reuseExisting:\s*reuse\s*\}\)/);
+    // Auto-start effect uses reuse=true (both the first attempt and the
+    // single automatic retry).
+    expect(RESUME_UI).toMatch(/runCapture\(true\)/);
+    // Re-entry confirm button mints fresh.
+    expect(RESUME_UI).toMatch(/runCapture\(false\)/);
   });
 
   it('the deterministic ref stays as the mint-path safety net (not removed)', () => {
@@ -460,6 +467,136 @@ describe('new-customer signup makes exactly ONE createCheckout (auto-start reuse
     // checkoutRef(payment.id) is still built — it dedups a mid-flight
     // double-mint on the re-entry path.
     expect(body).toMatch(/checkoutRef\(payment\.id as string\)/);
+  });
+});
+
+describe('auto-start failure never degrades into a second confirm (FIX 1: retry then inline error)', () => {
+  // Observed: new customer taps Pay → ?capture=auto hand-off hit a
+  // transient Peach/network failure → user was dropped on the manual
+  // "Confirm and pay" surface (the second confirm), which then worked on
+  // a second tap. The double-confirm we removed was still reachable via
+  // the auto-start ERROR path. Fix: retry once automatically (reuse path
+  // is idempotent), then show a COMPACT inline error + single "Try again"
+  // — never the full confirm chrome.
+  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  it('the ENTIRE autoStart case is handled before the manual confirm view (confirm unreachable on hand-off)', () => {
+    // A single `if (autoStart) { ... return ... }` wraps both the
+    // in-flight placeholder and the error card, and always returns — so
+    // execution never reaches the manual confirm markup when autoStart.
+    expect(RESUME_UI).toMatch(/if \(autoStart\)\s*\{/);
+    // The manual confirm button lives AFTER (below) the autoStart block.
+    const autoIdx    = RESUME_UI.indexOf('if (autoStart) {');
+    const confirmIdx = RESUME_UI.indexOf('data-testid="resume-capture-button"');
+    expect(autoIdx).toBeGreaterThan(0);
+    expect(confirmIdx).toBeGreaterThan(autoIdx);
+  });
+
+  it('retries the capture ONCE automatically on failure before surfacing anything', () => {
+    // The effect fires runCapture(true), and on failure retries
+    // runCapture(true) a second time after a backoff, only THEN setting
+    // the terminal autoFailed flag.
+    expect(RESUME_UI).toMatch(/AUTO_RETRY_DELAY_MS/);
+    expect(RESUME_UI).toMatch(/setTimeout\(resolve, AUTO_RETRY_DELAY_MS\)/);
+    expect(RESUME_UI).toMatch(/setAutoFailed\(true\)/);
+    // Two runCapture(true) calls in the effect (attempt + retry) — count
+    // occurrences to prove the retry exists.
+    const reuseCalls = RESUME_UI.match(/runCapture\(true\)/g) ?? [];
+    expect(reuseCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('terminal failure renders a compact error + "Try again" (NOT the manual confirm heading)', () => {
+    // The autoFailed branch shows the error alert + a retry button whose
+    // handler re-fires the reuse capture — and crucially does NOT render
+    // the "Confirm and pay" heading (that heading is only in the
+    // non-autoStart manual view).
+    expect(RESUME_UI).toMatch(/data-testid="resume-capture-autostart-error"/);
+    expect(RESUME_UI).toMatch(/data-testid="resume-capture-retry"/);
+    expect(RESUME_UI).toMatch(/retryAutoStart/);
+    // The error card block must not contain the confirm heading text —
+    // slice from the autostart-error testid to the next return.
+    const errIdx = RESUME_UI.indexOf('resume-capture-autostart-error');
+    const card   = RESUME_UI.slice(errIdx, errIdx + 900);
+    expect(card).not.toMatch(/Confirm and pay/);
+  });
+
+  it('retryAutoStart re-fires the reuse capture (idempotent — same checkoutId/ref, no double-charge)', () => {
+    // The manual Try-again handler calls runCapture(true) → reuseExisting
+    // true → the resume action reuses the stamped checkoutId (or, in the
+    // fallback-mint case, the deterministic ref dedups). A retry cannot
+    // create a second checkout or double-charge.
+    const idx  = RESUME_UI.indexOf('async function retryAutoStart');
+    expect(idx).toBeGreaterThan(0);
+    const body = RESUME_UI.slice(idx, idx + 300);
+    expect(body).toMatch(/runCapture\(true\)/);
+  });
+});
+
+describe('pre-card confirm copy does not claim a charge is already in progress (FIX 2)', () => {
+  // The pre-card confirm screen previously read "CHARGING YOUR CARD NOW"
+  // before any card had been entered. Both the fresh CheckoutForm confirm
+  // step AND the ResumeCapture re-entry confirm are pre-card screens —
+  // neither may claim a charge is happening.
+  const FORM_SRC  = read('app/checkout/[token]/CheckoutForm.tsx');
+  const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
+
+  it('CheckoutForm confirm step no longer says "charging your card now"', () => {
+    expect(FORM_SRC).not.toMatch(/[Cc]harging your card now/);
+    expect(FORM_SRC).toMatch(/First instalment — due today/);
+  });
+
+  it('ResumeCapture confirm no longer says "charging your card now"', () => {
+    expect(RESUME_UI).not.toMatch(/[Cc]harging your card now/);
+    expect(RESUME_UI).toMatch(/First instalment — due today/);
+  });
+
+  it('the CTA still commits to paying today (unchanged)', () => {
+    // "Pay Rx today" remains the button copy on both surfaces.
+    expect(FORM_SRC).toMatch(/Pay \$\{formatRand\(instalments\[0\]\)\} today/);
+    expect(RESUME_UI).toMatch(/Pay \$\{formatRand\(firstInstalmentAmount\)\} today/);
+  });
+});
+
+describe('embedded checkout widget is card-only — no billing-address form (FIX 3)', () => {
+  // Peach Embedded Checkout SDK: customisations.card.showBillingFields
+  // (default true) controls the billing-address form; it "overrides the
+  // backend configuration". It is a WIDGET render option, NOT a
+  // /v2/checkout POST field — so it cannot trip the V2 "unknown field"
+  // body rejection, and it must NOT be added to the server createCheckout
+  // body. PeachWidget is the single V2 host both Flow A call sites
+  // (initiateCheckout + resumeFirstInstalmentCapture) render into.
+  const WIDGET  = read('app/_components/PeachWidget.tsx');
+  const ACTIONS = read('app/checkout/[token]/actions.ts');
+
+  function actionBody(name: string): string {
+    const startIdx = ACTIONS.indexOf(`export async function ${name}`);
+    expect(startIdx).toBeGreaterThan(0);
+    const rest       = ACTIONS.slice(startIdx);
+    const nextExport = rest.indexOf('\nexport ', 1);
+    return nextExport > 0 ? rest.slice(0, nextExport) : rest;
+  }
+
+  it('PeachWidget passes customisations.card.showBillingFields=false to Checkout.initiate', () => {
+    expect(WIDGET).toMatch(/customisations:\s*\{[\s\S]{0,80}card:\s*\{\s*showBillingFields:\s*false\s*\}/);
+  });
+
+  it('showBillingFields is NOT sent on the server /v2/checkout body (avoids the unknown-field reject)', () => {
+    // Neither server action may put showBillingFields or a billing object
+    // into the createCheckout params — it's a widget option only.
+    expect(actionBody('initiateCheckout')).not.toMatch(/showBillingFields/);
+    expect(actionBody('resumeFirstInstalmentCapture')).not.toMatch(/showBillingFields/);
+    expect(actionBody('initiateCheckout')).not.toMatch(/billing:/);
+    expect(actionBody('resumeFirstInstalmentCapture')).not.toMatch(/billing:/);
+  });
+
+  it('identity fields (email/givenName/surname) are STILL passed on both call sites', () => {
+    for (const name of ['initiateCheckout', 'resumeFirstInstalmentCapture']) {
+      const body = actionBody(name);
+      expect(body).toMatch(/customer:\s*\{/);
+      expect(body).toMatch(/email:/);
+      expect(body).toMatch(/givenName:/);
+      expect(body).toMatch(/surname:/);
+    }
   });
 });
 

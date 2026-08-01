@@ -182,6 +182,18 @@ export default function PeachWidget({ checkoutId, entityId, shopperResultUrl }: 
       const checkout = checkoutGlobal.initiate({
         key:        entityId,
         checkoutId,
+        // Card-only entry: number / expiry / CVV / cardholder — NO
+        // billing-address form. `customisations.card.showBillingFields`
+        // is an Embedded Checkout SDK render option that (per the SDK
+        // reference) "overrides the backend configuration". It is a
+        // WIDGET option, NOT a /v2/checkout POST field — so it cannot
+        // trip the V2 "unknown field" body rejection that source/
+        // frequency taught us about. The shopper's identity (email,
+        // given name, surname) still travels on the server-side
+        // customer block; only the address inputs are dropped.
+        customisations: {
+          card: { showBillingFields: false },
+        },
         events: {
           onCompleted: () => navigateBack('completed'),
           onCancelled: () => navigateBack('cancelled'),

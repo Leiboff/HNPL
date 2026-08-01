@@ -730,7 +730,7 @@ export default function CheckoutForm({
         >
           <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6">
             <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
-              Charging your card now
+              First instalment — due today
             </p>
             <p className="mt-2 text-4xl font-semibold tabular-nums text-[#13294B]">
               {formatRand(instalments[0])}
