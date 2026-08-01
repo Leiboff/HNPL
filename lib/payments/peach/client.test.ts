@@ -172,17 +172,48 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     expect(chkBody.nonce.length).toBeGreaterThan(10);
   });
 
-  it('createCheckout REJECTS amountCents=0 — V2 is purchase-only; card vault → provider.createCardRegistration', async () => {
-    // Dual-door invariant: after the pivot back to COPYandPAY for
-    // Flow B, the V2 door must refuse to be used as a card-vault
-    // route. A caller regression that tries amount=0 through V2
-    // fails loud here rather than reaching Peach.
+  it('createCheckout REJECTS amountCents=0 UNLESS it is the card-vault recipe (PA + createRegistration)', async () => {
+    // Single-door invariant: V2 now serves BOTH purchase (amount > 0)
+    // AND the card-vault registration recipe (amount 0 + paymentType
+    // 'PA' + createRegistration). A stray amount=0 on a purchase path
+    // must still fail loud rather than reaching Peach malformed.
     scriptedFetch([]);
     const p = new PeachProvider();
+    // amount=0 with the default DB purchase shape → rejected.
     await expect(p.createCheckout({
       amountCents:           0,
+      merchantTransactionId: 'bncABCDEFGHIJKLM',
+    })).rejects.toThrow(/positive integer|card-vault recipe/);
+    // amount=0 with paymentType 'PA' but WITHOUT createRegistration →
+    // still rejected (not the full recipe).
+    await expect(p.createCheckout({
+      amountCents:           0,
+      paymentType:           'PA',
+      merchantTransactionId: 'bncABCDEFGHIJKLM',
+    })).rejects.toThrow(/positive integer|card-vault recipe/);
+  });
+
+  it('createCheckout ACCEPTS amountCents=0 under the full card-vault recipe (PA + createRegistration)', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg-0pa' } },
+    ]);
+    const p = new PeachProvider();
+    const res = await p.createCheckout({
+      amountCents:           0,
+      paymentType:           'PA',
+      createRegistration:    true,
+      defaultPaymentMethod:  'CARD',
+      forceDefaultMethod:    true,
       merchantTransactionId: 'bnrABCDEFGHIJKLM',
-    })).rejects.toThrow(/purchase-only|createCardRegistration/);
+    });
+    expect(res.checkoutId).toBe('chk-reg-0pa');
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.amount).toBe('0.00');
+    expect(chkBody.paymentType).toBe('PA');
+    expect(chkBody.createRegistration).toBe(true);
+    expect(chkBody.defaultPaymentMethod).toBe('CARD');
+    expect(chkBody.forceDefaultMethod).toBe(true);
   });
 
   it('rejects a fractional / non-integer amount', async () => {
@@ -355,6 +386,122 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     const [u1] = (fake.mock.calls[0] as unknown) as [string]; expect(u1).toContain('/api/oauth/token');
     const [u2] = (fake.mock.calls[1] as unknown) as [string]; expect(u2).toContain('/v2/checkout');
     const [u3] = (fake.mock.calls[2] as unknown) as [string]; expect(u3).toContain('/v2/checkout');
+  });
+});
+
+// ─── createCardRegistration — Flow B card-vault on the V2 door ──────
+//
+// Card-add now runs on the SAME Checkout V2 surface via the
+// zero-amount PA registration recipe. These pins lock the exact
+// wire body: amount 0, paymentType 'PA', createRegistration, card-only
+// (defaultPaymentMethod 'CARD' + forceDefaultMethod), and — critically
+// — NO standingInstruction (a pure vault has no scheme SI until an
+// INITIAL CIT/MIT actually charges).
+
+describe('PeachProvider.createCardRegistration — zero-amount PA registration recipe (V2)', () => {
+  it('POSTs /v2/checkout with amount 0 + PA + createRegistration + card-only, and NO standingInstruction', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg-1' } },
+    ]);
+    const p = new PeachProvider();
+    const res = await p.createCardRegistration({
+      merchantTransactionId: 'bnrABCDEFGHIJKLM',
+      shopperResultUrl:      'https://app.test/patient/payment-methods/complete',
+      origin:                'https://app.test',
+      customer:              { email: 'p@x.com', givenName: 'Alice', surname: 'Test' },
+      customParameters:      { SHOPPER_purpose: 'card_registration', SHOPPER_patientId: 'user-1' },
+    });
+    expect(res.checkoutId).toBe('chk-reg-1');
+    expect(fake).toHaveBeenCalledTimes(2);
+
+    // The checkout create call — OAuth Bearer, JSON, Origin header.
+    const [chkUrl, chkInit] = (fake.mock.calls[1] as unknown) as [string, RequestInit];
+    expect(chkUrl).toBe(`${CHECKOUT_URL}/v2/checkout`);
+    const chkHeaders = chkInit.headers as Record<string, string>;
+    expect(chkHeaders.Authorization).toBe('Bearer checkout-tok-1');
+    expect(chkHeaders.Origin).toBe('https://app.test');
+
+    const chkBody = JSON.parse(String(chkInit.body));
+    // The registration recipe — every field pinned.
+    expect(chkBody.amount).toBe('0.00');
+    expect(chkBody.paymentType).toBe('PA');
+    expect(chkBody.createRegistration).toBe(true);
+    expect(chkBody.defaultPaymentMethod).toBe('CARD');
+    expect(chkBody.forceDefaultMethod).toBe(true);
+    expect(chkBody.merchantTransactionId).toBe('bnrABCDEFGHIJKLM');
+    expect(chkBody.shopperResultUrl).toBe('https://app.test/patient/payment-methods/complete');
+    expect(chkBody.customer).toEqual({ email: 'p@x.com', givenName: 'Alice', surname: 'Test' });
+    expect(chkBody.customParameters).toEqual({ SHOPPER_purpose: 'card_registration', SHOPPER_patientId: 'user-1' });
+    // A pure vault carries NO standing instruction.
+    expect(chkBody.standingInstruction).toBeUndefined();
+    // Registration refs are purpose 'r' and ≤ 16 chars.
+    expect(peachRefPurpose(chkBody.merchantTransactionId)).toBe('r');
+    expect(chkBody.merchantTransactionId.length).toBeLessThanOrEqual(16);
+  });
+
+  it('uses the Checkout OAuth surface (never the recurring host)', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-reg-2' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCardRegistration({
+      merchantTransactionId: 'bnrABCDEFGHIJKLM',
+      shopperResultUrl:      'https://app.test/patient/payment-methods/complete',
+    });
+    // Exactly the OAuth call + the /v2/checkout call; never a recurring
+    // /v1 host and never /v1/checkouts (the old COPYandPAY door).
+    const urls = fake.mock.calls.map((c) => (c as unknown as [string])[0]);
+    expect(urls[0]).toContain('/api/oauth/token');
+    expect(urls[1]).toBe(`${CHECKOUT_URL}/v2/checkout`);
+    for (const u of urls) {
+      expect(u).not.toContain(RECURRING_URL);
+      expect(u).not.toContain('/v1/checkouts');
+    }
+  });
+});
+
+// ─── Registration status — a 0-PA vault reads registrationId + card ─
+//
+// The completion route reads a card-vault result via getCheckoutStatus
+// (NOT a separate registration-status call). The flat V2 status body
+// carries result.code + registrationId + card.* with amount 0 — a
+// stored token and NO charge.
+
+describe('PeachProvider.getCheckoutStatus — 0-PA registration status (flat body)', () => {
+  it('returns registrationId + card and a zero amount for a successful vault', async () => {
+    scriptedFetch([
+      OAUTH_OK,
+      {
+        url:  /\/v2\/checkout\/.+\/status$/,
+        body: {
+          id:                          'pa-0-txn-1',
+          'result.code':               '000.100.110',
+          'result.description':        'Request successfully processed',
+          merchantTransactionId:       'bnrABCDEFGHIJKLM',
+          amount:                      '0.00',
+          paymentType:                 'PA',
+          registrationId:              'reg-vault-abc',
+          'card.paymentBrand':         'VISA',
+          'card.last4Digits':          '4242',
+          'card.expiryMonth':          '12',
+          'card.expiryYear':           '2030',
+          'card.holder':               'Alice Test',
+        },
+      },
+    ]);
+    const p = new PeachProvider();
+    const st = await p.getCheckoutStatus('chk-reg-1');
+    expect(st.status).toBe('success');
+    expect(st.registrationId).toBe('reg-vault-abc');
+    expect(st.merchantTransactionId).toBe('bnrABCDEFGHIJKLM');
+    expect(peachRefPurpose(st.merchantTransactionId)).toBe('r');
+    expect(st.amountCents).toBe(0);
+    expect(st.card?.brand).toBe('VISA');
+    expect(st.card?.last4).toBe('4242');
+    expect(st.card?.expiryMonth).toBe(12);
+    expect(st.card?.expiryYear).toBe(2030);
   });
 });
 

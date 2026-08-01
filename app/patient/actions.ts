@@ -307,14 +307,14 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
     : '/patient/payment-methods/complete';
   const shopperResultUrl = `${appUrl}${safePath}`;
 
-  // Flow B — card-vault ONLY. Runs on the COPYandPAY "second door"
-  // (see lib/payments/peach/copyandpay/registration.ts). No debit,
-  // no PA hold, no shopper billing fields — the widget renders a
-  // minimal card form with a "Save card"-style button. Runs on the
-  // recurring credential family (same creds as Flow C MIT charges),
-  // NOT on Checkout V2 OAuth.
+  // Flow B — card-vault ONLY. Runs on the SAME Checkout V2 door as
+  // Flow A via the zero-amount PA registration recipe (amount 0 +
+  // paymentType 'PA' + createRegistration + card-only). No money moves
+  // — the zero-value PA auto-expires — and the embedded widget renders
+  // the same card-only form as Flow A. The completion route reads the
+  // result via getCheckoutStatus (shopperResultUrl?checkoutId={id}).
   //
-  // The registrationId this produces has NO initial transaction —
+  // The registrationId this produces has NO initial CIT transaction —
   // plans that use this card later will send their first MIT under
   // standingInstruction.type=UNSCHEDULED (chain-root fallback
   // implemented in chargeInstalment.ts + settle-actions.ts).
@@ -323,6 +323,7 @@ export async function initializeCardRegistration(returnTo?: string): Promise<{
     const registration = await provider.createCardRegistration({
       merchantTransactionId: reference,
       shopperResultUrl,
+      origin: appUrl,
       customer: {
         email:     profile.email,
         givenName: profile.first_name ?? null,

@@ -4,22 +4,26 @@ import { createClient as createServerClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
+import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import PollingConfirmation from './PollingConfirmation';
 
-// ─── Peach COPYandPAY return route for the "add card" flow ──────────
+// ─── Checkout V2 return route for the "add card" flow (Flow B) ──────
 //
-// Registration-only checkout (Flow B — dual-door architecture; see
-// lib/payments/peach/copyandpay/registration.ts). No debit, no PA
-// hold, no refund. On return the COPYandPAY widget navigates the
-// browser to `shopperResultUrl?resourcePath=/v1/checkouts/{id}/registration`
-// (note: the `/registration` suffix is what Peach's own docs specify
-// for a REGISTRATION-ONLY checkout — a paying checkout would use
-// `/payment` instead; we accept either shape since the same GET
-// endpoint answers both). We fetch the status via
-// provider.getCardRegistrationStatus to discover the newly-created
+// Card-add now runs on the SAME Checkout V2 door as Flow A, using the
+// zero-amount PA registration recipe (amount 0 + paymentType 'PA' +
+// createRegistration). No money moves — the zero-value PA auto-expires.
+// On completion the embedded widget navigates the browser to
+// `shopperResultUrl?checkoutId={id}`; we read the final status via
+// provider.getCheckoutStatus to discover the newly-created
 // registrationId + card metadata, then save the payment_methods row
 // idempotently.
+//
+// Purpose guard: this route accepts ONLY registration ('r') refs — the
+// merchantTransactionId minted by registrationRef(). A Flow A checkout
+// ('c') ref landing here would be a wiring bug, so we reject it rather
+// than vault a paying checkout's card on the wrong route. (Flow A's own
+// completion at app/checkout/[token]/complete gates on 'c'.)
 //
 // Idempotency posture: `saveCardForPatient` dedupes on the synthetic
 // fingerprint (brand + last4 + expiry) — hitting this URL twice for
@@ -27,10 +31,6 @@ import PollingConfirmation from './PollingConfirmation';
 // path below (recent-card lookup) short-circuits the second visit
 // without even a Peach round-trip when the webhook or a prior render
 // has already landed the row.
-//
-// This route is Flow B ONLY. Flow A's return route lives at
-// app/checkout/[token]/complete/page.tsx (uses Checkout V2 status
-// via getCheckoutStatus) — DO NOT re-route this into V2.
 
 function ResultCard({ children }: { children: React.ReactNode }) {
   return (
@@ -107,7 +107,7 @@ function NoReferenceCard() {
   );
 }
 
-function FailureCard({ resourcePath, reason }: { resourcePath: string; reason: string }) {
+function FailureCard({ checkoutId, reason }: { checkoutId: string; reason: string }) {
   return (
     <ResultCard>
       <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-100 mx-auto">
@@ -121,7 +121,7 @@ function FailureCard({ resourcePath, reason }: { resourcePath: string; reason: s
       </div>
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
         <Link
-          href={`/patient/payment-methods/complete?resourcePath=${encodeURIComponent(resourcePath)}`}
+          href={`/patient/payment-methods/complete?checkoutId=${encodeURIComponent(checkoutId)}`}
           className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
         >
           Try again
@@ -142,10 +142,10 @@ export default async function CardRegistrationCompletePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params       = await searchParams;
-  const resourcePath = (params.resourcePath ?? params.resource_path) as string | undefined;
+  const params     = await searchParams;
+  const checkoutId = (params.checkoutId ?? params.checkout_id) as string | undefined;
 
-  if (!resourcePath) return <NoReferenceCard />;
+  if (!checkoutId) return <NoReferenceCard />;
 
   const supabaseUser       = await createServerClient();
   const { data: { user } } = await supabaseUser.auth.getUser();
@@ -172,18 +172,30 @@ export default async function CardRegistrationCompletePage({
     }
   }
 
-  // ── 2. Primary path: ask Peach for the registration status ────────
-  //     resourcePath for a Flow B registration-only completion is
-  //     `/v1/checkouts/{id}/registration` (per Peach docs). We also
-  //     accept `/v1/checkouts/{id}/payment` from the widget without
-  //     rewriting — the GET endpoint answers both suffixes.
+  // ── 2. Primary path: ask Peach for the Checkout V2 status ─────────
+  //     The V2 status body is flat dot-notation; the client's
+  //     shape-tolerant parser normalises it. For a zero-amount PA
+  //     registration the body carries result.code, registrationId, and
+  //     card.* — no charge, no payment row.
   const provider = getPaymentProvider();
-  let status: Awaited<ReturnType<typeof provider.getCardRegistrationStatus>>;
+  let status: Awaited<ReturnType<typeof provider.getCheckoutStatus>>;
   try {
-    status = await provider.getCardRegistrationStatus(resourcePath);
+    status = await provider.getCheckoutStatus(checkoutId);
   } catch (err) {
     console.error('[card-registration-complete] Peach status fetch failed', err instanceof Error ? err.message : err);
-    return <PollingConfirmation since={since} reference={resourcePath} />;
+    return <PollingConfirmation since={since} reference={checkoutId} />;
+  }
+
+  // ── Purpose guard — accept ONLY registration ('r') refs here ──────
+  //     The status echoes our merchantTransactionId. A Flow A ('c')
+  //     checkout ref landing on the card-vault route is a wiring bug;
+  //     reject rather than vault a paying checkout's card here.
+  const reference = status.merchantTransactionId;
+  if (peachRefPurpose(reference) !== 'r') {
+    return <FailureCard
+      checkoutId={checkoutId}
+      reason="This reference isn't from a card-verification flow."
+    />;
   }
 
   const classified = classifyResultCode(status.resultCode);
@@ -193,30 +205,37 @@ export default async function CardRegistrationCompletePage({
   // eventual completion of the pending path) and flips to Success or
   // Timeout on its own.
   if (classified === 'pending') {
-    return <PollingConfirmation since={since} reference={resourcePath} />;
+    return <PollingConfirmation since={since} reference={checkoutId} />;
   }
   if (classified === 'rejected') {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason={status.resultDescription ?? 'The card verification did not complete.'}
     />;
   }
 
   if (!status.registrationId || !status.card) {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason="Peach didn't return a stored registration on the verified transaction."
     />;
   }
 
   // ── 3. Resolve the patient ────────────────────────────────────────
-  // customParameters carries SHOPPER_patientId on our own checkouts.
-  const rawCustom = (status.raw as { customParameters?: Record<string, string> } | null)?.customParameters ?? {};
-  const metaPid   = rawCustom.SHOPPER_patientId ?? rawCustom.patientId;
+  //     customParameters carries SHOPPER_patientId on our own checkouts.
+  //     The V2 status body is flat, so the parameter may arrive under
+  //     the bracketed flat key OR (older/nested modes) a nested object —
+  //     read both tolerantly.
+  const rawCustom = (status.raw ?? {}) as Record<string, unknown>;
+  const nestedCustom = rawCustom.customParameters as Record<string, string> | undefined;
+  const metaPid =
+    (rawCustom['customParameters[SHOPPER_patientId]'] as string | undefined) ??
+    nestedCustom?.SHOPPER_patientId ??
+    nestedCustom?.patientId;
 
   if (user && metaPid && metaPid !== user.id) {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason="This card verification belongs to a different account."
     />;
   }
@@ -224,7 +243,7 @@ export default async function CardRegistrationCompletePage({
   const patientId = metaPid ?? user?.id;
   if (!patientId) {
     return <FailureCard
-      resourcePath={resourcePath}
+      checkoutId={checkoutId}
       reason="Could not match this verification to your account. Sign in and retry."
     />;
   }
@@ -249,7 +268,7 @@ export default async function CardRegistrationCompletePage({
   );
 
   if (result.kind === 'error') {
-    return <FailureCard resourcePath={resourcePath} reason={result.message} />;
+    return <FailureCard checkoutId={checkoutId} reason={result.message} />;
   }
 
   // ── 5. Redirect to the cards list ─────────────────────────────────

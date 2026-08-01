@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import PeachCopyAndPayWidget from '@/app/_components/PeachCopyAndPayWidget';
+import PeachWidget from '@/app/_components/PeachWidget';
 import type {
   CardRow,
   ChangeDefaultResult,
@@ -229,10 +229,11 @@ export default function PaymentMethods({
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  // Once the patient hits "Add card", the COPYandPAY widget takes over
-  // the whole panel until they cancel or complete the flow. The widget
-  // POSTs to shopperResultUrl on success → /patient/payment-methods/
-  // complete?resourcePath=... which saves the card and redirects here.
+  // Once the patient hits "Add card", the Checkout V2 widget takes over
+  // the whole panel until they cancel or complete the flow. On success
+  // it navigates to shopperResultUrl?checkoutId=... →
+  // /patient/payment-methods/complete which reads the status, saves the
+  // card, and redirects here.
   if (addCardWidget) {
     return (
       <div className="space-y-4">
@@ -243,8 +244,9 @@ export default function PaymentMethods({
               We verify your card with your bank — no money is taken.
             </p>
           </div>
-          <PeachCopyAndPayWidget
+          <PeachWidget
             checkoutId={addCardWidget.checkoutId}
+            entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={addCardWidget.shopperResultUrl}
           />
           <button
