@@ -209,7 +209,12 @@ export default function PeachWidget({ checkoutId, entityId, shopperResultUrl }: 
   }, [scriptReady, checkoutId, entityId, shopperResultUrl, targetId]);
 
   return (
-    <div data-testid="peach-widget">
+    // `peach-embed` sizes the SDK-injected iframe host-side (globals.css):
+    // full width, a content-fitting min-height, no nested scrollbar. The
+    // V2 Embedded Checkout SDK exposes NO height/sizing option (confirmed
+    // against the SDK reference — sizing is otherwise iframe-controlled),
+    // so the fix lives in CSS, not a render() option.
+    <div data-testid="peach-widget" className="peach-embed">
       {error && (
         <div
           role="alert"

@@ -340,22 +340,28 @@ describe('ResumeCapture — single "Confirm and pay" surface (no first-vs-return
 });
 
 describe('single confirm owned by ResumeCapture (CheckoutForm has NO confirm/pay step)', () => {
-  // The double-confirm is removed by DELETION, not a silent hand-off:
-  // CheckoutForm's final step is "Continue to payment" (it runs
-  // initiateCheckout and redirects to /checkout/[token] with NO query
-  // param). The one and only payment confirm — schedule + amount + Pay —
-  // lives on ResumeCapture, the surface that demonstrably mounts the
-  // widget. No ?capture=auto, no autoStart, no auto-fire, anywhere.
+  // The redundant pre-pay interstitial is collapsed: OTP verification
+  // fires the initiateCheckout hand-off DIRECTLY (handleVerified →
+  // submitPay), so after Verify the form shows only a brief loading state
+  // and redirects to /checkout/[token] with NO query param. The one and
+  // only payment confirm — schedule + amount + Pay — lives on
+  // ResumeCapture, the surface that demonstrably mounts the widget. No
+  // ?capture=auto, no autoStart, no auto-fire, anywhere.
   const FORM_SRC   = read('app/checkout/[token]/CheckoutForm.tsx');
   const PAGE_SRC   = read('app/checkout/[token]/page.tsx');
   const RESUME_UI  = read('app/checkout/[token]/ResumeCapture.tsx');
 
-  it('CheckoutForm final step is "Continue to payment", not a payment confirm', () => {
-    expect(FORM_SRC).toMatch(/Continue to payment/);
-    // The old confirm-step chrome is gone: no "Pay Rx today" button, no
-    // "First instalment — due today" eyebrow, no "Confirm and pay" heading.
+  it('OTP verification hands off directly (no "Continue to payment" interstitial button)', () => {
+    // onVerified runs the hand-off itself; there is no separate confirm
+    // step to tap through.
+    expect(FORM_SRC).toMatch(/onVerified=\{handleVerified\}/);
+    expect(FORM_SRC).toMatch(/function handleVerified\(\)\s*\{[\s\S]{0,120}submitPay\(\)/);
+    // Step 5 is a loading hand-off, not a confirm/pay screen: no
+    // "Pay Rx today" button, no "First instalment — due today" eyebrow,
+    // no "Confirm and pay" heading, and a loading placeholder is present.
     expect(FORM_SRC).not.toMatch(/Pay \$\{formatRand\(instalments\[0\]\)\} today/);
     expect(FORM_SRC).not.toMatch(/heading="Confirm and pay"/);
+    expect(FORM_SRC).toMatch(/data-testid="checkout-handoff-loading"/);
     // CheckoutForm still mounts NO widget (that's ResumeCapture's job).
     expect(FORM_SRC).not.toMatch(/from ['"]@\/app\/_components\/PeachWidget['"]/);
     expect(FORM_SRC).not.toMatch(/<PeachWidget/);
@@ -449,9 +455,9 @@ describe('normal signup makes exactly ONE createCheckout (fresh-cookie reuse)', 
 
 describe('no pre-card screen claims a charge is already in progress', () => {
   // No pre-card surface may read "CHARGING YOUR CARD NOW" before any card
-  // has been entered. CheckoutForm's final step is now "Continue to
-  // payment" (no charge claim at all); ResumeCapture's confirm reads
-  // "First instalment — due today" and its CTA is "Pay Rx today".
+  // has been entered. CheckoutForm's hand-off step is a loading state (no
+  // charge claim); ResumeCapture's confirm reads "First instalment — due
+  // today" and its CTA is "Pay Rx today".
   const FORM_SRC  = read('app/checkout/[token]/CheckoutForm.tsx');
   const RESUME_UI = read('app/checkout/[token]/ResumeCapture.tsx');
 
@@ -465,9 +471,11 @@ describe('no pre-card screen claims a charge is already in progress', () => {
     expect(RESUME_UI).toMatch(/Pay \$\{formatRand\(firstInstalmentAmount\)\} today/);
   });
 
-  it('CheckoutForm makes no charge claim (its final step is Continue to payment)', () => {
-    expect(FORM_SRC).toMatch(/Continue to payment/);
+  it('CheckoutForm hand-off makes no charge claim (loading state, no "Pay today" button)', () => {
+    expect(FORM_SRC).toMatch(/data-testid="checkout-handoff-loading"/);
     expect(FORM_SRC).not.toMatch(/Pay \$\{formatRand\(instalments\[0\]\)\} today/);
+    // "No charge yet" is explicit in the hand-off copy.
+    expect(FORM_SRC).toMatch(/No charge yet/);
   });
 });
 
@@ -718,5 +726,81 @@ describe('Confirm page ownership guard is the second line of defence', () => {
     expect(CONFIRM_PAGE).toMatch(/\.eq\(\s*['"]status['"]\s*,\s*['"]pending_acceptance['"]\s*\)/);
     // Non-owner / non-pending → maybeSingle → null → bounce.
     expect(CONFIRM_PAGE).toMatch(/if\s*\(!rawPlan\)\s*redirect\(\s*['"]\/patient\/orders['"]\s*\)/);
+  });
+});
+
+describe('post-success UX — hero-first, skippable password, collapsed hand-off, widget sizing', () => {
+  const DONE     = read('app/checkout/[token]/done/page.tsx');
+  const PWFORM   = read('app/checkout/[token]/done/PasswordSetForm.tsx');
+  const GLOBALS  = read('app/globals.css');
+  const WIDGET   = read('app/_components/PeachWidget.tsx');
+  const FORM_SRC = read('app/checkout/[token]/CheckoutForm.tsx');
+  const LOGIN    = read('app/(auth)/login/page.tsx');
+
+  // ── FIX 1: success is the hero; password is secondary + skippable ──
+
+  it('success hero renders ABOVE the password form (confirmation is never buried)', () => {
+    const heroIdx = DONE.indexOf('checkout-success-hero');
+    const pwIdx   = DONE.indexOf('<PasswordSetForm');
+    expect(heroIdx).toBeGreaterThan(0);
+    expect(pwIdx).toBeGreaterThan(heroIdx);           // hero precedes password
+    expect(DONE).toMatch(/Payment successful — your plan is active/);
+    // Amount paid + remaining schedule + practice name are surfaced.
+    expect(DONE).toMatch(/Paid today/);
+    expect(DONE).toMatch(/data-testid="checkout-success-schedule"/);
+    expect(DONE).toMatch(/\.from\('practices'\)/);
+  });
+
+  it('password step is skippable — "Skip for now" lands on /patient (dashboard)', () => {
+    expect(PWFORM).toMatch(/data-testid="checkout-done-skip"/);
+    expect(PWFORM).toMatch(/href="\/patient"/);
+    // The password is now OPTIONAL, not the only exit.
+    expect(PWFORM).toMatch(/Optional/);
+    expect(PWFORM).not.toMatch(/ONLY way out/);
+  });
+
+  it('skip is not a lockout — /login offers password reset + passkey (no-password re-entry)', () => {
+    // Email is confirmed for checkout accounts, so forgot-password always
+    // works; passkey is the durable passwordless credential.
+    expect(LOGIN).toMatch(/\/forgot-password/);
+    expect(LOGIN).toMatch(/Sign in with a passkey/);
+  });
+
+  // ── FIX 2: widget sizing — full width, min-height floor, no inner scroll ──
+
+  it('PeachWidget host carries the peach-embed sizing class', () => {
+    expect(WIDGET).toMatch(/data-testid="peach-widget" className="peach-embed"/);
+  });
+
+  it('globals.css sizes the injected iframe full-width + min-height, no nested scroll (mobile + desktop)', () => {
+    // One width-agnostic rule → applies at 390px and desktop alike.
+    expect(GLOBALS).toMatch(/\.peach-embed iframe/);
+    expect(GLOBALS).toMatch(/width:\s*100%\s*!important/);
+    expect(GLOBALS).toMatch(/min-height:\s*\d+px/);
+    // Host adds NO fixed-height clip and NO nested scrollbar.
+    expect(GLOBALS).toMatch(/\.peach-embed\s*\{[^}]*overflow:\s*visible/);
+    expect(GLOBALS).not.toMatch(/\.peach-embed[^}]*max-height/);
+    expect(GLOBALS).not.toMatch(/\.peach-embed[^}]*overflow:\s*auto/);
+  });
+
+  // ── FIX 3: collapsed hand-off; consent preserved ──
+
+  it('post-OTP hands off AUTOMATICALLY (no interstitial) to the single ResumeCapture confirm', () => {
+    expect(FORM_SRC).toMatch(/onVerified=\{handleVerified\}/);
+    expect(FORM_SRC).toMatch(/function handleVerified\(\)\s*\{[\s\S]{0,140}submitPay\(\)/);
+    // Hand-off step is a loading state, not a confirm/pay screen.
+    expect(FORM_SRC).toMatch(/data-testid="checkout-handoff-loading"/);
+    expect(FORM_SRC).not.toMatch(/heading="Confirm and pay"/);
+  });
+
+  it('T&C consent capture preserved — the checkbox still gates on the Details step', () => {
+    // Consent is a client-side required gate on Details (termsAccepted),
+    // captured BEFORE account creation — unchanged. It is not persisted to
+    // the DB (no terms column); the only DB acceptance record is
+    // patient_invitations.accepted_at, written by the completion page on
+    // payment success (untouched here).
+    expect(FORM_SRC).toMatch(/id="checkout-termsAccepted"/);
+    expect(FORM_SRC).toMatch(/checked=\{details\.termsAccepted\}/);
+    expect(FORM_SRC).toMatch(/Please accept the payment-plan terms/);
   });
 });

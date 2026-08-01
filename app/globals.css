@@ -107,3 +107,20 @@ body {
     box-shadow: none;
   }
 }
+
+/* ── Peach Checkout V2 embedded widget sizing ──────────────────────────
+ * The V2 Embedded Checkout SDK exposes NO height/sizing option (confirmed
+ * against the SDK reference; only checkoutId/key/options/eventHandlers/
+ * customisations exist). Its injected iframe otherwise renders at an
+ * SDK-chosen height with an internal scrollbar. We size it host-side:
+ * full width of the sheet, a min-height that fits the card-only form
+ * (billing hidden via showBillingFields:false), no fixed-height clipping
+ * and no nested scrollbar. min-height is a FLOOR — if the SDK ever sizes
+ * the iframe taller (e.g. an inline 3DS challenge) it grows past it. */
+.peach-embed { width: 100%; overflow: visible; }
+.peach-embed iframe {
+  width: 100% !important;
+  min-height: 480px;
+  border: 0;
+  display: block;
+}

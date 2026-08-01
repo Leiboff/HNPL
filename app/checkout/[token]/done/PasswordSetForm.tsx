@@ -3,13 +3,13 @@
 import { useState, useTransition } from 'react';
 import { StepShell, PrimaryButton } from '../_components/CheckoutChrome';
 
-// Password set is the ONLY way out of /checkout/[token]/done — no
-// "Skip for now" affordance. Without OTP and without the patient ever
-// seeing the temp passwords we used during the flow, skipping would
-// leave them with no credential they know and only the "forgot
-// password" channel for recovery. For a financial product where the
-// plan is already live and money has already moved, that's not a
-// trade-off worth offering.
+// Setting a password is a SECONDARY, skippable next step — the success
+// confirmation above is the hero and must never be gated behind this.
+// Skipping is safe: the account's email is already confirmed (the emailed
+// checkout link proved possession), so "Forgot password" on /login always
+// gets the patient back in, and the patient portal surfaces the passkey
+// prompt post-login (a better durable credential for this cohort). A
+// password here just makes the NEXT login one tap faster.
 
 type Props = {
   email:            string;
@@ -51,12 +51,23 @@ export default function PasswordSetForm({ email, finalizePassword }: Props) {
       <StepShell
         icon="shield"
         iconTone="teal"
-        heading="One last thing"
-        subhead={`Pick a password for ${email} — you'll use it next time you log in.`}
+        heading="Secure your account"
+        subhead={`Optional — set a password for ${email} to make next time's login one tap.`}
         actions={
-          <PrimaryButton type="submit" disabled={isPending}>
-            {isPending ? 'Saving…' : 'Set password & continue'}
-          </PrimaryButton>
+          <div className="space-y-3">
+            <PrimaryButton type="submit" disabled={isPending}>
+              {isPending ? 'Saving…' : 'Create password'}
+            </PrimaryButton>
+            <div className="flex justify-center">
+              <a
+                href="/patient"
+                data-testid="checkout-done-skip"
+                className="text-sm font-medium text-[#7A8AA0] underline underline-offset-2 hover:text-[#3A4B66]"
+              >
+                Skip for now
+              </a>
+            </div>
+          </div>
         }
       >
         <div>
