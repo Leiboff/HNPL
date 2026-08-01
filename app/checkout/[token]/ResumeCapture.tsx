@@ -26,6 +26,31 @@ import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 // The underlying resume action is idempotent (mints the same
 // deterministic Peach ref, Peach dedups), so firing it automatically is
 // safe — it's exactly what an immediate button tap would do.
+//
+// ─── Auto-start FAILURE never falls back to a second confirm ───────────
+//
+// The auto-start surface must NEVER degrade into the manual "Confirm and
+// pay" view on error — that was the double-confirm the ?capture=auto
+// hand-off exists to remove, reachable via the failure path (a Peach/
+// network blip dropping the patient onto the second confirm, which then
+// worked on a second tap). Instead, on auto-start failure we:
+//   1. retry the capture ONCE automatically (after a short backoff), and
+//   2. if it still fails, show a COMPACT inline error + a single
+//      "Try again" action that re-fires the capture — NOT the full
+//      confirm chrome.
+// So a signed-in owner sees exactly one confirm before the widget on
+// success, and never a second confirm on failure.
+//
+// Retry safety: the auto-start path always calls the resume action with
+// reuseExisting=true. That path reuses the checkoutId initiateCheckout
+// already minted + stamped on the instalment-1 row and, in the fallback-
+// mint case, mints against the SAME deterministic Peach ref
+// (checkoutRef(payment.id)). Peach dedups on merchantTransactionId, so a
+// retry can neither create a second checkout nor double-charge.
+
+// Short backoff before the single automatic retry — gives a transient
+// slow/aborted Peach or DB read a beat to clear before the second try.
+const AUTO_RETRY_DELAY_MS = 800;
 
 type ResumeAction = (
   token: string,
@@ -71,6 +96,12 @@ export default function ResumeCapture({
   const [widget, setWidget] = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
   const [error,  setError]  = useState<string | null>(null);
   const [busy,   setBusy]   = useState(false);
+  // Terminal auto-start failure: set only after the automatic attempt +
+  // one retry have both failed. Gates the compact error+retry card
+  // (NOT the manual confirm view). While false during the auto-start
+  // window the "setting up" placeholder shows — so the confirm chrome
+  // never appears on the hand-off, success OR failure.
+  const [autoFailed, setAutoFailed] = useState(false);
 
   // Single surface — accurate for both first attempt and re-entry.
   const cta = busy ? 'Setting up payment…' : `Pay ${formatRand(firstInstalmentAmount)} today`;
@@ -85,45 +116,67 @@ export default function ResumeCapture({
   const stripDates   = scheduleParsed.map((r) => new Date(r.iso));
   const showSchedule = stripAmounts.length > 0;
 
-  async function start(): Promise<void> {
+  // Runs the capture once. Returns true on success (widget mounted),
+  // false on any failure (error surfaced). `reuse` maps to the resume
+  // action's reuseExisting: the auto-start hand-off reuses the checkout
+  // initiateCheckout already minted; a genuine re-entry mints fresh
+  // (the stored checkout is past its validity window). Either way the
+  // deterministic Peach ref makes the call idempotent.
+  async function runCapture(reuse: boolean): Promise<boolean> {
     setError(null);
     setBusy(true);
     try {
-      // reuseExisting mirrors autoStart. On the fresh post-Pay hand-off
-      // (autoStart=true) initiateCheckout just minted + stamped a
-      // checkout on the instalment-1 row; the action reuses it instead
-      // of minting a second, so the new-customer path is ONE
-      // createCheckout. A genuine re-entry (autoStart=false) mints fresh
-      // because the stored checkout is past its validity window.
-      const result = await resumeAction(token, { reuseExisting: autoStart });
+      const result = await resumeAction(token, { reuseExisting: reuse });
       if (!result.ok) {
         setError(result.error);
-        return;
+        return false;
       }
       setWidget({ checkoutId: result.checkoutId, shopperResultUrl: result.shopperResultUrl });
+      return true;
     } catch (err) {
       setError(
         err instanceof Error
           ? `Couldn't reach the payment service (${err.message}). Please try again in a moment.`
           : 'Couldn\'t reach the payment service. Please try again in a moment.',
       );
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
+  // Manual "Try again" from the auto-start error card. Clears the
+  // terminal flag (so the placeholder shows while in-flight), re-fires
+  // the reuse capture, and re-arms the error card only if it fails
+  // again. Never routes to the manual confirm view.
+  async function retryAutoStart(): Promise<void> {
+    setAutoFailed(false);
+    const ok = await runCapture(true);
+    if (!ok) setAutoFailed(true);
+  }
+
   // Fresh post-Pay hand-off (?capture=auto): fire the capture once on
   // mount so the widget appears immediately — no second confirm. Guarded
   // by a ref so React's dev double-invoke (StrictMode) can't fire it
-  // twice. If it errors, the catch in start() surfaces the alert and the
-  // manual retry button below becomes available.
+  // twice. On failure we retry ONCE automatically (after a short
+  // backoff) and, only if that also fails, mark autoFailed → the compact
+  // error+retry card. We never fall through to the manual confirm view.
   const autoFiredRef = useRef(false);
   useEffect(() => {
     if (!autoStart) return;
     if (autoFiredRef.current) return;
     autoFiredRef.current = true;
-    void start();
-    // start is stable for the component's lifetime; deps intentionally
+    let cancelled = false;
+    void (async () => {
+      let ok = await runCapture(true);
+      if (!ok && !cancelled) {
+        await new Promise((resolve) => setTimeout(resolve, AUTO_RETRY_DELAY_MS));
+        if (!cancelled) ok = await runCapture(true);
+      }
+      if (!ok && !cancelled) setAutoFailed(true);
+    })();
+    return () => { cancelled = true; };
+    // runCapture is stable for the component's lifetime; deps intentionally
     // limited to autoStart so this fires exactly once on a fresh mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart]);
@@ -156,13 +209,44 @@ export default function ResumeCapture({
     );
   }
 
-  // Auto-start hand-off — show a quiet "setting up" state instead of the
-  // confirm chrome (the patient already confirmed on CheckoutForm). This
-  // covers the first render (before the mount effect fires) AND the
-  // in-flight window, so the confirm never flashes. If the auto-fire
-  // errors, we fall through to the confirm view below, which surfaces
-  // the error + a manual retry button.
-  if (autoStart && !error) {
+  // ── Auto-start hand-off surface ──────────────────────────────────
+  // The whole autoStart case is handled here so the manual confirm view
+  // below is UNREACHABLE on the hand-off — success OR failure. That is
+  // what guarantees the patient never sees a second confirm.
+  if (autoStart) {
+    // Terminal failure (auto attempt + one retry both failed): compact
+    // inline error + a single "Try again" that re-fires the capture.
+    // NOT the full "Confirm and pay" chrome.
+    if (autoFailed) {
+      return (
+        <div data-testid="resume-capture-autostart-error">
+          <div className="mb-5">
+            <BillChip practiceName={practiceName} totalAmount={totalAmount} />
+          </div>
+          <div className="rounded-2xl border border-[#E5E9F0] bg-white p-6 shadow-sm space-y-4">
+            <div
+              role="alert"
+              data-testid="resume-capture-error"
+              className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+            >
+              {error ?? 'We couldn\'t set up your payment. Please try again.'}
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void retryAutoStart()}
+              data-testid="resume-capture-retry"
+              className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 hover:shadow-lg transition-shadow"
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            >
+              {busy ? 'Setting up payment…' : 'Try again'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    // Initial render + in-flight (including the automatic retry window):
+    // a quiet "setting up" state, never the confirm chrome.
     return (
       <div data-testid="resume-capture-autostarting">
         <div className="mb-5">
@@ -198,10 +282,13 @@ export default function ResumeCapture({
 
         <div className="rounded-xl bg-[#FAFBFD] border border-[#E5E9F0] p-4">
           <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
-            Charging your card now
+            First instalment — due today
           </p>
           <p className="mt-1 text-3xl font-semibold tabular-nums text-[#13294B]">
             {formatRand(firstInstalmentAmount)}
+          </p>
+          <p className="mt-1 text-sm text-[#3A4B66]">
+            You&apos;ll pay {formatRand(firstInstalmentAmount)} today, on the next screen.
           </p>
         </div>
 
@@ -222,7 +309,7 @@ export default function ResumeCapture({
         <button
           type="button"
           disabled={busy}
-          onClick={start}
+          onClick={() => void runCapture(false)}
           data-testid="resume-capture-button"
           className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 hover:shadow-lg transition-shadow"
           style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
