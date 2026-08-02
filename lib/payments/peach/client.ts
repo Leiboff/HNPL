@@ -463,6 +463,22 @@ export class PeachProvider implements PaymentProvider {
       body.forceDefaultMethod = params.forceDefaultMethod;
     }
 
+    // One-click on a stored card (CIT). Passing cardTokens re-presents
+    // the KNOWN card in the widget for a mostly-frictionless one-click;
+    // allowStoredCards must accompany it (per the checkout-tokenisation
+    // reference). requireCvv is optional — omitted, the acquirer/backend
+    // config decides. This is what makes a saved-card first instalment a
+    // customer-present 3DS charge that roots the credential chain.
+    if (Array.isArray(params.cardTokens) && params.cardTokens.length > 0) {
+      body.cardTokens       = [...params.cardTokens];
+      body.allowStoredCards = params.allowStoredCards !== false;
+    } else if (typeof params.allowStoredCards === 'boolean') {
+      body.allowStoredCards = params.allowStoredCards;
+    }
+    if (typeof params.requireCvv === 'boolean') {
+      body.requireCvv = params.requireCvv;
+    }
+
     if (params.standingInstruction) {
       // Whitelist the fields we forward to Peach V2 — the V2 validator
       // rejects unknown fields with "unknown field" errors. V2's SI

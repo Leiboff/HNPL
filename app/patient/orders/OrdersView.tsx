@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import PendingPlanCard from '@/app/patient/PendingPlanCard';
 import StatusChip from '@/components/StatusChip';
 import { computePlanProgress } from '@/lib/planProgress';
@@ -30,6 +31,40 @@ function getPracticeName(plan: PlanRow): string {
   if (!plan.practice) return 'Unknown Practice';
   if (Array.isArray(plan.practice)) return plan.practice[0]?.name ?? 'Unknown Practice';
   return (plan.practice as { name: string }).name;
+}
+
+// A plan sits here when the saved-card first-instalment one-click was
+// started but abandoned (widget closed / 3DS dropped): status
+// pending_first_payment, no stored registration yet, no money taken.
+// "Payment processing" would mislead — offer a resume back into the
+// same (deterministic-ref, no-double-charge) checkout on /confirm.
+function ResumePaymentCard({ plan }: { plan: PlanRow }) {
+  return (
+    <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-base font-semibold text-gray-900 truncate">{getPracticeName(plan)}</h3>
+          {plan.invoice_number && (
+            <p className="font-mono text-xs text-gray-500 mt-0.5 truncate">{plan.invoice_number}</p>
+          )}
+        </div>
+        <span className="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700">
+          Payment not finished
+        </span>
+      </div>
+      <p className="text-sm text-gray-600">
+        Your first instalment wasn&apos;t completed and no money was taken. Pick up where you left off — it only takes a tap.
+      </p>
+      <Link
+        href={`/patient/orders/${plan.id}/confirm`}
+        data-testid="resume-payment-link"
+        className="inline-flex items-center justify-center rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+      >
+        Resume payment →
+      </Link>
+    </div>
+  );
 }
 
 // ─── Status configs ───────────────────────────────────────────────────────────
@@ -413,6 +448,8 @@ export default function OrdersView({
                 declinePlan={declinePlan}
                 blocked={patientBlocked}
               />
+            ) : plan.status === 'pending_first_payment' && !plan.peach_registration_id ? (
+              <ResumePaymentCard key={plan.id} plan={plan} />
             ) : (
               <PlanCard
                 key={plan.id}

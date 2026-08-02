@@ -723,7 +723,10 @@ describe('Confirm page ownership guard is the second line of defence', () => {
   // guard on the plan lookup.
   it('plans lookup is scoped to the session user by patient_id', () => {
     expect(CONFIRM_PAGE).toMatch(/\.eq\(\s*['"]patient_id['"]\s*,\s*user\.id\s*\)/);
-    expect(CONFIRM_PAGE).toMatch(/\.eq\(\s*['"]status['"]\s*,\s*['"]pending_acceptance['"]\s*\)/);
+    // The confirm page now accepts pending_acceptance (fresh confirm) AND
+    // pending_first_payment (resume of an abandoned saved-card one-click),
+    // still owner-scoped by patient_id above.
+    expect(CONFIRM_PAGE).toMatch(/\.in\(\s*['"]status['"]\s*,\s*\[\s*['"]pending_acceptance['"]\s*,\s*['"]pending_first_payment['"]\s*\]\s*\)/);
     // Non-owner / non-pending → maybeSingle → null → bounce.
     expect(CONFIRM_PAGE).toMatch(/if\s*\(!rawPlan\)\s*redirect\(\s*['"]\/patient\/orders['"]\s*\)/);
   });
