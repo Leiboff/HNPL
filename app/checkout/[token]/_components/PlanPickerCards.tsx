@@ -43,8 +43,11 @@
 //
 // Mobile-first
 // ─────────────
-// Stacked single column on narrow screens (default), two-column grid
-// from sm:; tap targets are the full card surface.
+// Full-width cards STACKED vertically at every breakpoint (single
+// column — never side-by-side), so the eye reads top-to-bottom and the
+// pre-selected default is unmistakably first. Tap targets are the full
+// card surface. The smaller-instalment 3-payment option is rendered
+// FIRST/on top (see PLAN_OPTIONS order) and is the caller's default.
 
 type Props = {
   totalAmount:        number;
@@ -63,7 +66,9 @@ function formatRand(n: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
-const PLAN_OPTIONS = [2, 3] as const;
+// 3-payment (smaller instalment) FIRST/on top — it's the default and
+// the eye should land on it. 2-payment second.
+const PLAN_OPTIONS = [3, 2] as const;
 
 export default function PlanPickerCards({
   totalAmount,
@@ -81,7 +86,7 @@ export default function PlanPickerCards({
         </p>
       </header>
 
-      <div role="radiogroup" aria-label="Number of instalments" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div role="radiogroup" aria-label="Number of instalments" className="grid grid-cols-1 gap-3">
         {PLAN_OPTIONS.map((n) => {
           const each   = perInstalmentAmount(n);
           const active = planType === n;
