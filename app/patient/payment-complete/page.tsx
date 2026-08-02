@@ -5,6 +5,7 @@ import { getPaymentProvider } from '@/lib/payments/provider';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
+import { logPeachRawResponse } from '@/lib/payments/peach/logRawResponse';
 import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
 
 // ─── /patient/payment-complete — Checkout V2 first-payment return ──
@@ -164,6 +165,14 @@ async function activateFirstInstalmentFromStatus(
     // Only our checkout ('c') refs activate here. A registration ('r')
     // or instalment ('i') ref on this route would be a wiring bug.
     if (!reference || peachRefPurpose(reference) !== 'c') return;
+
+    // Phase-2 chain-root capture: log the FULL raw CIT status body
+    // (card-redacted) so we can see which scheme/CIT transaction-id
+    // field Peach returns on this saved-card CIT — grep
+    // "PEACH CIT CAPTURE (saved-card)". Diagnostic only; stamping is
+    // unchanged below (still status.providerPaymentId until the capture
+    // confirms the correct field).
+    logPeachRawResponse('PEACH CIT CAPTURE (saved-card):', status.raw);
 
     const svc = createServiceClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,

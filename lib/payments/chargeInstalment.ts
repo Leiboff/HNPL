@@ -1,6 +1,7 @@
 import { getPaymentProvider } from './provider';
 import { chargeAmountCents } from './dunning';
 import { instalmentAttemptRef } from './peach/refs';
+import { logPeachRawResponse } from './peach/logRawResponse';
 
 // ─── Atomic claim-and-charge for one installment (Peach MIT) ────────
 //
@@ -208,6 +209,16 @@ export async function attemptChargeInstalment(
     currency:              'ZAR',
     standingInstruction,
   });
+
+  // Phase-2 chain-root capture: log the FULL raw MIT response (card-
+  // redacted) so we can confirm whether this MIT was ACCEPTED with the
+  // initialTransactionId we sent (the CIT's `id`) and what Peach echoes
+  // back (standingInstruction.initialTransactionId / scheme ids). Grep
+  // "PEACH MIT CAPTURE". Diagnostic only — the SI we send is unchanged.
+  logPeachRawResponse(
+    `PEACH MIT CAPTURE (instalment paymentId=${paymentId} attempt=${nextAttempt} siType=${standingInstruction.type} sentInitial=${initial ?? 'none'}):`,
+    result.raw,
+  );
 
   if (result.status === 'error') {
     return {

@@ -23,6 +23,7 @@ import {
 } from '@/lib/payments/dunningNotifications';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
+import { logPeachRawResponse } from '@/lib/payments/peach/logRawResponse';
 
 // ─── Peach Checkout webhook receiver ────────────────────────────────
 //
@@ -866,6 +867,12 @@ export async function POST(request: NextRequest) {
   try {
     if (type === 'PAYMENT') {
       const p = payload as WebhookPaymentPayload;
+      // Phase-2 chain-root capture: log the FULL webhook payload (card-
+      // redacted) so any scheme/CIT transaction id Peach delivers via the
+      // webhook (cardholderInitiatedTransactionId / schemeTransactionId /
+      // standingInstruction.initialTransactionId) is visible. Grep
+      // "PEACH WEBHOOK PAYMENT CAPTURE". Diagnostic only.
+      logPeachRawResponse('PEACH WEBHOOK PAYMENT CAPTURE:', p);
       const classified = classifyResultCode(p.result?.code);
       if (classified === 'success') {
         await handlePaymentSuccess(p);
