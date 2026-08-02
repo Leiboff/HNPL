@@ -151,26 +151,13 @@ export default async function CardRegistrationCompletePage({
   const { data: { user } } = await supabaseUser.auth.getUser();
   const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-  // ── 1. Fast path (idempotency) — recent card already on file ──────
-  //     If the user hit refresh, back-button, or "Try again" after a
-  //     successful save, we short-circuit here with the SuccessCard
-  //     BEFORE re-calling Peach. The window is 5 minutes; the
-  //     fingerprint dedup in saveCardForPatient covers any collisions
-  //     outside that window.
-  if (user) {
-    const { data: recentCard } = await supabaseUser
-      .from('payment_methods')
-      .select('card_brand, last_four')
-      .eq('patient_id', user.id)
-      .gte('created_at', since)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (recentCard) {
-      return <SuccessCard brand={recentCard.card_brand} lastFour={recentCard.last_four} />;
-    }
-  }
+  // NOTE: idempotency is enforced in step 4, SCOPED to this checkout's
+  // registrationId — NOT a "any card saved in the last 5 minutes" guard.
+  // The old time-window fast-path short-circuited a legitimate SECOND
+  // card added within 5 minutes (it matched the FIRST card and returned
+  // before saving), so a genuinely new card never got inserted. Scoping
+  // to the actual card being saved fixes that while still no-oping a
+  // refresh / back-button / "Try again" re-post of the SAME checkout.
 
   // ── 2. Primary path: ask Peach for the Checkout V2 status ─────────
   //     The V2 status body is flat dot-notation; the client's
@@ -254,6 +241,22 @@ export default async function CardRegistrationCompletePage({
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } },
   );
+
+  // Scoped idempotency: if THIS checkout's card (keyed by its
+  // registrationId → the row's token) is already on file, a refresh /
+  // back-button / "Try again" re-post is a no-op — show success without
+  // re-saving. A genuinely new second card has a DIFFERENT registrationId,
+  // so it falls through to the save below and inserts.
+  const { data: alreadyOnFile } = await svc
+    .from('payment_methods')
+    .select('card_brand, last_four')
+    .eq('patient_id', patientId)
+    .eq('token', status.registrationId)
+    .maybeSingle();
+  if (alreadyOnFile) {
+    return <SuccessCard brand={alreadyOnFile.card_brand} lastFour={alreadyOnFile.last_four} alreadySaved />;
+  }
+
   const result = await saveCardForPatient(
     patientId,
     {
