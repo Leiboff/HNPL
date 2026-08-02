@@ -205,15 +205,68 @@ export const V1_REFUND_RESPONSE = {
   result: { code: '000.100.110', description: 'Request successfully processed' },
 };
 
-// ─── AWAITING LIVE CAPTURE (Phase 2) ────────────────────────────────
+// ─── CHAIN ROOT — RESOLVED by a live sandbox capture (Phase 2) ──────
 //
-// Peach documents cardholderInitiatedTransactionId + schemeTransactionId
-// on the successful CIT response/webhook as the stored-credential chain
-// root. NO real captured body in the repo proves which one Peach accepts
-// as standingInstruction.initialTransactionId on a subsequent MIT. Until
-// a live sandbox MIT is captured (Phase 2), the fields below are the
-// DOCUMENTED shape only — the tests that assert them are skipped and
-// marked "AWAITING LIVE CAPTURE".
+// The audit's open question ("is the chain root the CIT top-level `id`,
+// or the documented cardholderInitiatedTransactionId / schemeTransactionId?")
+// was settled by a real sandbox MIT on 2026-08-02:
+//
+//   • CIT status (checkout 1dcf373f…) returned top-level
+//     id = 8ac7a49f9fb7fec7019fc3fe2c097657 and carried NEITHER
+//     cardholderInitiatedTransactionId NOR schemeTransactionId.
+//   • We stamped that `id` as plans.peach_initial_transaction_id and sent
+//     it as standingInstruction.initialTransactionId on instalment 2.
+//   • The MIT was ACCEPTED — result.code 000.100.110, money moved, and
+//     Peach echoed the same initialTransactionId back.
+//
+// Conclusion: on THIS integration the CIT top-level `id` is the ONLY
+// chain root Peach returns, and it is the correct one. The scheme-id
+// fields the docs mention are NOT present here — a future refactor that
+// "reads the documented cardholderInitiatedTransactionId" would read
+// undefined and silently break every MIT. The fixtures below pin both
+// realities so that can't happen.
+
+/**
+ * REAL capture — CIT status, sandbox checkout 1dcf373f… (2026-08-02).
+ * REAL captured values: top-level `id` (the chain root) + result.code +
+ * the ABSENCE of cardholderInitiatedTransactionId / schemeTransactionId.
+ * `merchantTransactionId` / `registrationId` / card.* are representative
+ * (shape-faithful) — the tests only assert the id + the absence.
+ */
+export const V2_STATUS_CIT_1DCF: Record<string, unknown> = {
+  'result.code':        '000.100.110',
+  'result.description': "Request successfully processed in 'Merchant in Integrator Test Mode'",
+  id:                    '8ac7a49f9fb7fec7019fc3fe2c097657', // ← REAL — the chain root we stamp
+  merchantTransactionId: 'bnc1dcf373fcapt',                  // representative
+  amount:                '92.00',
+  currency:              'ZAR',
+  'card.last4Digits':    '0042',                             // representative
+  'card.paymentBrand':   'VISA',
+  registrationId:        'reg-1dcf373f',                     // representative
+  // NB: NO cardholderInitiatedTransactionId, NO schemeTransactionId —
+  // confirmed absent in the real capture.
+};
+
+/**
+ * REAL capture — the ACCEPTED MIT response (instalment 2) that proved
+ * the chain root. REAL: result.code 000.100.110 + the echoed
+ * standingInstruction.initialTransactionId === the CIT `id` we sent.
+ * `id` (the MIT's own payment id) is representative.
+ */
+export const V1_MIT_CHARGE_ACCEPTED = {
+  id:     'mit-pay-1dcf373f',                                   // representative (MIT's own id)
+  result: { code: '000.100.110', description: 'Request successfully processed' },
+  // Peach echoed back the initialTransactionId we sent (the CIT id).
+  standingInstruction: { initialTransactionId: '8ac7a49f9fb7fec7019fc3fe2c097657' },
+};
+
+/** The exact CIT id we send as standingInstruction.initialTransactionId. */
+export const CIT_CHAIN_ROOT_ID = '8ac7a49f9fb7fec7019fc3fe2c097657';
+
+// Retained: a DOC-SHAPED synthetic body that DOES carry the scheme ids —
+// used ONLY by the redaction test (proving the log redactor keeps those
+// id fields IF a future Peach shape ever includes them). It is NOT
+// representative of what this integration returns (see V2_STATUS_CIT_1DCF).
 export const V2_STATUS_DOC_SCHEME_IDS: Record<string, unknown> = {
   'result.code':                    '000.100.110',
   id:                                'pay-scheme',

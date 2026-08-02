@@ -13,7 +13,9 @@ import {
   V2_STATUS_BOTH_BRANDS,
   V2_STATUS_NESTED,
   V2_STATUS_DECLINE,
-  V2_STATUS_DOC_SCHEME_IDS,
+  V2_STATUS_CIT_1DCF,
+  V1_MIT_CHARGE_ACCEPTED,
+  CIT_CHAIN_ROOT_ID,
   RESULT_CODES,
   WEBHOOK_PAYMENT_SUCCESS,
   WEBHOOK_CARD_REG,
@@ -263,30 +265,52 @@ describe('refund — NESTED /v1 response extraction', () => {
   });
 });
 
-// ─── 8. AWAITING LIVE CAPTURE (Phase 2) — CIT chain-root scheme ids ──
+// ─── 8. CIT chain root — RESOLVED by live capture (Phase 2) ─────────
 //
-// Peach documents cardholderInitiatedTransactionId + schemeTransactionId
-// on the successful CIT response as the stored-credential chain root. We
-// currently stamp plans.peach_initial_transaction_id from the payment's
-// top-level `id` and never read those fields. No captured body proves
-// which value Peach accepts as standingInstruction.initialTransactionId
-// on a subsequent MIT. These tests assert the DOCUMENTED shape and are
-// skipped until Phase 2 captures a live MIT.
+// Live sandbox MIT (2026-08-02, checkout 1dcf373f…) proved: the CIT
+// top-level `id` is the chain root, Peach returns NO scheme ids on this
+// integration, and the MIT was ACCEPTED with that id as
+// standingInstruction.initialTransactionId. These are now ACTIVE pins.
 
-describe('CIT chain-root scheme ids — AWAITING LIVE CAPTURE (Phase 2)', () => {
-  it('the documented body carries both scheme ids (readable via pickField)', () => {
-    // Active sanity check on the documented shape — proves the extraction
-    // WOULD work once toPaymentStatus surfaces these fields.
-    expect(pickField(V2_STATUS_DOC_SCHEME_IDS, 'cardholderInitiatedTransactionId')).toBe('CIT-XREF-DOC');
-    expect(pickField(V2_STATUS_DOC_SCHEME_IDS, 'schemeTransactionId')).toBe('SCHEME-XREF-DOC');
+describe('CIT chain root — the top-level `id` (proven by live MIT)', () => {
+  it('toPaymentStatus surfaces the CIT `id` as providerPaymentId — the value we stamp', () => {
+    // payment-complete/page.tsx + checkout/[token]/complete/page.tsx stamp
+    // plans.peach_initial_transaction_id = status.providerPaymentId.
+    const st = toPaymentStatus(V2_STATUS_CIT_1DCF);
+    expect(st.providerPaymentId).toBe(CIT_CHAIN_ROOT_ID);
+    expect(st.status).toBe('success');
   });
 
-  it.skip('AWAITING LIVE CAPTURE: toPaymentStatus surfaces cardholderInitiatedTransactionId as the chain root', () => {
-    // Phase 2 will: (a) capture a live sandbox MIT, (b) confirm which
-    // field Peach accepts as initialTransactionId, (c) make toPaymentStatus
-    // expose it, then flip this to an active assertion, e.g.:
-    const st = toPaymentStatus(V2_STATUS_DOC_SCHEME_IDS) as unknown as { cardholderInitiatedTransactionId?: string };
-    expect(st.cardholderInitiatedTransactionId).toBe('CIT-XREF-DOC');
+  it('the real CIT body carries NO cardholderInitiatedTransactionId / schemeTransactionId', () => {
+    // REGRESSION GUARD: a refactor that "reads the documented scheme id"
+    // would read undefined here and silently break every MIT chain. This
+    // pins that those fields are ABSENT on this integration.
+    expect(pickField(V2_STATUS_CIT_1DCF, 'cardholderInitiatedTransactionId')).toBeUndefined();
+    expect(pickField(V2_STATUS_CIT_1DCF, 'schemeTransactionId')).toBeUndefined();
+  });
+
+  it('the ACCEPTED MIT echoed our sent initialTransactionId (== the CIT id) and succeeded', () => {
+    respondOnce(V1_MIT_CHARGE_ACCEPTED);
+    return new PeachProvider().chargeSavedCard({
+      registrationId:        'reg-1dcf373f',
+      amountCents:           9200,
+      merchantTransactionId: 'bni1dcf373fcapt',
+      currency:              'ZAR',
+      standingInstruction:   { mode: 'REPEATED', source: 'MIT', type: 'INSTALLMENT', initialTransactionId: CIT_CHAIN_ROOT_ID },
+    }).then((res) => {
+      expect(res.status).toBe('success');
+      expect(res.resultCode).toBe('000.100.110');
+      expect(res.initialTransactionId).toBe(CIT_CHAIN_ROOT_ID);
+    });
+  });
+
+  it('the MIT standing-instruction WE SEND matches the accepted shape', () => {
+    // Source-pin: chargeInstalment builds the exact SI Peach accepted —
+    // REPEATED / MIT / INSTALLMENT + initialTransactionId (with the
+    // UNSCHEDULED fallback only when no root is stamped yet).
+    const src = readFileSync(resolve(process.cwd(), 'lib/payments/chargeInstalment.ts'), 'utf8');
+    expect(src).toMatch(/mode:\s*'REPEATED'[\s\S]{0,60}source:\s*'MIT'[\s\S]{0,80}type:\s*'INSTALLMENT'[\s\S]{0,60}initialTransactionId:\s*initial/);
+    expect(src).toMatch(/type:\s*'UNSCHEDULED'/); // fallback branch retained
   });
 });
 
