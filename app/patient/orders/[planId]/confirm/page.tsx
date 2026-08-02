@@ -23,10 +23,12 @@ export default async function ConfirmPage({
   const [{ data: rawPlan }, { data: profile }, { data: rawCards }, { data: rawProgress }] = await Promise.all([
     supabase
       .from('plans')
-      .select('id, total_amount, status, invoice_number, practice_reference, practices(name)')
+      // pending_acceptance = fresh confirm; pending_first_payment (no
+      // stored card) = RESUME of an abandoned saved-card one-click.
+      .select('id, total_amount, status, plan_type, peach_registration_id, invoice_number, practice_reference, practices(name)')
       .eq('id', planId)
       .eq('patient_id', user.id)
-      .eq('status', 'pending_acceptance')
+      .in('status', ['pending_acceptance', 'pending_first_payment'])
       .maybeSingle(),
     supabase
       .from('profiles')
@@ -43,10 +45,21 @@ export default async function ConfirmPage({
       .from('plans')
       .select('status')
       .eq('patient_id', user.id)
+      // Exclude THIS plan — a plan (a resume in pending_first_payment)
+      // must never block itself.
+      .neq('id', planId)
       .in('status', ['pending_first_payment', 'active', 'completed']),
   ]);
 
   if (!rawPlan) redirect('/patient/orders');
+
+  // A pending_first_payment plan that ALREADY has a stored card has
+  // captured its card (first charge landed / in flight) — not resumable
+  // here; its live state shows on the orders page.
+  if (rawPlan.status === 'pending_first_payment' && rawPlan.peach_registration_id) {
+    redirect('/patient/orders');
+  }
+  const resumeMode = rawPlan.status === 'pending_first_payment';
 
   const progressRows = (rawProgress ?? []) as { status: string }[];
   const hasInProgress = progressRows.some(
@@ -99,6 +112,10 @@ export default async function ConfirmPage({
     is_default:    Boolean(c.is_default),
   }));
 
+  // On resume, the instalment count was fixed at first acceptance — use it.
+  const resolvedPlanType: 2 | 3 | null =
+    resumeMode ? ((rawPlan.plan_type as 2 | 3 | null) ?? initialPlanType) : initialPlanType;
+
   return (
     <div className="mx-auto max-w-xl px-6 py-10">
       <ConfirmForm
@@ -108,9 +125,10 @@ export default async function ConfirmPage({
         invoiceNumber={rawPlan.invoice_number as string | null}
         salaryDay={salaryDay}
         cards={cards}
-        initialPlanType={initialPlanType}
+        initialPlanType={resolvedPlanType}
         fromRegistration={fromRegistration}
         blocked={blocked}
+        resumeMode={resumeMode}
       />
     </div>
   );

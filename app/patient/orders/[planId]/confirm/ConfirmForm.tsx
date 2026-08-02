@@ -63,6 +63,10 @@ type Props = {
   initialPlanType:  2 | 3 | null;
   fromRegistration: boolean;
   blocked:          boolean;
+  // RESUME of an abandoned saved-card one-click: the plan is already
+  // pending_first_payment with its schedule fixed. The instalment count
+  // is locked and the CTA re-opens the same (deterministic-ref) checkout.
+  resumeMode:       boolean;
 };
 
 const POLL_TIMEOUT_S = 10;
@@ -79,6 +83,7 @@ export default function ConfirmForm({
   initialPlanType,
   fromRegistration,
   blocked,
+  resumeMode,
 }: Props) {
   const router = useRouter();
 
@@ -379,17 +384,18 @@ export default function ConfirmForm({
         </div>
       )}
 
-      {/* Section 1 — Choose payment plan */}
+      {/* Section 1 — Choose payment plan (locked on resume) */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5 space-y-3">
         <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-          Choose your payment plan
+          {resumeMode ? 'Your payment plan' : 'Choose your payment plan'}
         </h2>
         <div className="grid grid-cols-2 gap-3">
           {([2, 3] as const).map((n) => (
             <button
               key={n}
               type="button"
-              disabled={busy || cardSearchStatus === 'polling'}
+              // On resume the count is fixed (the schedule already exists).
+              disabled={resumeMode || busy || cardSearchStatus === 'polling'}
               onClick={() => handlePlanTypeChange(n)}
               className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 planType === n
@@ -591,7 +597,7 @@ export default function ConfirmForm({
             className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:shadow-lg"
             style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
-            {submitting ? 'Processing…' : 'Confirm and Pay First Instalment'}
+            {submitting ? 'Processing…' : resumeMode ? 'Resume payment' : 'Confirm and Pay First Instalment'}
           </button>
         )}
         <Link
