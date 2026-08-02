@@ -112,7 +112,7 @@ function TimeoutView({ reference }: { reference: string }) {
       </div>
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
         <Link
-          href={`/patient/payment-methods/complete?reference=${encodeURIComponent(reference)}`}
+          href={`/patient/payment-methods/complete?checkoutId=${encodeURIComponent(reference)}`}
           className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
         >
           Try again

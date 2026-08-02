@@ -50,10 +50,6 @@ import type {
   RefundResult,
 } from '../provider';
 import { classifyResultCode } from './resultCodes';
-import {
-  createCardRegistration     as copyAndPayCreate,
-  getCardRegistrationStatus  as copyAndPayStatus,
-} from './copyandpay/registration';
 
 // ─── Env helpers ────────────────────────────────────────────────────
 
@@ -423,14 +419,19 @@ export class PeachProvider implements PaymentProvider {
       );
     }
 
-    // V2 = purchase-shaped door only. Card-vault flows go through the
-    // separate COPYandPAY door (see provider.createCardRegistration
-    // + lib/payments/peach/copyandpay/registration.ts). Reject
-    // amount=0 here to keep the dual-door invariant honest — a
-    // regression that tries to route a vault through V2 fails loud
-    // instead of silently reaching Peach.
-    if (!Number.isInteger(params.amountCents) || params.amountCents <= 0) {
-      throw new Error(`Peach createCheckout: amountCents must be a positive integer (V2 is purchase-only; card vault → provider.createCardRegistration); got ${params.amountCents}`);
+    // Amount guard. V2 is now the SINGLE customer-present capture door:
+    // it serves BOTH purchase flows (amount > 0, Flow A) AND the
+    // card-vault registration recipe (amount = 0 + paymentType 'PA' +
+    // createRegistration, Flow B). Zero is valid ONLY under that exact
+    // recipe — a stray amount=0 on any purchase path (e.g. paymentType
+    // 'DB', or createRegistration unset) still fails loud rather than
+    // silently reaching Peach as a malformed purchase.
+    const isZeroPaRegistration =
+      params.amountCents === 0 &&
+      params.paymentType === 'PA' &&
+      params.createRegistration === true;
+    if (!isZeroPaRegistration && (!Number.isInteger(params.amountCents) || params.amountCents <= 0)) {
+      throw new Error(`Peach createCheckout: amountCents must be a positive integer (or 0 only under the card-vault recipe: paymentType 'PA' + createRegistration); got ${params.amountCents}`);
     }
 
     const origin = params.origin ?? process.env.NEXT_PUBLIC_APP_URL ?? '';
@@ -631,30 +632,36 @@ export class PeachProvider implements PaymentProvider {
     }
   }
 
-  // ─── COPYandPAY registration-only vault (Flow B) ─────────────────
+  // ─── Card-vault registration (Flow B — SAME V2 door) ─────────────
   //
-  // Deliberately delegates to lib/payments/peach/copyandpay/
-  // registration.ts — that module is isolated (its own transport +
-  // env scope) so the vault "door" cannot silently share state or
-  // request-body shape with the Checkout V2 "door" above. The
-  // provider methods here are just seams so tests can stub the
-  // provider interface uniformly.
-
+  // Card-add now runs on the SAME Checkout V2 surface as Flow A, using
+  // the documented zero-amount PA registration recipe:
+  //   amount 0 + paymentType 'PA' + createRegistration + card-only.
+  // No money moves — the zero-value PA auto-expires — and the embedded
+  // widget returns a reusable registrationId, which the completion
+  // route reads via getCheckoutStatus and saves. Kept as a distinct,
+  // purpose-built method (rather than having callers hand-build a
+  // zero-amount createCheckout) so a caller cannot accidentally pass a
+  // purchase amount to a vault, and so the recipe lives in one place.
+  //
+  // Deliberately NO standingInstruction: a pure vault has no scheme
+  // standing instruction until an INITIAL CIT/MIT actually charges.
+  // Plans that later use this card send their first MIT under
+  // type=UNSCHEDULED (chain-root fallback in chargeInstalment.ts +
+  // settle-actions.ts).
   async createCardRegistration(params: CardRegistrationCreateParams): Promise<CardRegistrationCreated> {
-    return copyAndPayCreate({
+    return this.createCheckout({
+      amountCents:           0,
+      paymentType:           'PA',
+      createRegistration:    true,
+      defaultPaymentMethod:  'CARD',
+      forceDefaultMethod:    true,
       merchantTransactionId: params.merchantTransactionId,
+      shopperResultUrl:      params.shopperResultUrl,
       customer:              params.customer,
       customParameters:      params.customParameters,
-      // shopperResultUrl is a browser-side concern (the <form action>
-      // of the mounted widget) — server-side createCheckouts POST
-      // does NOT accept it as a field. We accept it on the interface
-      // so callers can pass it through in a single object, but drop
-      // it here before hitting Peach.
+      origin:                params.origin,
     });
-  }
-
-  async getCardRegistrationStatus(resourcePath: string): Promise<PaymentStatus> {
-    return copyAndPayStatus(resourcePath);
   }
 }
 

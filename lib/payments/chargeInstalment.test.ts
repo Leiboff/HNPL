@@ -281,12 +281,12 @@ describe('attemptChargeInstalment — successful charge', () => {
   });
 
   it('CHAIN-ROOT FALLBACK — a registration-only card (no peach_initial_transaction_id) charges under UNSCHEDULED without initialTransactionId', async () => {
-    // Regression pin for the dual-door architecture: a COPYandPAY
-    // registration-only vault produces a registrationId but NO
-    // initial CIT transaction. Plans that use such a card MUST send
-    // their first MIT charge under type=UNSCHEDULED without an
-    // initialTransactionId — else the acquirer rejects "invalid
-    // initial reference".
+    // Regression pin for the card-vault chain root: a registration-only
+    // card (added via the Checkout V2 zero-amount PA registration
+    // recipe) produces a registrationId but NO initial CIT transaction.
+    // Plans that use such a card MUST send their first MIT charge under
+    // type=UNSCHEDULED without an initialTransactionId — else the
+    // acquirer rejects "invalid initial reference".
     const state: StubState = {
       payments: [{
         id: 'p-orphan', status: 'scheduled', retry_count: 0, amount: 200,

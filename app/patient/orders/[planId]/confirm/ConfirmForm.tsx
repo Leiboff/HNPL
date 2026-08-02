@@ -6,10 +6,10 @@ import { useRouter } from 'next/navigation';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { payWithSavedCard, initializeCardRegistration } from '@/app/patient/actions';
-// Flow B card-add uses the COPYandPAY widget — dual-door architecture
-// (see lib/payments/peach/copyandpay/registration.ts). Flow A's Checkout V2
-// PeachWidget lives at app/_components/PeachWidget.tsx and is NOT used here.
-import PeachCopyAndPayWidget from '@/app/_components/PeachCopyAndPayWidget';
+// Card-add (Flow B) mounts the SAME Checkout V2 widget as every other
+// customer-present surface — the card-vault runs on the zero-amount PA
+// registration recipe (see provider.createCardRegistration).
+import PeachWidget from '@/app/_components/PeachWidget';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -283,8 +283,9 @@ export default function ConfirmForm({
           <p className="mb-3 text-xs text-gray-500">
             We verify your card with your bank — no money is taken.
           </p>
-          <PeachCopyAndPayWidget
+          <PeachWidget
             checkoutId={addCardWidget.checkoutId}
+            entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={addCardWidget.shopperResultUrl}
           />
           <button
