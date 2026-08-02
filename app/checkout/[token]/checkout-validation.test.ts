@@ -78,7 +78,7 @@ describe('CheckoutForm — fields wired through the hook', () => {
     expect(form).toMatch(/onBlur=\{onBlur\(['"]termsAccepted['"]\)\}/);
   });
 
-  it('submit-time backstop calls validateAll() and bounces back to step 3 with the first invalid field focused', () => {
+  it('submit-time backstop calls validateAll() and bounces back to the Details step with the first invalid field focused', () => {
     expect(form).toMatch(/validateAll\(\)/);
     expect(form).toMatch(/focusAndScrollTo\(\s*[`'"]checkout-/);
   });

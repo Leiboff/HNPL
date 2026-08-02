@@ -17,7 +17,7 @@ import { resolve } from 'node:path';
 //     OTP code is generated + hashed server-side and NEVER returned
 //     to the client. The SMS sender is called only AFTER the RPC
 //     stored the hash successfully.
-//   • UI: 5-step flow, Verify step uses one-time-code autocomplete,
+//   • UI: 3-step flow, Verify step uses one-time-code autocomplete,
 //     Change-number resets the sent marker.
 
 const ROOT = resolve(process.cwd());
@@ -186,11 +186,11 @@ describe('CheckoutForm — Verify step UI contract (shared PhoneOtpStep)', () =>
   // assertions now check the SHARED component for the UI properties
   // that matter for autofill + auto-submit, and check CheckoutForm
   // only for the wiring (mount, key-bump on change-number / verify_
-  // phone_required, 5-step flow).
+  // phone_required, 3-step flow).
   const SHARED = read('app/_otp/PhoneOtpStep.tsx');
 
-  it('is a 5-step flow now (Bill → Plan → Details → Verify → Pay)', () => {
-    expect(FORM).toMatch(/type Step = 1 \| 2 \| 3 \| 4 \| 5/);
+  it('is a 3-step flow now (Plan → Details → Verify; hand-off is a button spinner)', () => {
+    expect(FORM).toMatch(/type Step = 1 \| 2 \| 3\b/);
   });
 
   it('shared PhoneOtpStep uses components/OtpInput (which declares one-time-code autocomplete)', () => {
@@ -218,9 +218,9 @@ describe('CheckoutForm — Verify step UI contract (shared PhoneOtpStep)', () =>
     expect(FORM).toMatch(/<PhoneOtpStep[\s\S]{0,200}key=\{otpStepKey\}/);
   });
 
-  it('bounces back to Verify step (4) when initiateCheckout returns verify_phone_required', () => {
+  it('bounces back to Verify step (3) when initiateCheckout returns verify_phone_required', () => {
     expect(FORM).toMatch(/result\.error === 'verify_phone_required'/);
-    expect(FORM).toMatch(/setStep\(4\)/);
+    expect(FORM).toMatch(/setStep\(3\)/);
   });
 
   it('shared PhoneOtpStep enforces a 30-second resend cooldown', () => {

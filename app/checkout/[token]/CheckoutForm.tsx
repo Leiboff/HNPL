@@ -25,11 +25,15 @@ import PlanPickerCards from './_components/PlanPickerCards';
 
 // ─── Multi-step anonymous checkout ─────────────────────────────────────────
 //
-// Three visible steps + a final Pay submit:
-//   1. Bill review — reads the bill back, confirms the deal.
-//   2. Plan — 2 vs 3 instalments + salary day → schedule preview.
-//   3. Details — name, SA ID, phone (blur-validated via shared hook).
-//   4. Pay — single button → Paystack.
+// Compressed to three visible steps (the emailed link IS the bill
+// restatement, so there's no separate "you have a bill" screen; and the
+// post-verify hand-off is a button spinner, not a page):
+//   1. Plan — 3 vs 2 instalments + salary day → schedule preview. This
+//      is the landing screen (the link drops the patient straight here).
+//   2. Details — name, SA ID, phone, T&C (blur-validated via shared hook).
+//   3. Verify — phone OTP; on success the initiateCheckout hand-off runs
+//      with a button-level "Setting up…" spinner (no interstitial page),
+//      then a redirect to the single confirm→widget surface.
 //
 // Validation rules + per-field UX (blur-then-keystroke timing, single
 // generic SA ID error, normalised phone validator) are SHARED with
@@ -98,10 +102,11 @@ type Props = {
   verifyPhoneOtp:     (token: string, phone: string, code: string) => Promise<PhoneOtpVerifyResult>;
 };
 
-// Five steps now: Bill → Plan → Details → Verify → Pay. The Verify
-// step (4) was inserted between Details (3) and Pay (now 5) — phone-
-// OTP gate per migration 0052. Pay was previously 4.
-type Step = 1 | 2 | 3 | 4 | 5;
+// Three steps: Plan (1) → Details (2) → Verify (3). The phone-OTP gate
+// (migration 0052) is step 3; on verification the initiateCheckout
+// hand-off runs inline (button spinner) — there is no separate "Setting
+// up your payment" screen and no opening bill-restatement screen.
+type Step = 1 | 2 | 3;
 
 // 30s resend cooldown lives inside the shared PhoneOtpStep now; the
 // server-side prepare_phone_verification RPC is the authoritative
@@ -188,14 +193,14 @@ function previewDates(salaryDay: number, planType: 2 | 3, today: Date = new Date
 
 // ─── Quiet step indicator ──────────────────────────────────────────────
 //
-// Four dots, current step expanded. No labels, no chrome. The
+// Three dots, current step expanded. No labels, no chrome. The
 // medallion in StepShell handles the "what step is this" load; this
 // just confirms position in the flow.
 
 function StepDots({ step }: { step: Step }) {
   return (
-    <div className="flex items-center justify-center gap-1.5 mb-5" aria-label={`Step ${step} of 5`}>
-      {([1, 2, 3, 4, 5] as Step[]).map((n) => (
+    <div className="flex items-center justify-center gap-1.5 mb-5" aria-label={`Step ${step} of 3`}>
+      {([1, 2, 3] as Step[]).map((n) => (
         <span
           key={n}
           aria-hidden
@@ -231,14 +236,20 @@ const BLANK_DETAILS: DetailsFields = {
 // ─── The form ─────────────────────────────────────────────────────────────
 
 export default function CheckoutForm({
-  token, email, practiceName, totalAmount, invoiceNumber, practiceReference,
+  // email / invoiceNumber / practiceReference are still accepted (the
+  // page passes them) but no longer rendered — the opening bill-
+  // restatement screen that showed them is gone; the BillChip header
+  // (practice + amount) carries the deal now.
+  token, practiceName, totalAmount,
   initialSalaryDay,
   initiateCheckout, requestPhoneOtp, verifyPhoneOtp,
 }: Props) {
   const [step, setStep] = useState<Step>(1);
 
-  // Step 2 state — defaults are always valid; no schema entries needed.
-  const [planType,  setPlanType]  = useState<2 | 3>(2);
+  // Plan-step state — defaults are always valid; no schema entries needed.
+  // Default to the 3-payment (smaller-instalment) option — it's the one
+  // rendered first/on top and the gentler cash-flow choice.
+  const [planType,  setPlanType]  = useState<2 | 3>(3);
   // Post-0065: prefer the value the server already knows (profile
   // source of truth). If none, fall back to 25 which is the modal
   // ZA payday and keeps the schedule preview meaningful before the
@@ -315,6 +326,12 @@ export default function CheckoutForm({
   // while the navigation swaps the page.
   const [redirecting, setRedirecting] = useState(false);
 
+  // Post-OTP hand-off. When true, the Verify step (3) swaps its OTP body
+  // for a button-level "Setting up…" spinner while initiateCheckout runs
+  // — there is NO standalone full-page loading screen. Cleared
+  // when the hand-off bounces back to an earlier step (verify/plan/details).
+  const [handoff, setHandoff] = useState(false);
+
   // Phone-OTP state lives entirely inside the shared <PhoneOtpStep />.
   // CheckoutForm only needs a remount-key — bumping it on
   // change-number / verify_phone_required forces the embedded step
@@ -336,7 +353,7 @@ export default function CheckoutForm({
       }
       return;
     }
-    setStep(4);
+    setStep(3);
   }
 
   // Bump the key so the embedded PhoneOtpStep remounts and re-fires
@@ -348,17 +365,18 @@ export default function CheckoutForm({
 
   function handleChangeNumber() {
     resetOtpStep();
-    setStep(3);
+    setStep(2);
   }
 
   // After OTP verification we go STRAIGHT to the payment hand-off — no
-  // interstitial "Continue to payment" screen (that redundant screen (1)
-  // is collapsed). submitPay creates the account + checkout and redirects
-  // to the single pre-card confirm (ResumeCapture: schedule + amount +
-  // Pay). Step 5 renders only a brief loading state (or an error + retry
-  // if initiateCheckout fails / bounces).
+  // interstitial screen. submitPay creates the account + checkout and
+  // redirects to the single pre-card confirm (ResumeCapture: schedule +
+  // amount + Pay). `handoff` swaps the Verify step's OTP body for a
+  // button-level "Setting up…" spinner (or an error + retry if
+  // initiateCheckout fails / bounces) — the user never leaves this step
+  // for a standalone loading page.
   function handleVerified() {
-    setStep(5);
+    setHandoff(true);
     submitPay();
   }
 
@@ -372,9 +390,10 @@ export default function CheckoutForm({
     if (!ok) {
       setError('Please complete the required fields highlighted above.');
       if (firstInvalid) {
-        // The invalid field lives on step 3 — bounce back so the
-        // patient sees the inline errors next to the inputs.
-        setStep(3);
+        // The invalid field lives on the Details step (2) — bounce back
+        // so the patient sees the inline errors next to the inputs.
+        setHandoff(false);
+        setStep(2);
         requestAnimationFrame(() => focusAndScrollTo(`checkout-${String(firstInvalid)}`));
       }
       return;
@@ -411,18 +430,20 @@ export default function CheckoutForm({
           if (result.error === 'verify_phone_required') {
             // Verification row is missing or stale (>30 min).
             // resetOtpStep remounts the PhoneOtpStep so its auto-send
-            // re-fires.
+            // re-fires. Clear the hand-off so the OTP body shows again.
+            setHandoff(false);
             resetOtpStep();
-            setStep(4);
+            setStep(3);
             setError(null);
             return;
           }
           if (result.error === 'missing_salary_day') {
             // Server couldn't source a salary_day from the profile
             // and we didn't send one. Force the inline picker on and
-            // bounce back to Step 2 with a clear message.
+            // bounce back to the Plan step (1) with a clear message.
+            setHandoff(false);
             setForceSalaryDayPicker(true);
-            setStep(2);
+            setStep(1);
             setError('Please pick when you get paid — this saves to your profile for future bills too.');
             return;
           }
@@ -465,41 +486,7 @@ export default function CheckoutForm({
         <BillChip practiceName={practiceName} totalAmount={totalAmount} />
       </div>
 
-      {/* ── Step 1: bill review ──────────────────────────────────────── */}
-      {step === 1 && (
-        <StepShell
-          icon="bill"
-          heading="You have a bill to settle"
-          subhead={`From ${practiceName}. Pay it in 2 or 3 instalments — interest-free.`}
-          actions={<PrimaryButton onClick={() => setStep(2)}>Review my plan</PrimaryButton>}
-        >
-          <div className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-5 sm:p-6 text-center">
-            <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0]">
-              Amount due
-            </p>
-            <p className="mt-2 text-4xl font-semibold tabular-nums text-[#13294B]">
-              {formatRand(totalAmount)}
-            </p>
-            {(invoiceNumber || practiceReference) && (
-              <div className="mt-3 flex gap-2 flex-wrap justify-center">
-                {invoiceNumber && (
-                  <span className="font-mono text-xs text-[#3A4B66] bg-white border border-[#E5E9F0] rounded-full px-2.5 py-0.5">
-                    {invoiceNumber}
-                  </span>
-                )}
-                {practiceReference && (
-                  <span className="font-mono text-xs text-[#3A4B66] bg-white border border-[#E5E9F0] rounded-full px-2.5 py-0.5">
-                    {practiceReference}
-                  </span>
-                )}
-              </div>
-            )}
-            <p className="mt-3 text-xs text-[#7A8AA0]">to {email}</p>
-          </div>
-        </StepShell>
-      )}
-
-      {/* ── Step 2: plan + salary day ───────────────────────────────────
+      {/* ── Step 1: plan + salary day ───────────────────────────────────
           Plan choice is rendered by <PlanPickerCards/> — a presentation-
           only restyle of the previous radio-button grid. The cards show
           the hero per-instalment amount, the "N payments on your salary
@@ -508,19 +495,12 @@ export default function CheckoutForm({
           State (planType, setPlanType) and the per-instalment amount
           come from THIS component's existing values (previewInstalments
           + useState above) — the cards never recompute. */}
-      {step === 2 && (
+      {step === 1 && (
         <StepShell
           icon="calendar"
           heading="Choose how to split your bill"
-          subhead="Interest-free, on the days you get paid."
-          actions={
-            <div className="flex items-center justify-between gap-4">
-              <SecondaryButton onClick={() => setStep(1)}>← Back</SecondaryButton>
-              <div className="flex-1 max-w-xs ml-auto">
-                <PrimaryButton onClick={() => setStep(3)}>Looks good</PrimaryButton>
-              </div>
-            </div>
-          }
+          subhead={`From ${practiceName}. Interest-free, on the days you get paid.`}
+          actions={<PrimaryButton onClick={() => setStep(2)}>Looks good</PrimaryButton>}
         >
           <PlanPickerCards
             totalAmount={totalAmount}
@@ -560,14 +540,14 @@ export default function CheckoutForm({
         </StepShell>
       )}
 
-      {/* ── Step 3: details (blur-validated via shared hook) ─────────── */}
-      {step === 3 && (
+      {/* ── Step 2: details (blur-validated via shared hook) ─────────── */}
+      {step === 2 && (
         <StepShell
           icon="idcard"
           heading="Just your details"
           actions={
             <div className="flex items-center justify-between gap-4">
-              <SecondaryButton onClick={() => setStep(2)}>← Back</SecondaryButton>
+              <SecondaryButton onClick={() => setStep(1)}>← Back</SecondaryButton>
               <div className="flex-1 max-w-xs ml-auto">
                 <PrimaryButton onClick={handleContinueFromDetails}>Continue to pay</PrimaryButton>
               </div>
@@ -683,15 +663,16 @@ export default function CheckoutForm({
         </StepShell>
       )}
 
-      {/* ── Step 4: phone OTP verification (shared component) ───────────
+      {/* ── Step 3: phone OTP verification (shared component) ───────────
           Visual identity = checkout's StepShell chrome. The shared
           PhoneOtpStep owns the input + auto-send + resend + verify
           + error-mapping; we pass it the checkout-keyed server actions
           and a shell render-prop that wraps the body in StepShell.
           The key={otpStepKey} forces a remount on Change-number /
           verify_phone_required so auto-send re-fires for the new
-          (token, phone) pair. */}
-      {step === 4 && (
+          (token, phone) pair. On verify, `handoff` flips and the block
+          below replaces this OTP body with a button-level spinner. */}
+      {step === 3 && !handoff && (
         <PhoneOtpStep
           key={otpStepKey}
           phoneDisplay={details.phone}
@@ -712,48 +693,59 @@ export default function CheckoutForm({
         />
       )}
 
-      {/* ── Step 5: payment hand-off (brief loading, no interstitial) ──
-          The redundant "Continue to payment" screen is collapsed: OTP
-          verification fires submitPay directly (handleVerified), so this
-          step is only a short loading state while the account + checkout
-          are created, then a server redirect to the SINGLE pre-card
-          confirm (ResumeCapture: schedule + amount + Pay → widget). If
-          initiateCheckout errors, we surface it here with a retry. */}
-      {step === 5 && (
+      {/* ── Step 3 hand-off (button-level loading — NOT a standalone page) ──
+          The redundant "Continue to payment" / full-page loading screen
+          is gone. On OTP verify, `handoff` flips and this block
+          replaces the OTP body IN PLACE: a spinner ON the pay button
+          ("Setting up…") while initiateCheckout creates the account +
+          checkout, then a redirect to the SINGLE pre-card confirm
+          (ResumeCapture: schedule + amount + Pay → widget). If
+          initiateCheckout errors, we surface it here with a retry — still
+          no separate page. verify_phone_required / missing_salary_day
+          clear `handoff` and bounce to the relevant earlier step. */}
+      {step === 3 && handoff && (
         <StepShell
           icon="card"
-          heading={error ? 'Let’s try that again' : 'Setting up your payment…'}
-          subhead={error ? undefined : 'One moment — creating your account and secure checkout.'}
+          heading={error ? 'Let’s try that again' : 'Almost there'}
+          subhead={error ? undefined : 'No charge yet — your card comes next.'}
           actions={
             error ? (
               <div className="space-y-3">
                 <PrimaryButton onClick={submitPay} disabled={isPending || redirecting}>
-                  {(isPending || redirecting) ? 'Setting up payment…' : 'Try again'}
+                  {(isPending || redirecting) ? 'Setting up…' : 'Try again'}
                 </PrimaryButton>
                 <div className="flex justify-center">
-                  {/* Back goes to Details (3), skipping Verify on the
-                      return — the patient is already verified here. */}
-                  <SecondaryButton onClick={() => setStep(3)} disabled={isPending || redirecting}>← Back</SecondaryButton>
+                  {/* Back goes to Details (2); the patient stays verified,
+                      so re-verification isn't forced on the return. */}
+                  <SecondaryButton
+                    onClick={() => { setHandoff(false); setStep(2); }}
+                    disabled={isPending || redirecting}
+                  >
+                    ← Back
+                  </SecondaryButton>
                 </div>
               </div>
-            ) : undefined
+            ) : (
+              // The loading lives ON the button they just used — no
+              // interstitial screen. Disabled + spinner + "Setting up…".
+              <PrimaryButton disabled>
+                <span className="inline-flex items-center justify-center gap-2">
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
+                  </svg>
+                  Setting up…
+                </span>
+              </PrimaryButton>
+            )
           }
         >
           {!error && (
-            <div
-              className="rounded-2xl bg-[#FAFBFD] border border-[#E5E9F0] p-6 flex items-center gap-3"
-              data-testid="checkout-handoff-loading"
-            >
-              <svg className="w-5 h-5 text-[#15A89E] animate-spin shrink-0" fill="none" viewBox="0 0 24 24" aria-hidden>
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
-              </svg>
-              <p className="text-sm text-[#3A4B66]">
-                No charge yet — you&apos;ll confirm your{' '}
-                <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span> first
-                instalment and enter your card on the next screen.
-              </p>
-            </div>
+            <p className="text-center text-sm text-[#3A4B66]" data-testid="checkout-handoff-loading">
+              No charge yet — you&apos;ll confirm your{' '}
+              <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span> first
+              instalment and enter your card on the next screen.
+            </p>
           )}
 
           {error && (

@@ -70,6 +70,32 @@ describe('PlanPickerCards — both options render with the supplied per-instalme
   });
 });
 
+describe('PlanPickerCards — stacked, 3-payment first (the pre-selected default)', () => {
+  it('renders the 3-payment card FIRST in DOM order (on top of the stack)', () => {
+    setup();
+    const radios = screen.getAllByRole('radio');
+    // DOM order === visual top-to-bottom for a single-column stack.
+    expect(radios[0].getAttribute('data-testid')).toBe('plan-card-3');
+    expect(radios[1].getAttribute('data-testid')).toBe('plan-card-2');
+  });
+
+  it('cards are STACKED vertically (single column — never a 2-up grid)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { resolve } = require('node:path') as typeof import('node:path');
+    const src = readFileSync(
+      resolve(process.cwd(), 'app/checkout/[token]/_components/PlanPickerCards.tsx'),
+      'utf8',
+    );
+    // The radiogroup is a single-column grid. No side-by-side breakpoint.
+    expect(src).toMatch(/grid grid-cols-1(?![^"']*sm:grid-cols-2)/);
+    expect(src).not.toMatch(/sm:grid-cols-2/);
+    // And the option order is 3 then 2.
+    expect(src).toMatch(/const PLAN_OPTIONS = \[3, 2\] as const/);
+  });
+});
+
 describe('PlanPickerCards — load-bearing trust + honest cadence copy', () => {
   it('"No interest or fees" appears on BOTH cards', () => {
     setup();
