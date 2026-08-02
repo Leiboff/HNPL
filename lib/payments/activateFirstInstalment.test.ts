@@ -203,24 +203,34 @@ describe('activateFirstInstalment — error surfacing', () => {
   });
 });
 
-describe('activateFirstInstalment — pending status is NOT activated by caller', () => {
-  // Sanity check on the CONTRACT (not the helper itself): the sync path
-  // must only call this on Peach's 'success' branch. 'pending' — where
-  // Peach hasn't confirmed yet — should NOT hit this helper. Pin the
-  // downstream file so a future refactor doesn't add a `pending` call.
-  it('is only called from success paths — not pending', async () => {
+describe('first-instalment activation — only on success, never pending/rejected', () => {
+  // The saved-card first instalment is now a customer-present CIT via
+  // Checkout V2 one-click; activation happens on the /patient/
+  // payment-complete return route (after the widget + 3DS resolve), NOT
+  // synchronously in payWithSavedCard. Pin that the return route
+  // activates ONLY on the classified-success branch.
+  it('payment-complete activates only on the success branch', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('app/patient/payment-complete/page.tsx', 'utf8'),
+    );
+    const successIdx  = src.indexOf("c === 'success'");
+    const activateIdx = src.indexOf('activateFirstInstalmentFromStatus(', successIdx);
+    expect(successIdx).toBeGreaterThan(0);
+    expect(activateIdx).toBeGreaterThan(successIdx);
+    // The rejected branch renders a card and does NOT activate.
+    const rejectedBranch = src.slice(src.indexOf("c === 'rejected'"));
+    expect(rejectedBranch).not.toMatch(/activateFirstInstalmentFromStatus\(/);
+  });
+
+  it('payWithSavedCard no longer activates inline — it hands off to the widget', async () => {
     const src = await import('node:fs').then((fs) =>
       fs.readFileSync('app/patient/actions.ts', 'utf8'),
     );
-    // 'pending' branch logs but does not invoke activateFirstInstalment.
-    const pendingBranch = src.slice(src.indexOf('STEP 6 PENDING'));
-    expect(pendingBranch).not.toMatch(/activateFirstInstalment/);
-    // The 'success' branch DOES.
-    const successBranch = src.slice(
-      src.indexOf("chargeResult.status === 'success'"),
-      src.indexOf("STEP 6 PENDING"),
-    );
-    expect(successBranch).toMatch(/activateFirstInstalment/);
+    const fnStart = src.indexOf('export async function payWithSavedCard');
+    const fnEnd   = src.indexOf('export async function', fnStart + 1);
+    const body    = src.slice(fnStart, fnEnd === -1 ? src.length : fnEnd);
+    expect(body).not.toMatch(/activateFirstInstalment\(/);
+    expect(body).toContain('provider.createCheckout');
   });
 });
 
@@ -234,13 +244,14 @@ describe('sync + webhook cannot double-activate — pins on caller', () => {
     expect(src).not.toMatch(/async function activateFirstPayment/);
   });
 
-  it("sync path awaits activation BEFORE STEP 6 SUCCESS log so a throw doesn't succeed silently", async () => {
+  it('the return route awaits the shared helper + keeps the write-once anchor guard', async () => {
     const src = await import('node:fs').then((fs) =>
-      fs.readFileSync('app/patient/actions.ts', 'utf8'),
+      fs.readFileSync('app/patient/payment-complete/page.tsx', 'utf8'),
     );
-    const activateIdx = src.indexOf('await activateFirstInstalment');
-    const successIdx  = src.indexOf('STEP 6 SUCCESS');
-    expect(activateIdx).toBeGreaterThan(0);
-    expect(successIdx).toBeGreaterThan(activateIdx);
+    // The return route reuses the SAME activateFirstInstalment helper the
+    // webhook uses, so the two paths cannot drift; and the CIT-root stamp
+    // is write-once guarded so a racing webhook is a no-op.
+    expect(src).toMatch(/await activateFirstInstalment\(/);
+    expect(src).toMatch(/\.is\('peach_initial_transaction_id',\s*null\)/);
   });
 });

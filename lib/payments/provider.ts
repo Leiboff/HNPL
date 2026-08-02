@@ -127,6 +127,26 @@ export type CheckoutCreateParams = {
   // fields, so a caller can pass them without a client change.
   defaultPaymentMethod?: 'CARD';
   forceDefaultMethod?:   boolean;
+  // ── One-click on a STORED card (Peach V2 checkout tokenisation) ────
+  //
+  // For a saved-card first instalment we want a CUSTOMER-PRESENT (CIT)
+  // charge with 3DS — the only surface that can authenticate a stored
+  // card and establish the stored-credential chain root
+  // (cardholderInitiatedTransactionId). The recurring /v1 API is MIT
+  // (server-to-server) and cannot do 3DS, so a CIT-on-file charge MUST
+  // run through Checkout V2 with the existing token passed as a
+  // cardToken. The widget re-presents the KNOWN card for a mostly-
+  // frictionless one-click (no re-enter-card form).
+  //
+  // Recipe (developer.peachpayments.com/docs/checkout-tokenisation):
+  //   createRegistration true + allowStoredCards true + cardTokens:[…].
+  // The resulting status returns the CIT id (providerPaymentId) →
+  // stamp plans.peach_initial_transaction_id so instalments 2-N charge
+  // rooted MIT INSTALLMENT (chargeInstalment falls back to UNSCHEDULED
+  // only when that column is null — reg-only cards never charged CIT).
+  cardTokens?:           string[];    // Existing Peach registration ids to offer for one-click.
+  allowStoredCards?:     boolean;     // Required alongside cardTokens to enable one-click.
+  requireCvv?:           boolean;     // Force CVV on the one-click (default: acquirer/backend config).
   // Peach V2 /v2/checkout standingInstruction — the V2 schema only
   // (developer.peachpayments.com/reference/post_v2-checkout).
   //

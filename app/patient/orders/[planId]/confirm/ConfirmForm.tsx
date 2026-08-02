@@ -6,9 +6,10 @@ import { useRouter } from 'next/navigation';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { payWithSavedCard, initializeCardRegistration } from '@/app/patient/actions';
-// Card-add (Flow B) mounts the SAME Checkout V2 widget as every other
-// customer-present surface — the card-vault runs on the zero-amount PA
-// registration recipe (see provider.createCardRegistration).
+// Every customer-present surface here mounts the SAME Checkout V2
+// PeachWidget: card-add (Flow B) runs the zero-amount PA registration
+// recipe (see provider.createCardRegistration), and PAYING with a saved
+// card is a one-click CIT (3DS-eligible on the known card).
 import PeachWidget from '@/app/_components/PeachWidget';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -98,6 +99,9 @@ export default function ConfirmForm({
   // initializeCardRegistration returns a checkoutId. Null means "no
   // widget mounted".
   const [addCardWidget,  setAddCardWidget]  = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
+  // Checkout V2 one-click widget for PAYING with a saved card (CIT).
+  // Mounted after payWithSavedCard returns a checkoutId. Null = not paying.
+  const [payWidget,      setPayWidget]      = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
 
   // Card search status: 'polling' when we return from registration and no card visible yet
   const [cardSearchStatus, setCardSearchStatus] = useState<CardSearchStatus>(() => {
@@ -254,13 +258,16 @@ export default function ConfirmForm({
     setError(null);
 
     const result = await payWithSavedCard(planId, planType, selectedCardId);
-    if (result.error) {
-      setError(result.error);
+    if (result.error || !result.checkoutId || !result.shopperResultUrl) {
+      setError(result.error ?? 'Could not start the payment. Please try again.');
       setSubmitting(false);
       return;
     }
-    // Webhook activates the plan; redirect to orders so the patient sees the updated status
-    window.location.href = '/patient/orders';
+    // Saved-card first instalment is a CUSTOMER-PRESENT CIT: mount the
+    // Checkout V2 one-click widget (mostly frictionless 3DS on the known
+    // card). It completes on /patient/payment-complete, which activates
+    // the plan and roots the stored-credential chain.
+    setPayWidget({ checkoutId: result.checkoutId, shopperResultUrl: result.shopperResultUrl });
   }
 
   const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting && !wantsNewCard && !blocked;
@@ -268,6 +275,42 @@ export default function ConfirmForm({
   const busy         = submitting || addCardLoading;
 
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  // Paying with a saved card — the Checkout V2 one-click widget takes
+  // over the surface. It re-presents the KNOWN card for a mostly-
+  // frictionless 3DS (the bank may challenge), then navigates to
+  // /patient/payment-complete?checkoutId=… which activates the plan.
+  if (payWidget) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">{practiceName}</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            Confirm your first instalment. You may be asked by your bank to approve it.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <PeachWidget
+            checkoutId={payWidget.checkoutId}
+            entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
+            shopperResultUrl={payWidget.shopperResultUrl}
+          />
+          <button
+            type="button"
+            // The plan is now committed (pending_first_payment) with a
+            // checkout in flight, so returning to the stale confirm form
+            // would dead-end on a re-tap. Leave to orders instead, where
+            // the in-flight state shows and the patient can come back.
+            onClick={() => { window.location.href = '/patient/orders'; }}
+            className="mt-3 text-xs text-gray-500 underline hover:text-gray-700"
+            data-testid="confirm-pay-widget-cancel"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Peach widget takes over the surface while it's mounted. The
   // shopperResultUrl brings the patient back to the same route with

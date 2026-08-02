@@ -226,6 +226,64 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     })).rejects.toThrow(/positive integer/);
   });
 
+  it('one-click on a SAVED card — emits cardTokens + allowStoredCards (customer-present CIT)', async () => {
+    // The saved-card first instalment (payWithSavedCard) passes the
+    // stored token via cardTokens so the widget re-presents the KNOWN
+    // card for a mostly-frictionless 3DS one-click. allowStoredCards
+    // must accompany it (checkout-tokenisation reference). This is the
+    // ONLY way to run a CIT+3DS on a stored token — the recurring API
+    // is MIT/S2S.
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-oneclick' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({
+      amountCents:           25000,
+      merchantTransactionId: 'bnc1234567890abc',
+      currency:              'ZAR',
+      paymentType:           'DB',
+      createRegistration:    true,
+      cardTokens:            ['reg-saved-token-1'],
+      allowStoredCards:      true,
+      defaultPaymentMethod:  'CARD',
+      forceDefaultMethod:    true,
+      standingInstruction: {
+        mode:                 'INITIAL',
+        type:                 'INSTALLMENT',
+        expiry:               '2027-01-15',
+        frequency:            30,
+        numberOfInstallments: 3,
+      },
+    });
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.cardTokens).toEqual(['reg-saved-token-1']);
+    expect(chkBody.allowStoredCards).toBe(true);
+    expect(chkBody.createRegistration).toBe(true);
+    // Still card-only + rooted-INSTALLMENT SI (no OPPWA source).
+    expect(chkBody.defaultPaymentMethod).toBe('CARD');
+    expect(chkBody.standingInstruction).toEqual({
+      mode: 'INITIAL', type: 'INSTALLMENT', expiry: '2027-01-15', frequency: 30, numberOfInstallments: 3,
+    });
+    expect(chkBody.standingInstruction.source).toBeUndefined();
+  });
+
+  it('omits cardTokens / allowStoredCards on a normal new-card checkout', async () => {
+    const fake = scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-newcard' } },
+    ]);
+    const p = new PeachProvider();
+    await p.createCheckout({
+      amountCents: 9200,
+      merchantTransactionId: 'bnc1234567890abc',
+      standingInstruction: { mode: 'INITIAL', type: 'INSTALLMENT' },
+    });
+    const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
+    expect(chkBody.cardTokens).toBeUndefined();
+    expect(chkBody.allowStoredCards).toBeUndefined();
+  });
+
   it('rejects a merchantTransactionId longer than 16 characters', async () => {
     scriptedFetch([]);
     const p = new PeachProvider();

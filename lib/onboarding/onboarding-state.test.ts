@@ -453,7 +453,9 @@ describe('Server-side acceptance gate — acceptPlan + payWithSavedCard', () => 
     const fnStart = PATIENT_ACT.indexOf('export async function payWithSavedCard');
     const body = PATIENT_ACT.slice(fnStart);
     const guardIdx    = body.indexOf('requireOnboarded(');
-    const chargeIdx   = body.indexOf('provider.chargeSavedCard');
+    // The saved-card first instalment is now a customer-present CIT via
+    // Checkout V2 one-click (provider.createCheckout), not a silent MIT.
+    const chargeIdx   = body.indexOf('provider.createCheckout');
     expect(guardIdx).toBeGreaterThan(0);
     expect(chargeIdx).toBeGreaterThan(guardIdx);
   });
@@ -467,45 +469,54 @@ describe('Server-side acceptance gate — acceptPlan + payWithSavedCard', () => 
   });
 });
 
-describe('payWithSavedCard — peach_initial_transaction_id anchor (0077 fix)', () => {
-  // Regression pin for the initial-transaction anchor bug: this MIT
-  // path used to stamp the column from chargeResult.providerPaymentId
-  // (which is the MIT's own top-level id). Because every writer of the
-  // column is .is(...null)-guarded (write-once), that wrong value
-  // locks in permanently and every later instalment threads a bogus
-  // reference. The fix: stamp from chargeResult.initialTransactionId
-  // (Peach's echoed chain root) and skip the write when the echo is
-  // absent — chargeInstalment / settle-actions fall back safely to
-  // UNSCHEDULED when the column is null.
+describe('payWithSavedCard — customer-present CIT via Checkout V2 one-click', () => {
+  // The saved-card first instalment is a CUSTOMER-PRESENT charge, so it
+  // must run as a CIT (3DS-eligible, liability-shifted) that BECOMES the
+  // stored-credential chain root — not the silent MIT UNSCHEDULED it used
+  // to send. A CIT on a stored card can only run through Checkout V2
+  // (the recurring /v1 API is MIT/S2S; 3DS impossible there), so we pass
+  // the saved token via cardTokens for a one-click. The CIT root is
+  // stamped in the /patient/payment-complete return route.
 
   const fnStart = PATIENT_ACT.indexOf('export async function payWithSavedCard');
   const body    = PATIENT_ACT.slice(fnStart);
+  const PAYMENT_COMPLETE = read('app/patient/payment-complete/page.tsx');
 
-  it('stamps peach_initial_transaction_id from chargeResult.initialTransactionId', () => {
-    // The .update({...}) block must reference initialTransactionId,
-    // and must NOT reach for providerPaymentId as an anchor source.
-    const stampBlock = body.match(
-      /\.update\(\{\s*peach_initial_transaction_id:\s*chargeResult\.[a-zA-Z]+\s*\}\)/,
+  it('issues a Checkout V2 one-click CIT (createCheckout with cardTokens), NOT a silent MIT', () => {
+    expect(body).toContain('provider.createCheckout');
+    expect(body).toContain('cardTokens:');
+    expect(body).toContain('allowStoredCards:');
+    // Must NOT charge the recurring MIT surface on this customer-present path.
+    expect(body).not.toContain('provider.chargeSavedCard');
+    expect(body).not.toContain("source: 'MIT'");
+  });
+
+  it('sends the V2 INITIAL/INSTALLMENT standing instruction (roots the chain), never UNSCHEDULED', () => {
+    expect(body).toMatch(/mode:\s*'INITIAL'/);
+    expect(body).toMatch(/type:\s*'INSTALLMENT'/);
+    expect(body).not.toContain("type:   'UNSCHEDULED'");
+  });
+
+  it('hands off to the widget (returns checkoutId), activation lands on the return route', () => {
+    expect(body).toContain('checkoutId');
+    expect(body).toContain('shopperResultUrl');
+    expect(body).toContain('/patient/payment-complete');
+  });
+
+  it('the return route stamps the CIT chain root from providerPaymentId, write-once', () => {
+    // status.providerPaymentId IS the customer-present CIT id — the
+    // initial transaction that established the stored credential.
+    const stampBlock = PAYMENT_COMPLETE.match(
+      /\.update\(\{\s*peach_initial_transaction_id:\s*status\.providerPaymentId\s*\}\)/,
     );
     expect(stampBlock).not.toBeNull();
-    expect(stampBlock![0]).toContain('chargeResult.initialTransactionId');
-    expect(stampBlock![0]).not.toContain('chargeResult.providerPaymentId');
+    // Race safety: the webhook may land the same value in parallel — the
+    // DB predicate enforces write-once.
+    expect(PAYMENT_COMPLETE).toMatch(/\.is\('peach_initial_transaction_id',\s*null\)/);
   });
 
-  it('gates the write on chargeResult.initialTransactionId being present', () => {
-    // Absent echo → no write. The if-guard immediately preceding the
-    // .update({peach_initial_transaction_id:...}) must be the same
-    // field the update reads from.
-    const guarded = body.match(
-      /if \(chargeResult\.initialTransactionId\) \{[\s\S]*?\.update\(\{\s*peach_initial_transaction_id:\s*chargeResult\.initialTransactionId\s*\}\)/,
-    );
-    expect(guarded).not.toBeNull();
-  });
-
-  it('keeps the write-once .is(peach_initial_transaction_id, null) guard', () => {
-    // Race safety: writers #1/#2 (checkout complete + webhook) may
-    // land in parallel; the DB predicate is what enforces write-once.
-    expect(body).toMatch(/\.is\('peach_initial_transaction_id',\s*null\)/);
+  it('the return route activates instalment 1 via the shared activateFirstInstalment helper', () => {
+    expect(PAYMENT_COMPLETE).toContain('activateFirstInstalment');
   });
 });
 
