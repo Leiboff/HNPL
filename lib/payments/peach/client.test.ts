@@ -563,6 +563,75 @@ describe('PeachProvider.getCheckoutStatus — 0-PA registration status (flat bod
   });
 });
 
+// ─── paymentBrand lives at the TOP LEVEL, not under card ───────────
+//
+// Peach returns paymentBrand as a SIBLING of the `card` object (proven
+// against the docs), NOT card.paymentBrand. Reading card.paymentBrand
+// returned undefined → every saved card got brand "Card" + a NULL
+// fingerprint → dedup was globally broken. toPaymentStatus must read
+// top-level paymentBrand first, tolerating a nested card.paymentBrand
+// as a fallback. last4/expiry genuinely live under card and are
+// unchanged.
+
+describe('PeachProvider.getCheckoutStatus — paymentBrand is top-level', () => {
+  const CARD_FIELDS = {
+    'card.last4Digits': '0042',
+    'card.expiryMonth': '02',
+    'card.expiryYear':  '2031',
+    'card.holder':      'Jane Doe',
+  };
+
+  it('reads the REAL shape: top-level paymentBrand, card.* for the rest', async () => {
+    scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout\/.+\/status$/, body: {
+        id: 'p-top', 'result.code': '000.100.110',
+        merchantTransactionId: 'bncTOPLEVELBRAND', amount: '92.00',
+        registrationId: 'reg-top',
+        paymentBrand: 'VISA',            // ← top-level, sibling of card
+        ...CARD_FIELDS,                  // ← NO card.paymentBrand at all
+      } },
+    ]);
+    const st = await new PeachProvider().getCheckoutStatus('chk-top');
+    expect(st.card?.brand).toBe('VISA');
+    // last4 + expiry still read correctly from card.*
+    expect(st.card?.last4).toBe('0042');
+    expect(st.card?.expiryMonth).toBe(2);
+    expect(st.card?.expiryYear).toBe(2031);
+  });
+
+  it('falls back to nested card.paymentBrand when no top-level paymentBrand', async () => {
+    scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout\/.+\/status$/, body: {
+        id: 'p-fb', 'result.code': '000.100.110',
+        merchantTransactionId: 'bncFALLBACKBRD', amount: '92.00',
+        registrationId: 'reg-fb',
+        'card.paymentBrand': 'MASTERCARD',   // only the nested one present
+        ...CARD_FIELDS,
+      } },
+    ]);
+    const st = await new PeachProvider().getCheckoutStatus('chk-fb');
+    expect(st.card?.brand).toBe('MASTERCARD');
+  });
+
+  it('top-level paymentBrand WINS when both are present', async () => {
+    scriptedFetch([
+      OAUTH_OK,
+      { url: /\/v2\/checkout\/.+\/status$/, body: {
+        id: 'p-both', 'result.code': '000.100.110',
+        merchantTransactionId: 'bncBOTHBRANDS', amount: '92.00',
+        registrationId: 'reg-both',
+        paymentBrand: 'VISA',
+        'card.paymentBrand': 'MASTERCARD',
+        ...CARD_FIELDS,
+      } },
+    ]);
+    const st = await new PeachProvider().getCheckoutStatus('chk-both');
+    expect(st.card?.brand).toBe('VISA');
+  });
+});
+
 // ─── getCheckoutStatus — V2 GET /v2/checkout/{id}/status ───────────
 
 describe('PeachProvider.getCheckoutStatus — V2 status API', () => {

@@ -175,7 +175,9 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
             plan.patient_id,
             {
               registrationId: payload.registrationId,
-              brand:          payload.card.paymentBrand ?? null,
+              // paymentBrand is top-level (sibling of `card`); fall back
+              // to nested only for older/test shapes.
+              brand:          payload.paymentBrand ?? payload.card.paymentBrand ?? null,
               last4:          payload.card.last4Digits  ?? null,
               expiryMonth:    payload.card.expiryMonth  ? Number(payload.card.expiryMonth) : null,
               expiryYear:     payload.card.expiryYear   ? Number(payload.card.expiryYear)  : null,
@@ -500,7 +502,9 @@ async function handleCardRegistrationSuccess(supabase: ReturnType<typeof svc>, p
       patientId,
       {
         registrationId: payload.registrationId,
-        brand:          payload.card.paymentBrand ?? null,
+        // paymentBrand is top-level (sibling of `card`); fall back to
+        // nested only for older/test shapes.
+        brand:          payload.paymentBrand ?? payload.card.paymentBrand ?? null,
         last4:          payload.card.last4Digits  ?? null,
         expiryMonth:    payload.card.expiryMonth  ? Number(payload.card.expiryMonth) : null,
         expiryYear:     payload.card.expiryYear   ? Number(payload.card.expiryYear)  : null,

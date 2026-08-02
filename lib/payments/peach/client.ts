@@ -375,7 +375,11 @@ function toPaymentStatus(body: Record<string, unknown>): PaymentStatus {
   const amount          = pickStr(body, 'amount');
   const registrationId  = pickStr(body, 'registrationId');
 
-  const cardBrand   = pickStr(body, 'card.paymentBrand');
+  // Peach returns paymentBrand at the TOP LEVEL (a sibling of `card`),
+  // NOT card.paymentBrand — proven against the docs. Read top-level
+  // first, tolerating a nested card.paymentBrand as a fallback for older
+  // / test shapes. last4 + expiry genuinely live under `card`.
+  const cardBrand   = pickStr(body, 'paymentBrand') ?? pickStr(body, 'card.paymentBrand');
   const cardLast4   = pickStr(body, 'card.last4Digits');
   const cardHolder  = pickStr(body, 'card.holder');
   const cardExpM    = pickStr(body, 'card.expiryMonth');
