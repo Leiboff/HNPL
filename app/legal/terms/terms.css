@@ -1,0 +1,154 @@
+/* ─── /legal/terms — styling for the Customer T&Cs page ──────────────────
+ *
+ * Restyle of the standalone terms HTML using the marketing surface's
+ * existing design tokens. Every rule is scoped under `.lp-root` so it
+ * reads the same --navy / --teal / --line / --muted / --card / --bg
+ * custom properties the landing + practices pages define (landing.css),
+ * rather than the source file's hard-coded hexes. Class names are
+ * prefixed `lp-terms-` so nothing collides with landing.css (notably
+ * its own `.wrap`, which is a max-width container, not this grid). */
+
+.lp-root .lp-terms-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px clamp(20px, 5vw, 40px) 80px;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 40px;
+}
+@media (max-width: 860px) {
+  .lp-root .lp-terms-wrap { grid-template-columns: 1fr; gap: 20px; }
+}
+
+/* ── Sticky side nav ─────────────────────────────────────────────────── */
+.lp-root .lp-terms-toc {
+  position: sticky;
+  top: 104px;
+  align-self: start;
+  max-height: calc(100vh - 130px);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.lp-root .lp-terms-toc h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin: 0 0 12px 4px;
+}
+.lp-root .lp-terms-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: sec;
+}
+.lp-root .lp-terms-toc a {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  border-left: 2px solid transparent;
+  counter-increment: sec;
+  text-decoration: none;
+}
+.lp-root .lp-terms-toc a::before {
+  content: counter(sec) ". ";
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.lp-root .lp-terms-toc a:hover { background: var(--tint); }
+.lp-root .lp-terms-toc a.active {
+  background: var(--tint);
+  border-left-color: var(--teal);
+  color: var(--navy);
+  font-weight: 600;
+}
+@media (max-width: 860px) {
+  .lp-root .lp-terms-toc {
+    position: static;
+    max-height: none;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+}
+
+/* ── Content card ────────────────────────────────────────────────────── */
+.lp-root .lp-terms-main {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 40px 44px;
+  box-shadow: var(--shadow);
+}
+@media (max-width: 560px) {
+  .lp-root .lp-terms-main { padding: 26px 20px; }
+}
+
+.lp-root .lp-terms-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0 0 6px;
+}
+.lp-root .lp-terms-sub {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.lp-root .lp-terms-intro {
+  margin: 22px 0 8px;
+  color: var(--ink);
+}
+.lp-root .lp-terms-intro strong { color: var(--navy); }
+
+.lp-root .lp-terms-section {
+  font-size: 20px;
+  color: var(--navy);
+  margin: 38px 0 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 110px;
+}
+.lp-root .lp-terms-num {
+  color: var(--teal);
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+.lp-root .lp-terms-clause {
+  margin: 0 0 11px;
+  padding-left: 52px;
+  position: relative;
+}
+.lp-root .lp-terms-clause .lp-terms-cn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+}
+.lp-root .lp-terms-clause.sub { padding-left: 84px; }
+.lp-root .lp-terms-clause.sub .lp-terms-cn { left: 34px; }
+.lp-root .lp-terms-clause strong { color: var(--navy); }
+
+.lp-root .lp-terms-callout {
+  background: var(--tint);
+  border: 1px solid rgba(21, 168, 158, 0.35);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 20px 0;
+  font-size: 15px;
+}
+.lp-root .lp-terms-callout b { color: var(--navy); }
+
+.lp-root .lp-terms-foot {
+  margin-top: 34px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.lp-root .lp-terms-backtop { display: inline-block; margin-top: 8px; }

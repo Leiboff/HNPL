@@ -797,10 +797,12 @@ describe('post-success UX — hero-first, skippable password, collapsed hand-off
 
   it('T&C consent capture preserved — the checkbox still gates on the Details step', () => {
     // Consent is a client-side required gate on Details (termsAccepted),
-    // captured BEFORE account creation — unchanged. It is not persisted to
-    // the DB (no terms column); the only DB acceptance record is
-    // patient_invitations.accepted_at, written by the completion page on
-    // payment success (untouched here).
+    // captured BEFORE account creation — unchanged. Since migration 0081
+    // the acceptance is ALSO recorded server-side by initiateCheckout:
+    // profiles.terms_accepted_at/terms_version on the profile upsert and
+    // plans.terms_accepted_at/terms_version on the plan activation (pinned
+    // in app/terms-acceptance.test.ts). The label now links to
+    // /legal/terms.
     expect(FORM_SRC).toMatch(/id="checkout-termsAccepted"/);
     expect(FORM_SRC).toMatch(/checked=\{details\.termsAccepted\}/);
     expect(FORM_SRC).toMatch(/Please accept the payment-plan terms/);

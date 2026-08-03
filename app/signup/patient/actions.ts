@@ -8,6 +8,7 @@ import {
   checkPassword,
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
+import { TERMS_VERSION } from '@/lib/legal/terms';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -29,11 +30,12 @@ import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 //   • salary_day (now in /onboarding/identity)
 
 export type PatientSignupInput = {
-  firstName:  string;
-  lastName:   string;
-  email:      string;
-  password:   string;
-  token?:     string;
+  firstName:     string;
+  lastName:      string;
+  email:         string;
+  password:      string;
+  token?:        string;
+  termsAccepted: boolean;
 };
 
 export type PatientSignupResult = {
@@ -49,11 +51,14 @@ export type PatientSignupResult = {
 };
 
 export async function signUpPatient(input: PatientSignupInput): Promise<PatientSignupResult> {
-  const { firstName, lastName, email, password, token } = input;
+  const { firstName, lastName, email, password, token, termsAccepted } = input;
 
   if (!firstName.trim())      return { error: 'First name is required.', success: false };
   if (!lastName.trim())       return { error: 'Last name is required.',  success: false };
   if (!isValidEmail(email))   return { error: 'Enter a valid email address.', success: false };
+  // Server-side gate: the T&C tick is enforced in the form, but the
+  // acceptance must be a server decision, not just a client checkbox.
+  if (!termsAccepted)         return { error: 'Please accept the betternow terms to continue.', success: false };
 
   // Password — minimum length + the two cheap guards (email-local-part
   // + common-password list). Same guardrails as before.
@@ -92,7 +97,7 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   // null and the user is unconfirmed until verifyOtp({type:'email'})
   // succeeds — the onboarding flow lands them at /onboarding/verify-email
   // to do that.
-  const { error: signUpError } = await supabase.auth.signUp({
+  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -106,6 +111,22 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
 
   if (signUpError) {
     return { error: signUpError.message ?? 'Sign up failed. Please try again.', success: false };
+  }
+
+  // Record T&C acceptance on the profile, server-side, at the moment of
+  // signup. The profile row is created synchronously by the
+  // on_auth_user_created trigger, so it exists by the time signUp
+  // returns; we stamp it with the version the customer agreed to
+  // (lib/legal/terms.ts). Best-effort: a stamp failure must not block
+  // account creation — the tick was already required above — so we log
+  // and continue rather than fail the signup.
+  const newUserId = signUpData.user?.id;
+  if (newUserId) {
+    const { error: termsErr } = await svc
+      .from('profiles')
+      .update({ terms_accepted_at: new Date().toISOString(), terms_version: TERMS_VERSION })
+      .eq('id', newUserId);
+    if (termsErr) console.warn('terms acceptance stamp on signup failed:', termsErr.message);
   }
 
   if (token) {

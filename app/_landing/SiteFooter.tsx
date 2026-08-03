@@ -29,7 +29,7 @@ export default function SiteFooter() {
           </div>
           <div className="col">
             <h5>Legal</h5>
-            <a href="#">Terms &amp; Conditions</a>
+            <Link href="/legal/terms">Terms &amp; Conditions</Link>
             <a href="#">Privacy Policy</a>
             <a href="#">PAIA Manual</a>
           </div>

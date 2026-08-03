@@ -120,11 +120,12 @@ export default function PatientSignupForm({ invitation, token }: Props) {
     setLoading(true);
     const emailTrimmed = fields.email.trim();
     const result = await signUpPatient({
-      firstName: fields.firstName.trim(),
-      lastName:  fields.lastName.trim(),
-      email:     emailTrimmed,
-      password:  fields.password,
-      token:     token ?? undefined,
+      firstName:     fields.firstName.trim(),
+      lastName:      fields.lastName.trim(),
+      email:         emailTrimmed,
+      password:      fields.password,
+      token:         token ?? undefined,
+      termsAccepted: fields.termsAccepted,
     });
     setLoading(false);
 
