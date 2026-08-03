@@ -23,7 +23,6 @@ import {
   WEBHOOK_REGISTRATION_DELETED,
   WEBHOOK_MIT_SI,
   V1_MIT_CHARGE_RESPONSE,
-  V1_REFUND_RESPONSE,
 } from './__fixtures__/capturedBodies';
 
 // ─── Peach captured-body extraction suite ───────────────────────────
@@ -253,16 +252,6 @@ describe('chargeSavedCard — NESTED /v1 MIT response extraction', () => {
     expect(res.providerPaymentId).toBe('pay-mit-1');
     expect(res.resultCode).toBe('000.100.110');
     expect(res.initialTransactionId).toBe('CIT-ROOT-1');
-  });
-});
-
-describe('refund — NESTED /v1 response extraction', () => {
-  it('reads result.code + id', async () => {
-    respondOnce(V1_REFUND_RESPONSE);
-    const res = await new PeachProvider().refund('pay-mit-1', 9200, 'bnr0123456789abc');
-    expect(res.status).toBe('success');
-    expect(res.providerRefundId).toBe('refund-1');
-    expect(res.resultCode).toBe('000.100.110');
   });
 });
 

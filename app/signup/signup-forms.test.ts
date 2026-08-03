@@ -227,7 +227,6 @@ const PORTAL_FILES = [
   'app/practice/members/page.tsx',
   'app/practice/setup/page.tsx',
   'app/admin/page.tsx',
-  'app/admin/refunds/page.tsx',
   'app/dashboard/page.tsx',
 ];
 

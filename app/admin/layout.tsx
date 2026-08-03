@@ -8,8 +8,9 @@ import InactivityGuard from '@/lib/auth/InactivityGuard';
 
 // Persistent shell for every /admin/* route — mirrors the patient
 // portal: sticky top bar with brand + logout, desktop left sidebar,
-// mobile bottom nav. Badge counts (pending practices, outstanding
-// refunds) are fetched once here and threaded into both nav variants.
+// mobile bottom nav. Badge counts (pending practices, overdue
+// collections, pending payouts) are fetched once here and threaded into
+// both nav variants.
 //
 // Layout-level admin authorization runs first; individual /admin/* pages
 // still keep their own auth checks as belt-and-braces (consistent with
@@ -35,16 +36,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const [
     { count: pendingPractices },
-    { count: outstandingRefunds },
     { count: overdueCollections },
     { count: pendingPayouts },
   ] = await Promise.all([
     supabase.from('practices').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    supabase
-      .from('refunds')
-      .select('*', { count: 'exact', head: true })
-      .in('status', ['initiated', 'pending'])
-      .lt('initiated_at', new Date(Date.now() - 60 * 60 * 1000).toISOString()),
     // Overdue = scheduled past due_date (cron hasn't picked up yet).
     // kind='instalment' so a settlement row (post-0058) never inflates
     // the sidebar badge — settlement rows are administrative artifacts,
@@ -57,7 +52,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const counts = {
     pendingPractices:    pendingPractices    ?? 0,
-    outstandingRefunds:  outstandingRefunds  ?? 0,
     overdueCollections:  overdueCollections  ?? 0,
     pendingPayouts:      pendingPayouts      ?? 0,
   };

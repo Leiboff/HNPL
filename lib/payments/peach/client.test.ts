@@ -995,42 +995,6 @@ describe('PeachProvider.deleteRegistration', () => {
   });
 });
 
-// ─── refund — RF (default) + RV (reversal) ─────────────────────────
-
-describe('PeachProvider.refund — POST /v1/payments/{id} on the recurring surface', () => {
-  it('defaults to paymentType=RF against the recurring entity', async () => {
-    const fake = scriptedFetch([{
-      url: /\/v1\/payments\/peach-payment-1/,
-      body: { id: 'rf-1', result: { code: '000.100.110' } },
-    }]);
-    const p = new PeachProvider();
-    const res = await p.refund('peach-payment-1', 9200, 'hnpl_rf_x');
-    expect(res.status).toBe('success');
-    expect(res.providerRefundId).toBe('rf-1');
-    const [url, init] = (fake.mock.calls[0] as unknown) as [string, RequestInit];
-    expect(url).toBe(`${RECURRING_URL}/v1/payments/peach-payment-1`);
-    expect(init.method).toBe('POST');
-    const body = String(init.body);
-    expect(body).toContain('paymentType=RF');
-    expect(body).toContain('amount=92.00');
-    expect(body).toContain('currency=ZAR');
-    expect(body).toContain('entityId=entity-REC');
-    expect(body).toContain('merchantTransactionId=hnpl_rf_x');
-  });
-
-  it('honours { paymentType: "RV" } for preauth reversal', async () => {
-    const fake = scriptedFetch([{
-      url: /\/v1\/payments\/peach-payment-2/,
-      body: { id: 'rv-1', result: { code: '000.100.110' } },
-    }]);
-    const p = new PeachProvider();
-    await p.refund('peach-payment-2', 9200, 'hnpl_rv_x', { paymentType: 'RV' });
-    const body = String(((fake.mock.calls[0] as unknown) as [string, RequestInit])[1].body);
-    expect(body).toContain('paymentType=RV');
-    expect(body).not.toContain('paymentType=RF');
-  });
-});
-
 // ─── Credential-separation invariant ────────────────────────────────
 //
 // The load-bearing property of the 0077 split: the recurring surface
@@ -1052,19 +1016,6 @@ describe('Credential separation — Checkout vs Recurring never mix', () => {
       standingInstruction: { mode: 'REPEATED', source: 'MIT', type: 'INSTALLMENT', initialTransactionId: 't' },
     });
     // No OAuth token fetch — recurring is authenticated with its own token.
-    for (const call of fake.mock.calls) {
-      const url = (call as unknown as [string])[0];
-      expect(url).not.toContain('/api/oauth/token');
-    }
-  });
-
-  it('refund makes NO OAuth call — recurring surface', async () => {
-    const fake = scriptedFetch([{
-      url: /\/v1\/payments\/pay-1/,
-      body: { id: 'rf-1', result: { code: '000.100.110' } },
-    }]);
-    const p = new PeachProvider();
-    await p.refund('pay-1', 100, 'hnpl_rf_z');
     for (const call of fake.mock.calls) {
       const url = (call as unknown as [string])[0];
       expect(url).not.toContain('/api/oauth/token');

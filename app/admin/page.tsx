@@ -47,7 +47,6 @@ export default async function AdminDashboardPage() {
     { count: suspendedPracticesCount },
     { count: totalPatientsCount },
     { count: activePlansCount },
-    { count: outstandingRefundsCount },
     { data: dueTodayRows },
     { data: overdueRows },
     { data: pendingPayoutRows },
@@ -61,7 +60,6 @@ export default async function AdminDashboardPage() {
     supabase.from('practices').select('*',     { count: 'exact', head: true }).eq('status', 'suspended'),
     supabase.from('profiles').select('*',      { count: 'exact', head: true }).eq('role', 'patient'),
     supabase.from('plans').select('*',         { count: 'exact', head: true }).eq('status', 'active'),
-    supabase.from('refunds').select('*',       { count: 'exact', head: true }).in('status', ['initiated', 'pending']),
     // All payment aggregations filter kind='instalment' so settlement
     // rows (kind='settlement', created by claim_plan_for_settlement in
     // 0058) don't double-count: a settle-entire-bill that collects 3
@@ -187,15 +185,6 @@ export default async function AdminDashboardPage() {
     });
   }
 
-  if ((outstandingRefundsCount ?? 0) > 0) {
-    attention.push({
-      key:    'refunds',
-      tone:   'warn',
-      label:  `${outstandingRefundsCount} refund${outstandingRefundsCount === 1 ? '' : 's'} outstanding`,
-      href:   '/admin/refunds',
-    });
-  }
-
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
 
@@ -232,7 +221,7 @@ export default async function AdminDashboardPage() {
         {attention.length === 0 ? (
           <p className="mt-2 text-sm text-gray-600">
             No pending practices, no overdue collections, no at-risk patients or practice books,
-            no payouts owed, no refunds outstanding.
+            no payouts owed.
           </p>
         ) : (
           <ul className="mt-3 space-y-2">

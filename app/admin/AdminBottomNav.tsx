@@ -8,7 +8,6 @@ import { usePathname } from 'next/navigation';
 
 type Counts = {
   pendingPractices:    number;
-  outstandingRefunds:  number;
   overdueCollections:  number;
   pendingPayouts:      number;
 };
@@ -63,17 +62,8 @@ function PayoutsIcon({ active }: { active: boolean }) {
   );
 }
 
-function RefundsIcon({ active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <polyline points="3 3 3 9 9 9" />
-    </svg>
-  );
-}
-
-// 6 items at 375px — each item is ~62px wide, still comfortable. We
-// drop a couple of labels to keep the row scan-friendly:
+// 5 items at 375px — each item is ~75px wide, comfortable. We drop a
+// couple of labels to keep the row scan-friendly:
 //   "Practices" → "Practice"   "Collections" → "Collect"
 const LINKS = [
   { href: '/admin',                          label: 'Home',        Icon: DashboardIcon                                                           },
@@ -81,7 +71,6 @@ const LINKS = [
   { href: '/admin/customers',                label: 'Customers',   Icon: CustomersIcon                                                            },
   { href: '/admin/collections?chip=overdue', label: 'Collect',     Icon: CollectionsIcon, countKey: 'overdueCollections' as const },
   { href: '/admin/payouts',                  label: 'Payouts',     Icon: PayoutsIcon,     countKey: 'pendingPayouts'     as const },
-  { href: '/admin/refunds',                  label: 'Refunds',     Icon: RefundsIcon,     countKey: 'outstandingRefunds' as const },
 ];
 
 export default function AdminBottomNav({ counts }: { counts: Counts }) {

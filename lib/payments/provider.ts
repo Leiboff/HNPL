@@ -218,13 +218,6 @@ export type PaymentStatus = {
   raw?: unknown;
 };
 
-export type RefundResult = {
-  status:                ChargeStatus;
-  providerRefundId?:     string;
-  resultCode?:           string;
-  raw?:                  unknown;
-};
-
 // ─── Card-registration surface (Flow B — same Checkout V2 door) ─────
 //
 // Card-add runs on the SAME Checkout V2 surface as Flow A, via the
@@ -293,29 +286,6 @@ export interface PaymentProvider {
    * auth error, swap to the checkout surface.
    */
   deleteRegistration(registrationId: string): Promise<{ ok: boolean; raw?: unknown }>;
-
-  /**
-   * Refund a prior payment by provider id. Peach spec (Manage payments):
-   *   POST /v1/payments/{id} with paymentType=RF (refund) — reduces a
-   *   prior debit; the standard flow for our DB (debit) instalments.
-   *   POST /v1/payments/{id} with paymentType=RV (reversal) — voids a
-   *   preauth (PA) that hasn't been captured yet. We only issue DB
-   *   today, so RF is the default; RV is exposed for future PA flows.
-   *
-   * TODO(dina): confirm from Dashboard whether a refund of a
-   * Checkout-V2-captured payment (i.e. instalment 1) must be booked
-   * against the Checkout entity or the recurring entity. The current
-   * default is 'recurring' — same channel MIT instalments 2+ live on.
-   * If Peach rejects a CIT refund routed to recurring, we'll need
-   * per-payment routing that mirrors the entity the original charge
-   * used (payments.payment_provider + the checkout/recurring split).
-   */
-  refund(
-    providerPaymentId: string,
-    amountCents: number,
-    merchantTransactionId: string,
-    opts?: { paymentType?: 'RF' | 'RV' },
-  ): Promise<RefundResult>;
 
   /**
    * Create a card-vault checkout (Flow B) on the Checkout V2 door using

@@ -12,7 +12,6 @@ import { usePathname } from 'next/navigation';
 
 type Counts = {
   pendingPractices:    number;
-  outstandingRefunds:  number;
   overdueCollections:  number;
   pendingPayouts:      number;
 };
@@ -23,7 +22,6 @@ const NAV_LINKS = [
   { href: '/admin/customers',                  label: 'Customers'                                                            },
   { href: '/admin/collections?chip=overdue',   label: 'Collections', countKey: 'overdueCollections'  as const                },
   { href: '/admin/payouts',                    label: 'Payouts',     countKey: 'pendingPayouts'      as const                },
-  { href: '/admin/refunds',                    label: 'Refunds',     countKey: 'outstandingRefunds'  as const                },
   { href: '/crm',                              label: 'CRM'                                                                  },
   { href: '/admin/sales-team',                 label: 'Sales team'                                                           },
 ];
