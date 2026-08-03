@@ -186,7 +186,7 @@ export const WEBHOOK_MIT_SI =
   '&standingInstruction.initialTransactionId=CIT-ROOT-1' +
   '&type=PAYMENT';
 
-// ─── /v1 recurring (MIT charge) + refund — NESTED JSON responses ────
+// ─── /v1 recurring MIT charge — NESTED JSON response ────────────────
 
 /**
  * MIT charge response (POST /v1/registrations/{id}/payments) — parsed
@@ -199,11 +199,6 @@ export const V1_MIT_CHARGE_RESPONSE = {
   standingInstruction: { initialTransactionId: 'CIT-ROOT-1' },
 };
 
-/** Refund response (POST /v1/payments/{id}) — nested. */
-export const V1_REFUND_RESPONSE = {
-  id:     'refund-1',
-  result: { code: '000.100.110', description: 'Request successfully processed' },
-};
 
 // ─── V2 initiate rejection — REAL capture (Phase 4) ─────────────────
 //

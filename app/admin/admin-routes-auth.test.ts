@@ -29,7 +29,6 @@ const ADMIN_PAGES = [
   'app/admin/payouts/page.tsx',
   'app/admin/practices/page.tsx',
   'app/admin/practices/[id]/page.tsx',
-  'app/admin/refunds/page.tsx',
 ];
 
 describe('admin routes — server-side admin auth pattern', () => {

@@ -104,9 +104,14 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
   }
   const supabase = svc();
 
-  // Refund events arrive as PAYMENT + paymentType=RF. Route them.
-  if (payload.paymentType === 'RF') {
-    await handleRefundSuccess(supabase, payload);
+  // Refund/reversal events (PAYMENT + paymentType RF/RV) are ignored:
+  // the product has no refund flow (nothing initiates one), so there's
+  // nothing to reconcile. Safe no-op — log and return rather than fall
+  // through to the payment-row lookup (an RF ref matches no payment).
+  if (payload.paymentType === 'RF' || payload.paymentType === 'RV') {
+    console.log('[peach-webhook] ignoring refund/reversal event (no refund flow)', {
+      reference, paymentType: payload.paymentType,
+    });
     return;
   }
 
@@ -331,8 +336,12 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
   }
   const supabase = svc();
 
-  if (payload.paymentType === 'RF') {
-    await handleRefundFailure(supabase, payload);
+  // Refund/reversal events are ignored — no refund flow exists (see the
+  // success path). Safe no-op.
+  if (payload.paymentType === 'RF' || payload.paymentType === 'RV') {
+    console.log('[peach-webhook] ignoring refund/reversal failure event (no refund flow)', {
+      reference, paymentType: payload.paymentType,
+    });
     return;
   }
 
@@ -647,46 +656,6 @@ async function handleSettlementChargeFailed(
       tag:   `settlement:${settlement.id}:failed`,
     });
   }
-}
-
-// ─── Refund lifecycle ──────────────────────────────────────────────
-
-async function handleRefundSuccess(supabase: ReturnType<typeof svc>, payload: WebhookPaymentPayload): Promise<void> {
-  const txRef      = payload.merchantTransactionId;
-  const peachId    = payload.id ?? null;
-  if (!txRef) return;
-  const now = new Date().toISOString();
-  await supabase
-    .from('refunds')
-    .upsert({
-      transaction_reference: txRef,
-      amount_cents:          payload.amount ? Math.round(Number(payload.amount) * 100) : 100,
-      reason:                'card_registration',
-      status:                'processed',
-      peach_refund_id:       peachId,
-      processed_at:          now,
-      last_event_at:         now,
-      raw_event:             payload,
-    }, { onConflict: 'transaction_reference' });
-}
-
-async function handleRefundFailure(supabase: ReturnType<typeof svc>, payload: WebhookPaymentPayload): Promise<void> {
-  const txRef      = payload.merchantTransactionId;
-  const peachId    = payload.id ?? null;
-  if (!txRef) return;
-  const now = new Date().toISOString();
-  await supabase
-    .from('refunds')
-    .upsert({
-      transaction_reference: txRef,
-      amount_cents:          payload.amount ? Math.round(Number(payload.amount) * 100) : 100,
-      reason:                'card_registration',
-      status:                'failed',
-      peach_refund_id:       peachId,
-      failure_reason:        payload.result?.description ?? 'Refund failed',
-      last_event_at:         now,
-      raw_event:             payload,
-    }, { onConflict: 'transaction_reference' });
 }
 
 // ─── Registration events ───────────────────────────────────────────

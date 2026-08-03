@@ -15,7 +15,6 @@
 //     Used by:
 //       - chargeSavedCard()      — POST /v1/registrations/{id}/payments
 //       - deleteRegistration()   — DELETE /v1/registrations/{id}
-//       - refund()               — POST /v1/payments/{id}
 //     entityId on every request = PEACH_RECURRING_ENTITY_ID.
 //
 // Env vars (all server-side; the NEXT_PUBLIC_ ones are widget-only):
@@ -47,7 +46,6 @@ import type {
   CardRegistrationCreateParams,
   CardRegistrationCreated,
   PaymentStatus,
-  RefundResult,
 } from '../provider';
 import { classifyResultCode } from './resultCodes';
 
@@ -612,46 +610,6 @@ export class PeachProvider implements PaymentProvider {
     }
   }
 
-  async refund(
-    providerPaymentId:     string,
-    amountCents:           number,
-    merchantTransactionId: string,
-    opts?: { paymentType?: 'RF' | 'RV' },
-  ): Promise<RefundResult> {
-    // Peach spec (Manage payments): POST /v1/payments/{id} with
-    // paymentType=RF (refund of a DB) or RV (reversal of a PA).
-    // TODO(dina): confirm from Dashboard whether refunds of a V2
-    // Checkout-captured payment must be booked against the Checkout
-    // entity. Current default: recurring entity — matches where
-    // instalments 2+ live.
-    const paymentType: 'RF' | 'RV' = opts?.paymentType ?? 'RF';
-    const body = toFormBody({
-      entityId:              recurringEntity(),
-      amount:                formatAmountCents(amountCents),
-      currency:              'ZAR',
-      paymentType,
-      merchantTransactionId,
-    });
-    try {
-      const res = await recurringFetch(
-        'POST',
-        `/v1/payments/${encodeURIComponent(providerPaymentId)}`,
-        body,
-      ) as PeachPaymentBody;
-      return {
-        status:            classifyResultCode(res.result?.code),
-        providerRefundId:  res.id,
-        resultCode:        res.result?.code,
-        raw:               res,
-      };
-    } catch (err) {
-      return {
-        status:            'error',
-        resultCode:        undefined,
-        raw:               err instanceof Error ? err.message : String(err),
-      };
-    }
-  }
 
   // ─── Card-vault registration (Flow B — SAME V2 door) ─────────────
   //
