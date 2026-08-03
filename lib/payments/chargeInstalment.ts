@@ -1,5 +1,5 @@
 import { getPaymentProvider } from './provider';
-import { chargeAmountCents } from './dunning';
+import { chargeAmountCents, dunningFeesEnabled } from './dunning';
 import { instalmentAttemptRef } from './peach/refs';
 import { logPeachRawResponse } from './peach/logRawResponse';
 
@@ -180,7 +180,22 @@ export async function attemptChargeInstalment(
   //       interpretation lives in the provider; the atomic-claim
   //       primitive doesn't need to know it. A transport error (any
   //       throw / status='error') leaves the row in 'processing'.
-  const amountChargedCents = chargeAmountCents(Number(current.amount), previousFees);
+  //
+  // Fee gate (compliance): while dunningFeesEnabled() is OFF, we charge
+  // the instalment principal ONLY — never any accrued dunning fee. This
+  // is the load-bearing charge-point gate: it protects BOTH rows failing
+  // after the gate deployed (whose ledger stays 0 anyway) AND any legacy
+  // row that accrued dunning_fees_cents BEFORE the gate — that fee is
+  // never debited while OFF. dunning_fees_cents itself is left untouched
+  // (the ledger is not erased, just not charged).
+  const feesEnabled  = dunningFeesEnabled();
+  const feesToCharge = feesEnabled ? previousFees : 0;
+  if (!feesEnabled && previousFees > 0) {
+    console.log('[chargeInstalment] accrued dunning fee NOT charged [gated]', {
+      paymentId, accruedFeesCents: previousFees,
+    });
+  }
+  const amountChargedCents = chargeAmountCents(Number(current.amount), feesToCharge);
 
   // Standing instruction for a fixed-instalment MIT charge:
   //

@@ -15,7 +15,8 @@ import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient as saveCardForPatientPeach } from '@/lib/payments/peach/saveCardForPatient';
 import { sendPushToUser } from '@/lib/notifications/sendPush';
-import { advanceLadderAfterFailure, chargeAmountCents } from '@/lib/payments/dunning';
+import { advanceLadderAfterFailure, chargeAmountCents, dunningFeesEnabled } from '@/lib/payments/dunning';
+import { MAX_ATTEMPTS } from '@/lib/payments/chargeInstalment';
 import {
   notifyAttemptFailed,
   notifyDefaulted,
@@ -411,7 +412,43 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     today:                           todayUtc,
   });
 
-  const newStatus: 'failed' | 'defaulted' = ladder.terminalStatus ?? 'failed';
+  // ── Fee gate (compliance). While fees are OFF the ladder advances and
+  //    retries schedule exactly as normal — but no fee is persisted
+  //    (dunning_fees_cents is NOT grown) and no fee is charged. The
+  //    terminal `defaulted` still lands (see the two-signal logic in the
+  //    gated branch below). When fees are ON, the pure ladder's rand-cap
+  //    terminal is authoritative.
+  const feesEnabled    = dunningFeesEnabled();
+  const feeThisAttempt = feesEnabled ? ladder.feeAppliedThisAttempt : 0;
+  const feesCentsAfter = feesEnabled ? ladder.dunningFeesCentsAfter  : feesBefore;
+
+  let newStatus: 'failed' | 'defaulted';
+  let nextAttemptDate: string | null;
+  let capReached: boolean;
+  if (feesEnabled) {
+    newStatus       = ladder.terminalStatus ?? 'failed';
+    nextAttemptDate = ladder.nextAttemptDate;
+    capReached      = ladder.capReached;
+  } else {
+    // Two terminal signals while gated:
+    //   • ladder.capReached — fires when a SINGLE would-be fee already
+    //     meets the cap (small bills: 50%-of-plan cap ≤ one fee). This
+    //     is correct even with the ledger frozen at 0, because one fee
+    //     alone reaches the cap — matches the ungated early-default.
+    //   • the MAX_ATTEMPTS backstop — for normal bills, where the cap
+    //     needs multiple fees to accumulate (which the frozen ledger
+    //     can't track), we terminate at the attempt-count backstop.
+    const backstopHit = Number(payment.retry_count ?? 0) >= MAX_ATTEMPTS;
+    capReached      = ladder.capReached || backstopHit;
+    newStatus       = capReached ? 'defaulted' : 'failed';
+    nextAttemptDate = capReached ? null : ladder.nextAttemptDate;
+    if (ladder.feeAppliedThisAttempt > 0) {
+      console.log(
+        `[peach-webhook] default fee ${formatRandCents(ladder.feeAppliedThisAttempt / 100)} WOULD apply [gated]`,
+        { paymentId: payment.id, reference },
+      );
+    }
+  }
 
   await supabase
     .from('payments')
@@ -419,8 +456,8 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
       status:                      newStatus,
       failure_reason:              failureReason,
       consecutive_failed_attempts: ladder.consecutiveFailedAttemptsAfter,
-      dunning_fees_cents:          ladder.dunningFeesCentsAfter,
-      next_attempt_date:           ladder.nextAttemptDate,
+      dunning_fees_cents:          feesCentsAfter,
+      next_attempt_date:           nextAttemptDate,
     })
     .eq('id', payment.id);
 
@@ -434,11 +471,11 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
         instalment_number:                 payment.instalment_number,
         failure_reason:                    failureReason,
         consecutive_failed_attempts_after: ladder.consecutiveFailedAttemptsAfter,
-        next_attempt_date:                 ladder.nextAttemptDate,
+        next_attempt_date:                 nextAttemptDate,
       },
     },
   ];
-  if (ladder.feeAppliedThisAttempt > 0) {
+  if (feeThisAttempt > 0) {
     planEventInserts.push({
       plan_id:    plan.id,
       patient_id: plan.patient_id,
@@ -446,12 +483,12 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
       payload: {
         payment_id:               payment.id,
         instalment_number:        payment.instalment_number,
-        fee_applied_cents:        ladder.feeAppliedThisAttempt,
-        dunning_fees_cents_after: ladder.dunningFeesCentsAfter,
+        fee_applied_cents:        feeThisAttempt,
+        dunning_fees_cents_after: feesCentsAfter,
       },
     });
   }
-  if (ladder.capReached) {
+  if (capReached) {
     planEventInserts.push({
       plan_id:    plan.id,
       patient_id: plan.patient_id,
@@ -459,7 +496,7 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
       payload: {
         payment_id:               payment.id,
         instalment_number:        payment.instalment_number,
-        outstanding_amount_cents: chargeAmountCents(Number(payment.amount), ladder.dunningFeesCentsAfter),
+        outstanding_amount_cents: chargeAmountCents(Number(payment.amount), feesCentsAfter),
       },
     });
   }
@@ -468,22 +505,22 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
   await notifyAttemptFailed(supabase, {
     paymentId:                       payment.id,
     consecutiveFailedAttemptsBefore: counterBefore,
-    feeAppliedCents:                 ladder.feeAppliedThisAttempt,
-    dunningFeesCentsAfter:           ladder.dunningFeesCentsAfter,
+    feeAppliedCents:                 feeThisAttempt,
+    dunningFeesCentsAfter:           feesCentsAfter,
     attemptedAmountCents,
-    nextAttemptDate:                 ladder.nextAttemptDate,
+    nextAttemptDate,
   });
-  if (ladder.capReached) {
+  if (capReached) {
     await notifyDefaulted(supabase, {
       paymentId:              payment.id,
-      outstandingAmountCents: chargeAmountCents(Number(payment.amount), ladder.dunningFeesCentsAfter),
+      outstandingAmountCents: chargeAmountCents(Number(payment.amount), feesCentsAfter),
     });
   }
   if (plan.patient_id) {
     await safePush(plan.patient_id, {
       title: 'Payment didn\'t go through',
-      body:  ladder.feeAppliedThisAttempt > 0
-        ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. A ${formatRandCents(ladder.feeAppliedThisAttempt / 100)} fee was added. Tap to settle now and stop further fees.`
+      body:  feeThisAttempt > 0
+        ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. A ${formatRandCents(feeThisAttempt / 100)} fee was added. Tap to settle now and stop further fees.`
         : `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. We'll try again — fund your card now or settle to avoid further fees.`,
       url:   `/patient/orders`,
       tag:   `payment:${payment.id}:failed:r${payment.retry_count ?? 0}`,
