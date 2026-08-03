@@ -83,7 +83,7 @@ describe('notifyAttemptFailed', () => {
     expect(arg.subject).toMatch(/payment didn't go through/i);
   });
 
-  it('Day-0 (consecutiveFailedAttemptsBefore=0) fires SMS too', async () => {
+  it('fires SMS on the first attempt (no URL — anti-smishing)', async () => {
     const svc = makeSvcReturning(samplePayment, { name: 'TestPractice' });
     await notifyAttemptFailed(svc, {
       paymentId: 'p1',
@@ -99,17 +99,20 @@ describe('notifyAttemptFailed', () => {
     expect(body).not.toMatch(/https?:\/\//);
   });
 
-  it('non-Day-0 (counter > 0) does NOT fire SMS', async () => {
+  it('PARITY: fires SMS on EVERY later attempt too, naming the fee', async () => {
     const svc = makeSvcReturning(samplePayment, { name: 'TestPractice' });
     await notifyAttemptFailed(svc, {
       paymentId: 'p1',
-      consecutiveFailedAttemptsBefore: 1, // second-of-pair fail
+      consecutiveFailedAttemptsBefore: 1, // a later, fee-bearing failure
       feeAppliedCents: DUNNING_FEE_CENTS,
       dunningFeesCentsAfter: DUNNING_FEE_CENTS,
       attemptedAmountCents: 25_000,
       nextAttemptDate: '2026-06-22',
     });
-    expect(sendSmsSpy).not.toHaveBeenCalled();
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
+    const [, body] = sendSmsSpy.mock.calls[0] as [string, string];
+    expect(body).toMatch(/R115\.00 fee/);      // names the fee
+    expect(body).not.toMatch(/https?:\/\//);   // still no URL
   });
 
   it('resolves cleanly when the sender throws (never crashes the webhook)', async () => {
@@ -161,10 +164,10 @@ describe('notifyRecoverySucceeded', () => {
     plan_id: 'plan-1',
     patient_id: 'u1',
     plans:   { id: 'plan-1', total_amount: 1000, practice_id: 'practice-1' },
-    patient: { email: 'u@example.com', first_name: 'Sam', phone: null },
+    patient: { email: 'u@example.com', first_name: 'Sam', phone: '+27821234567' },
   };
 
-  it('sends a recovery-success email', async () => {
+  it('PARITY: sends a recovery email AND an SMS (no URL)', async () => {
     const svc = makeSvcReturning(payment, { name: 'TestPractice' });
     await notifyRecoverySucceeded(svc, {
       paymentId: 'p2',
@@ -172,7 +175,10 @@ describe('notifyRecoverySucceeded', () => {
       viaSelfSettle: false,
     });
     expect(sendEmailSpy).toHaveBeenCalledTimes(1);
-    expect(sendSmsSpy).not.toHaveBeenCalled();
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
+    const [, body] = sendSmsSpy.mock.calls[0] as [string, string];
+    expect(body).toMatch(/up to date/i);
+    expect(body).not.toMatch(/https?:\/\//);
   });
 
   it('uses self-settle phrasing when viaSelfSettle:true', async () => {
@@ -201,15 +207,25 @@ describe('notifyDefaulted', () => {
     plan_id: 'plan-1',
     patient_id: 'u1',
     plans:   { id: 'plan-1', total_amount: 1000, practice_id: 'practice-1' },
-    patient: { email: 'u@example.com', first_name: 'Sam', phone: null },
+    patient: { email: 'u@example.com', first_name: 'Sam', phone: '+27821234567' },
   };
 
-  it('sends a defaulted-instalment email mentioning outstanding balance', async () => {
+  it('email mentions the outstanding balance AND the new-plan freeze', async () => {
     const svc = makeSvcReturning(payment, { name: 'TestPractice' });
     await notifyDefaulted(svc, { paymentId: 'p3', outstandingAmountCents: 55_000 });
     expect(sendEmailSpy).toHaveBeenCalledTimes(1);
     const [arg] = sendEmailSpy.mock.calls[0] as [{ html: string }];
     expect(arg.html).toMatch(/R550\.00/);
+    expect(arg.html).toMatch(/frozen/i);
+  });
+
+  it('PARITY: also fires an SMS conveying the freeze (no URL)', async () => {
+    const svc = makeSvcReturning(payment, { name: 'TestPractice' });
+    await notifyDefaulted(svc, { paymentId: 'p3', outstandingAmountCents: 55_000 });
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
+    const [, body] = sendSmsSpy.mock.calls[0] as [string, string];
+    expect(body).toMatch(/frozen/i);
+    expect(body).not.toMatch(/https?:\/\//);
   });
 
   it('never throws on a sender error', async () => {

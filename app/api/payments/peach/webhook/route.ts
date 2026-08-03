@@ -517,13 +517,21 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     });
   }
   if (plan.patient_id) {
+    // NOTE: this file's formatRandCents takes RANDS (not cents — unlike the
+    // same-named helper in dunningNotifications). attemptedAmountCents is
+    // cents, so `/ 100` is the correct cents→rands conversion. Do NOT
+    // "fix" the /100 away — see dunningFeeGate/route.test push-format pin.
     await safePush(plan.patient_id, {
-      title: 'Payment didn\'t go through',
-      body:  feeThisAttempt > 0
-        ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. A ${formatRandCents(feeThisAttempt / 100)} fee was added. Tap to settle now and stop further fees.`
-        : `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. We'll try again — fund your card now or settle to avoid further fees.`,
+      title: capReached ? 'Account frozen — action needed' : 'Payment didn\'t go through',
+      body:  capReached
+        ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)} after several attempts. No more retries — your account is frozen from new plans until you settle. Tap to settle and lift the freeze.`
+        : feeThisAttempt > 0
+          ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. A ${formatRandCents(feeThisAttempt / 100)} fee was added. Tap to settle now and stop further fees.`
+          : `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. We'll try again — fund your card now or settle to avoid further fees.`,
       url:   `/patient/orders`,
-      tag:   `payment:${payment.id}:failed:r${payment.retry_count ?? 0}`,
+      tag:   capReached
+        ? `payment:${payment.id}:defaulted`
+        : `payment:${payment.id}:failed:r${payment.retry_count ?? 0}`,
     });
   }
 }

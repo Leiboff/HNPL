@@ -97,6 +97,7 @@ export type ChipKey =
   | 'upcoming'
   | 'processing'
   | 'failed'
+  | 'defaulted'
   | 'collected'
   | 'written_off'
   | 'all';
@@ -119,6 +120,7 @@ export function sortModeForChip(chip: ChipKey): DateRollupSortMode {
       return 'asc';
     case 'processing':
     case 'failed':
+    case 'defaulted':
     case 'collected':
     case 'written_off':
       return 'desc';
@@ -133,6 +135,7 @@ export const BUCKET_MIX_LABEL: Record<CollectionBucket, string> = {
   upcoming:    'upcoming',
   processing:  'awaiting',
   failed:      'failed',
+  defaulted:   'defaulted',
   collected:   'collected',
   written_off: 'written off',
 };

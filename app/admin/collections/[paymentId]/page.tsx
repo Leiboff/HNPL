@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { formatRand, formatDateStr, formatDateTime, fullName, practiceName } from '../../_lib/format';
 import CollectionStatusBadge, { classifyCollection } from '../../_components/CollectionStatusBadge';
+import { isPatientFrozen } from '@/lib/patient/freeze';
 import { retryCollection } from '../actions';
 import RetryButton from './RetryButton';
 
@@ -29,6 +30,8 @@ type PaymentFull = {
   failure_reason:    string | null;
   peach_payment_id:  string | null;
   created_at:        string;
+  dunning_fees_cents: number | null;
+  next_attempt_date:  string | null;
 };
 
 type SiblingPayment = {
@@ -115,7 +118,8 @@ export default async function CollectionDetailPage({
     .from('payments')
     .select(`
       id, plan_id, patient_id, instalment_number, amount, due_date,
-      status, retry_count, collected_at, failure_reason, peach_payment_id, created_at
+      status, retry_count, collected_at, failure_reason, peach_payment_id, created_at,
+      dunning_fees_cents, next_attempt_date
     `)
     .eq('id', paymentId)
     .maybeSingle();
@@ -159,6 +163,12 @@ export default async function CollectionDetailPage({
     if (pmRaw) paymentMethod = pmRaw as PaymentMethod;
   }
 
+  // Frozen flag — the patient is blocked from new plans while ANY of
+  // their instalments is defaulted (lib/patient/freeze.ts).
+  const isFrozen = payment.patient_id
+    ? await isPatientFrozen(supabase, payment.patient_id)
+    : false;
+
   const today  = new Date().toISOString().slice(0, 10);
   const bucket = classifyCollection(payment, today);
 
@@ -184,6 +194,11 @@ export default async function CollectionDetailPage({
               {plan?.plan_type ? ` of ${plan.plan_type}` : ''}
             </h1>
             <CollectionStatusBadge bucket={bucket} />
+            {isFrozen && (
+              <span className="inline-flex items-center rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                Patient frozen — blocked from new plans
+              </span>
+            )}
           </div>
           <p className="mt-1 text-sm text-gray-500">
             {practiceName(plan?.practices)} · {fullName(plan?.profiles ?? null)}
@@ -202,6 +217,13 @@ export default async function CollectionDetailPage({
           <Field label="Due date"      value={formatDateStr(payment.due_date)} />
           <Field label="Status"        value={<CollectionStatusBadge bucket={bucket} />} />
           <Field label="Retry count"   value={String(payment.retry_count)} />
+          <Field
+            label="Dunning fees"
+            value={Number(payment.dunning_fees_cents ?? 0) > 0
+              ? <span className="tabular-nums text-red-700">{formatRand(Number(payment.dunning_fees_cents) / 100)}</span>
+              : '—'}
+          />
+          <Field label="Next retry"    value={payment.next_attempt_date ? formatDateStr(payment.next_attempt_date) : '—'} />
           <Field label="Collected at"  value={payment.collected_at ? formatDateTime(payment.collected_at) : '—'} />
           <Field label="Created at"    value={formatDateTime(payment.created_at)} />
           <Field label="Peach ref"     value={payment.peach_payment_id ?? '—'} mono />

@@ -5,8 +5,9 @@
 // labels and colours. Used on the collections list AND the detail
 // page so the same vocabulary is shown in both places.
 //
-// payments.status enum (from supabase/migrations/0001_initial_schema.sql):
-//   'scheduled' | 'processing' | 'collected' | 'failed' | 'retried' | 'written_off'
+// payments.status enum (0001 + 'defaulted' added by 0057):
+//   'scheduled' | 'processing' | 'collected' | 'failed' | 'retried'
+//   | 'written_off' | 'defaulted'
 //
 // We surface 'scheduled' rows differently depending on whether their
 // due_date is in the past or future — both share the same underlying
@@ -14,10 +15,15 @@
 //   • due_date >= today → "Upcoming"
 //   • due_date <  today → "Overdue" (cron hasn't picked it up yet)
 //
+// 'defaulted' is the dunning ladder's terminal state (cap of fees
+// reached; debt still owed, still self-settleable, and it freezes the
+// patient out of new plans). It gets its own bucket so admins can see
+// it distinctly from in-flight 'failed'.
+//
 // 'retried' is in the CHECK constraint but no code path sets it today
-// (the webhook only sets 'collected' or 'failed'; the cron only sets
-// 'processing' / 'written_off'). We map it to the same bucket as
-// 'failed' for safety should anything historically wrote it.
+// (the webhook only sets 'collected' / 'failed' / 'defaulted'; the cron
+// only sets 'processing'). We map it to the same bucket as 'failed' for
+// safety should anything historically wrote it.
 
 export type CollectionBucket =
   | 'upcoming'
@@ -25,7 +31,8 @@ export type CollectionBucket =
   | 'processing'
   | 'failed'
   | 'collected'
-  | 'written_off';
+  | 'written_off'
+  | 'defaulted';
 
 type Row = { status: string; due_date: string };
 
@@ -42,6 +49,8 @@ export function classifyCollection(row: Row, today: string): CollectionBucket {
       return 'collected';
     case 'written_off':
       return 'written_off';
+    case 'defaulted':
+      return 'defaulted';
     default:
       return 'failed';  // unknown status — surface for investigation
   }
@@ -54,6 +63,7 @@ const CFG: Record<CollectionBucket, { label: string; cls: string }> = {
   failed:      { label: 'Failed',         cls: 'bg-red-50   text-red-700   border-red-200'   },
   collected:   { label: 'Collected',      cls: 'bg-green-50 text-green-700 border-green-200' },
   written_off: { label: 'Written off',    cls: 'bg-gray-100 text-gray-600  border-gray-200'  },
+  defaulted:   { label: 'Defaulted',      cls: 'bg-red-100  text-red-800   border-red-300'   },
 };
 
 export default function CollectionStatusBadge({
