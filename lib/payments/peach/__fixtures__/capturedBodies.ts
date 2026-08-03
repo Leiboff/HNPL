@@ -205,6 +205,19 @@ export const V1_REFUND_RESPONSE = {
   result: { code: '000.100.110', description: 'Request successfully processed' },
 };
 
+// ─── V2 initiate rejection — REAL capture (Phase 4) ─────────────────
+//
+// REAL capture (2026-08-02): the saved-card one-click initiate sent
+// `allowStoredCards` on POST /v2/checkout and Peach rejected the whole
+// request with HTTP 400 { "allowStoredCards": "unknown field" } — the
+// initiate rolled back and the returning-patient CIT flow failed. The
+// field is NOT in the current /v2/checkout reference; cardTokens alone
+// is the documented one-click enabler. This fixture records the reason
+// the field was removed, so a future re-add is anchored to the evidence.
+export const V2_INITIATE_ALLOWSTOREDCARDS_400 = {
+  allowStoredCards: 'unknown field',
+};
+
 // ─── CHAIN ROOT — RESOLVED by a live sandbox capture (Phase 2) ──────
 //
 // The audit's open question ("is the chain root the CIT top-level `id`,

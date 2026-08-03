@@ -667,8 +667,10 @@ export async function payWithSavedCard(
         paymentType:           'DB',
         createRegistration:    true,   // return/refresh the reusable token
         // One-click on the SAVED card → CIT with 3DS, roots the chain.
+        // cardTokens alone is the documented one-click enabler; we send
+        // no extra "show stored cards" flag (V2 rejects it as an unknown
+        // field — proven live 2026-08-02, see client.createCheckout).
         cardTokens:            [paymentMethod.token as string],
-        allowStoredCards:      true,
         // Card-only — same rationale as Flow A (wallet tokens are
         // single-use; instalments 2-N would be uncollectable).
         defaultPaymentMethod:  'CARD',

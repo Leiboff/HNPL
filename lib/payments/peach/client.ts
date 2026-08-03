@@ -468,16 +468,17 @@ export class PeachProvider implements PaymentProvider {
     }
 
     // One-click on a stored card (CIT). Passing cardTokens re-presents
-    // the KNOWN card in the widget for a mostly-frictionless one-click;
-    // allowStoredCards must accompany it (per the checkout-tokenisation
-    // reference). requireCvv is optional — omitted, the acquirer/backend
-    // config decides. This is what makes a saved-card first instalment a
-    // customer-present 3DS charge that roots the credential chain.
+    // the KNOWN card in the widget for a mostly-frictionless one-click.
+    // cardTokens is the DOCUMENTED one-click enabler and is sufficient on
+    // its OWN — we deliberately do NOT send `allowStoredCards`: the
+    // current /v2/checkout reference does not define it, and Peach V2
+    // rejects it with 400 {"allowStoredCards":"unknown field"} (the whole
+    // initiate rolls back — proven live 2026-08-02 on the returning-
+    // patient CIT flow). `allowStoringDetails` is a DIFFERENT field
+    // (offer to store a NEW card), NOT a substitute — do not rename to it.
+    // requireCvv is optional — omitted, the acquirer/backend config decides.
     if (Array.isArray(params.cardTokens) && params.cardTokens.length > 0) {
-      body.cardTokens       = [...params.cardTokens];
-      body.allowStoredCards = params.allowStoredCards !== false;
-    } else if (typeof params.allowStoredCards === 'boolean') {
-      body.allowStoredCards = params.allowStoredCards;
+      body.cardTokens = [...params.cardTokens];
     }
     if (typeof params.requireCvv === 'boolean') {
       body.requireCvv = params.requireCvv;

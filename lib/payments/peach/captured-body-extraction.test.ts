@@ -16,6 +16,7 @@ import {
   V2_STATUS_CIT_1DCF,
   V1_MIT_CHARGE_ACCEPTED,
   CIT_CHAIN_ROOT_ID,
+  V2_INITIATE_ALLOWSTOREDCARDS_400,
   RESULT_CODES,
   WEBHOOK_PAYMENT_SUCCESS,
   WEBHOOK_CARD_REG,
@@ -314,7 +315,36 @@ describe('CIT chain root — the top-level `id` (proven by live MIT)', () => {
   });
 });
 
-// ─── 9. B5 guard — add-card idempotency scoped to the checkout ──────
+// ─── 9. Phase 4 — allowStoredCards removed from the initiate body ───
+//
+// Live capture (2026-08-02) proved Peach V2 rejects `allowStoredCards`
+// with 400 {"allowStoredCards":"unknown field"} — cardTokens alone is
+// the documented one-click enabler. These pins are the regression guard:
+// a future re-add of the field breaks the returning-patient CIT initiate.
+
+describe('Phase 4 — allowStoredCards is NOT sent on /v2/checkout', () => {
+  const CLIENT  = readFileSync(resolve(process.cwd(), 'lib/payments/peach/client.ts'), 'utf8');
+  const PATIENT = readFileSync(resolve(process.cwd(), 'app/patient/actions.ts'), 'utf8');
+
+  it('the client emits body.cardTokens but NEVER body.allowStoredCards', () => {
+    expect(CLIENT).toMatch(/body\.cardTokens\s*=/);
+    expect(CLIENT).not.toMatch(/body\.allowStoredCards\s*=/);
+  });
+
+  it('payWithSavedCard passes cardTokens and does NOT pass allowStoredCards', () => {
+    const start = PATIENT.indexOf('export async function payWithSavedCard');
+    const next  = PATIENT.indexOf('export async function', start + 1);
+    const fn    = PATIENT.slice(start, next === -1 ? PATIENT.length : next);
+    expect(fn).toMatch(/cardTokens:\s*\[/);
+    expect(fn).not.toContain('allowStoredCards');
+  });
+
+  it('the recorded 400 documents WHY it was removed (unknown field)', () => {
+    expect(V2_INITIATE_ALLOWSTOREDCARDS_400).toEqual({ allowStoredCards: 'unknown field' });
+  });
+});
+
+// ─── 10. B5 guard — add-card idempotency scoped to the checkout ─────
 //
 // Not a body-extraction, but the fifth historical bug. Source-pinned
 // here so the whole five-bug set fails against reintroduction in ONE

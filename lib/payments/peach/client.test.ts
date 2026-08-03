@@ -226,13 +226,14 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     })).rejects.toThrow(/positive integer/);
   });
 
-  it('one-click on a SAVED card — emits cardTokens + allowStoredCards (customer-present CIT)', async () => {
+  it('one-click on a SAVED card — emits cardTokens and NEVER allowStoredCards (V2 rejects it)', async () => {
     // The saved-card first instalment (payWithSavedCard) passes the
     // stored token via cardTokens so the widget re-presents the KNOWN
-    // card for a mostly-frictionless 3DS one-click. allowStoredCards
-    // must accompany it (checkout-tokenisation reference). This is the
-    // ONLY way to run a CIT+3DS on a stored token — the recurring API
-    // is MIT/S2S.
+    // card for a mostly-frictionless 3DS one-click. cardTokens is the
+    // documented one-click enabler and is SUFFICIENT alone — this is the
+    // ONLY way to run a CIT+3DS on a stored token (the recurring API is
+    // MIT/S2S). allowStoredCards must NOT be sent: V2 rejects it with 400
+    // {"allowStoredCards":"unknown field"} (proven live 2026-08-02).
     const fake = scriptedFetch([
       OAUTH_OK,
       { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-oneclick' } },
@@ -245,7 +246,6 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
       paymentType:           'DB',
       createRegistration:    true,
       cardTokens:            ['reg-saved-token-1'],
-      allowStoredCards:      true,
       defaultPaymentMethod:  'CARD',
       forceDefaultMethod:    true,
       standingInstruction: {
@@ -258,7 +258,9 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     });
     const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
     expect(chkBody.cardTokens).toEqual(['reg-saved-token-1']);
-    expect(chkBody.allowStoredCards).toBe(true);
+    // REGRESSION GUARD: a future re-add of allowStoredCards breaks the
+    // initiate (V2 unknown-field 400). It must never appear in the body.
+    expect('allowStoredCards' in chkBody).toBe(false);
     expect(chkBody.createRegistration).toBe(true);
     // Still card-only + rooted-INSTALLMENT SI (no OPPWA source).
     expect(chkBody.defaultPaymentMethod).toBe('CARD');
@@ -268,7 +270,7 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     expect(chkBody.standingInstruction.source).toBeUndefined();
   });
 
-  it('omits cardTokens / allowStoredCards on a normal new-card checkout', async () => {
+  it('omits cardTokens (and never allowStoredCards) on a normal new-card checkout', async () => {
     const fake = scriptedFetch([
       OAUTH_OK,
       { url: /\/v2\/checkout$/, body: { checkoutId: 'chk-newcard' } },
@@ -281,7 +283,7 @@ describe('PeachProvider.createCheckout — V2 with OAuth + INITIAL/INSTALLMENT/C
     });
     const chkBody = JSON.parse(String(((fake.mock.calls[1] as unknown) as [string, RequestInit])[1].body));
     expect(chkBody.cardTokens).toBeUndefined();
-    expect(chkBody.allowStoredCards).toBeUndefined();
+    expect('allowStoredCards' in chkBody).toBe(false);
   });
 
   it('rejects a merchantTransactionId longer than 16 characters', async () => {
