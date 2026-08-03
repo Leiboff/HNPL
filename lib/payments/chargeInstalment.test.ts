@@ -480,7 +480,7 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
     process.env.DUNNING_FEES_ENABLED = 'true';
     const state: StubState = {
       payments: [{
-        id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
+        id: 'p1', status: 'defaulted', retry_count: MAX_ATTEMPTS, amount: 250,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 30_000,
       }],
@@ -501,7 +501,7 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
     // is charged the principal only — the accrued R300 is not debited.
     const state: StubState = {
       payments: [{
-        id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
+        id: 'p1', status: 'defaulted', retry_count: MAX_ATTEMPTS, amount: 250,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 30_000,
       }],
@@ -521,7 +521,7 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
   it('refuses to charge a defaulted row when selfSettle=false (cron path)', async () => {
     const state: StubState = {
       payments: [{
-        id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
+        id: 'p1', status: 'defaulted', retry_count: MAX_ATTEMPTS, amount: 250,
         plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
         dunning_fees_cents: 30_000,
       }],

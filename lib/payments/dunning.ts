@@ -1,10 +1,11 @@
 // ─── Failed-instalment dunning ladder — pure schedule + fee math ────────
 //
 // All offsets are in days from "the original due date / first failure"
-// (Day 0). Pair pattern: two attempts ~1 day apart, ~6 days between
-// pairs.  Fee attaches on every SECOND consecutive failed attempt; the
-// counter resets when a fee attaches. Cap = min(R345 = 3×fee, 50% of the
-// original bill).
+// (Day 0). Cadence: the first failure is a fee-free grace (retry +1 day);
+// every failure after that carries a fee and retries WEEKLY, until the
+// cap (3 fees) is reached → terminal `defaulted`. Fee-bearing days on a
+// normal bill: Day 1, 8, 15. Cap = min(R345 = 3×fee, 50% of the original
+// bill).
 //
 // This module is PURE — no DB, no fetch, no I/O. The caller passes in
 // the pre-attempt state and "today", and gets back the post-attempt
@@ -29,8 +30,13 @@ export const DUNNING_MAX_FEES                = 3;
 // 50% of the plan (computeFeeCapCents).
 export const DUNNING_FEE_CAP_ABSOLUTE_CENTS  = DUNNING_FEE_CENTS * DUNNING_MAX_FEES;  // R345
 export const DUNNING_FEE_CAP_PERCENT         = 0.5;     // OR 50% of original bill
-export const INTRA_PAIR_GAP_DAYS             = 1;       // Day 0 → 1, 7 → 8, 14 → 15
-export const INTER_PAIR_GAP_DAYS             = 6;       // Day 1 → 7, 8 → 14
+
+// Cadence: the first failure (the missed due date) is a fee-free grace —
+// we retry ONE day later. If that +1-day retry also fails, that's the
+// first default → fee #1, and from there we retry WEEKLY, a fee on each,
+// until the cap (3 fees) is reached → terminal `defaulted`.
+export const FIRST_RETRY_GAP_DAYS            = 1;       // Day 0 → Day 1
+export const WEEKLY_RETRY_GAP_DAYS           = 7;       // Day 1 → 8 → 15 …
 
 // ─── Fee gate (compliance) ──────────────────────────────────────────────
 //
@@ -49,17 +55,16 @@ export function dunningFeesEnabled(): boolean {
   return process.env.DUNNING_FEES_ENABLED === 'true';
 }
 
-// Number of consecutive failed attempts that earns a fee. The brief
-// pins this at 2 ("a R115 default fee is charged only after every two
-// consecutive failed attempts"). Don't change without rereading the
-// brief — the pair schedule and the fee rule are coupled.
-export const FAILURES_PER_FEE                = 2;
+// Number of leading fee-FREE failures. The first missed collection is a
+// grace attempt (no fee) that only earns a +1-day retry; every failure
+// after that carries a fee. Policy pins this at 1.
+export const FEE_FREE_FIRST_FAILURES         = 1;
 
 export type LadderInput = {
   /**
-   * Pre-attempt: how many consecutive failures since the last fee was
-   * applied (or since the ladder began). 0 on the first failure of a
-   * new pair, 1 after a no-fee mid-pair failure.
+   * Pre-attempt: total failures on this instalment SO FAR (before this
+   * one), monotonic — it is NOT reset when a fee attaches. 0 on the
+   * first failure (the missed due date), 1 on the +1-day retry, etc.
    */
   consecutiveFailedAttemptsBefore: number;
   /** Pre-attempt: cumulative fees on this instalment (cents). */
@@ -74,6 +79,7 @@ export type LadderInput = {
 };
 
 export type LadderOutcome = {
+  /** Post-attempt TOTAL failures so far (monotonic, never reset). */
   consecutiveFailedAttemptsAfter: number;
   dunningFeesCentsAfter:          number;
   /** Cents of fee attached to THIS attempt (0 if no fee). */
@@ -115,34 +121,46 @@ export function addDaysISO(today: string, days: number): string {
 /**
  * Compute the post-attempt ladder state after a FAILED attempt.
  *
- *   • Increment the "consecutive fails since last fee" counter by 1.
- *   • If the counter hits FAILURES_PER_FEE (= 2): attach a fee, clamp
- *     to remaining headroom under the cap, and reset the counter to 0.
- *   • Decide the next attempt date:
- *       - cap reached → terminal `defaulted`, no next attempt
- *       - fee attached this attempt (end of pair) → INTER_PAIR_GAP_DAYS
- *       - no fee (mid-pair)                       → INTRA_PAIR_GAP_DAYS
+ * Cadence (decided policy):
+ *   • The FIRST failure (the missed due date) is a fee-free grace: no
+ *     fee, retry in FIRST_RETRY_GAP_DAYS (+1 day).
+ *   • Every failure AFTER that carries a fee (the first default → fee #1),
+ *     clamped to remaining headroom under the cap, and retries WEEKLY
+ *     (WEEKLY_RETRY_GAP_DAYS).
+ *   • When the accrued fee reaches the cap (3 fees, or the 50%-of-plan
+ *     bound sooner) → terminal `defaulted`, no next attempt.
+ *
+ *   Timeline on a normal bill: Day 0 (fail, no fee, +1) → Day 1 (fail,
+ *   fee #1, +7) → Day 8 (fail, fee #2, +7) → Day 15 (fail, fee #3 → cap
+ *   → defaulted).
+ *
+ * The counter is TOTAL failures so far (monotonic, never reset) so
+ * "before === 0" always identifies the first failure — the caller keys
+ * the Day-0 SMS off exactly that.
  *
  * Success outcomes are handled by the caller — they terminate the
- * ladder entirely (clear next_attempt_date, leave counter as-is for
+ * ladder entirely (clear next_attempt_date, leave the counter as-is for
  * post-mortem readability; the row's `status` going to 'collected'
  * makes the counters moot).
  */
 export function advanceLadderAfterFailure(input: LadderInput): LadderOutcome {
-  const newConsecutive = input.consecutiveFailedAttemptsBefore + 1;
-  const capCents       = computeFeeCapCents(input.originalBillRands);
+  const failuresAfter = input.consecutiveFailedAttemptsBefore + 1;
+  const capCents      = computeFeeCapCents(input.originalBillRands);
 
-  const earnsFee = newConsecutive >= FAILURES_PER_FEE;
+  // The first FEE_FREE_FIRST_FAILURES failures earn no fee; every later
+  // failure does. With FEE_FREE_FIRST_FAILURES = 1: failure #1 is free,
+  // failures #2, #3, #4… each carry a fee.
+  const isGraceFailure = input.consecutiveFailedAttemptsBefore < FEE_FREE_FIRST_FAILURES;
+  const earnsFee       = !isGraceFailure;
 
-  // Fee is clamped to remaining cap headroom — even though earnsFee
-  // tells us "this is the second-of-pair fail", the cap may bind below
-  // R115 on a tiny bill (e.g. R150 bill → cap R75). Headroom < fee
-  // means the fee shrinks to fit; headroom == 0 means no fee attaches.
+  // Fee is clamped to remaining cap headroom — the cap may bind below a
+  // full fee on a small bill (e.g. R150 bill → cap R75, or the last fee
+  // before the R345 cap). Headroom < fee → the fee shrinks to fit;
+  // headroom == 0 → no fee attaches.
   const remainingHeadroom = Math.max(0, capCents - input.dunningFeesCentsBefore);
   const feeThisAttempt    = earnsFee ? Math.min(DUNNING_FEE_CENTS, remainingHeadroom) : 0;
 
   const dunningFeesCentsAfter = input.dunningFeesCentsBefore + feeThisAttempt;
-  const counterAfter          = earnsFee ? 0 : newConsecutive;
   const capReached            = dunningFeesCentsAfter >= capCents;
 
   let nextAttemptDate: string | null;
@@ -150,16 +168,18 @@ export function advanceLadderAfterFailure(input: LadderInput): LadderOutcome {
   if (capReached) {
     nextAttemptDate = null;
     terminalStatus  = 'defaulted';
-  } else if (earnsFee) {
-    nextAttemptDate = addDaysISO(input.today, INTER_PAIR_GAP_DAYS);
+  } else if (isGraceFailure) {
+    // First failure → the single +1-day retry.
+    nextAttemptDate = addDaysISO(input.today, FIRST_RETRY_GAP_DAYS);
     terminalStatus  = null;
   } else {
-    nextAttemptDate = addDaysISO(input.today, INTRA_PAIR_GAP_DAYS);
+    // A fee-bearing failure that hasn't hit the cap → weekly retry.
+    nextAttemptDate = addDaysISO(input.today, WEEKLY_RETRY_GAP_DAYS);
     terminalStatus  = null;
   }
 
   return {
-    consecutiveFailedAttemptsAfter: counterAfter,
+    consecutiveFailedAttemptsAfter: failuresAfter,
     dunningFeesCentsAfter,
     feeAppliedThisAttempt:          feeThisAttempt,
     capReached,

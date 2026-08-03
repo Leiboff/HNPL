@@ -6,20 +6,22 @@ import {
   addDaysISO,
   DUNNING_FEE_CENTS,
   DUNNING_FEE_CAP_ABSOLUTE_CENTS,
-  INTRA_PAIR_GAP_DAYS,
-  INTER_PAIR_GAP_DAYS,
+  DUNNING_MAX_FEES,
+  FIRST_RETRY_GAP_DAYS,
+  WEEKLY_RETRY_GAP_DAYS,
 } from './dunning';
 
-// ─── Pure math — ladder progression (the "two-fails-per-fee" rule) ──────────
+// ─── Pure math — ladder progression (fee on first default, then weekly) ─────
 //
-// These tests pin the brief's exact ladder behaviour:
+// The decided cadence: the first miss is a fee-free grace (retry +1 day);
+// every failure after that carries a fee and retries weekly, until 3 fees
+// hit the cap → defaulted. `consecutiveFailedAttemptsBefore` is TOTAL
+// failures so far (monotonic, never reset). Timeline on a normal bill:
 //
-//   Attempt 1 (Day 0) fails → counter=1, no fee
-//   Attempt 2 (Day 1) fails → counter=0, +R115 fee   (end of pair)
-//   Attempt 3 (Day 7) fails → counter=1, no fee
-//   Attempt 4 (Day 8) fails → counter=0, +R115 fee   (end of pair)
-//   Attempt 5 (Day 14) fails → counter=1, no fee
-//   Attempt 6 (Day 15) fails → counter=0, +R115 fee  → cap reached → defaulted
+//   Failure #1 (Day 0)  → no fee, retry Day 1
+//   Failure #2 (Day 1)  → +R115 fee #1, retry Day 8   (weekly)
+//   Failure #3 (Day 8)  → +R115 fee #2, retry Day 15
+//   Failure #4 (Day 15) → +R115 fee #3 → cap reached → defaulted
 
 describe('computeFeeCapCents — cap = min(R345, 50% of bill)', () => {
   it('large bill (≥R690) is bounded by the absolute cap (R345 = 3×R115)', () => {
@@ -104,13 +106,16 @@ describe('chargeAmountCents — fractional-rand instalments (R425.68 + R425.66 +
   });
 });
 
-// ─── Ladder progression on a typical R1000 bill (large bill, R345 cap) ──────
+// ─── Full ladder timeline on a typical R1000 bill (large bill, R345 cap) ────
 
-describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {
+describe('advanceLadderAfterFailure — full timeline on a R1000 bill', () => {
   const bill = 1000;
   const day0 = '2026-06-15';
+  const day1 = addDaysISO(day0, FIRST_RETRY_GAP_DAYS);   // 2026-06-16
+  const day8 = addDaysISO(day1, WEEKLY_RETRY_GAP_DAYS);  // 2026-06-23
+  const day15 = addDaysISO(day8, WEEKLY_RETRY_GAP_DAYS); // 2026-06-30
 
-  it('Day 0 fail — first of pair, no fee, schedules Day 1', () => {
+  it('Failure #1 (Day 0) — grace, NO fee, schedules the +1-day retry (Day 1)', () => {
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
@@ -122,77 +127,72 @@ describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {
     expect(r.dunningFeesCentsAfter).toBe(0);
     expect(r.capReached).toBe(false);
     expect(r.terminalStatus).toBeNull();
-    expect(r.nextAttemptDate).toBe(addDaysISO(day0, INTRA_PAIR_GAP_DAYS));
+    expect(r.nextAttemptDate).toBe(day1);
   });
 
-  it('Day 1 fail — second of pair, +R115 fee, counter resets, schedules Day 7', () => {
+  it('Failure #2 (Day 1) — first default, +R115 fee #1, schedules the weekly retry (Day 8)', () => {
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           addDaysISO(day0, 1),
+      today:                           day1,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
-    expect(r.consecutiveFailedAttemptsAfter).toBe(0);
+    expect(r.consecutiveFailedAttemptsAfter).toBe(2);
     expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CENTS);
     expect(r.capReached).toBe(false);
-    expect(r.nextAttemptDate).toBe(addDaysISO(addDaysISO(day0, 1), INTER_PAIR_GAP_DAYS));
+    expect(r.nextAttemptDate).toBe(day8);
   });
 
-  it('Day 7 fail — first of next pair, no fee, schedules Day 8', () => {
-    const day7 = addDaysISO(addDaysISO(day0, 1), INTER_PAIR_GAP_DAYS);
+  it('Failure #3 (Day 8) — +R115 fee #2, schedules the next weekly retry (Day 15)', () => {
     const r = advanceLadderAfterFailure({
-      consecutiveFailedAttemptsBefore: 0,
-      dunningFeesCentsBefore:          DUNNING_FEE_CENTS,
-      originalBillRands:               bill,
-      today:                           day7,
-    });
-    expect(r.feeAppliedThisAttempt).toBe(0);
-    expect(r.consecutiveFailedAttemptsAfter).toBe(1);
-    expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CENTS);
-    expect(r.nextAttemptDate).toBe(addDaysISO(day7, INTRA_PAIR_GAP_DAYS));
-  });
-
-  it('Day 8 fail — second of pair, +R115 fee (#2), counter resets, schedules Day 14', () => {
-    const day8 = addDaysISO(addDaysISO(addDaysISO(day0, 1), INTER_PAIR_GAP_DAYS), 1);
-    const r = advanceLadderAfterFailure({
-      consecutiveFailedAttemptsBefore: 1,
+      consecutiveFailedAttemptsBefore: 2,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS,
       originalBillRands:               bill,
       today:                           day8,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
+    expect(r.consecutiveFailedAttemptsAfter).toBe(3);
     expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CENTS * 2);
     expect(r.capReached).toBe(false);
-    expect(r.nextAttemptDate).toBe(addDaysISO(day8, INTER_PAIR_GAP_DAYS));
+    expect(r.nextAttemptDate).toBe(day15);
   });
 
-  it('Day 15 fail — fee #3 lands → cap reached → terminal defaulted', () => {
-    // day8 + 6 = day14; day14 + 1 = day15
-    const day8  = addDaysISO(addDaysISO(addDaysISO(day0, 1), INTER_PAIR_GAP_DAYS), 1);
-    const day14 = addDaysISO(day8, INTER_PAIR_GAP_DAYS);
-    const day15 = addDaysISO(day14, INTRA_PAIR_GAP_DAYS);
+  it('Failure #4 (Day 15) — fee #3 lands → cap R345 reached → terminal defaulted', () => {
     const r = advanceLadderAfterFailure({
-      consecutiveFailedAttemptsBefore: 1,
+      consecutiveFailedAttemptsBefore: 3,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS * 2,
       originalBillRands:               bill,
       today:                           day15,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
-    expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CAP_ABSOLUTE_CENTS);
+    expect(r.consecutiveFailedAttemptsAfter).toBe(4);
+    expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CAP_ABSOLUTE_CENTS); // R345 = 3 fees
     expect(r.capReached).toBe(true);
     expect(r.terminalStatus).toBe('defaulted');
     expect(r.nextAttemptDate).toBeNull();
   });
 });
 
-// ─── Small-bill cap short-circuit (R400 bill → R200 cap → 2 fees max) ───────
+// ─── Small-bill cap short-circuit (R400 bill → R200 cap → defaults early) ───
 
 describe('advanceLadderAfterFailure — small-bill cap binds early', () => {
   const bill = 400;                       // 50% cap = R200 = computeFeeCapCents(400)
   const cap  = computeFeeCapCents(bill);  // 20_000
 
-  it('first fee attaches at Day 1 (full R115), counter resets, schedule Day 7', () => {
+  it('Failure #1 (Day 0) — grace, no fee, schedules Day 1', () => {
+    const r = advanceLadderAfterFailure({
+      consecutiveFailedAttemptsBefore: 0,
+      dunningFeesCentsBefore:          0,
+      originalBillRands:               bill,
+      today:                           '2026-06-15',
+    });
+    expect(r.feeAppliedThisAttempt).toBe(0);
+    expect(r.nextAttemptDate).toBe(addDaysISO('2026-06-15', FIRST_RETRY_GAP_DAYS));
+    expect(r.capReached).toBe(false);
+  });
+
+  it('Failure #2 (Day 1) — fee #1 (full R115) fits under R200, schedules weekly (Day 8)', () => {
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          0,
@@ -202,19 +202,22 @@ describe('advanceLadderAfterFailure — small-bill cap binds early', () => {
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS); // R115, fits under R200
     expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CENTS);
     expect(r.capReached).toBe(false);
+    expect(r.nextAttemptDate).toBe(addDaysISO('2026-06-16', WEEKLY_RETRY_GAP_DAYS));
   });
 
-  it('second fee at Day 8 CLAMPS to headroom (R85, not a full R115) → cap R200 reached → defaulted', () => {
+  it('Failure #3 (Day 8) — fee #2 CLAMPS to headroom (R85) → cap R200 reached → defaulted', () => {
     // After R115, only R85 of headroom remains under the R200 cap, so the
     // second fee shrinks to fit — proves the clamp tracks the fee constant.
+    // The small bill therefore defaults ONE attempt sooner than a large one.
     const r = advanceLadderAfterFailure({
-      consecutiveFailedAttemptsBefore: 1,
+      consecutiveFailedAttemptsBefore: 2,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS,
       originalBillRands:               bill,
       today:                           '2026-06-23',
     });
     expect(r.feeAppliedThisAttempt).toBe(cap - DUNNING_FEE_CENTS); // 20_000 − 11_500 = 8_500 (R85)
     expect(r.dunningFeesCentsAfter).toBe(cap);                     // R200
+    expect(r.consecutiveFailedAttemptsAfter).toBe(3);
     expect(r.capReached).toBe(true);
     expect(r.terminalStatus).toBe('defaulted');
     expect(r.nextAttemptDate).toBeNull();
@@ -224,9 +227,9 @@ describe('advanceLadderAfterFailure — small-bill cap binds early', () => {
 // ─── Edge: tiny bill where one fee binds the cap below R100 ─────────────────
 
 describe('advanceLadderAfterFailure — tiny-bill cap < single fee', () => {
-  it('R150 bill (R75 cap): fee shrinks to R75; cap reached; defaulted', () => {
+  it('R150 bill (R75 cap): first fee-bearing failure (#2) shrinks to R75; cap reached; defaulted', () => {
     const r = advanceLadderAfterFailure({
-      consecutiveFailedAttemptsBefore: 1,  // second-of-pair → would earn fee
+      consecutiveFailedAttemptsBefore: 1,  // failure #2 → fee-bearing
       dunningFeesCentsBefore:          0,
       originalBillRands:               150,
       today:                           '2026-06-16',
@@ -236,5 +239,52 @@ describe('advanceLadderAfterFailure — tiny-bill cap < single fee', () => {
     expect(r.capReached).toBe(true);
     expect(r.terminalStatus).toBe('defaulted');
     expect(r.nextAttemptDate).toBeNull();
+  });
+});
+
+// ─── Adversarial: drive the whole ladder as a loop (output → next input) ────
+//
+// Feeds each attempt's real outputs (counter, accrued fees, next date) into
+// the following attempt — exactly how the webhook persists + the cron
+// re-reads. Pins the ENTIRE cadence end-to-end so a schedule regression
+// can't slip past the per-step tests: which days, which attempts carry a
+// fee, and where it terminates.
+
+describe('advanceLadderAfterFailure — end-to-end ladder run (R1000 bill)', () => {
+  it('runs Day 0/1/8/15 with fees [0, R115, R115, R115] then terminal defaulted', () => {
+    const bill = 1000;
+    let counter = 0;
+    let fees    = 0;
+    let today: string | null = '2026-06-15';
+
+    const days:  string[] = [];
+    const feesPerAttempt: number[] = [];
+    let terminal: string | null = null;
+    let guard = 0;
+
+    while (today && guard++ < 10) {
+      days.push(today);
+      const r = advanceLadderAfterFailure({
+        consecutiveFailedAttemptsBefore: counter,
+        dunningFeesCentsBefore:          fees,
+        originalBillRands:               bill,
+        today,
+      });
+      feesPerAttempt.push(r.feeAppliedThisAttempt);
+      counter  = r.consecutiveFailedAttemptsAfter;
+      fees     = r.dunningFeesCentsAfter;
+      terminal = r.terminalStatus;
+      today    = r.nextAttemptDate; // null terminates the loop
+    }
+
+    // Exactly 4 attempts: Day 0 (grace) + 3 weekly fee-bearing.
+    expect(days).toEqual(['2026-06-15', '2026-06-16', '2026-06-23', '2026-06-30']);
+    // Day 0 free; every later attempt carries a full R115 (R1000 bill never clamps).
+    expect(feesPerAttempt).toEqual([0, DUNNING_FEE_CENTS, DUNNING_FEE_CENTS, DUNNING_FEE_CENTS]);
+    // 3 fees total = R345 cap; terminal defaulted.
+    expect(fees).toBe(DUNNING_FEE_CAP_ABSOLUTE_CENTS);
+    expect(feesPerAttempt.filter((f) => f > 0)).toHaveLength(DUNNING_MAX_FEES);
+    expect(counter).toBe(4);
+    expect(terminal).toBe('defaulted');
   });
 });
