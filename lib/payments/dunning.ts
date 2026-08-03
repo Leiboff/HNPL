@@ -9,7 +9,7 @@
 // This module is PURE — no DB, no fetch, no I/O. The caller passes in
 // the pre-attempt state and "today", and gets back the post-attempt
 // state to persist. That lets the same engine drive:
-//   • the charge.failed webhook (advance on a real Paystack failure)
+//   • the payment-failure webhook (advance on a real charge failure)
 //   • tests (deterministic, no clock + no stub Supabase needed)
 //   • a future preauth/DebiCheck swap (the rail-agnostic guarantee:
 //     only "today + attempt failed?" + the per-row counters matter,

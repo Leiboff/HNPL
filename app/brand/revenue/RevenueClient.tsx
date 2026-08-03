@@ -10,7 +10,7 @@ import type { RevenueSummary } from '@/lib/brand/revenue';
 // doctor filters remain URL params for shareable links.
 //
 // What is intentionally NOT here: collection-progress (settled-so-far,
-// remaining instalments, paystack state). The provider sees activated-
+// remaining instalments, processor charge state). The provider sees activated-
 // plan net-to-provider only; collection is BetterNow's float position.
 
 type Props = {

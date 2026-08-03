@@ -110,7 +110,7 @@ describe('computePlanProgress', () => {
 
   // ─── Settlement-row exclusion (post-0058) ───────────────────────────
   //
-  // A settlement row (kind='settlement') represents a single Paystack
+  // A settlement row (kind='settlement') represents a single Peach
   // charge for the summed total of N instalments. Its amount equals
   // the sum of the instalments it covers, so including it in the
   // progress calculation double-counts. computePlanProgress filters

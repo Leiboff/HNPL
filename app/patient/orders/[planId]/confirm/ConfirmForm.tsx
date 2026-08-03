@@ -115,7 +115,7 @@ export default function ConfirmForm({
     return cardIsAlreadyHere ? 'idle' : 'polling';
   });
 
-  // Stable "since" for the polling window: covers the full Paystack checkout flow
+  // Stable "since" for the polling window: covers the full Peach checkout flow
   const pollingSince = useRef(
     fromRegistration ? new Date(Date.now() - 5 * 60 * 1000).toISOString() : '',
   );

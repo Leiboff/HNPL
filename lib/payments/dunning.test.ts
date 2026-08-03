@@ -83,7 +83,7 @@ describe('chargeAmountCents — fractional-rand instalments (R425.68 + R425.66 +
 
   it('JS sum of the three legs equals the SQL SUM expected from the RPC (127700)', () => {
     // Mirrors what the patient sees: if they tap Pay-now on each
-    // instalment, the cumulative Paystack-amount = 127700. The
+    // instalment, the cumulative charge amount = 127700. The
     // claim_plan_for_settlement RPC sums in Postgres NUMERIC and
     // returns 127700 too. The two charge paths agree to the cent.
     const a = chargeAmountCents(425.68, 0);

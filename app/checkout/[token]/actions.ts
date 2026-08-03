@@ -37,9 +37,9 @@ import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 //        day + plan_type + first instalment amount.
 //     4) Create the payments schedule (#1 processing, 2..N scheduled).
 //     5) Sign them in via a temp password we just set on the auth user
-//        — so they're authenticated when they return from Paystack.
-//     6) Initialize a Paystack transaction with our callback URL and
-//        return the authorization_url for the client to redirect to.
+//        — so they're authenticated when they return from Peach.
+//     6) Mint a Peach Checkout V2 session with our callback URL and
+//        return the redirect URL for the client to redirect to.
 //
 //   The "temp password" approach lets us establish a real session
 //   without OTP or magic-link side effects. The patient sets their own
@@ -48,10 +48,10 @@ import { isRapidRepeatPayAttempt } from './_lib/idempotency';
 //   Idempotency / retry: every step is safe to re-run. If the same
 //   patient hits Pay again after a decline, we reuse the same account,
 //   update the profile (in case they corrected something), regenerate
-//   the temp password + Paystack reference, and re-initiate.
+//   the temp password + Peach reference, and re-initiate.
 //
-//   The invitation `accepted_at` is NOT set here — that's the Paystack
-//   callback's job, after the charge actually succeeds.
+//   The invitation `accepted_at` is NOT set here — that's the Peach
+//   return/webhook's job, after the charge actually succeeds.
 
 const MIN_AGE = 18;
 
@@ -191,13 +191,13 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   }
 
   // ── 2b. Idempotency: short-window pay-step throttle ──────────────────
-  // If a previous Pay submit stamped a Paystack reference on this
+  // If a previous Pay submit stamped a Peach reference on this
   // plan's instalment 1 in the last 5s, we're in a rapid retry (e.g.
-  // slow Paystack roundtrip → user refreshed → second submit). The
+  // slow Peach roundtrip → user refreshed → second submit). The
   // discriminator below would handle this correctly — same user, same
   // plan, wipe-and-recreate payments — but doing that work twice in
   // 5s thrashes the DB and risks ordering surprises (the first call's
-  // payments row is in the middle of being read by Paystack as we
+  // payments row is in the middle of being read by Peach as we
   // delete it). Throttle instead; the user just waits a beat.
   const { data: recentInstalmentOne } = await svc
     .from('payments')
@@ -430,7 +430,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   await svc.from('payments').update({ peach_payment_id: reference }).eq('id', instalment1Id);
 
   // ── 8. Sign the user in via fresh temp password ───────────────────────
-  // We need an authenticated session before redirecting to Paystack so
+  // We need an authenticated session before redirecting to Peach so
   // the callback returns into the right cookie context. updateUserById
   // sets a known password; signInWithPassword establishes the session.
   const sessionTempPwd = generateTempPassword();

@@ -1,6 +1,6 @@
 /**
  * Backfill check — finds any active / pending-first-payment plan whose
- * stored Paystack authorization_code DOES NOT match its patient's
+ * stored Peach registration id (token) DOES NOT match its patient's
  * current default card's token. Pure read; reports findings, never
  * writes. Decide on the backfill (manual SQL UPDATE, the
  * change_default_card RPC per patient, or leave alone) after seeing the

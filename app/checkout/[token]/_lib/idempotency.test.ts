@@ -8,9 +8,9 @@ import {
 // ─── Checkout idempotency window — pin the rule ────────────────────────────
 //
 // initiateCheckout uses this to throttle the rapid-retry case (slow
-// Paystack roundtrip → user refreshes → re-submits within seconds).
+// Peach roundtrip → user refreshes → re-submits within seconds).
 // 5s is short enough to never get in the way of legitimate retries
-// (a Paystack decline + 3DS abort takes longer to come back), and
+// (a Peach decline + 3DS abort takes longer to come back), and
 // long enough to catch the panic-refresh pattern.
 
 const NOW = 1_750_000_000_000;

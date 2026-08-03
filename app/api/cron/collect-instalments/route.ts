@@ -34,7 +34,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Cron secret not configured.' }, { status: 500 });
     }
     // Constant-time compare via crypto.timingSafeEqual — same pattern
-    // the Paystack webhook handler uses for its HMAC signature check
+    // the Peach webhook handler uses for its HMAC signature check
     // (app/api/payments/peach/webhook/route.ts). The length check guards
     // against a mismatched-size header throwing instead of cleanly
     // rejecting; an attacker-supplied short/garbage header gets the
