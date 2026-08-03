@@ -6,7 +6,9 @@ import ApprovedBalanceCard from './ApprovedBalanceCard';
 import FindCareBar from './FindCareBar';
 import MergedPlansCard, { type MergedPlanRow, type MergedHeadline } from './MergedPlansCard';
 import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
+import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computePlanProgress } from '@/lib/planProgress';
+import DefaultFreezeBanner from './DefaultFreezeBanner';
 
 // ─── Patient home dashboard ──────────────────────────────────────────────
 //
@@ -87,7 +89,7 @@ export default async function PatientDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: profile }, { data: rawPlans }, { data: rawPayments }] =
+  const [{ data: profile }, { data: rawPlans }, { data: rawPayments }, isFrozen] =
     await Promise.all([
       supabase
         .from('profiles')
@@ -117,6 +119,9 @@ export default async function PatientDashboardPage() {
         .eq('kind', 'instalment')
         .in('status', ['scheduled', 'processing', 'failed', 'defaulted'])
         .order('due_date', { ascending: true }),
+      // Default-freeze rollup — authoritative single source of truth
+      // (lib/patient/freeze.ts). Runs in parallel; drives the banner.
+      isPatientFrozen(supabase, user.id),
     ]);
 
   const allPlans   = (rawPlans   ?? []) as unknown as PlanSummary[];
@@ -323,6 +328,10 @@ export default async function PatientDashboardPage() {
         <p className="text-lg font-semibold" style={{ color: '#13294B' }}>
           Hi, {profile?.first_name ?? user.email?.split('@')[0] ?? 'there'} 👋
         </p>
+
+        {/* Default-freeze notice — highest priority. Renders null unless
+            the patient has an unresolved defaulted plan. */}
+        <DefaultFreezeBanner frozen={isFrozen} />
 
         {/* Find-care search bar (LINK to explore). Placed directly under
             the greeting so it's the first tap-target the patient sees. */}
