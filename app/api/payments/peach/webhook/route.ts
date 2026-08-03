@@ -143,7 +143,7 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
 
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, status, total_amount, practice_id, patient_id, provider_id, payment_provider, peach_initial_transaction_id')
+    .select('id, status, total_amount, practice_id, patient_id, provider_id, peach_initial_transaction_id')
     .eq('id', payment.plan_id)
     .maybeSingle();
 
