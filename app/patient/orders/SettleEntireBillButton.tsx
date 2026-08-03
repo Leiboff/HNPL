@@ -29,7 +29,7 @@ type Props = {
 // Plan-level "Settle entire bill". Button label keeps the rand amount
 // (the total IS useful at the plan level — unlike per-row Pay-now where
 // the amount is already on the row). Confirms via ConfirmChargeDialog
-// before firing the single Paystack charge.
+// before firing the single Peach charge.
 export default function SettleEntireBillButton({
   planId,
   outstandingTotalCents,

@@ -8,10 +8,10 @@ import Link from 'next/link';
 type CardInfo = { id: string; card_brand: string; last_four: string };
 type PollingState = 'polling' | 'success' | 'timeout';
 
-// Safety-net only. The primary path is server-side Paystack /verify on
-// the parent page; this component is rendered when that path throws
-// (network blip to Paystack, etc.) so we can still recover if the
-// webhook lands a row in time.
+// Safety-net only. The primary path is the server-side Peach Checkout
+// V2 status check on the parent page; this component is rendered when
+// that path throws (network blip to Peach, etc.) so we can still
+// recover if the webhook lands a row in time.
 
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS  = 60_000;   // bumped from 10s — the brief

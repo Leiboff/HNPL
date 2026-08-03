@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 // ─── markPayoutPaid ─────────────────────────────────────────────────────────
 //
 // Admin manually marks a pending payout as paid (we initiate the actual
-// payout via Paystack outside the app — this is the bookkeeping flip).
+// payout via banking/EFT outside the app — this is the bookkeeping flip).
 // Server-side admin auth; UI only triggers, never decides.
 
 async function guardAdmin() {

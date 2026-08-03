@@ -45,7 +45,7 @@ describe('discriminateExistingUser — returning checkout patient (decline-retry
   it('reuses when plan.patient_id matches the existing confirmed user — the decline-retry happy path', () => {
     // The user was created on the first pass with email_confirm: true,
     // and the plan was bound to them in step 6 of initiateCheckout
-    // BEFORE the Paystack call. On retry, the plan still points at
+    // BEFORE the Peach call. On retry, the plan still points at
     // them; reuse cleanly.
     const out = discriminateExistingUser(USER_A, USER_A.id);
     expect(out).toEqual({ action: 'reuse', userId: USER_A.id });

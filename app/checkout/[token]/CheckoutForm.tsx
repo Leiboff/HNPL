@@ -43,7 +43,7 @@ import PlanPickerCards from './_components/PlanPickerCards';
 //
 // State is purely client-side until the Pay submit. The server action
 // is the single commit point — it creates the auth user, profile,
-// payments schedule, and Paystack transaction in one trip.
+// payments schedule, and Peach checkout in one trip.
 //
 // Mobile-first. Visual rhythm: one heading per step, an anchoring
 // medallion icon, generous whitespace, a single primary button. The
@@ -401,7 +401,7 @@ export default function CheckoutForm({
 
     startTransition(async () => {
       // The try/catch is load-bearing: if initiateCheckout throws
-      // (function timeout reaching Paystack, network drop), the
+      // (function timeout reaching Peach, network drop), the
       // rejection would surface as an uncaught promise inside the
       // transition — isPending eventually resets but the patient
       // sees a re-enabled button with NO error. Catch + surface a

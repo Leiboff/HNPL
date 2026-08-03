@@ -2,7 +2,7 @@
 //
 // Server-side fan-out: given a user_id and a notification payload, look
 // up every active push_subscriptions row for that user and deliver via
-// the Web Push protocol. Used by the Paystack webhook and any future
+// the Web Push protocol. Used by the Peach payment webhook and any future
 // cron job / server action that wants to notify the patient about
 // something — payment events today, plan + account + general events
 // once the relevant triggers are wired.

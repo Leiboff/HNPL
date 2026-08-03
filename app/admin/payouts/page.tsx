@@ -8,7 +8,7 @@ import { markPayoutPaid } from './actions';
 //
 // All payouts owed to practices: pending (HNPL owes the practice) and
 // paid (settled). "Mark paid" is a bookkeeping flip — the actual payout
-// happens via Paystack/banking outside the app.
+// happens via banking/EFT outside the app.
 
 type NameRef     = { first_name: string; last_name: string };
 type PracticeRef = { name: string };

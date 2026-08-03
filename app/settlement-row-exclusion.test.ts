@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 // ─── Settlement-row exclusion regression suite (post-0058) ──────────────
 //
 // 0058 introduced `payments.kind` ('instalment' | 'settlement'). A
-// settlement row represents a single Paystack charge for the SUMMED
+// settlement row represents a single Peach charge for the SUMMED
 // total of N instalments — its amount is the sum of the instalments it
 // covers. Including it anywhere instalments are counted/summed/listed
 // would double-count or render as a phantom "Instalment 0".

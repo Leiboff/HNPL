@@ -17,8 +17,8 @@
 //
 //   "In full" assumption — verified against the current code path:
 //     - chargeInstalment.ts passes the full scheduled amount to
-//       Paystack's /transaction/charge_authorization (no partial amounts).
-//     - The webhook sets status='collected' on charge.success without
+//       Peach's MIT charge /v1/registrations/{id}/payments (no partial amounts).
+//     - The webhook sets status='collected' on payment success without
 //       comparing the captured amount to payments.amount.
 //     - There is no `collected_amount` / `partial` column on payments.
 //   So 'collected' ALREADY means "full scheduled amount captured" by

@@ -1,7 +1,7 @@
 // ─── SMSPortal REST sender ───────────────────────────────────────────────
 //
 // One-shot send via SMSPortal's /bulkmessages endpoint. Mirrors the
-// bounded-fetch discipline of lib/email/resend.ts and lib/paystack.ts:
+// bounded-fetch discipline of lib/email/resend.ts and lib/payments/peach/client.ts:
 //
 //   • 8-second AbortController timeout. An SMS provider that hangs
 //     must NEVER hang the checkout — the patient is standing at the

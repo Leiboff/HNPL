@@ -23,7 +23,7 @@ import { settleRef } from '@/lib/payments/peach/refs';
 //   3. The settleable-status whitelist guards against UI bugs that
 //      try to settle a 'processing' or 'collected' row.
 //   4. Service-role client → attemptChargeInstalment(selfSettle:true)
-//      does the atomic claim + Paystack call. Service-role bypasses
+//      does the atomic claim + Peach call. Service-role bypasses
 //      RLS — safe because we've already verified ownership above.
 //
 // Settleable statuses:
@@ -39,14 +39,14 @@ import { settleRef } from '@/lib/payments/peach/refs';
 //                    only way back from here besides admin write-off.
 //
 // Outcomes (mirrored from attemptChargeInstalment):
-//   • 'charged'        — Paystack accepted the charge. The webhook
+//   • 'charged'        — Peach accepted the charge. The webhook
 //                        will confirm collected or failed async. UI
 //                        should show "processing — we'll confirm
 //                        shortly" until the webhook flips status.
 //   • 'claim_lost'     — concurrent cron or another tab already
 //                        claimed. The earlier attempt is in flight;
 //                        the user does not need to retry.
-//   • 'transport_err'  — Paystack network error. Surfaces to the user
+//   • 'transport_err'  — Peach network error. Surfaces to the user
 //                        as "try again in a moment" — the underlying
 //                        row is in 'processing' awaiting admin
 //                        reconciliation.
@@ -92,7 +92,7 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
     return { ok: false, status: 'not_settleable', currentStatus: payment.status as string };
   }
 
-  // ── 3. Service-role client → atomic claim + Paystack charge.
+  // ── 3. Service-role client → atomic claim + Peach charge.
   //       attemptChargeInstalment is shared with the cron — the SAME
   //       UPDATE-with-WHERE-status claim is what serialises the
   //       cron-vs-self-settle race to exactly one winner.
@@ -137,7 +137,7 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
   return { ok: false, status: 'claim_lost', reason: outcome.reason };
 }
 
-// ─── Settle entire bill — ONE Paystack charge via the settlement row ──
+// ─── Settle entire bill — ONE Peach charge via the settlement row ──
 //
 // Plan-level "pay everything outstanding now" using the settlement-row
 // model added by migration 0058. The atomic claim_plan_for_settlement
@@ -145,13 +145,13 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
 // payment row (kind='settlement') for the summed total, flips every
 // eligible instalment to 'processing' in one UPDATE, and reverts
 // cleanly if it lost a race against the cron. Then this action fires
-// ONE Paystack charge against the settlement row's reference. The
-// webhook's existing charge.success handler closes the loop —
-// see app/api/webhooks/paystack/route.ts handleChargeSuccess where
+// ONE Peach charge against the settlement row's reference. The
+// webhook's existing payment-success handler closes the loop —
+// see app/api/payments/peach/webhook/route.ts where
 // kind='settlement' fans out collected to every covered instalment.
 //
 // Why one charge, not the per-instalment loop:
-//   • One Paystack transaction fee instead of N.
+//   • One Peach transaction fee instead of N.
 //   • One statement line for the patient instead of N.
 //   • Voluntary all-or-nothing is correct semantics — half-settling
 //     a voluntary "pay everything" tap is the wrong contract.
@@ -336,7 +336,7 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   };
 }
 
-// Revert a settlement row that never made it to Paystack — flips it
+// Revert a settlement row that never made it to Peach — flips it
 // to 'failed' so the webhook's charge.failed handler (or an admin
 // sweep) restores the covered instalments to their snapshot statuses.
 // Used when post-claim preconditions miss (no card / no email).

@@ -12,7 +12,7 @@
 //            running, none of the other counts matter.
 //   RED    — the last run completed but recorded transport_errors > 0
 //            OR written_off_count > 0. transport_errors are a real
-//            failure mode (Paystack unreachable). written_off rows
+//            failure mode (Peach unreachable). written_off rows
 //            are an expected business outcome at the retry cap, but
 //            the brief calls for them to surface red — they represent
 //            money we've given up on, and any change in cadence is
