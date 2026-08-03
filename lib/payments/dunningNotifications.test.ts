@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { DUNNING_FEE_CENTS } from './dunning';
 
 // ─── Tests — dunning notifications NEVER throw ──────────────────────────────
 //
@@ -103,8 +104,8 @@ describe('notifyAttemptFailed', () => {
     await notifyAttemptFailed(svc, {
       paymentId: 'p1',
       consecutiveFailedAttemptsBefore: 1, // second-of-pair fail
-      feeAppliedCents: 10_000,
-      dunningFeesCentsAfter: 10_000,
+      feeAppliedCents: DUNNING_FEE_CENTS,
+      dunningFeesCentsAfter: DUNNING_FEE_CENTS,
       attemptedAmountCents: 25_000,
       nextAttemptDate: '2026-06-22',
     });
@@ -143,13 +144,13 @@ describe('notifyAttemptFailed', () => {
     await notifyAttemptFailed(svc, {
       paymentId: 'p1',
       consecutiveFailedAttemptsBefore: 1,
-      feeAppliedCents: 10_000,
-      dunningFeesCentsAfter: 10_000,
+      feeAppliedCents: DUNNING_FEE_CENTS,
+      dunningFeesCentsAfter: DUNNING_FEE_CENTS,
       attemptedAmountCents: 25_000,
       nextAttemptDate: '2026-06-22',
     });
     const [arg] = sendEmailSpy.mock.calls[0] as [{ subject: string; html: string }];
-    expect(arg.subject).toMatch(/R100\.00/);
+    expect(arg.subject).toMatch(/R115\.00/);
     expect(arg.html).toMatch(/default fee was added/i);
   });
 });

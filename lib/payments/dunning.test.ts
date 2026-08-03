@@ -15,19 +15,20 @@ import {
 // These tests pin the brief's exact ladder behaviour:
 //
 //   Attempt 1 (Day 0) fails → counter=1, no fee
-//   Attempt 2 (Day 1) fails → counter=0, +R100 fee   (end of pair)
+//   Attempt 2 (Day 1) fails → counter=0, +R115 fee   (end of pair)
 //   Attempt 3 (Day 7) fails → counter=1, no fee
-//   Attempt 4 (Day 8) fails → counter=0, +R100 fee   (end of pair)
+//   Attempt 4 (Day 8) fails → counter=0, +R115 fee   (end of pair)
 //   Attempt 5 (Day 14) fails → counter=1, no fee
-//   Attempt 6 (Day 15) fails → counter=0, +R100 fee  → cap reached → defaulted
+//   Attempt 6 (Day 15) fails → counter=0, +R115 fee  → cap reached → defaulted
 
-describe('computeFeeCapCents — cap = min(R300, 50% of bill)', () => {
-  it('large bill (>R600) is bounded by the absolute cap (R300)', () => {
-    expect(computeFeeCapCents(1000)).toBe(30_000);
-    expect(computeFeeCapCents(600)).toBe(30_000);
+describe('computeFeeCapCents — cap = min(R345, 50% of bill)', () => {
+  it('large bill (≥R690) is bounded by the absolute cap (R345 = 3×R115)', () => {
+    expect(computeFeeCapCents(1000)).toBe(34_500);
+    expect(computeFeeCapCents(690)).toBe(34_500); // 50% of R690 = R345, ties the absolute
   });
 
-  it('small bill is bounded by the 50% cap', () => {
+  it('mid / small bill is bounded by the 50% cap', () => {
+    expect(computeFeeCapCents(600)).toBe(30_000); // 50% of R600 = R300 < R345 absolute
     expect(computeFeeCapCents(400)).toBe(20_000); // R200
     expect(computeFeeCapCents(150)).toBe(7_500);  // R75
   });
@@ -51,8 +52,10 @@ describe('chargeAmountCents — retry-carries-fees', () => {
   });
 
   it('adds accrued fees on top of the instalment', () => {
-    expect(chargeAmountCents(250, 10_000)).toBe(35_000);
-    expect(chargeAmountCents(250, 30_000)).toBe(55_000);
+    // One fee (R115) and the full cap (R345 = 3 fees), symbolic so they
+    // track the constants.
+    expect(chargeAmountCents(250, DUNNING_FEE_CENTS)).toBe(25_000 + DUNNING_FEE_CENTS);            // R365
+    expect(chargeAmountCents(250, DUNNING_FEE_CAP_ABSOLUTE_CENTS)).toBe(25_000 + DUNNING_FEE_CAP_ABSOLUTE_CENTS); // R595
   });
 });
 
@@ -92,16 +95,16 @@ describe('chargeAmountCents — fractional-rand instalments (R425.68 + R425.66 +
     expect(a + b + c).toBe(127_700);
   });
 
-  it('with accrued dunning fees mixed in: 3 instalments + R100 fee on the failed one', () => {
-    // R425.68 + R425.66 (with R100 fee) + R425.66 = R1,277 + R100 = R1,377 → 137700 cents
+  it('with accrued dunning fees mixed in: 3 instalments + one R115 fee on the failed one', () => {
+    // R425.68 + R425.66 (with R115 fee) + R425.66 = R1,277 + R115 = R1,392 → 139200 cents
     const a = chargeAmountCents(425.68, 0);
-    const b = chargeAmountCents(425.66, 10_000); // R100 fee on this leg
+    const b = chargeAmountCents(425.66, DUNNING_FEE_CENTS); // R115 fee on this leg
     const c = chargeAmountCents(425.66, 0);
-    expect(a + b + c).toBe(137_700);
+    expect(a + b + c).toBe(127_700 + DUNNING_FEE_CENTS);
   });
 });
 
-// ─── Ladder progression on a typical R1000 bill (large bill, R300 cap) ──────
+// ─── Ladder progression on a typical R1000 bill (large bill, R345 cap) ──────
 
 describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {
   const bill = 1000;
@@ -122,7 +125,7 @@ describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {
     expect(r.nextAttemptDate).toBe(addDaysISO(day0, INTRA_PAIR_GAP_DAYS));
   });
 
-  it('Day 1 fail — second of pair, +R100 fee, counter resets, schedules Day 7', () => {
+  it('Day 1 fail — second of pair, +R115 fee, counter resets, schedules Day 7', () => {
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          0,
@@ -150,7 +153,7 @@ describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {
     expect(r.nextAttemptDate).toBe(addDaysISO(day7, INTRA_PAIR_GAP_DAYS));
   });
 
-  it('Day 8 fail — second of pair, +R100 fee (#2), counter resets, schedules Day 14', () => {
+  it('Day 8 fail — second of pair, +R115 fee (#2), counter resets, schedules Day 14', () => {
     const day8 = addDaysISO(addDaysISO(addDaysISO(day0, 1), INTER_PAIR_GAP_DAYS), 1);
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 1,
@@ -186,29 +189,32 @@ describe('advanceLadderAfterFailure — happy path on a R1000 bill', () => {
 // ─── Small-bill cap short-circuit (R400 bill → R200 cap → 2 fees max) ───────
 
 describe('advanceLadderAfterFailure — small-bill cap binds early', () => {
-  const bill = 400; // 50% cap = R200 → 2 R100 fees → ladder stops there
+  const bill = 400;                       // 50% cap = R200 = computeFeeCapCents(400)
+  const cap  = computeFeeCapCents(bill);  // 20_000
 
-  it('first fee attaches at Day 1, counter resets, schedule Day 7', () => {
+  it('first fee attaches at Day 1 (full R115), counter resets, schedule Day 7', () => {
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
       today:                           '2026-06-16',
     });
-    expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
+    expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS); // R115, fits under R200
     expect(r.dunningFeesCentsAfter).toBe(DUNNING_FEE_CENTS);
     expect(r.capReached).toBe(false);
   });
 
-  it('second fee attaches at Day 8 → cap = R200 reached → defaulted, no third pair', () => {
+  it('second fee at Day 8 CLAMPS to headroom (R85, not a full R115) → cap R200 reached → defaulted', () => {
+    // After R115, only R85 of headroom remains under the R200 cap, so the
+    // second fee shrinks to fit — proves the clamp tracks the fee constant.
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS,
       originalBillRands:               bill,
       today:                           '2026-06-23',
     });
-    expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
-    expect(r.dunningFeesCentsAfter).toBe(2 * DUNNING_FEE_CENTS); // R200
+    expect(r.feeAppliedThisAttempt).toBe(cap - DUNNING_FEE_CENTS); // 20_000 − 11_500 = 8_500 (R85)
+    expect(r.dunningFeesCentsAfter).toBe(cap);                     // R200
     expect(r.capReached).toBe(true);
     expect(r.terminalStatus).toBe('defaulted');
     expect(r.nextAttemptDate).toBeNull();

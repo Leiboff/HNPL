@@ -3,7 +3,7 @@
 // All offsets are in days from "the original due date / first failure"
 // (Day 0). Pair pattern: two attempts ~1 day apart, ~6 days between
 // pairs.  Fee attaches on every SECOND consecutive failed attempt; the
-// counter resets when a fee attaches. Cap = min(R300, 50% of the
+// counter resets when a fee attaches. Cap = min(R345 = 3×fee, 50% of the
 // original bill).
 //
 // This module is PURE — no DB, no fetch, no I/O. The caller passes in
@@ -18,8 +18,16 @@
 // Named constants — one place so a finance/legal change is one edit.
 // All values in cents to avoid float drift.
 
-export const DUNNING_FEE_CENTS               = 10_000;  // R100 per applied fee
-export const DUNNING_FEE_CAP_ABSOLUTE_CENTS  = 30_000;  // R300 hard cap
+export const DUNNING_FEE_CENTS               = 11_500;  // R115 per applied fee
+
+// Max number of fees the ladder may apply before terminal (policy: 3).
+export const DUNNING_MAX_FEES                = 3;
+
+// Absolute cap = 3 × the fee, so it AUTO-TRACKS the fee constant rather
+// than being a hardcoded rand figure (3 × R115 = R345). Change the fee
+// and the cap follows. The effective cap is still the LOWER of this and
+// 50% of the plan (computeFeeCapCents).
+export const DUNNING_FEE_CAP_ABSOLUTE_CENTS  = DUNNING_FEE_CENTS * DUNNING_MAX_FEES;  // R345
 export const DUNNING_FEE_CAP_PERCENT         = 0.5;     // OR 50% of original bill
 export const INTRA_PAIR_GAP_DAYS             = 1;       // Day 0 → 1, 7 → 8, 14 → 15
 export const INTER_PAIR_GAP_DAYS             = 6;       // Day 1 → 7, 8 → 14
@@ -42,7 +50,7 @@ export function dunningFeesEnabled(): boolean {
 }
 
 // Number of consecutive failed attempts that earns a fee. The brief
-// pins this at 2 ("a R100 default fee is charged only after every two
+// pins this at 2 ("a R115 default fee is charged only after every two
 // consecutive failed attempts"). Don't change without rereading the
 // brief — the pair schedule and the fee rule are coupled.
 export const FAILURES_PER_FEE                = 2;
@@ -82,7 +90,7 @@ export type LadderOutcome = {
 
 /**
  * Compute the per-instalment fee cap in cents. The cap is the LOWER of
- * the absolute (R300) and the per-bill percentage (50% of the plan
+ * the absolute (R345 = 3×fee) and the per-bill percentage (50% of the plan
  * total). Floor to whole cents so we never quote sub-cent amounts.
  */
 export function computeFeeCapCents(originalBillRands: number): number {
@@ -128,7 +136,7 @@ export function advanceLadderAfterFailure(input: LadderInput): LadderOutcome {
 
   // Fee is clamped to remaining cap headroom — even though earnsFee
   // tells us "this is the second-of-pair fail", the cap may bind below
-  // R100 on a tiny bill (e.g. R150 bill → cap R75). Headroom < fee
+  // R115 on a tiny bill (e.g. R150 bill → cap R75). Headroom < fee
   // means the fee shrinks to fit; headroom == 0 means no fee attaches.
   const remainingHeadroom = Math.max(0, capCents - input.dunningFeesCentsBefore);
   const feeThisAttempt    = earnsFee ? Math.min(DUNNING_FEE_CENTS, remainingHeadroom) : 0;
