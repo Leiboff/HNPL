@@ -557,7 +557,17 @@ export default function ConfirmForm({
       {/* Section 4 — Consent line */}
       {schedule && selectedCard && hasValidCard && !wantsNewCard && (
         <p className="text-sm text-gray-600">
-          By confirming, you agree to pay the amounts above on the dates shown, and your
+          By confirming, you agree to the{' '}
+          <Link
+            href="/legal/terms"
+            target="_blank"
+            rel="noopener"
+            className="font-semibold underline underline-offset-2"
+            style={{ color: '#15A89E' }}
+          >
+            payment-plan terms
+          </Link>
+          {' '}and to pay the amounts above on the dates shown, and your
           selected card will be charged immediately for the first instalment of{' '}
           <span className="font-semibold">{formatRand(schedule[0].amount)}</span>.
         </p>

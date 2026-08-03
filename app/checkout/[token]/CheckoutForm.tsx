@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition, useMemo } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import {
@@ -646,8 +647,18 @@ export default function CheckoutForm({
                 className="mt-0.5 h-4 w-4 accent-[#15A89E]"
               />
               <span className="leading-relaxed">
-                I agree to the payment-plan terms and authorise the scheduled
-                instalment debits on the dates shown.
+                I agree to the{' '}
+                <Link
+                  href="/legal/terms"
+                  target="_blank"
+                  rel="noopener"
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-semibold underline underline-offset-2"
+                  style={{ color: '#15A89E' }}
+                >
+                  payment-plan terms
+                </Link>
+                {' '}and authorise the scheduled instalment debits on the dates shown.
               </span>
             </label>
             {errors.termsAccepted && <p className="mt-1.5 text-xs text-[#D14141]">{errors.termsAccepted}</p>}
