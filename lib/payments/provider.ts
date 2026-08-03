@@ -139,13 +139,14 @@ export type CheckoutCreateParams = {
   // frictionless one-click (no re-enter-card form).
   //
   // Recipe (developer.peachpayments.com/docs/checkout-tokenisation):
-  //   createRegistration true + allowStoredCards true + cardTokens:[…].
+  //   createRegistration true + cardTokens:[…]. cardTokens is the
+  //   documented one-click enabler and is sufficient on its own — do NOT
+  //   send allowStoredCards (V2 rejects it as an unknown field, 400).
   // The resulting status returns the CIT id (providerPaymentId) →
   // stamp plans.peach_initial_transaction_id so instalments 2-N charge
   // rooted MIT INSTALLMENT (chargeInstalment falls back to UNSCHEDULED
   // only when that column is null — reg-only cards never charged CIT).
   cardTokens?:           string[];    // Existing Peach registration ids to offer for one-click.
-  allowStoredCards?:     boolean;     // Required alongside cardTokens to enable one-click.
   requireCvv?:           boolean;     // Force CVV on the one-click (default: acquirer/backend config).
   // Peach V2 /v2/checkout standingInstruction — the V2 schema only
   // (developer.peachpayments.com/reference/post_v2-checkout).

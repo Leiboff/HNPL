@@ -485,7 +485,9 @@ describe('payWithSavedCard — customer-present CIT via Checkout V2 one-click', 
   it('issues a Checkout V2 one-click CIT (createCheckout with cardTokens), NOT a silent MIT', () => {
     expect(body).toContain('provider.createCheckout');
     expect(body).toContain('cardTokens:');
-    expect(body).toContain('allowStoredCards:');
+    // cardTokens alone enables one-click; allowStoredCards must NOT be sent
+    // (V2 rejects it as an unknown field — proven live 2026-08-02).
+    expect(body).not.toContain('allowStoredCards');
     // Must NOT charge the recurring MIT surface on this customer-present path.
     expect(body).not.toContain('provider.chargeSavedCard');
     expect(body).not.toContain("source: 'MIT'");
