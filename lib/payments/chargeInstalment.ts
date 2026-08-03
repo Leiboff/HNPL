@@ -154,7 +154,7 @@ export async function attemptChargeInstalment(
   //       missing so cards tokenised before the migration still work.
   const { data: plan } = await svc
     .from('plans')
-    .select('peach_registration_id, peach_initial_transaction_id, patient_id, status, payment_provider')
+    .select('peach_registration_id, peach_initial_transaction_id, patient_id, status')
     .eq('id', current.plan_id)
     .maybeSingle();
 
