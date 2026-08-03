@@ -32,11 +32,14 @@
 // Identity conventions:
 //   • `merchantTransactionId` is our idempotency key on every charge;
 //     the same string is echoed on the webhook so we can reconcile.
-//     Format follows the existing convention:
-//       hnpl_co_<20 hex>       — checkout first instalment
-//       hnpl_<16 hex>_a<n>     — MIT recurring attempt n
-//       hnpl_settle_<uuid>     — settlement charge
-//       hnpl_reg_<uuid>        — standalone card-registration
+//     Peach caps it at 16 chars, so refs are the compact scheme minted
+//     by lib/payments/peach/refs.ts — exactly 16 chars, `bn<purpose><13>`:
+//       bnc<13>   — checkout first-instalment CIT   (checkoutRef)
+//       bni<13>   — MIT recurring instalment attempt (instalmentAttemptRef)
+//       bns<13>   — settle-entire-plan MIT           (settleRef)
+//       bnr<13>   — standalone card-registration     (registrationRef)
+//     (The old long-form hnpl_* refs exceeded the 16-char cap and are no
+//     longer minted; peachRefPurpose() recovers the purpose char.)
 //
 // State authority:
 //   • CIT (widget) charges: the WEBHOOK is authoritative. createCheckout

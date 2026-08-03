@@ -100,7 +100,7 @@ export default function ConfirmForm({
   const [error,          setError]          = useState<string | null>(null);
   const [addCardLoading, setAddCardLoading] = useState(false);
   const [addCardError,   setAddCardError]   = useState<string | null>(null);
-  // Peach COPYandPAY widget lives on the same page — mounted after
+  // Peach Checkout V2 widget lives on the same page — mounted after
   // initializeCardRegistration returns a checkoutId. Null means "no
   // widget mounted".
   const [addCardWidget,  setAddCardWidget]  = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);

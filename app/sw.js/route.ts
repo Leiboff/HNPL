@@ -22,7 +22,7 @@ import { NextResponse } from 'next/server';
 //   (none)       network-only / bypass /api/*, /auth/*, /checkout/*, anything
 //                                       non-GET, anything cross-origin
 //
-// Payment routes (/checkout/[token], /api/webhooks/paystack, /api/push/*)
+// Payment routes (/checkout/[token], /api/payments/peach/webhook, /api/push/*)
 // are NEVER cached and NEVER replayed offline. An offline user mid-
 // checkout sees the clean /offline screen rather than a half-working
 // cached form that would lie about whether their card was charged.
@@ -60,7 +60,7 @@ const SHELL_PRECACHE = [
 
 // Paths the SW MUST NOT touch — always go straight to the network,
 // never cache the response. Payment + auth + push subscription
-// surfaces, and the webhook endpoint Paystack hits server-side.
+// surfaces, and the webhook endpoint Peach hits server-side.
 const BYPASS_PREFIXES = [
   '/api/',
   '/checkout/',
@@ -123,7 +123,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Cross-origin (Paystack, Supabase realtime, Resend, etc.) — pass.
+  // Cross-origin (Peach, Supabase realtime, Resend, etc.) — pass.
   if (url.origin !== self.location.origin) return;
 
   // Payment + auth + push surfaces — never cache, never replay.

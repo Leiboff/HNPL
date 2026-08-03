@@ -91,6 +91,7 @@ vi.mock('@/lib/payments/peach/saveCardForPatient', () => ({
 
 // Import AFTER mocks are wired.
 import { POST } from './route';
+import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 
 const SECRET = 'test-secret-token-hex-does-not-need-to-be-real';
 const WEBHOOK_URL = 'https://app.test/api/payments/peach/webhook';
@@ -99,6 +100,7 @@ beforeEach(() => {
   dbState.writes.length   = 0;
   dbState.payments.length = 0;
   dbState.plans.length    = 0;
+  vi.mocked(saveCardForPatient).mockClear();
   process.env.NEXT_PUBLIC_SUPABASE_URL   = 'https://test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY  = 'service-role-test';
   process.env.PEACH_CHECKOUT_SECRET_TOKEN = SECRET;
@@ -189,7 +191,7 @@ describe('POST /api/payments/peach/webhook — JSON verification probe', () => {
 
 const EVENT_BODY_SUCCESS =
   'id=peach-payment-abc' +
-  '&merchantTransactionId=hnpl_reg_test_1' +   // reg reference — safe path
+  '&merchantTransactionId=bnrreg0000000001' +  // compact card-registration ref (purpose 'r')
   '&amount=0.00' +
   '&currency=ZAR' +
   '&paymentType=DB' +
@@ -234,6 +236,26 @@ describe('POST /api/payments/peach/webhook — signed event delivery', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.received).toBe(true);
+  });
+
+  it('P2: card-reg backstop resolves the patient from BRACKETED-FLAT customParameters and saves the card', async () => {
+    // Peach delivers customParameters[SHOPPER_patientId]=patient-1 as a
+    // bracketed-flat key; parseFormEventBody keeps it flat. The handler
+    // must read that literal key (not a nested customParameters object,
+    // which the parser never builds) — else the backstop silently no-ops
+    // (audit finding #4 / P2). Assert saveCardForPatient is called with
+    // the resolved patientId.
+    const signed = signWebhookForTesting({ body: EVENT_BODY_SUCCESS, secret: SECRET, url: WEBHOOK_URL });
+    const res = await POST(makeFormRequest(EVENT_BODY_SUCCESS, {
+      'x-webhook-signature-algorithm': signed.algorithm,
+      'x-webhook-timestamp':           signed.timestamp,
+      'x-webhook-id':                  signed.webhookId,
+      'x-webhook-signature':           signed.signature,
+    }));
+    expect(res.status).toBe(200);
+    expect(vi.mocked(saveCardForPatient)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveCardForPatient).mock.calls[0][0]).toBe('patient-1');
+    expect(vi.mocked(saveCardForPatient).mock.calls[0][1]).toMatchObject({ registrationId: 'peach-reg-abc' });
   });
 
   it('is idempotent — double-delivery of the same signed event still returns 200', async () => {

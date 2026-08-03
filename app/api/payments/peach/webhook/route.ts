@@ -118,9 +118,10 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
 
   // Standalone card-registration path — no payment row; just save
   // the card. Purpose 'r' identifies the compact peach ref as a Flow B
-  // add-card event. Historic long-form refs (hnpl_reg_*) still hit the
-  // fallback for pre-0079 rows in flight.
-  if (!payment && (peachRefPurpose(reference) === 'r' || reference.startsWith('hnpl_reg_'))) {
+  // add-card event. (The old `|| startsWith('hnpl_reg_')` fallback for
+  // pre-compact-ref rows is removed — only compact `bnr…` refs are minted
+  // now, and any legacy checkout session expired long ago.)
+  if (!payment && peachRefPurpose(reference) === 'r') {
     await handleCardRegistrationSuccess(supabase, payload);
     return;
   }
@@ -341,7 +342,7 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     .eq('peach_payment_id', reference)
     .maybeSingle();
 
-  if (!payment && (peachRefPurpose(reference) === 'r' || reference.startsWith('hnpl_reg_'))) {
+  if (!payment && peachRefPurpose(reference) === 'r') {
     console.log('[peach-webhook] card_registration: charge failed — no action needed', {
       reference, reason: payload.result?.description ?? 'unknown',
     });
@@ -484,7 +485,21 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
 // ─── Standalone card-registration ──────────────────────────────────
 
 async function handleCardRegistrationSuccess(supabase: ReturnType<typeof svc>, payload: WebhookPaymentPayload): Promise<void> {
-  const patientId = payload.customParameters?.SHOPPER_patientId ?? payload.customParameters?.patientId;
+  // Peach's form-urlencoded webhook delivers customParameters as
+  // BRACKETED-FLAT keys (customParameters[SHOPPER_patientId]=…), and
+  // parseFormEventBody (which only unflattens dotted names) keeps them as
+  // literal top-level keys — it never builds a nested customParameters
+  // object. Reading payload.customParameters?.SHOPPER_patientId (nested)
+  // therefore ALWAYS missed → this card-reg backstop silently no-oped
+  // (audit finding #4 / P2). Read the bracketed-flat key first, tolerating
+  // the nested shape as a fallback for older/test deliveries — mirrors the
+  // sync completion route (payment-methods/complete/page.tsx).
+  const raw = payload as unknown as Record<string, unknown>;
+  const patientId =
+    (raw['customParameters[SHOPPER_patientId]'] as string | undefined) ??
+    (raw['customParameters[patientId]']        as string | undefined) ??
+    payload.customParameters?.SHOPPER_patientId ??
+    payload.customParameters?.patientId;
   if (!patientId) {
     console.error('[peach-webhook] card_registration: no patientId in customParameters', { reference: payload.merchantTransactionId });
     return;
