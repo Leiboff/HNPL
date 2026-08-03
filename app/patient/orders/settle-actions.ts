@@ -5,6 +5,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { getPaymentProvider } from '@/lib/payments/provider';
+import { dunningFeesEnabled } from '@/lib/payments/dunning';
 import { settleRef } from '@/lib/payments/peach/refs';
 
 // ─── Patient-initiated "Pay now" — self-settle a past-due instalment ──
@@ -201,10 +202,15 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   );
 
   const today = new Date().toISOString().slice(0, 10);
+  // Fee gate (compliance): while dunning fees are OFF, the settlement
+  // total must EXCLUDE any accrued dunning_fees_cents — the patient
+  // settles instalment principal only, never an un-consented fee. The
+  // per-instalment charge path gates the same way (chargeInstalment).
   const { data: claim, error: claimErr } = await svc.rpc('claim_plan_for_settlement', {
-    p_plan_id:    planId,
-    p_patient_id: user.id,
-    p_today:      today,
+    p_plan_id:      planId,
+    p_patient_id:   user.id,
+    p_today:        today,
+    p_include_fees: dunningFeesEnabled(),
   });
 
   if (claimErr) {

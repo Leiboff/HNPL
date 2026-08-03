@@ -131,6 +131,9 @@ function stubSuccess() {
 
 beforeEach(() => {
   chargeSavedCardSpy.mockReset();
+  // Default the fee gate OFF for every test (compliance default). Tests
+  // that assert the ungated behaviour opt in explicitly.
+  delete process.env.DUNNING_FEES_ENABLED;
 });
 
 // ─── attemptChargeInstalment ────────────────────────────────────────
@@ -360,7 +363,8 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(r1.reference).not.toBe(r3.reference);
   });
 
-  it('includes accrued dunning fees in the Peach amount (retry-carries-fees)', async () => {
+  it('includes accrued dunning fees in the Peach amount when fees ENABLED (retry-carries-fees)', async () => {
+    process.env.DUNNING_FEES_ENABLED = 'true';
     const state: StubState = {
       payments: [{
         id: 'p1', status: 'failed', retry_count: 2, amount: 250,
@@ -379,6 +383,33 @@ describe('attemptChargeInstalment — successful charge', () => {
     expect(result.amountChargedCents).toBe(35_000);
     const [args] = chargeSavedCardSpy.mock.calls as [[{ amountCents: number }]];
     expect(args[0].amountCents).toBe(35_000);
+  });
+
+  it('GATE: charges instalment ONLY (no accrued fee) when fees DISABLED (default)', async () => {
+    // Compliance: with the fee gate OFF (default), a row carrying an
+    // accrued dunning_fees_cents is charged the instalment principal
+    // ONLY — zero rand of fee reaches the card. The ledger column is
+    // left untouched (not erased), just not charged.
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'failed', retry_count: 2, amount: 250,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+        dunning_fees_cents: 10_000, // R100 accrued (legacy) — must NOT be charged
+      }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    stubSuccess();
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+    expect(result.kind).toBe('charged');
+    if (result.kind !== 'charged') return;
+    // R250 instalment only — the R100 accrued fee is gated out.
+    expect(result.amountChargedCents).toBe(25_000);
+    const [args] = chargeSavedCardSpy.mock.calls as [[{ amountCents: number }]];
+    expect(args[0].amountCents).toBe(25_000);
+    // Ledger untouched — the fee is not erased, just not charged.
+    expect(state.payments[0].dunning_fees_cents).toBe(10_000);
   });
 });
 
@@ -445,7 +476,8 @@ describe('attemptChargeInstalment — revert on post-claim ineligibility', () =>
 // ─── self-settle path ──────────────────────────────────────────────
 
 describe('attemptChargeInstalment — selfSettle widens the claim', () => {
-  it('charges a defaulted row when selfSettle=true', async () => {
+  it('charges a defaulted row when selfSettle=true (fees ENABLED → includes accrued fees)', async () => {
+    process.env.DUNNING_FEES_ENABLED = 'true';
     const state: StubState = {
       payments: [{
         id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
@@ -462,6 +494,28 @@ describe('attemptChargeInstalment — selfSettle widens the claim', () => {
     if (result.kind !== 'charged') return;
     expect(result.amountChargedCents).toBe(25_000 + 30_000); // R250 + R300 fees
     expect(state.payments[0].status).toBe('processing');
+  });
+
+  it('GATE: self-settling a defaulted row charges instalment ONLY when fees DISABLED', async () => {
+    // A patient paying off a defaulted instalment while the gate is OFF
+    // is charged the principal only — the accrued R300 is not debited.
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'defaulted', retry_count: 6, amount: 250,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+        dunning_fees_cents: 30_000,
+      }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+    };
+    const svc = makeStub(state);
+    stubSuccess();
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15', selfSettle: true });
+    expect(result.kind).toBe('charged');
+    if (result.kind !== 'charged') return;
+    expect(result.amountChargedCents).toBe(25_000); // R250 only, fee gated out
+    const [args] = chargeSavedCardSpy.mock.calls as [[{ amountCents: number }]];
+    expect(args[0].amountCents).toBe(25_000);
   });
 
   it('refuses to charge a defaulted row when selfSettle=false (cron path)', async () => {

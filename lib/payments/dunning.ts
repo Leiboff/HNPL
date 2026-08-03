@@ -24,6 +24,23 @@ export const DUNNING_FEE_CAP_PERCENT         = 0.5;     // OR 50% of original bi
 export const INTRA_PAIR_GAP_DAYS             = 1;       // Day 0 → 1, 7 → 8, 14 → 15
 export const INTER_PAIR_GAP_DAYS             = 6;       // Day 1 → 7, 8 → 14
 
+// ─── Fee gate (compliance) ──────────────────────────────────────────────
+//
+// Charging a default fee requires disclosed + accepted T&Cs, which are
+// not yet persisted. Until they are, ALL fee CHARGING is gated OFF:
+// the ladder still advances, retries still run, comms still fire, and the
+// instalment still transitions to `defaulted` at the ladder's terminal
+// point — but ZERO rand of fee ever hits a patient card, and the
+// dunning_fees_cents ledger is not grown while the gate is closed.
+//
+// Read at call time (not module load) so tests + a future ops flip can
+// toggle it via env without a rebuild. Default OFF: enabling requires a
+// deliberate `DUNNING_FEES_ENABLED=true`, never an accidental empty/typo
+// value. This is the single source of truth every charge point consults.
+export function dunningFeesEnabled(): boolean {
+  return process.env.DUNNING_FEES_ENABLED === 'true';
+}
+
 // Number of consecutive failed attempts that earns a fee. The brief
 // pins this at 2 ("a R100 default fee is charged only after every two
 // consecutive failed attempts"). Don't change without rereading the
