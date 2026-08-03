@@ -19,6 +19,7 @@ import {
   type SaIdInvalidReason,
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
+import { isPatientFrozen } from '@/lib/patient/freeze';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
@@ -125,7 +126,10 @@ export type InitiateCheckoutResult =
   // (#6 in the verification audit). The form uses `loginUrl` to send
   // the patient to /login?next=… so they land on this bill's
   // confirm page after authenticating.
-  | { ok: false; error: string; requireLogin: true; loginUrl: string };
+  | { ok: false; error: string; requireLogin: true; loginUrl: string }
+  // frozen fires when the resolved patient has an unresolved defaulted
+  // plan — they're blocked from starting a new one until it's settled.
+  | { ok: false; error: string; frozen: true };
 
 export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
   const { token, firstName, lastName, saIdNumber, phone, planType } = input;
@@ -292,6 +296,21 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     }
     userId    = created.user.id;
     isNewUser = true;
+  }
+
+  // ── 3a. Default freeze (server-side gate). A returning patient with an
+  //    unresolved defaulted plan is blocked from starting a NEW one until
+  //    they settle it. New users can't be frozen (no prior plans), so we
+  //    skip the query for them. This is the authoritative enforcement —
+  //    the checkout/orders UI also surfaces it, but the block lives here
+  //    so a direct POST cannot bypass it. Mirrors the bill-acceptance
+  //    reject pattern above.
+  if (!isNewUser && (await isPatientFrozen(svc, userId))) {
+    return {
+      ok:     false,
+      error:  "You have a defaulted plan. You can't take on a new plan until it's settled — open your orders to settle it.",
+      frozen: true,
+    };
   }
 
   // ── 3b. Resolve the salary_day — profile is the source of truth ─────

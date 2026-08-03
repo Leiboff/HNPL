@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { isPatientFrozen } from '@/lib/patient/freeze';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef, registrationRef } from '@/lib/payments/peach/refs';
@@ -87,7 +88,7 @@ async function isBlockedFromNewPlan(patientId: string): Promise<boolean> {
 export async function acceptPlan(
   planId: string,
   planType: 2 | 3,
-): Promise<{ error: string | null; reason?: 'not_onboarded'; href?: string }> {
+): Promise<{ error: string | null; reason?: 'not_onboarded'; frozen?: boolean; href?: string }> {
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -119,6 +120,19 @@ export async function acceptPlan(
 
   const salaryDay = profile?.salary_day as number | null;
   if (!salaryDay) return { error: 'Please set your salary date before accepting.' };
+
+  // ─── Default freeze gate ─────────────────────────────────────────
+  // Checked BEFORE the one-plan velocity rule below: the freeze is the
+  // more specific block (unresolved default) and carries its own message.
+  // It also catches repeat customers who have completed a plan before —
+  // they're exempt from isBlockedFromNewPlan, but a default still freezes
+  // them out until settled.
+  if (await isPatientFrozen(supabase, user.id)) {
+    return {
+      error: "You have a defaulted plan. You can't take on a new plan until it's settled — settle it from your orders first.",
+      frozen: true,
+    };
+  }
 
   if (await isBlockedFromNewPlan(user.id)) {
     return { error: 'Please complete your current payment plan before starting another.' };
@@ -346,6 +360,7 @@ export async function payWithSavedCard(
   error:             string | null;
   planId?:           string;
   reason?:           'not_onboarded';
+  frozen?:           boolean;
   href?:             string;
   // The saved-card first instalment is a CUSTOMER-PRESENT (CIT) charge:
   // it runs through a Checkout V2 one-click widget (3DS-eligible, roots
@@ -364,6 +379,19 @@ export async function payWithSavedCard(
   // ─── Onboarding gate ─────────────────────────────────────────────
   const refusal = await requireOnboarded(supabase, user);
   if (refusal) return refusal;
+
+  // ─── Default freeze gate ─────────────────────────────────────────
+  // The saved-card one-click is the returning-patient equivalent of
+  // accepting a bill. If the patient has an unresolved defaulted plan,
+  // block it server-side (same gate as the cold-checkout initiateCheckout
+  // path) — they must settle the default before starting anything new,
+  // whether a fresh acceptance or a resume of an abandoned one.
+  if (await isPatientFrozen(supabase, user.id)) {
+    return {
+      error: "You have a defaulted plan. You can't take on a new plan until it's settled — settle it from your orders first.",
+      frozen: true,
+    };
+  }
 
   if (planType !== 2 && planType !== 3) {
     return { error: 'Invalid instalment count. Choose 2 or 3.' };

@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { declinePlan } from '../actions';
 import { selfSettleInstalment, selfSettleEntirePlan } from './settle-actions';
+import { isPatientFrozen } from '@/lib/patient/freeze';
+import DefaultFreezeBanner from '../DefaultFreezeBanner';
 import OrdersView from './OrdersView';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
@@ -98,6 +100,12 @@ export default async function OrdersPage() {
     }
   }
 
+  // Default-freeze rollup (authoritative single source of truth). A
+  // defaulted INSTALMENT keeps its plan 'active', so it's already in the
+  // fetched payments — but we use the shared helper so the banner can
+  // never drift from the server-side gate.
+  const isFrozen = await isPatientFrozen(supabase, user.id);
+
   const pendingPlans  = plans.filter((p) => PENDING_STATUSES.has(p.status));
   const currentPlans  = plans.filter((p) => CURRENT_STATUSES.has(p.status));
   const historicPlans = plans.filter((p) => HISTORIC_STATUSES.has(p.status));
@@ -111,6 +119,7 @@ export default async function OrdersPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10">
       <h1 className="text-2xl font-semibold mb-6" style={{ color: '#13294B' }}>Orders</h1>
+      {isFrozen && <div className="mb-6"><DefaultFreezeBanner frozen /></div>}
       <OrdersView
         pendingPlans={pendingPlans}
         currentPlans={currentPlans}

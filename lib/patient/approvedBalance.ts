@@ -6,15 +6,16 @@
 //
 //   available = max(0, limit - Σ outstanding_principal_on_active_plans)
 //
-// Where the outstanding principal on an active plan is the sum of
-// `amount` on `payments` rows that are STILL owed:
-//   status ∈ { scheduled, processing, failed }
-// Statuses NOT counted (already collected or terminal):
-//   collected, retried, written_off, defaulted
-//   (defaulted is "we've given up chasing" — from the patient's
-//    perspective they haven't paid, but for CREDIT-LIMIT accounting
-//    the balance stops accruing at write-off / default; the outstanding
-//    is what's still owed on ACTIVE plans, not a lifetime tally.)
+// Where the outstanding principal is the sum of `amount` on `payments`
+// rows that are STILL owed:
+//   status ∈ { scheduled, processing, failed, defaulted }
+// A `defaulted` instalment IS still owed — the patient hasn't paid it —
+// so it MUST keep consuming the limit. (It also freezes the patient out
+// of new plans entirely; see lib/patient/freeze.ts. Excluding it here
+// would perversely FREE the limit on default, which was the old bug.)
+// Statuses NOT counted (already paid or forgiven):
+//   collected — paid; retried — legacy; written_off — explicit
+//   forgiveness (no debt).
 //
 // The widget is DISPLAY-ONLY:
 //   • Renders nothing when limit is NULL (no fake placeholder, no "R0
@@ -26,13 +27,13 @@ export type PaymentForBalance = {
   status: string;
 };
 
-const OUTSTANDING_STATUSES = new Set(['scheduled', 'processing', 'failed']);
+const OUTSTANDING_STATUSES = new Set(['scheduled', 'processing', 'failed', 'defaulted']);
 
 /**
  * Sum the outstanding principal across every payment row on the
  * patient's active plans. Non-outstanding statuses (collected /
- * retried / written_off / defaulted) don't count — the widget
- * measures "what's still yours to owe on active plans".
+ * retried / written_off) don't count — the widget measures "what's
+ * still yours to owe". A `defaulted` row IS still owed and counts.
  *
  * Pass ONLY the payments belonging to active plans (the caller
  * filters upstream) — this function trusts its input and doesn't
