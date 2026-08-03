@@ -41,7 +41,7 @@ function CardThumbnail({ brand }: { brand: string }) {
 
 type Props = {
   initialCards:               CardRow[];
-  // Kicks off the COPYandPAY card-vault flow (Flow B). Returns
+  // Kicks off the Checkout V2 card-vault flow (Flow B). Returns
   // { checkoutId, shopperResultUrl }; the sheet mounts the widget
   // against those. No cross-page navigation.
   initializeCardRegistration: () => Promise<{
@@ -84,7 +84,7 @@ export default function PaymentMethods({
   const [error,   setError]   = useState<string | null>(null);
   const [notice,  setNotice]  = useState<string | null>(null);
 
-  // ── ?added=added|already banner from the COPYandPAY return route ──
+  // ── ?added=added|already banner from the Checkout V2 return route ──
   //     The return route uses server-side `redirect(...)` on success
   //     so the browser lands here with the flag. Shown once per
   //     navigation; the effect strips the query param after reading.
@@ -103,7 +103,7 @@ export default function PaymentMethods({
   const [addLoading, setAddLoading] = useState(false);
   const [addError,   setAddError]   = useState<string | null>(null);
   // Once initializeCardRegistration returns, hold checkoutId +
-  // shopperResultUrl so the sheet can mount the COPYandPAY widget.
+  // shopperResultUrl so the sheet can mount the Checkout V2 widget.
   const [addCardWidget, setAddCardWidget] = useState<{
     checkoutId:       string;
     shopperResultUrl: string;

@@ -108,7 +108,7 @@ export type InitiateCheckoutInput = {
 export type InitiateCheckoutResult =
   | {
       ok:                  true;
-      // Peach COPYandPAY: the widget script is loaded with this id and
+      // Peach Checkout V2: the widget script is loaded with this id and
       // renders the card entry / 3DS UI in-page. No off-site redirect.
       checkoutId:          string;
       // Server-computed instalment 1 amount in cents. Displayed to the
@@ -446,7 +446,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   });
   if (signInErr) return { ok: false, error: `Failed to sign in: ${signInErr.message}` };
 
-  // ── 9. Create the Peach COPYandPAY checkout ──────────────────────────
+  // ── 9. Create the Peach Checkout V2 checkout ─────────────────────────
   // The checkout is created server-side with the amount we just
   // computed. The client receives ONLY a checkoutId to mount the widget
   // against — the amount is bound on the server side and the widget
