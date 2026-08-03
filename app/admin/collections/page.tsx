@@ -40,9 +40,10 @@ const CHIP_DEFINITIONS: Array<{
   { key: 'overdue',     label: 'Overdue',           description: 'Scheduled, past due_date — cron should have picked these up' },
   { key: 'processing',  label: 'Awaiting',          description: 'Charge fired, webhook not yet reconciled' },
   { key: 'upcoming',    label: 'Upcoming',          description: 'Scheduled, due in the future' },
-  { key: 'failed',      label: 'Failed / retrying', description: 'Failed under the retry cap' },
+  { key: 'failed',      label: 'Failed / retrying', description: 'Failed, still in the dunning ladder' },
+  { key: 'defaulted',   label: 'Defaulted',         description: 'Dunning terminal — debt owed, patient frozen from new plans' },
   { key: 'collected',   label: 'Collected',         description: 'Successfully collected' },
-  { key: 'written_off', label: 'Written off',       description: 'Retry cap exhausted' },
+  { key: 'written_off', label: 'Written off',       description: 'Explicit write-off' },
   { key: 'all',         label: 'All',               description: 'Every row' },
 ];
 
@@ -56,6 +57,8 @@ type PaymentRow = {
   status:            string;
   retry_count:       number;
   collected_at:      string | null;
+  dunning_fees_cents: number | null;
+  next_attempt_date:  string | null;
   profiles:          { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
   plans:             { plan_type: number | null; practices: { name: string } | { name: string }[] | null } | { plan_type: number | null; practices: { name: string } | { name: string }[] | null }[] | null;
 };
@@ -141,7 +144,7 @@ export default async function AdminCollectionsPage({
     .from('payments')
     .select(`
       id, plan_id, patient_id, instalment_number, amount, due_date,
-      status, retry_count, collected_at,
+      status, retry_count, collected_at, dunning_fees_cents, next_attempt_date,
       profiles!payments_patient_id_fkey(first_name, last_name),
       plans(plan_type, practices(name))
     `);
@@ -158,6 +161,9 @@ export default async function AdminCollectionsPage({
       break;
     case 'failed':
       query = query.in('status', ['failed', 'retried']);
+      break;
+    case 'defaulted':
+      query = query.eq('status', 'defaulted');
       break;
     case 'collected':
       query = query.eq('status', 'collected');
@@ -200,7 +206,7 @@ export default async function AdminCollectionsPage({
   const { data: rawAll } = await countsQuery;
 
   const counts: Record<ChipKey, number> = {
-    overdue: 0, upcoming: 0, processing: 0, failed: 0, collected: 0, written_off: 0, all: 0,
+    overdue: 0, upcoming: 0, processing: 0, failed: 0, defaulted: 0, collected: 0, written_off: 0, all: 0,
   };
   for (const r of (rawAll ?? []) as Array<{ status: string; due_date: string }>) {
     const b = classifyCollection(r, today);
@@ -386,7 +392,7 @@ function MixLine({ mix }: { mix: DateRollup<PaymentRow>['mix'] }) {
   // Render the bucket counts in chip-bar order so the eye reads the
   // same vocabulary in both places.
   const ORDER: Array<CollectionBucket> = [
-    'overdue', 'processing', 'upcoming', 'failed', 'collected', 'written_off',
+    'overdue', 'processing', 'upcoming', 'failed', 'defaulted', 'collected', 'written_off',
   ];
   const parts = ORDER
     .filter(b => (mix[b] ?? 0) > 0)
@@ -402,7 +408,7 @@ function DateBody({ rows, today }: { rows: PaymentRow[]; today: string }) {
         <table className="w-full text-sm">
           <thead className="bg-white border-b border-gray-100">
             <tr>
-              {['Patient', 'Practice', 'Instalment', 'Amount', 'Status', 'Retry'].map((h) => (
+              {['Patient', 'Practice', 'Instalment', 'Amount', 'Fees', 'Status', 'Retry', 'Next retry'].map((h) => (
                 <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
                   {h}
                 </th>
@@ -420,6 +426,11 @@ function DateBody({ rows, today }: { rows: PaymentRow[]; today: string }) {
                 <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{planPracticeName(row)}</td>
                 <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{instalmentLabel(row)}</td>
                 <td className="px-4 py-3 text-gray-900 whitespace-nowrap tabular-nums">{formatRand(Number(row.amount))}</td>
+                <td className="px-4 py-3 text-xs tabular-nums whitespace-nowrap">
+                  {Number(row.dunning_fees_cents ?? 0) > 0
+                    ? <span className="text-red-700">{formatRand(Number(row.dunning_fees_cents) / 100)}</span>
+                    : <span className="text-gray-400">—</span>}
+                </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <Link href={`/admin/collections/${row.id}`} className="hover:opacity-80">
                     <CollectionStatusBadge bucket={classifyCollection(row, today)} />
@@ -427,6 +438,9 @@ function DateBody({ rows, today }: { rows: PaymentRow[]; today: string }) {
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-500 tabular-nums whitespace-nowrap">
                   {row.retry_count > 0 ? `${row.retry_count}` : '—'}
+                </td>
+                <td className="px-4 py-3 text-xs text-gray-500 tabular-nums whitespace-nowrap">
+                  {row.next_attempt_date ? formatDateStr(row.next_attempt_date) : '—'}
                 </td>
               </tr>
             ))}
@@ -463,6 +477,16 @@ function DateBody({ rows, today }: { rows: PaymentRow[]; today: string }) {
                 <span className="text-xs text-gray-500">Retry {row.retry_count}</span>
               )}
             </div>
+            {(Number(row.dunning_fees_cents ?? 0) > 0 || row.next_attempt_date) && (
+              <div className="mt-1 flex items-center gap-3 text-xs text-gray-500">
+                {Number(row.dunning_fees_cents ?? 0) > 0 && (
+                  <span className="text-red-700">Fees {formatRand(Number(row.dunning_fees_cents) / 100)}</span>
+                )}
+                {row.next_attempt_date && (
+                  <span>Next retry {formatDateStr(row.next_attempt_date)}</span>
+                )}
+              </div>
+            )}
           </Link>
         ))}
       </div>

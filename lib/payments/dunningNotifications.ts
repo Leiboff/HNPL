@@ -1,17 +1,18 @@
-// ─── Dunning-ladder notifications — email always, SMS on Day-0 ─────────
+// ─── Dunning-ladder notifications — email + SMS at every stage ─────────
 //
 // Centralises every notification fired by the failed-instalment recovery
-// flow. Three events:
+// flow. Email AND SMS fire on each event (channel parity); the matching
+// PUSH is sent by the webhook (safePush) at the same points. Three events:
 //
-//   • notifyAttemptFailed       — email always; SMS on the first-fail
-//                                 (consecutiveFailedAttemptsBefore === 0).
+//   • notifyAttemptFailed       — email + SMS on EVERY failed attempt.
 //                                 Fee-applied + next-attempt copy when a
 //                                 fee attached on this attempt.
-//   • notifyRecoverySucceeded   — email when an instalment that was in
-//                                 the ladder finally collects (either
+//   • notifyRecoverySucceeded   — email + SMS when an instalment that was
+//                                 in the ladder finally collects (either
 //                                 via cron retry or self-settle).
-//   • notifyDefaulted           — email when the cap is reached and the
-//                                 instalment turns terminal-defaulted.
+//   • notifyDefaulted           — email + SMS when the cap is reached and
+//                                 the instalment turns terminal-defaulted;
+//                                 both convey the new-plan freeze.
 //
 // Discipline:
 //   • Every function is `try`-wrapped — a sender throwing or timing out
@@ -143,13 +144,16 @@ export async function notifyAttemptFailed(
 
     await sendEmail({ to: ctx.email, subject, html });
 
-    // Day-0 SMS (first failure of the ladder): the highest-urgency
-    // touch. Plain text, no URL — anti-smishing.
-    const isDayZero = input.consecutiveFailedAttemptsBefore === 0;
-    if (isDayZero && ctx.phone) {
+    // SMS on EVERY failed attempt (channel parity — was Day-0 only).
+    // Plain text, no URL — anti-smishing. Names the fee when one attached
+    // on this attempt.
+    if (ctx.phone) {
+      const feeBit = input.feeAppliedCents > 0
+        ? ` A ${formatRandCents(input.feeAppliedCents)} fee was added.`
+        : '';
       const body =
         `BetterNow: we couldn't collect ${formatRandCents(input.attemptedAmountCents)} ` +
-        `for your plan with ${ctx.practiceName}. Log in to settle now and avoid further fees.`;
+        `for your plan with ${ctx.practiceName}.${feeBit} Log in to settle now and avoid further fees.`;
       await sendSms(ctx.phone, body);
     }
   } catch (err) {
@@ -191,6 +195,15 @@ export async function notifyRecoverySucceeded(
     `.trim();
 
     await sendEmail({ to: ctx.email, subject, html });
+
+    // SMS parity — no URL (anti-smishing).
+    if (ctx.phone) {
+      const verb = input.viaSelfSettle ? 'received' : 'collected';
+      const body =
+        `BetterNow: we've ${verb} ${formatRandCents(input.collectedAmountCents)} ` +
+        `for your plan with ${ctx.practiceName}. Your account is up to date.`;
+      await sendSms(ctx.phone, body);
+    }
   } catch (err) {
     console.warn('[dunningNotifications] notifyRecoverySucceeded failed (non-fatal)', {
       paymentId: input.paymentId,
@@ -220,12 +233,21 @@ export async function notifyDefaulted(
       <div style="font-family: system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif; color: #13294B; max-width: 560px;">
         <p>Hi ${ctx.firstName},</p>
         <p>Despite several attempts, we haven't been able to collect this instalment for your plan with ${ctx.practiceName}. Your outstanding balance is <strong>${formatRandCents(input.outstandingAmountCents)}</strong>.</p>
-        <p>No further retries or fees will be applied. To clear this balance, log in and tap <strong>Pay now</strong> on the instalment, or reply to this email and we'll help you arrange settlement.</p>
+        <p>No further retries or fees will be applied. <strong>Your account is frozen from taking new plans until this is settled.</strong> To clear this balance and lift the freeze, log in and tap <strong>Pay now</strong> on the instalment, or reply to this email and we'll help you arrange settlement.</p>
         <p style="font-size:12px; color:#6b7280; margin-top:22px;">${formatRand(ctx.totalAmount)} plan · planId ${ctx.planId.slice(0, 8)}</p>
       </div>
     `.trim();
 
     await sendEmail({ to: ctx.email, subject, html });
+
+    // SMS parity — conveys the freeze, no URL (anti-smishing).
+    if (ctx.phone) {
+      const body =
+        `BetterNow: after several attempts we couldn't collect your instalment ` +
+        `for ${ctx.practiceName}. Your account is frozen from new plans until it's ` +
+        `settled. Log in to settle and lift the freeze.`;
+      await sendSms(ctx.phone, body);
+    }
   } catch (err) {
     console.warn('[dunningNotifications] notifyDefaulted failed (non-fatal)', {
       paymentId: input.paymentId,

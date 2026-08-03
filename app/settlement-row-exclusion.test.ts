@@ -95,7 +95,7 @@ describe('Admin SUMMARY aggregations — filter kind, detail views left alone', 
     expect(ADMIN_DASH).toMatch(/\.eq\('kind',\s*'instalment'\)\.eq\('status',\s*'scheduled'\)\.eq\('due_date'/);
     expect(ADMIN_DASH).toMatch(/\.eq\('kind',\s*'instalment'\)\.eq\('status',\s*'scheduled'\)\.lt\('due_date'/);
     expect(ADMIN_DASH).toMatch(/\.eq\('kind',\s*'instalment'\)\.eq\('status',\s*'collected'\)\.gte\('collected_at'/);
-    expect(ADMIN_DASH).toMatch(/\.eq\('kind',\s*'instalment'\)\s*\n\s*\.in\('status',\s*\['failed',\s*'retried',\s*'written_off'\]\)/);
+    expect(ADMIN_DASH).toMatch(/\.eq\('kind',\s*'instalment'\)\s*\n\s*\.in\('status',\s*\['failed',\s*'retried',\s*'defaulted',\s*'written_off'\]\)/);
   });
 
   it("admin sidebar overdue-badge count filters kind=instalment", () => {

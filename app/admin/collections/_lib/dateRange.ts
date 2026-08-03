@@ -28,6 +28,7 @@ export type ChipKey =
   | 'upcoming'
   | 'processing'
   | 'failed'
+  | 'defaulted'
   | 'collected'
   | 'written_off'
   | 'all';
@@ -103,6 +104,7 @@ export function defaultRangeForChip(chip: ChipKey, today: string): DateRange {
     case 'overdue':
     case 'processing':
     case 'failed':
+    case 'defaulted':
     case 'written_off':
       // "Status" chips — concept is "as of now", not a time window.
       // Default to all-time so the user sees every open item.
@@ -155,6 +157,7 @@ const CHIP_NOUN: Record<ChipKey, string> = {
   upcoming:    'Upcoming',
   processing:  'Awaiting',
   failed:      'Failed / retrying',
+  defaulted:   'Defaulted',
   collected:   'Collected',
   written_off: 'Written off',
   all:         'All',

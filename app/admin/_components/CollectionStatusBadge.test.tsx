@@ -5,7 +5,8 @@ import { classifyCollection } from './CollectionStatusBadge';
 //
 // The collections page uses these labels everywhere. The mapping has to
 // stay aligned with the real payments.status enum from the schema:
-//   'scheduled' | 'processing' | 'collected' | 'failed' | 'retried' | 'written_off'
+//   'scheduled' | 'processing' | 'collected' | 'failed' | 'retried'
+//   | 'written_off' | 'defaulted'
 
 describe('classifyCollection — status → bucket mapping', () => {
   const TODAY = '2026-06-15';
@@ -40,6 +41,10 @@ describe('classifyCollection — status → bucket mapping', () => {
 
   it('written_off → written_off', () => {
     expect(classifyCollection({ status: 'written_off', due_date: '2026-06-10' }, TODAY)).toBe('written_off');
+  });
+
+  it('defaulted → defaulted (dunning terminal, its own bucket)', () => {
+    expect(classifyCollection({ status: 'defaulted', due_date: '2026-06-10' }, TODAY)).toBe('defaulted');
   });
 
   it('unknown status falls through to "failed" so it surfaces for investigation', () => {

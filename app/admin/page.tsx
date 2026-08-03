@@ -76,12 +76,13 @@ export default async function AdminDashboardPage() {
     supabase.from('cron_runs').select('started_at, finished_at, summary')
       .eq('job_name', 'collect-instalments').order('started_at', { ascending: false }).limit(1).maybeSingle(),
     // At-risk proxy: payments currently in failed / retried (in-flight
-    // trouble) or written_off (confirmed loss). The patient_id and
-    // plan_id fields let us count distinct entities downstream.
+    // trouble), defaulted (dunning terminal — debt owed, patient frozen)
+    // or written_off (confirmed loss). The patient_id and plan_id fields
+    // let us count distinct entities downstream.
     supabase.from('payments')
       .select('patient_id, plan_id, amount, status')
       .eq('kind', 'instalment')
-      .in('status', ['failed', 'retried', 'written_off']),
+      .in('status', ['failed', 'retried', 'defaulted', 'written_off']),
   ]);
 
   const dueToday    = (dueTodayRows           ?? []) as Array<{ amount: number }>;
