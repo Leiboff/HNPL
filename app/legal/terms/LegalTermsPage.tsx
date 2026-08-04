@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import Link from 'next/link';
 import SiteHeader from '../../_landing/SiteHeader';
 import SiteFooter from '../../_landing/SiteFooter';
 import { TERMS_VERSION, TERMS_EFFECTIVE_DATE_LABEL } from '@/lib/legal/terms';
@@ -131,11 +132,11 @@ const SECTIONS: Section[] = [
   },
   {
     id: 's7', num: '7', title: 'Missed Payments and Default Fees', toc: 'Missed Payments & Default Fees',
-    callout: 'In short: if you miss a payment, we try again. If it still isn’t paid, a R115 fee applies, and another R115 for each week it stays unpaid — up to 3 fees in total, and never more than 25% of your purchase. Pay on time and you’ll never pay a cent in fees.',
+    callout: 'In short: if you miss a payment, we try again. If it still isn’t paid, a R115 fee applies, and another R115 for each week it stays unpaid — up to 3 fees in total, and never more than 50% of your purchase. Pay on time and you’ll never pay a cent in fees.',
     clauses: [
       { n: '7.1', parts: ['Your Payment Plan sets out the due date for each Instalment Payment.'] },
       { n: '7.2', parts: ['If we do not receive an Instalment Payment in full on its due date, we will re-attempt collection. If the payment remains unpaid, a ', { b: 'Default Fee of R115.00 (including VAT)' }, ' will be charged, and a further Default Fee of R115.00 (including VAT) may be charged for each subsequent week that any amount remains overdue, until the earlier of: (a) your overdue balance (including Default Fees) being paid in full; or (b) a maximum of ', { b: 'three (3) Default Fees' }, ' having been charged on that Payment Plan.'] },
-      { n: '7.3', parts: [{ b: 'The total Default Fees charged on a Payment Plan are capped at the lower of: (a) R345.00 (including VAT), being three Default Fees; or (b) 25% of the Purchase Price (including VAT) of that Payment Plan.' }] },
+      { n: '7.3', parts: [{ b: 'The total Default Fees charged on a Payment Plan are capped at the lower of: (a) R345.00 (including VAT), being three Default Fees; or (b) 50% of the Purchase Price (including VAT) of that Payment Plan.' }] },
       { n: '7.4', parts: ['If we are unable to collect an Instalment Payment from your Card on its due date, you irrevocably authorise us to re-attempt collection of the overdue Instalment Payment (including any Default Fees) from your Card on any later date until it is recovered or the Payment Plan reaches the maximum number of Default Fees.'] },
       { n: '7.5', parts: ['We may, in our absolute discretion, waive or defer any Default Fee. Any waiver or deferral of a Default Fee (whether temporary or permanent) does not imply a waiver of any other amount due to us under a Payment Plan, and we reserve all rights to demand such other amounts.'] },
     ],
@@ -180,7 +181,7 @@ const SECTIONS: Section[] = [
       { n: '10.7.10', sub: true, parts: ['to communicate with you and deliver notices and documents to you; and'] },
       { n: '10.7.11', sub: true, parts: ['for security, identification, staff training and monitoring, and other internal operational purposes.'] },
       { n: '10.8', parts: ['You agree and consent that we may share your Personal Information with third parties, including our service providers and business partners, where it is necessary to provide the Payment Services or where it is in our or their legitimate interests to do so, and, where permitted by law, for direct-marketing purposes.'] },
-      { n: '10.9', parts: ['We may Process your Personal Information outside the borders of South Africa, in accordance with the safeguards and requirements of applicable law. These safeguards may include transferring and storing your Personal Information in a country that has data-protection legislation that is equivalent to, or better than, that of South Africa, or engaging a service provider that is subject to an agreement requiring it to comply with data-protection requirements equivalent to, or better than, those applicable in South Africa. Our cloud infrastructure and certain service providers may store and Process your Personal Information in data centres located outside South Africa, including in the European Union.'] },
+      { n: '10.9', parts: ['We may Process your Personal Information outside the borders of South Africa, in accordance with the safeguards and requirements of applicable law. These safeguards may include transferring and storing your Personal Information in a country that has data-protection legislation that is equivalent to, or better than, that of South Africa, or engaging a service provider that is subject to an agreement requiring it to comply with data-protection requirements equivalent to, or better than, those applicable in South Africa. Our cloud infrastructure and certain service providers may store and Process your Personal Information in data centres located outside South Africa.'] },
       { n: '10.10', parts: ['We may Process your information using automated means to make decisions about you or any application you make, as described in clause 10.5. We may use de-personalised information for product development and research.'] },
       { n: '10.11', parts: ['You acknowledge that any Personal Information you supply is provided voluntarily, and that we may be unable to provide the Payment Services or comply with our obligations if you do not provide the Personal Information we request.'] },
       { n: '10.12', parts: ['By submitting Personal Information to us in any form, you provide your unconditional, specific and voluntary consent to our Processing and storage of that Personal Information in the manner set out in this clause 10. In the absence of a written objection from you, this consent continues indefinitely or for the period otherwise required by law.'] },
@@ -218,16 +219,34 @@ const SECTIONS: Section[] = [
     ],
   },
   {
-    id: 's15', num: '15', title: 'General', toc: 'General',
+    id: 's15', num: '15', title: 'Dispute Resolution', toc: 'Dispute Resolution',
     clauses: [
-      { n: '15.1', parts: ['Nothing in this Agreement creates a partnership, joint venture, agency, trust or employment relationship between us.'] },
-      { n: '15.2', parts: ['No failure or delay in exercising a right under this Agreement is a waiver of it, and no single or partial exercise prevents any further exercise of that or any other right.'] },
-      { n: '15.3', parts: ['This Agreement constitutes the entire agreement between us in relation to a specific purchase of Goods and the relevant Payment Plan. Each new purchase of Goods by way of a Payment Plan forms a separate Agreement on these terms.'] },
-      { n: '15.4', parts: ['If any provision of this Agreement is found to be invalid, illegal or unenforceable, it will be severed and the remaining provisions will continue in full force and effect.'] },
-      { n: '15.5', parts: ['This Agreement is governed by the laws of South Africa, and the parties submit to the non-exclusive jurisdiction of the South African courts.'] },
-      { n: '15.6', parts: ['We may delay enforcing our rights under this Agreement without losing them, and our inability to enforce any term will not affect any other term.'] },
-      { n: '15.7', parts: ['If you wish to receive copies of documents relating to your account, you must tell us how you want them delivered (provided we are able to deliver them that way). In certain instances we may charge a reasonable fee for such copies.'] },
-      { n: '15.8', parts: ['Each undertaking and clause in this Agreement is capable of independent enforcement, so that a court or tribunal may enforce the remainder of this Agreement even if it finds any particular undertaking, portion or clause to be invalid.'] },
+      { n: '15.1', parts: ['If any dispute or claim arises between you and us concerning your use of the Platform or the Payment Services, the parties will first try to resolve it amicably by negotiation, with the best interests of both parties in mind.'] },
+      { n: '15.2', parts: ['If the dispute is not resolved by negotiation within a reasonable time, the parties will refer it to mediation by an independent industry expert to find a mutually acceptable solution.'] },
+      { n: '15.3', parts: ['If mediation does not resolve the dispute, the parties will refer it to binding, confidential arbitration under the expedited rules of the Arbitration Foundation of Southern Africa (AFSA).'] },
+      { n: '15.4', parts: ['Nothing in this clause prevents either party from approaching a competent South African court, or from using the dispute-resolution services of any applicable tribunal or ombud provided for in law. If your Payment Plan becomes an incidental credit agreement, you may also refer a complaint to the National Credit Regulator or the National Consumer Tribunal.'] },
+    ],
+  },
+  {
+    id: 's16', num: '16', title: 'Termination of Use', toc: 'Termination of Use',
+    clauses: [
+      { n: '16.1', parts: ['In addition to our other rights under this Agreement, we may restrict, suspend or terminate your use of the Platform or the Payment Services if you breach these terms, or for any other reasonable cause, on reasonable notice to you.'] },
+      { n: '16.2', parts: ['You may terminate this Agreement by settling any outstanding Payment Plan in full and closing your account. Termination does not affect any rights or obligations that accrued before it took effect — in particular, you remain liable for any amounts outstanding.'] },
+      { n: '16.3', parts: ['On termination, we will remove your account and Process your Personal Information in accordance with our data-retention practices and our Privacy Policy.'] },
+    ],
+  },
+  {
+    id: 's17', num: '17', title: 'General', toc: 'General',
+    clauses: [
+      { n: '17.1', parts: ['Nothing in this Agreement creates a partnership, joint venture, agency, trust or employment relationship between us.'] },
+      { n: '17.2', parts: ['No failure or delay in exercising a right under this Agreement is a waiver of it, and no single or partial exercise prevents any further exercise of that or any other right.'] },
+      { n: '17.3', parts: ['This Agreement constitutes the entire agreement between us in relation to a specific purchase of Goods and the relevant Payment Plan. Each new purchase of Goods by way of a Payment Plan forms a separate Agreement on these terms.'] },
+      { n: '17.4', parts: ['If any provision of this Agreement is found to be invalid, illegal or unenforceable, it will be severed and the remaining provisions will continue in full force and effect.'] },
+      { n: '17.5', parts: ['This Agreement is governed by the laws of South Africa, and the parties submit to the non-exclusive jurisdiction of the South African courts.'] },
+      { n: '17.6', parts: ['We may delay enforcing our rights under this Agreement without losing them, and our inability to enforce any term will not affect any other term.'] },
+      { n: '17.7', parts: ['If you wish to receive copies of documents relating to your account, you must tell us how you want them delivered (provided we are able to deliver them that way). In certain instances we may charge a reasonable fee for such copies.'] },
+      { n: '17.8', parts: ['Each undertaking and clause in this Agreement is capable of independent enforcement, so that a court or tribunal may enforce the remainder of this Agreement even if it finds any particular undertaking, portion or clause to be invalid.'] },
+      { n: '17.9', parts: ['You indemnify and hold us harmless from any claim, demand, loss or expense (including reasonable legal costs) made by a third party and arising out of or in connection with your use of the Platform or the Payment Services, or your breach of this Agreement, except to the extent that it results from our gross negligence or wilful misconduct.'] },
     ],
   },
 ];
@@ -295,8 +314,9 @@ export default function LegalTermsPage() {
           <p className="lp-terms-intro">
             By ticking &ldquo;I agree&rdquo; (or the equivalent) when you create an account
             or set up a payment plan, you agree to be bound by these terms and conditions
-            and by our Privacy Policy. These terms may change from time to time; if they do,
-            you will be asked to accept the updated terms when you next set up a plan.
+            and by our <Link href="/legal/privacy">Privacy Policy</Link>. These terms may
+            change from time to time; if they do, you will be asked to accept the updated
+            terms when you next set up a plan.
           </p>
 
           {SECTIONS.map((s) => (

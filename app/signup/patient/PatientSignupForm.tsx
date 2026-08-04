@@ -273,12 +273,21 @@ export default function PatientSignupForm({ invitation, token }: Props) {
                 href="/legal/terms"
                 target="_blank"
                 rel="noopener"
-                className="font-semibold underline underline-offset-2 lowercase"
+                className="font-semibold underline underline-offset-2"
                 style={{ color: '#13294B' }}
               >
-                betternow
+                Terms &amp; Conditions
               </Link>
-              {' '}terms.
+              {' '}and{' '}
+              <Link
+                href="/legal/privacy"
+                target="_blank"
+                rel="noopener"
+                className="font-semibold underline underline-offset-2"
+                style={{ color: '#13294B' }}
+              >
+                Privacy Policy
+              </Link>.
             </label>
           </div>
           {errors.termsAccepted && (

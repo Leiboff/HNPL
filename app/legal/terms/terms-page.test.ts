@@ -44,10 +44,12 @@ describe('/legal/terms route wiring', () => {
 });
 
 describe('/legal/terms — legal text ported verbatim', () => {
-  it('carries the R115 default fee, the R345 / 25% cap, and the 3-fee maximum', () => {
+  it('carries the R115 default fee, the R345 / 50% cap, and the 3-fee maximum', () => {
     expect(BODY).toMatch(/Default Fee of R115\.00 \(including VAT\)/);
     expect(BODY).toMatch(/R345\.00 \(including VAT\), being three Default Fees/);
-    expect(BODY).toMatch(/25% of the Purchase Price \(including VAT\)/);
+    // v1.0 cap is 50% of the Purchase Price (NOT 25%).
+    expect(BODY).toMatch(/50% of the Purchase Price \(including VAT\)/);
+    expect(BODY).not.toMatch(/25% of the Purchase Price/);
     // The 3-fee maximum — the phrase is split across a bold fragment in
     // the source ('a maximum of ', { b: 'three (3) Default Fees' }).
     expect(BODY).toMatch(/three \(3\) Default Fees/);
@@ -60,7 +62,7 @@ describe('/legal/terms — legal text ported verbatim', () => {
   });
 
   it('carries the plain-language fee callout', () => {
-    expect(BODY).toMatch(/never more than 25% of your purchase/);
+    expect(BODY).toMatch(/never more than 50% of your purchase/);
     expect(BODY).toMatch(/never pay a cent in fees/);
   });
 
@@ -70,15 +72,38 @@ describe('/legal/terms — legal text ported verbatim', () => {
     expect(BODY).toMatch(/Pay-in-3/);
   });
 
-  it('has all 15 sections wired into the side-nav', () => {
-    for (let n = 1; n <= 15; n++) {
+  it('has all 17 sections wired into the side-nav', () => {
+    for (let n = 1; n <= 17; n++) {
       expect(BODY).toMatch(new RegExp(`id: 's${n}'`));
     }
+    // ...and not an 18th.
+    expect(BODY).not.toMatch(/id: 's18'/);
+  });
+
+  it('carries the new v1.0 sections: Dispute Resolution (15), Termination (16), General incl. 17.9 indemnity', () => {
+    expect(BODY).toMatch(/title: 'Dispute Resolution'/);
+    expect(BODY).toMatch(/Arbitration Foundation of Southern Africa \(AFSA\)/);
+    expect(BODY).toMatch(/title: 'Termination of Use'/);
+    expect(BODY).toMatch(/You may terminate this Agreement by settling any outstanding Payment Plan in full/);
+    expect(BODY).toMatch(/n: '17\.9'/);
+    expect(BODY).toMatch(/You indemnify and hold us harmless from any claim, demand, loss or expense/);
+  });
+
+  it('cross-border clause (10.9) names no specific country', () => {
+    expect(BODY).toMatch(/data centres located outside South Africa\./);
+    expect(BODY).not.toMatch(/European Union/);
+  });
+
+  it('links the Privacy Policy reference in the intro to /legal/privacy', () => {
+    expect(BODY).toMatch(/<Link href="\/legal\/privacy">Privacy Policy<\/Link>/);
   });
 });
 
-describe('site footer links to the terms page', () => {
+describe('site footer links to both legal pages', () => {
   it('the Legal column Terms link points at /legal/terms', () => {
     expect(FOOTER).toMatch(/<Link href="\/legal\/terms">Terms/);
+  });
+  it('the Legal column Privacy link points at /legal/privacy', () => {
+    expect(FOOTER).toMatch(/<Link href="\/legal\/privacy">Privacy Policy<\/Link>/);
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { TERMS_VERSION } from '@/lib/legal/terms';
+import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -124,7 +125,7 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   if (newUserId) {
     const { error: termsErr } = await svc
       .from('profiles')
-      .update({ terms_accepted_at: new Date().toISOString(), terms_version: TERMS_VERSION })
+      .update({ terms_accepted_at: new Date().toISOString(), terms_version: TERMS_VERSION, privacy_version: PRIVACY_VERSION })
       .eq('id', newUserId);
     if (termsErr) console.warn('terms acceptance stamp on signup failed:', termsErr.message);
   }

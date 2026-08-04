@@ -9,6 +9,7 @@ import { checkoutRef } from '@/lib/payments/peach/refs';
 import { encryptId } from '@/lib/idEncryption';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { TERMS_VERSION } from '@/lib/legal/terms';
+import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import {
   isAllowedSalaryDay,
   ALLOWED_SALARY_DAYS,
@@ -369,10 +370,12 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     // retries; we don't ratchet backward).
     phone_verified_at:  phoneVerifiedAt,
     // Checkout-origin patients never pass through signUpPatient, so this
-    // is where their account-level T&C acceptance is recorded — the
-    // checkout "I agree" tick, stamped server-side with the version.
+    // is where their account-level acceptance of the T&Cs + Privacy
+    // Policy is recorded — the checkout "I agree" tick, stamped
+    // server-side with both versions.
     terms_accepted_at:  new Date().toISOString(),
     terms_version:      TERMS_VERSION,
+    privacy_version:    PRIVACY_VERSION,
   };
 
   // Use upsert so the path works whether the trigger has populated a row
@@ -422,10 +425,11 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       status:            'pending_first_payment',
       plan_type:         planType,
       instalment_amount: instalments[0],
-      // Record acceptance of the payment-plan terms on the plan, at
-      // activation — server-side, not just the client tick.
+      // Record acceptance of the payment-plan terms + privacy policy on
+      // the plan, at activation — server-side, not just the client tick.
       terms_accepted_at: new Date().toISOString(),
       terms_version:     TERMS_VERSION,
+      privacy_version:   PRIVACY_VERSION,
     })
     .eq('id', plan.id);
   if (planTermsErr) return { ok: false, error: `Failed to set plan terms: ${planTermsErr.message}` };
