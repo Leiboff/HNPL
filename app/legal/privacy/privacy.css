@@ -1,0 +1,175 @@
+/* ─── /legal/privacy — styling for the Privacy Policy page ───────────────
+ *
+ * Mirror of terms.css: a restyle of the standalone privacy HTML onto the
+ * marketing surface's design tokens. Every rule is scoped under `.lp-root`
+ * so it reads the same --navy / --teal / --line / --muted / --card / --bg
+ * custom properties landing.css defines. Class names are prefixed
+ * `lp-privacy-` so nothing collides with landing.css or terms.css. */
+
+.lp-root .lp-privacy-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px clamp(20px, 5vw, 40px) 80px;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 40px;
+}
+@media (max-width: 860px) {
+  .lp-root .lp-privacy-wrap { grid-template-columns: 1fr; gap: 20px; }
+}
+
+/* ── Sticky side nav ─────────────────────────────────────────────────── */
+.lp-root .lp-privacy-toc {
+  position: sticky;
+  top: 104px;
+  align-self: start;
+  max-height: calc(100vh - 130px);
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.lp-root .lp-privacy-toc h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin: 0 0 12px 4px;
+}
+.lp-root .lp-privacy-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: sec;
+}
+.lp-root .lp-privacy-toc a {
+  display: block;
+  padding: 7px 12px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  border-left: 2px solid transparent;
+  counter-increment: sec;
+  text-decoration: none;
+}
+.lp-root .lp-privacy-toc a::before {
+  content: counter(sec) ". ";
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.lp-root .lp-privacy-toc a:hover { background: var(--tint); }
+.lp-root .lp-privacy-toc a.active {
+  background: var(--tint);
+  border-left-color: var(--teal);
+  color: var(--navy);
+  font-weight: 600;
+}
+@media (max-width: 860px) {
+  .lp-root .lp-privacy-toc {
+    position: static;
+    max-height: none;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+}
+
+/* ── Content card ────────────────────────────────────────────────────── */
+.lp-root .lp-privacy-main {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 40px 44px;
+  box-shadow: var(--shadow);
+}
+@media (max-width: 560px) {
+  .lp-root .lp-privacy-main { padding: 26px 20px; }
+}
+
+.lp-root .lp-privacy-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0 0 6px;
+}
+.lp-root .lp-privacy-sub {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.lp-root .lp-privacy-intro {
+  margin: 22px 0 8px;
+  color: var(--ink);
+}
+.lp-root .lp-privacy-intro strong { color: var(--navy); }
+
+.lp-root .lp-privacy-section {
+  font-size: 20px;
+  color: var(--navy);
+  margin: 38px 0 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 110px;
+}
+.lp-root .lp-privacy-num {
+  color: var(--teal);
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+.lp-root .lp-privacy-clause {
+  margin: 0 0 11px;
+  padding-left: 52px;
+  position: relative;
+}
+.lp-root .lp-privacy-clause .lp-privacy-cn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 600;
+}
+.lp-root .lp-privacy-clause.sub { padding-left: 84px; }
+.lp-root .lp-privacy-clause.sub .lp-privacy-cn { left: 34px; }
+.lp-root .lp-privacy-clause strong { color: var(--navy); }
+
+.lp-root .lp-privacy-callout {
+  background: var(--tint);
+  border: 1px solid rgba(21, 168, 158, 0.35);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 20px 0;
+  font-size: 15px;
+}
+.lp-root .lp-privacy-callout b { color: var(--navy); }
+
+/* ── Info table (section 2 — categories of information) ──────────────── */
+.lp-root .lp-privacy-table-wrap {
+  margin: 14px 0 4px 52px;
+  overflow-x: auto;
+}
+.lp-root .lp-privacy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14.5px;
+}
+.lp-root .lp-privacy-table th,
+.lp-root .lp-privacy-table td {
+  border: 1px solid var(--line);
+  padding: 9px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.lp-root .lp-privacy-table th {
+  background: #f0f4f8;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.lp-root .lp-privacy-foot {
+  margin-top: 34px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.lp-root .lp-privacy-backtop { display: inline-block; margin-top: 8px; }

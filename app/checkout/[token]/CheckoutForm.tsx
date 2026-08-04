@@ -656,7 +656,18 @@ export default function CheckoutForm({
                   className="font-semibold underline underline-offset-2"
                   style={{ color: '#15A89E' }}
                 >
-                  payment-plan terms
+                  Terms &amp; Conditions
+                </Link>
+                {' '}and{' '}
+                <Link
+                  href="/legal/privacy"
+                  target="_blank"
+                  rel="noopener"
+                  onClick={(e) => e.stopPropagation()}
+                  className="font-semibold underline underline-offset-2"
+                  style={{ color: '#15A89E' }}
+                >
+                  Privacy Policy
                 </Link>
                 {' '}and authorise the scheduled instalment debits on the dates shown.
               </span>

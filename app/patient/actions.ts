@@ -10,6 +10,7 @@ import { isCardValidForPlan } from '@/lib/cardValidity';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import { TERMS_VERSION } from '@/lib/legal/terms';
+import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import type { User } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -149,10 +150,11 @@ export async function acceptPlan(
       status:            'pending_first_payment',
       plan_type:         planType,
       instalment_amount: instalments[0],
-      // Record acceptance of the payment-plan terms on the plan, at
-      // activation — server-side, not just the client tick.
+      // Record acceptance of the payment-plan terms + privacy policy on
+      // the plan, at activation — server-side, not just the client tick.
       terms_accepted_at: new Date().toISOString(),
       terms_version:     TERMS_VERSION,
+      privacy_version:   PRIVACY_VERSION,
     })
     .eq('id', planId)
     .eq('patient_id', user.id);
@@ -578,10 +580,11 @@ export async function payWithSavedCard(
           status:            'pending_first_payment',
           plan_type:         effectivePlanType,
           instalment_amount: instalments[0],
-          // Record acceptance of the payment-plan terms on the plan, at
-          // activation — server-side, not just the client tick.
+          // Record acceptance of the payment-plan terms + privacy policy
+          // on the plan, at activation — server-side, not just the tick.
           terms_accepted_at: new Date().toISOString(),
           terms_version:     TERMS_VERSION,
+          privacy_version:   PRIVACY_VERSION,
         })
         .eq('id', planId)
         .eq('patient_id', user.id);

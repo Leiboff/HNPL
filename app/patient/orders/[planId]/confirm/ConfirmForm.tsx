@@ -565,7 +565,17 @@ export default function ConfirmForm({
             className="font-semibold underline underline-offset-2"
             style={{ color: '#15A89E' }}
           >
-            payment-plan terms
+            Terms &amp; Conditions
+          </Link>
+          {' '}and{' '}
+          <Link
+            href="/legal/privacy"
+            target="_blank"
+            rel="noopener"
+            className="font-semibold underline underline-offset-2"
+            style={{ color: '#15A89E' }}
+          >
+            Privacy Policy
           </Link>
           {' '}and to pay the amounts above on the dates shown, and your
           selected card will be charged immediately for the first instalment of{' '}
