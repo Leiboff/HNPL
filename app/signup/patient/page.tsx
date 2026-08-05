@@ -35,43 +35,39 @@ export default async function PatientSignupPage({ searchParams }: Props) {
     >
       <div className="w-full max-w-md">
 
-        {/* Brand mark + prominent already-registered link. The link is
-            visible without scrolling on mobile — placed in the header
-            row rather than buried at the bottom. */}
-        <div className="mb-8 flex items-center justify-between">
-          <Link href="/" className="inline-block text-2xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-          </Link>
-          <Link
-            href="/login"
-            data-testid="patient-signup-login-cross-link"
-            className="text-sm font-semibold rounded-lg border border-[rgba(19,41,75,.12)] bg-white px-3 py-1.5 hover:bg-gray-50"
-            style={{ color: '#13294B' }}
-          >
-            Log in
-          </Link>
-        </div>
+        <section
+          className="rounded-[28px] border bg-white"
+          style={{
+            borderColor: 'rgba(19,41,75,0.07)',
+            boxShadow:   '0 24px 48px -28px rgba(15,31,58,.28), 0 2px 6px rgba(15,31,58,.04)',
+            padding:     '30px 28px 32px',
+          }}
+        >
+          {/* Header row — wordmark + a prominent already-registered link,
+              visible without scrolling. */}
+          <div className="mb-7 flex items-center justify-between">
+            <Link href="/" className="text-[22px] font-bold tracking-[-0.03em]" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+              <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+            </Link>
+            <Link
+              href="/login"
+              data-testid="patient-signup-login-cross-link"
+              className="rounded-full bg-[#F1F5F6] px-4 py-2 text-[13px] font-semibold hover:bg-[#E7EDF1]"
+              style={{ color: '#13294B' }}
+            >
+              Log in
+            </Link>
+          </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8">
           <div className="mb-7">
-            <h1 className="text-2xl font-semibold" style={{ color: '#13294B', fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+            <h1 className="text-[30px] font-semibold leading-[1.15] tracking-[-0.025em]" style={{ color: '#13294B', fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
               Create your account
             </h1>
-            <p className="mt-1 text-sm text-gray-500">Interest-free medical payment plans.</p>
+            <p className="mt-2 text-[15px] text-[#6B7C93]">Interest-free medical payment plans.</p>
           </div>
 
           <PatientSignupForm invitation={invitation} token={token ?? null} />
-        </div>
-
-        {/* Footer duplicate — the visible-without-scrolling link lives
-            in the header above. This bottom row is still useful for
-            long-form completers who reach the end. */}
-        <p className="mt-6 text-center text-sm text-gray-500">
-          Already have an account?{' '}
-          <Link href="/login" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
-            Sign in
-          </Link>
-        </p>
+        </section>
       </div>
     </div>
   );

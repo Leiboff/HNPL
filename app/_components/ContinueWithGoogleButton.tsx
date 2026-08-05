@@ -98,7 +98,7 @@ export default function ContinueWithGoogleButton({
         disabled={loading}
         aria-label={ariaLabel ?? label}
         data-testid="continue-with-google"
-        className="w-full flex items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        className="flex h-[52px] w-full items-center justify-center gap-3 rounded-[14px] border-[1.5px] border-[#E2E8EE] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
       >
         <GoogleGlyph />
         <span>{loading ? 'Opening Google…' : label}</span>

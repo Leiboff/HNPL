@@ -189,9 +189,9 @@ export default function PhoneOtpStep({
 
   const body = (
     <>
-      <p className="text-[15px] leading-relaxed text-[#3A4B66]">
+      <p className="text-[15px] leading-[1.6]" style={{ color: '#6B7C93' }}>
         We sent a 6-digit code to{' '}
-        <span className="font-medium text-[#0F1F3A] tabular-nums">{phoneDisplay || 'your number'}</span>.
+        <span className="font-semibold tabular-nums" style={{ color: '#13294B' }}>{phoneDisplay || 'your number'}</span>.
       </p>
 
       <OtpInput
@@ -204,34 +204,34 @@ export default function PhoneOtpStep({
       />
 
       {otpError && (
-        <p role="alert" className="text-center text-xs text-[#D14141]">{otpError}</p>
+        <p role="alert" className="text-center text-xs" style={{ color: '#D14141' }}>{otpError}</p>
       )}
 
-      {!smsUnavailable && (
-        <div className="text-center text-sm">
-          {sending ? (
-            <span className="text-[#7A8AA0]">Sending code…</span>
+      <div className="flex flex-col items-center gap-2 text-center">
+        {!smsUnavailable && (
+          sending ? (
+            <span className="text-[14px]" style={{ color: '#7A8AA0' }}>Sending code…</span>
           ) : remaining > 0 ? (
-            <span className="text-[#7A8AA0]">
+            <span className="text-[14px]" style={{ color: '#7A8AA0' }}>
               Didn’t arrive? Resend in{' '}
-              <span className="font-medium tabular-nums text-[#3A4B66]">{remaining}s</span>
+              <span className="font-semibold tabular-nums" style={{ color: '#41556F' }}>{remaining}s</span>
             </span>
           ) : (
             <button
               type="button"
               onClick={handleResend}
               disabled={verifying}
-              className="font-medium text-[#13294B] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors"
+              className="text-[14px] font-semibold hover:underline focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors"
+              style={{ color: '#13294B' }}
             >
               Didn’t arrive? Resend code
             </button>
-          )}
-        </div>
-      )}
-
-      <p className="text-center text-xs text-[#7A8AA0]">
-        The code expires in 10 minutes.
-      </p>
+          )
+        )}
+        <p className="text-[12px]" style={{ color: '#93A2B4' }}>
+          The code expires in 10 minutes.
+        </p>
+      </div>
     </>
   );
 
@@ -241,7 +241,8 @@ export default function PhoneOtpStep({
         type="button"
         onClick={onChangeNumber}
         disabled={verifying}
-        className="text-sm font-medium text-[#3A4B66] hover:text-[#13294B] focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors"
+        className="rounded-full px-5 py-[11px] text-[14px] font-semibold transition-colors focus:outline-none focus-visible:underline disabled:opacity-60"
+        style={{ color: '#41556F', background: '#F1F5F6' }}
       >
         ← Change number
       </button>
