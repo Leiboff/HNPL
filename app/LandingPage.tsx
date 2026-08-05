@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import SiteHeader from './_landing/SiteHeader';
@@ -24,8 +24,31 @@ import './landing.css';
 
 const WORDS = ['Smile', 'See', 'Hear', 'Move', 'Heal', 'Feel', 'Live'];
 
+// Relative timing labels for the bill-splitter illustration. Deliberately
+// NOT real dates — the real schedule comes from the patient's chosen
+// salary_day (lib/salaryDates.ts) at checkout.
+const WHEN = ['Today', 'Next payday', 'The payday after'];
+
+function randLabel(n: number): string {
+  const [i, d] = n.toFixed(2).split('.');
+  return 'R' + i.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + d;
+}
+
 export default function LandingPage() {
   const slotRef = useRef<HTMLSpanElement>(null);
+
+  // Bill-splitter state — presentational only (no fetch, no persistence).
+  // The arithmetic mirrors the FAQ: equal instalments, instalment 1
+  // absorbs the rounding remainder, total never exceeds the bill.
+  const [bill, setBill] = useState(3000);
+  const [plan, setPlan] = useState<2 | 3>(3);
+
+  const splitBase = Math.floor((bill / plan) * 100) / 100;
+  const splitRows = Array.from({ length: plan }, (_, k) => ({
+    n:      k + 1,
+    when:   WHEN[k],
+    amount: randLabel(k === 0 ? Math.round((bill - splitBase * (plan - 1)) * 100) / 100 : splitBase),
+  }));
 
   // Old #practices anchor → /practices. Handles bookmarks and any
   // external link that used the old fragment.
@@ -97,13 +120,14 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="lp-root">
+    <div className="lp-root lp-v3">
 
       <SiteHeader />
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <div className="stage">
         <div className="wrap hero">
+          <div className="eyebrow"><BoltIcon /> 1-minute approval</div>
           <h1 aria-label="betternow">
             <span ref={slotRef} className="verb-slot" aria-hidden={true}>
               <span className="verb-strut">Smile</span>
@@ -123,10 +147,89 @@ export default function LandingPage() {
           </p>
           <div className="ctas">
             <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
-            <Link className="btn btn-outline btn-lg" href="/login">Sign in</Link>
+            <Link className="btn btn-outline btn-lg" href="/#how">See how it works</Link>
+          </div>
+        </div>
+
+        {/* Verb marquee — a scrolling strip of the hero verbs. Decorative;
+            duplicated once for a seamless loop, whole strip aria-hidden. */}
+        <div className="verb-marquee" aria-hidden={true}>
+          <div className="verb-marquee-track">
+            {[0, 1].map((dup) => (
+              <div className="verb-marquee-row" key={dup}>
+                {WORDS.map((w) => (
+                  <span key={w}>
+                    <span className="vm-word">{w}</span>
+                    <span className="vm-dot">•</span>
+                  </span>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
       </div>
+
+      {/* ── Bill splitter ────────────────────────────────────────────────── */}
+      <section id="split" className="split-sec">
+        <div className="wrap">
+          <div className="split-two-col reveal">
+            <div className="split-intro">
+              <div className="kicker">Your bill, in doses</div>
+              <p className="split-lead">Drag the bill and pick your plan. Equal, interest-free instalments timed to your salary dates.</p>
+              <div className="split-controls">
+                <div className="split-bill">
+                  <span className="split-bill-label">Your bill</span>
+                  <span className="split-bill-amt">{randLabel(bill)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={500}
+                  max={30000}
+                  step={500}
+                  value={bill}
+                  onChange={(e) => setBill(Number(e.target.value))}
+                  aria-label="Bill amount"
+                  className="split-range"
+                />
+                <div className="split-range-ends"><span>R500</span><span>R30,000</span></div>
+                <div className="split-plans">
+                  <button type="button" className={`split-plan${plan === 2 ? ' on' : ''}`} onClick={() => setPlan(2)}>Pay in 2</button>
+                  <button type="button" className={`split-plan${plan === 3 ? ' on' : ''}`} onClick={() => setPlan(3)}>Pay in 3</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="split-card">
+              <div className="split-card-top">
+                <span className="split-card-eyebrow">Your plan</span>
+                <span className="split-chip">
+                  <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 10.5l3 3 7-7" /></svg>
+                  Interest-free
+                </span>
+              </div>
+              <div className="split-per">
+                <span className="split-per-name">{plan === 2 ? 'Pay in 2' : 'Pay in 3'} · equal instalments</span>
+                <span className="split-per-amt">{randLabel(splitBase)}</span>
+                <span className="split-per-sub">per instalment</span>
+              </div>
+              <div className="split-rows">
+                {splitRows.map((r) => (
+                  <div className="split-row" key={r.n}>
+                    <span className="split-row-n">{r.n}</span>
+                    <span className="split-row-when">{r.when}</span>
+                    <span className="split-row-amt">{r.amount}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="split-totals">
+                <div className="split-total-row"><span>Total you pay</span><span>{randLabel(bill)}</span></div>
+                <div className="split-fees"><span>Interest and plan fees</span><span className="split-zero">R0.00</span></div>
+              </div>
+              <p className="split-note">Illustration only. Your allowance and instalments depend on your approved limit and chosen salary dates.</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* ── Why betternow — exactly 3 reason cards (Payflex pattern) ───── */}
       <section id="why" className="band">
