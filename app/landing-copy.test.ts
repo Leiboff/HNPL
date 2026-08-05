@@ -202,14 +202,16 @@ describe('Slogan 4 — allowance strapline: "Give your health some credit — it
   });
 });
 
-describe('Hero CTAs — Cherry-style two-button pair (Get started + Sign in)', () => {
+describe('Hero CTAs — two-button pair (Get started + See how it works)', () => {
   const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
 
-  it('hero has BOTH a filled primary "Get started" and an outlined "Sign in" button', () => {
+  it('hero has BOTH a filled primary "Get started" and an outlined "See how it works" button', () => {
     // Filled primary → /signup/patient.
     expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup\/patient"[^>]*>Get started<\/Link>/);
-    // Outlined secondary → /login.
-    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-outline btn-lg"[^>]*href="\/login"[^>]*>Sign in<\/Link>/);
+    // Outlined secondary → the How-it-works anchor. v3 moves Sign in to
+    // the header (still asserted in the SiteHeader block below) and makes
+    // the hero's secondary CTA "See how it works".
+    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-outline btn-lg"[^>]*href="\/#how"[^>]*>See how it works<\/Link>/);
   });
 
   it('no practice CTA in the hero', () => {

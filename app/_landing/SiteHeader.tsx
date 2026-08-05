@@ -69,6 +69,7 @@ export default function SiteHeader() {
 
         <div className="nav-cta">
           <Link className="signin" href="/login">Sign in</Link>
+          <Link className="nav-get" href="/signup/patient">Get started</Link>
           <button
             type="button"
             className="burger"
@@ -93,6 +94,10 @@ export default function SiteHeader() {
           <Link href="/#how"      onClick={() => setMenuOpen(false)}>How it works</Link>
           <Link href="/practices" onClick={() => setMenuOpen(false)}>For practices</Link>
           <Link href="/#faq"      onClick={() => setMenuOpen(false)}>FAQ</Link>
+          <div className="mobile-cta">
+            <Link className="m-get" href="/signup/patient" onClick={() => setMenuOpen(false)}>Get started</Link>
+            <Link className="m-signin" href="/login" onClick={() => setMenuOpen(false)}>Sign in</Link>
+          </div>
         </div>
       )}
     </header>

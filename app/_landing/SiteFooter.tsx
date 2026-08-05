@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { PopiaIcon } from './icons';
 
 // ─── SiteFooter — shared marketing footer ──────────────────────────────
 //
@@ -36,7 +37,7 @@ export default function SiteFooter() {
         </div>
         <div className="copy">
           <span>betternow &copy; 2026</span>
-          <span>Made in South Africa</span>
+          <span className="foot-popia"><PopiaIcon /> Made in South Africa</span>
         </div>
       </div>
     </footer>
