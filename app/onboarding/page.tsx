@@ -61,6 +61,10 @@ export default async function OnboardingRouter() {
   if (status.done) {
     // Cache the flag if it isn't already set (e.g. migration backfill
     // missed this row) so the routing gate never sends them here again.
+    // The transition to completed is the ONE moment we show the
+    // completion welcome — flag it with ?welcome=1 so the dashboard
+    // greets first-run patients without ever showing that copy to
+    // returning ones (who take the plain redirect below).
     if (!p.onboarding_completed) {
       await service
         .from('profiles')
@@ -69,6 +73,7 @@ export default async function OnboardingRouter() {
           onboarding_completed_at: new Date().toISOString(),
         })
         .eq('id', user.id);
+      redirect('/patient?welcome=1');
     }
     redirect('/patient');
   }

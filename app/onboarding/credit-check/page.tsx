@@ -47,6 +47,7 @@ export default async function CreditCheckStep() {
       currentStep="credit-check"
       title="Affordability check"
       description="We check that instalments won't stretch your budget too far. This takes a few seconds."
+      minHeight={560}
     >
       <CreditCheckStepClient />
     </OnboardingShell>

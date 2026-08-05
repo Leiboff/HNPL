@@ -94,36 +94,35 @@ export default function OtpInput({
 
   return (
     <div
-      className="relative inline-flex w-full max-w-sm mx-auto"
+      className="relative w-full"
       role="group"
       aria-label="6-digit verification code"
       onClick={() => inputRef.current?.focus()}
     >
       {/* ── Visual cell row (purely presentational; driven by value) ── */}
-      <div className="flex gap-2 sm:gap-3 w-full justify-center" aria-hidden="true">
+      <div className="flex w-full justify-between gap-[9px]" aria-hidden="true">
         {Array.from({ length: LENGTH }).map((_, i) => {
           const ch       = value[i] ?? '';
           const isActive = i === activeIndex;
           const filled   = ch !== '';
 
           const cellClass =
-            'relative flex items-center justify-center '
-            + 'h-14 w-12 sm:h-16 sm:w-14 rounded-xl border-2 '
-            + 'text-2xl sm:text-3xl font-mono tabular-nums '
-            + 'transition-colors '
+            'relative flex flex-1 aspect-[1/1.25] items-center justify-center '
+            + 'rounded-2xl text-2xl font-semibold tabular-nums transition-colors '
             + (hasError
-                ? 'border-red-400 bg-red-50 text-red-700'
+                ? 'border-2 border-red-400 bg-red-50 text-red-700'
               : filled
-                ? 'border-[#15A89E] bg-white text-[#0F1F3A]'
+                ? 'border-2 border-[#15A89E] bg-white text-[#13294B]'
               : isActive
-                ? 'border-[#15A89E] bg-white ring-4 ring-[#15A89E]/15'
-                : 'border-[#D8DEE8] bg-white');
+                ? 'border-2 border-[#15A89E] bg-white'
+                : 'border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD]');
 
           return (
             <div
               key={i}
               data-testid={`otp-cell-${i}`}
               className={cellClass}
+              style={isActive && !hasError ? { boxShadow: '0 0 0 4px rgba(21,168,158,0.13)' } : undefined}
             >
               {filled ? (
                 ch
@@ -131,11 +130,11 @@ export default function OtpInput({
                 // Caret-like indicator on the next-to-be-typed cell.
                 // motion-safe keeps this respectful of reduced-motion.
                 <span
-                  className="block h-7 sm:h-8 w-px bg-[#15A89E] motion-safe:animate-pulse"
+                  className="block h-[26px] w-[2px] rounded bg-[#15A89E] motion-safe:animate-pulse"
                   aria-hidden="true"
                 />
               ) : (
-                <span className="text-[#D8DEE8] text-2xl leading-none">•</span>
+                <span className="text-[22px] leading-none text-[#C9D3DD]">·</span>
               )}
             </div>
           );

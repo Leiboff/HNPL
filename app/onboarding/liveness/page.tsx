@@ -46,6 +46,7 @@ export default async function LivenessStep() {
       currentStep="liveness"
       title="Verify it's really you"
       description="A short face-camera check to confirm you're the ID holder. About 20 seconds."
+      minHeight={560}
     >
       <LivenessStepClient />
     </OnboardingShell>

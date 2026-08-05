@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import SalaryDayPicker from '@/components/SalaryDayPicker';
+import { ShieldIcon } from '@/app/_landing/icons';
 import { saveIdAndSalaryDay } from '@/lib/onboarding/actions';
 import { validateSaId, saIdAge } from '@/lib/validation';
 
@@ -15,8 +16,9 @@ const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
 const MIN_AGE = 18;
 
 const INPUT_CLS =
-  'w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 focus:outline-none ' +
-  'focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20';
+  'h-[56px] w-full rounded-[14px] border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD] px-4 text-[16px] tracking-[0.06em] ' +
+  'text-[#13294B] outline-none transition-colors placeholder:text-[#A8B4C2] ' +
+  'focus:border-[#15A89E] focus:bg-white focus:ring-4 focus:ring-[#15A89E]/15';
 
 export default function IdentityStepClient() {
   const [saId,       setSaId]       = useState('');
@@ -56,9 +58,9 @@ export default function IdentityStepClient() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      <div>
-        <label htmlFor="sa-id" className="block text-sm font-medium text-gray-700 mb-1">
+    <form onSubmit={handleSubmit} className="flex flex-1 flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="sa-id" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
           South African ID number
         </label>
         <input
@@ -73,20 +75,23 @@ export default function IdentityStepClient() {
           placeholder="13-digit ID number"
           className={INPUT_CLS}
         />
-        <p className="mt-1 text-xs text-gray-500">
-          Stored encrypted. We use it for the affordability check and to verify it&apos;s really you.
-        </p>
+        <div className="flex items-start gap-2">
+          <span className="mt-px inline-flex shrink-0" style={{ color: '#15A89E' }} aria-hidden="true">
+            <ShieldIcon size={16} />
+          </span>
+          <p className="text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
+            Stored encrypted. We use it for the affordability check and to verify it&apos;s really you.
+          </p>
+        </div>
       </div>
 
-      <div>
-        <SalaryDayPicker
-          value={salaryDay}
-          onChange={(d) => setSalaryDay(d)}
-        />
-      </div>
+      <SalaryDayPicker
+        value={salaryDay}
+        onChange={(d) => setSalaryDay(d)}
+      />
 
       {error && (
-        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2" role="alert">
+        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
           {error}
         </p>
       )}
@@ -95,8 +100,8 @@ export default function IdentityStepClient() {
         type="submit"
         disabled={loading}
         data-testid="onboarding-identity-submit"
-        className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 transition-all hover:shadow-lg"
-        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+        className="mt-auto flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
+        style={{ background: '#15A89E', boxShadow: loading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
       >
         {loading ? 'Saving…' : 'Continue'}
       </button>

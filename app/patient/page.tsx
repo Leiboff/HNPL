@@ -9,6 +9,7 @@ import { availableBalance, type PaymentForBalance } from '@/lib/patient/approved
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computePlanProgress } from '@/lib/planProgress';
 import DefaultFreezeBanner from './DefaultFreezeBanner';
+import PatientWelcomeBanner from './PatientWelcomeBanner';
 
 // ─── Patient home dashboard ──────────────────────────────────────────────
 //
@@ -83,8 +84,13 @@ type UpcomingPayment = {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default async function PatientDashboardPage() {
+export default async function PatientDashboardPage({ searchParams }: { searchParams: Promise<{ welcome?: string }> }) {
   const supabase = await createClient();
+
+  // First-run completion flag — set once by the /onboarding router on the
+  // transition to completed (see app/onboarding/page.tsx). Returning
+  // patients never carry it, so the welcome copy never shows to them.
+  const { welcome } = await searchParams;
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
@@ -324,6 +330,13 @@ export default async function PatientDashboardPage() {
   return (
     <div className="bg-[#f7fbfb] min-h-full">
       <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8 space-y-4">
+
+        {/* First-run completion welcome — gated on ?welcome=1, rendered
+            above the greeting so the dashboard's layout order below is
+            unchanged. */}
+        {welcome === '1' && (
+          <PatientWelcomeBanner firstName={(profile?.first_name as string | null) ?? null} />
+        )}
 
         <p className="text-lg font-semibold" style={{ color: '#13294B' }}>
           Hi, {profile?.first_name ?? user.email?.split('@')[0] ?? 'there'} 👋

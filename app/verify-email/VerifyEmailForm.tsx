@@ -148,10 +148,11 @@ export default function VerifyEmailForm({ email, next }: Props) {
     if (phase === 'error') setPhase('idle');
   }
 
-  const disabled = phase === 'verifying' || phase === 'success';
+  const disabled    = phase === 'verifying' || phase === 'success';
+  const ctaDisabled = disabled || code.length !== OTP_LENGTH;
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-1 flex-col">
       <OtpInput
         value={code}
         onChange={handleChange}
@@ -165,40 +166,45 @@ export default function VerifyEmailForm({ email, next }: Props) {
         <div
           role="alert"
           data-testid="otp-error"
-          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
         >
           {ERROR_TEXT[errorKey]}
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => verify(code)}
-        disabled={disabled || code.length !== OTP_LENGTH}
-        className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
-        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-      >
-        {phase === 'verifying' ? 'Verifying…' : phase === 'success' ? 'Verified ✓' : 'Verify email'}
-      </button>
-
-      <div className="text-center text-sm text-gray-500">
-        Didn&apos;t get the code?{' '}
+      <div className="mt-auto flex flex-col gap-[18px] pt-8">
         <button
           type="button"
-          onClick={handleResend}
-          disabled={cooldown > 0 || resendState === 'sending' || phase === 'success'}
-          data-testid="otp-resend"
-          className="font-semibold hover:underline disabled:no-underline disabled:cursor-not-allowed"
-          style={{ color: cooldown > 0 ? '#94a3b8' : '#13294B' }}
+          onClick={() => verify(code)}
+          disabled={ctaDisabled}
+          className="flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
+          style={{
+            background: '#15A89E',
+            boxShadow:  ctaDisabled ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)',
+          }}
         >
-          {resendState === 'sending'
-            ? 'Sending…'
-            : cooldown > 0
-              ? `Resend in ${cooldown}s`
-              : resendState === 'sent'
-                ? 'Code sent ✓'
-                : 'Resend code'}
+          {phase === 'verifying' ? 'Verifying…' : phase === 'success' ? 'Verified ✓' : 'Verify email'}
         </button>
+
+        <div className="text-center text-[14px]" style={{ color: '#6B7C93' }}>
+          Didn&apos;t get the code?{' '}
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={cooldown > 0 || resendState === 'sending' || phase === 'success'}
+            data-testid="otp-resend"
+            className="font-semibold hover:underline disabled:no-underline disabled:cursor-not-allowed"
+            style={{ color: cooldown > 0 ? '#94a3b8' : '#13294B' }}
+          >
+            {resendState === 'sending'
+              ? 'Sending…'
+              : cooldown > 0
+                ? `Resend in ${cooldown}s`
+                : resendState === 'sent'
+                  ? 'Code sent ✓'
+                  : 'Resend code'}
+          </button>
+        </div>
       </div>
     </div>
   );

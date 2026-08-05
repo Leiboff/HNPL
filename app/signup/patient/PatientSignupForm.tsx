@@ -37,10 +37,10 @@ type Props = {
   token?:      string | null;
 };
 
-const INPUT_BASE = 'w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:ring-2';
-const INPUT_OK   = 'border-gray-300 focus:border-[#15A89E] focus:ring-[#15A89E]/20';
-const INPUT_ERR  = 'border-red-400 focus:border-red-500 focus:ring-red-200';
-const LABEL_CLS  = 'block text-sm font-medium text-gray-700 mb-1';
+const INPUT_BASE = 'h-[50px] w-full rounded-[14px] border-[1.5px] px-[14px] text-[15px] text-[#13294B] outline-none transition-all placeholder:text-[#A8B4C2]';
+const INPUT_OK   = 'border-[#E2E8EE] bg-[#FBFCFD] focus:border-[#15A89E] focus:bg-white focus:ring-4 focus:ring-[#15A89E]/15';
+const INPUT_ERR  = 'border-red-400 bg-white focus:border-red-500 focus:ring-4 focus:ring-red-200';
+const LABEL_CLS  = 'block text-[13px] font-medium text-[#41556F] mb-[7px]';
 
 function inputClass(hasError: boolean) {
   return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
@@ -50,7 +50,7 @@ function FieldLabel({ label, required }: { label: string; required?: boolean }) 
   return (
     <label className={LABEL_CLS}>
       {label}
-      {required && <span aria-hidden className="ml-0.5 text-red-500">*</span>}
+      {required && <span aria-hidden className="ml-0.5 text-[#E05252]">*</span>}
     </label>
   );
 }
@@ -162,12 +162,12 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           (email confirmed via Google, ID + phone + salary date + credit
           + affordability check) still applies via the standard patient
           surfaces after they land in /patient. */}
-      <div className="mb-5 space-y-3" data-testid="patient-signup-google-block">
+      <div className="mb-[18px] space-y-[18px]" data-testid="patient-signup-google-block">
         <ContinueWithGoogleButton label="Continue with Google" />
-        <div className="relative flex items-center">
-          <div className="grow border-t border-gray-200" />
-          <span className="mx-3 text-xs text-gray-400">or with email</span>
-          <div className="grow border-t border-gray-200" />
+        <div className="relative flex items-center gap-[14px]">
+          <div className="grow border-t border-[#E7EDF1]" />
+          <span className="text-xs text-[#93A2B4]">or with email</span>
+          <div className="grow border-t border-[#E7EDF1]" />
         </div>
       </div>
 
@@ -255,8 +255,8 @@ export default function PatientSignupForm({ invitation, token }: Props) {
 
         {/* ── Terms ───────────────────────────────────────────── */}
         <div>
-          <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
-            errors.termsAccepted ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-gray-50'
+          <div className={`flex items-start gap-[13px] rounded-2xl border-[1.5px] p-4 ${
+            errors.termsAccepted ? 'border-red-300 bg-red-50' : 'border-[#E2E8EE] bg-[#FBFCFD]'
           }`}>
             <input
               id="patient-termsAccepted"
@@ -265,15 +265,15 @@ export default function PatientSignupForm({ invitation, token }: Props) {
               onChange={(e) => setFields(f => ({ ...f, termsAccepted: e.target.checked }))}
               onBlur={onBlur('termsAccepted')}
               aria-invalid={!!errors.termsAccepted}
-              className="mt-0.5 w-4 h-4 rounded border-gray-300"
+              className="mt-px h-5 w-5 shrink-0 rounded-md border-[1.5px] border-[#CBD6E0] accent-[#15A89E]"
             />
-            <label htmlFor="patient-termsAccepted" className="text-sm text-gray-700 leading-relaxed">
+            <label htmlFor="patient-termsAccepted" className="text-[14px] leading-[1.6] text-[#41556F]">
               I agree to the{' '}
               <Link
                 href="/legal/terms"
                 target="_blank"
                 rel="noopener"
-                className="font-semibold underline underline-offset-2"
+                className="font-semibold underline underline-offset-[3px]"
                 style={{ color: '#13294B' }}
               >
                 Terms &amp; Conditions
@@ -283,7 +283,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
                 href="/legal/privacy"
                 target="_blank"
                 rel="noopener"
-                className="font-semibold underline underline-offset-2"
+                className="font-semibold underline underline-offset-[3px]"
                 style={{ color: '#13294B' }}
               >
                 Privacy Policy
@@ -296,7 +296,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         </div>
 
         {submitError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {submitError}
           </div>
         )}
@@ -304,14 +304,14 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         <button
           type="submit"
           disabled={loading}
-          className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+          className="flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
+          style={{ background: '#15A89E', boxShadow: loading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
         >
           {loading ? 'Creating account…' : 'Create account'}
         </button>
       </form>
 
-      <p className="mt-6 text-center text-sm text-gray-500">
+      <p className="mt-6 text-center text-[14px] text-[#6B7C93]">
         Already have an account?{' '}
         <Link href="/login" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
           Sign in →

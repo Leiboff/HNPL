@@ -173,41 +173,32 @@ describe('SalaryDayPicker — keyboard navigation', () => {
   });
 });
 
-describe('SalaryDayPicker — selected-state styling', () => {
-  it('selected pill carries teal border + teal text + tinted background classes (not a solid fill)', () => {
+describe('SalaryDayPicker — selected-state styling (v2)', () => {
+  it('selected pill carries the teal 2px border + a tinted inline fill (not a solid CTA fill)', () => {
     render(<Harness initial={25} />);
     const selected = screen.getByRole('radio', { name: /^25th$/ });
-    expect(selected.className).toMatch(/border-\[#15A89E\]/);
-    expect(selected.className).toMatch(/text-\[#15A89E\]/);
-    expect(selected.className).toMatch(/bg-\[#15A89E\]\/10/);
-    // No gradient/solid-fill inline style — Save is the only solid-teal
-    // element on the screen.
-    expect(selected.getAttribute('style')).toBeFalsy();
-  });
-
-  it('unselected pill has a visible (gray-300) border + white background', () => {
-    render(<Harness initial={25} />);
-    const unselected = screen.getByRole('radio', { name: /^15th$/ });
-    // gray-300 is one step darker than the earlier gray-200 — needed so
-    // the chip reads as tappable on white-on-white card backgrounds.
-    expect(unselected.className).toMatch(/border-gray-300/);
-    expect(unselected.className).toMatch(/bg-white/);
-    expect(unselected.className).toMatch(/text-gray-700/);
-  });
-
-  it('both pill states use border-2 — selection does not change dimensions', () => {
-    render(<Harness initial={25} />);
-    const selected   = screen.getByRole('radio', { name: /^25th$/ });
-    const unselected = screen.getByRole('radio', { name: /^15th$/ });
     expect(selected.className).toMatch(/\bborder-2\b/);
-    expect(unselected.className).toMatch(/\bborder-2\b/);
+    expect(selected.className).toMatch(/border-\[#15A89E\]/);
+    // Tinted teal fill + teal-dark label applied inline; the primary CTA
+    // remains the only solid-teal element on the screen.
+    expect(selected.getAttribute('style')).toBeTruthy();
   });
 
-  it('"Last day" pill spans the full row on mobile (col-span-full) and reverts at sm:', () => {
+  it('unselected pill uses the hairline border + faint fill + body-slate text', () => {
+    render(<Harness initial={25} />);
+    const unselected = screen.getByRole('radio', { name: /^15th$/ });
+    expect(unselected.className).toMatch(/border-\[1\.5px\]/);
+    expect(unselected.className).toMatch(/border-\[#E2E8EE\]/);
+    expect(unselected.className).toMatch(/bg-\[#FBFCFD\]/);
+    expect(unselected.className).toMatch(/text-\[#41556F\]/);
+    // No inline tint on the unselected state.
+    expect(unselected.getAttribute('style')).toBeFalsy();
+  });
+
+  it('"Last day" pill spans three columns in the 4-col grid', () => {
     render(<Harness />);
     const lastDay = screen.getByRole('radio', { name: /Last day/ });
-    expect(lastDay.className).toMatch(/col-span-full/);
-    expect(lastDay.className).toMatch(/sm:col-auto/);
+    expect(lastDay.className).toMatch(/col-span-3/);
   });
 });
 
