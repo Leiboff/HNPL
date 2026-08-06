@@ -6,6 +6,7 @@ import { getPaymentProvider } from '@/lib/payments/provider';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
+import { CARDS_SURFACE, cardCompletionRedirect } from '@/lib/patient/cardReturn';
 import PollingConfirmation from './PollingConfirmation';
 
 // ─── Checkout V2 return route for the "add card" flow (Flow B) ──────
@@ -81,7 +82,7 @@ function SuccessCard({ brand, lastFour, alreadySaved }: { brand?: string; lastFo
           : 'Your card is ready for future instalment payments.'}
       </p>
       <Link
-        href="/patient/payment-methods"
+        href={CARDS_SURFACE}
         className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
       >
         View my cards →
@@ -98,10 +99,10 @@ function NoReferenceCard() {
         We couldn&apos;t find a card verification to confirm. If you&apos;ve just added a card, check your payment methods — it may already be saved.
       </p>
       <Link
-        href="/patient/payment-methods"
+        href={CARDS_SURFACE}
         className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-6 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
       >
-        View payment methods
+        View my cards
       </Link>
     </ResultCard>
   );
@@ -143,7 +144,15 @@ export default async function CardRegistrationCompletePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params     = await searchParams;
-  const checkoutId = (params.checkoutId ?? params.checkout_id) as string | undefined;
+  const checkoutId   = (params.checkoutId ?? params.checkout_id) as string | undefined;
+  const widgetStatus = params.status as string | undefined;
+
+  // The shopper backed out of the 3DS/widget (PeachWidget tags the return
+  // with status=cancelled|expired). Nothing was saved — send them straight
+  // back to where they started, not onto a failure screen.
+  if (widgetStatus === 'cancelled' || widgetStatus === 'expired') {
+    redirect(cardCompletionRedirect({ status: widgetStatus }));
+  }
 
   if (!checkoutId) return <NoReferenceCard />;
 
@@ -274,13 +283,13 @@ export default async function CardRegistrationCompletePage({
     return <FailureCard checkoutId={checkoutId} reason={result.message} />;
   }
 
-  // ── 5. Redirect to the cards list ─────────────────────────────────
-  //     Server-side 3xx redirect. The browser navigates to
-  //     /patient/payment-methods with a query flag so the client can
-  //     surface a "Card added" toast without re-entering the widget.
-  //     redirect() throws NEXT_REDIRECT and unwinds the render — no
-  //     further JSX from this file runs after this line, so the widget
-  //     panel doesn't get another opportunity to reopen.
+  // ── 5. Redirect to the cards surface ──────────────────────────────
+  //     Server-side 3xx redirect back to the single card surface (the
+  //     Account tab) with a query flag so it can surface a "Card added"
+  //     toast without re-entering the widget. redirect() throws
+  //     NEXT_REDIRECT and unwinds the render — no further JSX from this
+  //     file runs after this line, so the widget panel doesn't get
+  //     another opportunity to reopen.
   const flag = result.kind === 'already_saved' ? 'already' : 'added';
-  redirect(`/patient/payment-methods?added=${flag}`);
+  redirect(cardCompletionRedirect({ addedFlag: flag }));
 }

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { CARDS_SURFACE } from '@/lib/patient/cardReturn';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ function SuccessView({ card }: { card: CardInfo }) {
         We verified your card with your bank — no money was taken. Your card is ready for future instalment payments.
       </p>
       <Link
-        href="/patient/payment-methods"
+        href={CARDS_SURFACE}
         className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
       >
         View my cards →
@@ -118,10 +119,10 @@ function TimeoutView({ reference }: { reference: string }) {
           Try again
         </Link>
         <Link
-          href="/patient/payment-methods"
+          href={CARDS_SURFACE}
           className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-6 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
         >
-          View payment methods
+          View my cards
         </Link>
       </div>
     </ResultCard>

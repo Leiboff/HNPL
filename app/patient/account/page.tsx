@@ -13,7 +13,7 @@ import {
   changeDefaultCard,
   removeCard,
   type CardRow,
-} from '../payment-methods/page';
+} from '../payment-methods/actions';
 
 // ─── Account (v4 screen 06) ──────────────────────────────────────────────
 //
@@ -154,9 +154,14 @@ export default async function AccountPage() {
           </p>
         </div>
 
-        {/* How you pay — the existing saved-card surface */}
+        {/* How you pay — the single card-management surface (v4 folds the
+            standalone /patient/payment-methods route in here). */}
         <div className="flex flex-col gap-[10px]">
           <p className="text-[11px] font-semibold uppercase px-1" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>How you pay</p>
+          <p className="px-1 text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
+            Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
+            certified payment partner. We only keep a secure reference to collect your instalments.
+          </p>
           <PaymentMethods
             initialCards={cards}
             initializeCardRegistration={initializeCardRegistration}
