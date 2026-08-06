@@ -11,6 +11,18 @@
 
 export const CARDS_SURFACE = '/patient/account';
 
+// Query flag that tells the card surface to auto-open the "add card" widget
+// on load — used by the "Try again" affordance after a failed/timed-out
+// verification so it RE-OPENS the flow (a fresh registration) instead of
+// re-polling a finished checkout, which can never succeed.
+export const ADD_CARD_PARAM = 'addCard';
+
+/** Where "Try again" sends the shopper: back to the card surface, with the
+ *  flag that re-launches a fresh add-card verification. */
+export function cardRetryDestination(): string {
+  return `${CARDS_SURFACE}?${ADD_CARD_PARAM}=1`;
+}
+
 /**
  * Where the "add card" completion route sends the browser once the
  * embedded widget hands back control.

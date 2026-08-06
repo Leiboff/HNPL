@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
@@ -35,13 +35,22 @@ type Props = {
 export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
   const [editing, setEditing] = useState(false);
   const [day,     setDay]     = useState<number | null>(current);
+  // The DISPLAYED value is a local mirror of the persisted day — not the
+  // `current` prop directly. On save we advance it immediately so the row
+  // shows what was just saved; the router.refresh() below re-fetches the
+  // server value, and this mirror re-syncs to it when the new prop lands.
+  // (The bug this fixes: reading `current` for display flashed the stale
+  // old day between "Saved." and the refresh completing.)
+  const [savedDay, setSavedDay] = useState<number | null>(current);
   const [error,   setError]   = useState<string | null>(null);
   const [okMsg,   setOkMsg]   = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  useEffect(() => { setSavedDay(current); }, [current]);
+
   function reset() {
-    setDay(current);
+    setDay(savedDay);
     setError(null);
     setOkMsg(null);
     setEditing(false);
@@ -58,6 +67,7 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
       const r = await saveSalaryDay(day);
       if (r.error) setError(r.error);
       else {
+        setSavedDay(day);   // reflect the saved value immediately, no stale flash
         setOkMsg('Saved.');
         setEditing(false);
         router.refresh();
@@ -86,7 +96,7 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
             </select>
           ) : (
             <p className="text-sm font-medium text-gray-800">
-              {current != null ? `${ordinal(current)} of the month` : '—'}
+              {savedDay != null ? `${ordinal(savedDay)} of the month` : '—'}
             </p>
           )}
         </div>
