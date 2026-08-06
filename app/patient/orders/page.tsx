@@ -5,7 +5,8 @@ import { isPatientFrozen } from '@/lib/patient/freeze';
 import DefaultFreezeBanner from '../DefaultFreezeBanner';
 import PatientScreen from '../PatientScreen';
 import OrdersView from './OrdersView';
-import { formatRand } from '../_format';
+import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
+import { formatRand, todaySAST } from '../_format';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
 
@@ -96,15 +97,19 @@ export default async function OrdersPage() {
   const hasCompleted   = plans.some((p) => p.status === 'completed');
   const patientBlocked = hasInProgress && !hasCompleted;
 
-  // ── Header summary: total outstanding + overdue reassurance ───────
+  // ── Header summary: total outstanding + overdue count ─────────────
+  // "Overdue" is derived (due date vs today), never read from the stored
+  // status — otherwise a past-due `scheduled` row would go uncounted and
+  // the header would claim "nothing overdue" while the schedule shows it.
   const outstandingStatuses = new Set(['scheduled', 'processing', 'failed', 'defaulted']);
+  const today = todaySAST();
   let outstandingCents = 0;
   let overdueCount = 0;
   for (const p of currentPlans) {
     for (const pmt of p.payments) {
       if (!outstandingStatuses.has(pmt.status)) continue;
       outstandingCents += Math.round(Number(pmt.amount) * 100) + Number(pmt.dunning_fees_cents ?? 0);
-      if (pmt.status === 'failed' || pmt.status === 'defaulted') overdueCount += 1;
+      if (deriveInstalmentStatus(pmt, today) === 'overdue') overdueCount += 1;
     }
   }
   const summary =
@@ -129,6 +134,7 @@ export default async function OrdersPage() {
           historicPlans={historicPlans}
           declinePlan={declinePlan}
           patientBlocked={patientBlocked}
+          today={today}
         />
       </div>
     </PatientScreen>
