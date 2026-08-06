@@ -62,8 +62,11 @@ describe('0083 — RULE 2: archive_card guards + soft-deletes', () => {
   });
 });
 
-describe('0083 — hard-delete path removed so the guard can\'t be bypassed', () => {
+describe('0083 — both direct-mutation bypasses closed', () => {
   it('drops the patient DELETE RLS policy', () => {
     expect(MIG).toMatch(/DROP POLICY IF EXISTS patients_delete_own_payment_methods ON payment_methods/);
+  });
+  it('drops the patient UPDATE RLS policy (RLS can\'t column-scope is_default / archived_at)', () => {
+    expect(MIG).toMatch(/DROP POLICY IF EXISTS patients_update_own_payment_methods ON payment_methods/);
   });
 });

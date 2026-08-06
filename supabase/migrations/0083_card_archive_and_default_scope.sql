@@ -195,7 +195,21 @@ COMMENT ON FUNCTION archive_card(uuid) IS
   'archived_at, clears the default flag, and promotes the newest other active '
   'card to default. Retains the token for reconciliation/disputes.';
 
--- ── Remove the patient hard-DELETE path so the guard can''t be bypassed ───
--- Archival via archive_card() is now the only removal route for patients;
--- a direct client DELETE would sidestep the active-plan guard.
+-- ── Close BOTH direct-mutation bypasses (DELETE and UPDATE) ──────────────
+-- The rules are only real if a patient can't sidestep the SECURITY DEFINER
+-- functions with a direct client write:
+--
+--   • DELETE — a direct delete would skip archive_card's active-plan guard.
+--   • UPDATE — Postgres RLS can't column-scope a policy, so a row-level
+--     patient UPDATE policy would let a patient set is_default or
+--     archived_at by hand, bypassing set_default_card_flag / archive_card
+--     (re-opening exactly the default-scoping RULE 1 just closed, and
+--     letting a card be "archived" while still backing an active plan).
+--
+-- No app path does a direct patient UPDATE/DELETE on payment_methods: every
+-- mutation goes through a SECURITY DEFINER function (set_default_card_flag,
+-- archive_card, refresh_card_token, change_default_card) or the service-role
+-- webhook (which bypasses RLS). So patients keep only INSERT + SELECT; all
+-- state changes to is_default / archived_at flow through the guarded RPCs.
 DROP POLICY IF EXISTS patients_delete_own_payment_methods ON payment_methods;
+DROP POLICY IF EXISTS patients_update_own_payment_methods ON payment_methods;
