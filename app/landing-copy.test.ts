@@ -33,8 +33,12 @@ import { resolve } from 'node:path';
 //      /practices).
 
 const ROOT = resolve(process.cwd());
-const LANDING = readFileSync(resolve(ROOT, 'app/LandingPage.tsx'), 'utf8');
-const HEADER  = readFileSync(resolve(ROOT, 'app/_landing/SiteHeader.tsx'), 'utf8');
+// Normalise CRLF→LF at read: these are source-text assertions, and git
+// (core.autocrlf) checks the files out with CRLF on Windows. Without this,
+// any pin keying on "\n" silently mismatches. Line endings are not part of
+// what this suite means to assert.
+const LANDING = readFileSync(resolve(ROOT, 'app/LandingPage.tsx'), 'utf8').replace(/\r\n/g, '\n');
+const HEADER  = readFileSync(resolve(ROOT, 'app/_landing/SiteHeader.tsx'), 'utf8').replace(/\r\n/g, '\n');
 
 // ─── Forbidden card-preauth / card-limit / no-check / debit-order strings ─
 
@@ -645,14 +649,18 @@ describe('Getting-started band — narrative order: what you need → what you g
 
   it('the primary CTA lives OUTSIDE the two-column grid (sibling to gs-two-col, not nested in gs-text or gs-visual)', () => {
     const bc = bandContent();
-    // The gs-two-col grid ends before the gs-cta appears.
     const gridStart = bc.indexOf('className="gs-two-col');
-    const gridEnd   = bc.indexOf('</div>\n          </div>', gridStart);   // end of the gs-two-col wrapper
     const ctaIdx    = bc.indexOf('className="gs-cta');
     expect(gridStart).toBeGreaterThan(-1);
-    expect(gridEnd).toBeGreaterThan(gridStart);
-    expect(ctaIdx).toBeGreaterThan(gridEnd);
-    // The CTA still targets patient signup.
+    // Narrative order: the CTA is the closing step, after the grid content.
+    expect(ctaIdx).toBeGreaterThan(gridStart);
+    // Sibling, not nested: the two-column wrapper closes (gs-visual's
+    // </div> then gs-two-col's </div>) before the CTA. Matched
+    // whitespace-flexibly so it survives reformatting / CRLF — the
+    // structure is what matters, not the exact indentation.
+    const beforeCta = bc.slice(gridStart, ctaIdx);
+    expect(beforeCta).toMatch(/<\/div>\s*<\/div>/);
+    // The CTA still targets patient signup with the expected label.
     expect(bc).toMatch(/className="gs-cta[^"]*"[\s\S]{0,200}href="\/signup\/patient"[^>]*>Get started</);
   });
 
