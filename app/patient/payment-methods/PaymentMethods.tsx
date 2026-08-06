@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import PeachWidget from '@/app/_components/PeachWidget';
 import { ADD_CARD_PARAM } from '@/lib/patient/cardReturn';
+import { cardBrandLabel, cardBrandGradient } from '@/lib/patient/cardBrand';
 import type {
   CardRow,
   ChangeDefaultResult,
@@ -20,20 +21,12 @@ function formatExpiry(month: number, year: number): string {
 // ─── Card thumbnail ───────────────────────────────────────────────────────────
 
 function CardThumbnail({ brand }: { brand: string }) {
-  const bg =
-    brand === 'Visa'       ? 'linear-gradient(135deg,#1a1f71,#4361ee)' :
-    brand === 'Mastercard' ? 'linear-gradient(135deg,#eb001b,#ff5f00)' :
-                             'linear-gradient(135deg,#13294B,#15A89E)';
-  const label =
-    brand === 'Visa'       ? 'VISA' :
-    brand === 'Mastercard' ? 'MC'   :
-                             brand.slice(0, 2).toUpperCase();
   return (
     <div
       className="w-11 h-8 rounded-lg flex items-center justify-center shrink-0 text-white text-[10px] font-black tracking-wider select-none"
-      style={{ background: bg }}
+      style={{ background: cardBrandGradient(brand) }}
     >
-      {label}
+      {cardBrandLabel(brand)}
     </div>
   );
 }
