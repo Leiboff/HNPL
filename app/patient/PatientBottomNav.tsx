@@ -3,35 +3,31 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+// ─── PatientBottomNav — v4 four-tab floating nav (mobile) ────────────────
+//
+// Home · Plans · Find care · Account. The old five-tab bar (Home / Orders
+// / Explore / Cards / Profile) collapsed in v4: Orders became Plans, Cards
+// folded into Account, and the standalone /patient/payment-methods and
+// /patient/profile routes now redirect into /patient/account.
+
 function HomeIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      <polyline points="9 22 9 12 15 12 15 22" />
     </svg>
   );
 }
 
-function OrdersIcon({ active }: { active: boolean }) {
+function PlansIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-      <rect x="9" y="3" width="6" height="4" rx="1" />
-      <path d="M9 12h6M9 16h4" />
+      <rect x="4" y="3" width="16" height="18" rx="3" />
+      <path d="M8 9h8M8 13h8M8 17h4" />
     </svg>
   );
 }
 
-function CardIcon({ active }: { active: boolean }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="5" width="20" height="14" rx="2" />
-      <path d="M2 10h20" />
-    </svg>
-  );
-}
-
-function ExploreIcon({ active }: { active: boolean }) {
+function FindCareIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <circle cx="11" cy="11" r="8" />
@@ -40,7 +36,7 @@ function ExploreIcon({ active }: { active: boolean }) {
   );
 }
 
-function ProfileIcon({ active }: { active: boolean }) {
+function AccountIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="4" />
@@ -50,11 +46,10 @@ function ProfileIcon({ active }: { active: boolean }) {
 }
 
 const LINKS = [
-  { href: '/patient',                 label: 'Home',    Icon: HomeIcon    },
-  { href: '/patient/orders',          label: 'Orders',  Icon: OrdersIcon  },
-  { href: '/patient/explore',         label: 'Explore', Icon: ExploreIcon },
-  { href: '/patient/payment-methods', label: 'Cards',   Icon: CardIcon    },
-  { href: '/patient/profile',         label: 'Profile', Icon: ProfileIcon },
+  { href: '/patient',         label: 'Home',      Icon: HomeIcon     },
+  { href: '/patient/orders',  label: 'Plans',     Icon: PlansIcon    },
+  { href: '/patient/explore', label: 'Find care', Icon: FindCareIcon },
+  { href: '/patient/account', label: 'Account',   Icon: AccountIcon  },
 ];
 
 export default function PatientBottomNav() {
@@ -66,17 +61,15 @@ export default function PatientBottomNav() {
 
   return (
     <div
-      className="fixed bottom-0 inset-x-0 z-30 md:hidden px-4"
-      style={{ paddingBottom: 'max(14px, env(safe-area-inset-bottom))' }}
+      className="fixed bottom-0 inset-x-0 z-30 md:hidden px-[14px]"
+      style={{ paddingBottom: 'max(18px, env(safe-area-inset-bottom))' }}
     >
       <nav
-        className="flex h-15.5 rounded-2xl overflow-hidden"
+        className="mx-auto flex h-[68px] max-w-md rounded-[20px] overflow-hidden"
         style={{
-          background: 'rgba(255,255,255,0.93)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: '1px solid rgba(19,41,75,0.10)',
-          boxShadow: '0 8px 32px -6px rgba(19,41,75,0.18), 0 2px 8px -2px rgba(19,41,75,0.08)',
+          background: '#ffffff',
+          border: '1px solid rgba(19,41,75,0.07)',
+          boxShadow: '0 10px 28px -10px rgba(11,31,58,0.22)',
         }}
       >
         {LINKS.map(({ href, label, Icon }) => {
@@ -85,13 +78,13 @@ export default function PatientBottomNav() {
             <Link
               key={href}
               href={href}
-              className="flex-1 flex flex-col items-center justify-center gap-1"
-              style={{ color: active ? '#15A89E' : '#94a3b8', transition: 'color 0.15s' }}
+              className="flex-1 flex flex-col items-center justify-center gap-[5px]"
+              style={{ color: active ? '#15A89E' : '#94A3B8', transition: 'color 0.15s' }}
             >
               <Icon active={active} />
               <span
-                className="text-[10px] leading-none font-semibold"
-                style={{ color: active ? '#13294B' : '#94a3b8', transition: 'color 0.15s' }}
+                className="text-[10.5px] leading-none font-semibold"
+                style={{ color: active ? '#13294B' : '#94A3B8', transition: 'color 0.15s' }}
               >
                 {label}
               </span>

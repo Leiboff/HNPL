@@ -35,9 +35,12 @@ type Props = {
   totalPractitioners: number;
   /** LocationRow rendered by the orchestrator; sits directly under the search bar. */
   locationRow:        React.ReactNode;
+  /** v4: hide the in-view "Find care" hero when the navy PatientScreen
+   *  header already carries the title (avoids a duplicate heading). */
+  hideHeading?:       boolean;
 };
 
-export default function Landing({ categories, totalPractitioners, locationRow }: Props) {
+export default function Landing({ categories, totalPractitioners, locationRow, hideHeading = false }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
 
@@ -52,13 +55,15 @@ export default function Landing({ categories, totalPractitioners, locationRow }:
 
   return (
     <div className="space-y-6">
-      {/* Hero */}
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Find care</h1>
-        <p className="text-sm text-gray-500">
-          Pay-later at any of these practitioners. Browse by specialty, or see everyone.
-        </p>
-      </header>
+      {/* Hero — suppressed under the v4 navy header (which owns the title). */}
+      {!hideHeading && (
+        <header className="space-y-1">
+          <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Find care</h1>
+          <p className="text-sm text-gray-500">
+            Pay-later at any of these practitioners. Browse by specialty, or see everyone.
+          </p>
+        </header>
+      )}
 
       {/* Search + Location row */}
       <form onSubmit={submitSearch} className="space-y-3">

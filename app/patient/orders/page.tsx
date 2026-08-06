@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { declinePlan } from '../actions';
-import { selfSettleInstalment, selfSettleEntirePlan } from './settle-actions';
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import DefaultFreezeBanner from '../DefaultFreezeBanner';
+import PatientScreen from '../PatientScreen';
 import OrdersView from './OrdersView';
+import { formatRand } from '../_format';
 
 // ─── Status buckets ───────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ export type PlanRow = {
   payments: PaymentRow[];
 };
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Page — v4 "Plans" ──────────────────────────────────────────────────────
 
 export default async function OrdersPage() {
   const supabase = await createClient();
@@ -74,36 +75,15 @@ export default async function OrdersPage() {
   const plans = ((rawPlans ?? []) as unknown as PlanRow[]).map((p) => ({
     ...p,
     // Strip settlement rows out of the per-plan schedule. Settlement
-    // rows (kind='settlement', instalment_number=0) are audit-only —
-    // they represent a "settle entire bill" charge and would otherwise
-    // render as a phantom "Instalment 0", inflate computePlanProgress
-    // totals, and double-count the outstanding sum used by the
-    // Settle-entire-bill button. The audit trail lives in plan_events.
+    // rows (kind='settlement', instalment_number=0) are audit-only and
+    // would otherwise render as a phantom "Instalment 0" and inflate the
+    // progress + outstanding sums. The audit trail lives in plan_events.
     payments: [...(p.payments ?? [])]
       .filter((pmt) => pmt.kind !== 'settlement')
       .sort((a, b) => a.instalment_number - b.instalment_number),
   }));
 
-  const providerIds = [...new Set(
-    plans.map(p => p.provider_id).filter((id): id is string => Boolean(id))
-  )];
-  const practiceIds = [...new Set(plans.map(p => p.practice_id).filter(Boolean))];
-  const specialtyMap: Record<string, string> = {};
-  if (providerIds.length > 0) {
-    const { data: memberRows } = await supabase
-      .from('practice_members')
-      .select('user_id, practice_id, specialty')
-      .in('user_id', providerIds)
-      .in('practice_id', practiceIds);
-    for (const m of (memberRows ?? []) as { user_id: string; practice_id: string; specialty: string | null }[]) {
-      if (m.specialty) specialtyMap[`${m.user_id}:${m.practice_id}`] = m.specialty;
-    }
-  }
-
-  // Default-freeze rollup (authoritative single source of truth). A
-  // defaulted INSTALMENT keeps its plan 'active', so it's already in the
-  // fetched payments — but we use the shared helper so the banner can
-  // never drift from the server-side gate.
+  // Default-freeze rollup (authoritative single source of truth).
   const isFrozen = await isPatientFrozen(supabase, user.id);
 
   const pendingPlans  = plans.filter((p) => PENDING_STATUSES.has(p.status));
@@ -116,20 +96,41 @@ export default async function OrdersPage() {
   const hasCompleted   = plans.some((p) => p.status === 'completed');
   const patientBlocked = hasInProgress && !hasCompleted;
 
+  // ── Header summary: total outstanding + overdue reassurance ───────
+  const outstandingStatuses = new Set(['scheduled', 'processing', 'failed', 'defaulted']);
+  let outstandingCents = 0;
+  let overdueCount = 0;
+  for (const p of currentPlans) {
+    for (const pmt of p.payments) {
+      if (!outstandingStatuses.has(pmt.status)) continue;
+      outstandingCents += Math.round(Number(pmt.amount) * 100) + Number(pmt.dunning_fees_cents ?? 0);
+      if (pmt.status === 'failed' || pmt.status === 'defaulted') overdueCount += 1;
+    }
+  }
+  const summary =
+    currentPlans.length === 0 && pendingPlans.length === 0
+      ? 'Nothing outstanding'
+      : `${formatRand(outstandingCents / 100)} outstanding · ${overdueCount > 0 ? `${overdueCount} overdue` : 'nothing overdue'}`;
+
+  const header = (
+    <>
+      <p className="text-[24px] font-semibold text-white" style={{ letterSpacing: '-.025em' }}>Plans</p>
+      <p className="mt-1.5 text-[13.5px] tabular-nums" style={{ color: 'rgba(255,255,255,.62)' }}>{summary}</p>
+    </>
+  );
+
   return (
-    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10">
-      <h1 className="text-2xl font-semibold mb-6" style={{ color: '#13294B' }}>Orders</h1>
-      {isFrozen && <div className="mb-6"><DefaultFreezeBanner frozen /></div>}
-      <OrdersView
-        pendingPlans={pendingPlans}
-        currentPlans={currentPlans}
-        historicPlans={historicPlans}
-        declinePlan={declinePlan}
-        settleInstalment={selfSettleInstalment}
-        settleEntirePlan={selfSettleEntirePlan}
-        specialtyMap={specialtyMap}
-        patientBlocked={patientBlocked}
-      />
-    </div>
+    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
+      <div className="flex flex-col gap-[14px]">
+        <DefaultFreezeBanner frozen={isFrozen} />
+        <OrdersView
+          pendingPlans={pendingPlans}
+          currentPlans={currentPlans}
+          historicPlans={historicPlans}
+          declinePlan={declinePlan}
+          patientBlocked={patientBlocked}
+        />
+      </div>
+    </PatientScreen>
   );
 }

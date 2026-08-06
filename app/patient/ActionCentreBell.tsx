@@ -14,7 +14,7 @@ import ActionCentreSheet from './ActionCentreSheet';
 // install-prompt is available). Completed items don't count toward
 // the badge.
 
-export default function ActionCentreBell() {
+export default function ActionCentreBell({ onDark = false }: { onDark?: boolean }) {
   const [open, setOpen] = useState(false);
 
   const { passkeys, loading: pkLoading, supported: pkSupported } = usePasskeys();
@@ -44,16 +44,26 @@ export default function ActionCentreBell() {
         aria-label={hasPending ? 'Notifications — you have new items' : 'Notifications'}
         onClick={() => setOpen(true)}
         data-testid="action-centre-bell"
-        className="relative rounded-lg p-2 text-gray-700 hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E]/60"
+        className={
+          onDark
+            ? 'relative flex items-center justify-center w-10 h-10 rounded-full text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60'
+            : 'relative rounded-lg p-2 text-gray-700 hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E]/60'
+        }
+        style={onDark ? { background: 'rgba(255,255,255,.12)' } : undefined}
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <svg width={onDark ? 20 : 22} height={onDark ? 20 : 22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
           <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
         </svg>
         {hasPending && (
           <span
             data-testid="action-centre-bell-dot"
-            className="absolute top-1.5 right-1.5 block w-2 h-2 rounded-full bg-red-500 ring-2 ring-white"
+            className={
+              onDark
+                ? 'absolute top-[7px] right-[8px] block w-[9px] h-[9px] rounded-full'
+                : 'absolute top-1.5 right-1.5 block w-2 h-2 rounded-full bg-red-500 ring-2 ring-white'
+            }
+            style={onDark ? { background: '#FF6B5A', boxShadow: '0 0 0 2px #16304F' } : undefined}
             aria-hidden
           />
         )}
