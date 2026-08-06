@@ -319,7 +319,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
               className="text-center text-[14.5px] font-semibold text-white rounded-[14px] py-[14px]"
               style={{ background: '#0B1F3A' }}
             >
-              Pay it now
+              View &amp; pay
             </Link>
           </div>
         )}

@@ -13,6 +13,7 @@ import {
   instalmentStatusLabel,
   type InstalmentStatus,
 } from '@/lib/patient/instalmentStatus';
+import { cardBrandLabel } from '@/lib/patient/cardBrand';
 import { formatRand, formatDate, relativeDay, todaySAST } from '@/app/patient/_format';
 
 // ─── Plan detail (v4 screen 03) ──────────────────────────────────────────
@@ -233,7 +234,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
         >
           <div className="flex items-center gap-3 px-[18px] py-[16px]">
             <span className="flex-none w-10 h-7 rounded-[7px] flex items-center justify-center text-[9.5px] font-bold" style={{ background: '#F1F5F6', color: '#41556F', letterSpacing: '.06em' }}>
-              {(chargeCard?.card_brand ?? 'CARD').toUpperCase().slice(0, 4)}
+              {cardBrandLabel(chargeCard?.card_brand)}
             </span>
             <div className="flex-1 min-w-0">
               <p className="text-[14px] font-semibold tabular-nums" style={{ color: '#13294B' }}>

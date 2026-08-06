@@ -176,7 +176,7 @@ export default async function AccountPage() {
           className="rounded-[22px] bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
-          <SettingRow href="/patient/profile" title="Payday" sub={paydayLabel} />
+          <SettingRow href="/patient/profile?section=salary" title="Payday" sub={paydayLabel} />
           <SettingRow href="/patient/profile" title="Your details" sub="Cell number, personal info" />
           <SettingRow href="/patient/profile" title="Notifications" />
           <SettingRow href="/patient/profile" title="Sign in & security" />

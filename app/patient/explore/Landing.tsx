@@ -111,7 +111,7 @@ export default function Landing({ categories, totalPractitioners, locationRow, h
                 className="group rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm hover:shadow-md transition-shadow px-4 py-4 flex items-center justify-between gap-3"
               >
                 <div className="min-w-0">
-                  <p className="font-semibold text-gray-900 truncate">{c.specialty}</p>
+                  <p className="font-semibold text-gray-900 leading-snug break-words">{c.specialty}</p>
                   <p className="text-xs text-gray-500 mt-0.5">
                     {c.count} practitioner{c.count === 1 ? '' : 's'}
                   </p>

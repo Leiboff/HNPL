@@ -1,9 +1,16 @@
 'use client';
 
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import AccordionSection from '@/components/AccordionSection';
 
 type SectionKey = 'personal' | 'salary' | 'notifications' | 'security';
+
+const SECTION_KEYS: readonly SectionKey[] = ['personal', 'salary', 'notifications', 'security'];
+
+function isSectionKey(value: string | null): value is SectionKey {
+  return value != null && (SECTION_KEYS as readonly string[]).includes(value);
+}
 
 type Props = {
   /** Personal-details body — includes phone as an inline editable
@@ -20,9 +27,11 @@ type Props = {
 };
 
 /**
- * Patient profile accordion. All sections start collapsed on page load —
- * no auto-expand of any kind. Tapping a heading expands that section;
- * tapping again collapses it. Sections can be open simultaneously.
+ * Patient profile accordion. Sections start collapsed on a normal page
+ * load. The ONE exception is a deep-link: arriving with `?section=<key>`
+ * (e.g. the Account "Payday" row → `?section=salary`) opens that section
+ * so the patient lands directly on what they tapped. Tapping a heading
+ * expands/collapses; sections can be open simultaneously.
  */
 export default function ProfileAccordion({
   personalDetails,
@@ -30,7 +39,11 @@ export default function ProfileAccordion({
   notifications,
   passkeys,
 }: Props) {
-  const [open, setOpen] = useState<Set<SectionKey>>(() => new Set());
+  const searchParams = useSearchParams();
+  const [open, setOpen] = useState<Set<SectionKey>>(() => {
+    const deepLink = searchParams?.get('section') ?? null;
+    return isSectionKey(deepLink) ? new Set<SectionKey>([deepLink]) : new Set<SectionKey>();
+  });
 
   function toggle(s: SectionKey) {
     setOpen((current) => {

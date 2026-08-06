@@ -2,23 +2,23 @@ import { describe, it, expect } from 'vitest';
 import { maskSaId } from './saIdMask';
 
 describe('maskSaId', () => {
-  it('masks a standard 13-digit SA ID to "first6•••••last2"', () => {
-    // The spec example from the design brief.
-    expect(maskSaId('8501015800123')).toBe('850101•••••23');
+  it('masks a standard 13-digit SA ID revealing ONLY the last 4', () => {
+    // The first six digits are the holder's date of birth (YYMMDD) and must
+    // never be shown. 13 chars → 9 bullets + last 4.
+    expect(maskSaId('8501015800123')).toBe('•••••••••0123');
   });
 
-  it('always shows exactly 5 bullets for a 13-character input (6 + 5 + 2 = 13)', () => {
-    const masked = maskSaId('1234567890123');
+  it('never leaks the date of birth (first 6 digits)', () => {
+    const masked = maskSaId('8501015800123');
+    expect(masked).not.toContain('850101');
+    expect(masked.startsWith('•')).toBe(true);
+  });
+
+  it('shows exactly the last 4 characters verbatim', () => {
+    const masked = maskSaId('9912319999987');
+    expect(masked.endsWith('9987')).toBe(true);
     expect(masked).toHaveLength(13);
-    expect(masked.match(/•/g)?.length ?? 0).toBe(5);
-  });
-
-  it('preserves the first 6 characters verbatim', () => {
-    expect(maskSaId('9912319999987').startsWith('991231')).toBe(true);
-  });
-
-  it('preserves the last 2 characters verbatim', () => {
-    expect(maskSaId('9912319999987').endsWith('87')).toBe(true);
+    expect(masked.match(/•/g)?.length ?? 0).toBe(9);
   });
 
   it('returns empty string for null / undefined / empty', () => {
@@ -27,18 +27,16 @@ describe('maskSaId', () => {
     expect(maskSaId('')).toBe('');
   });
 
-  it('returns the input verbatim if it is too short to mask meaningfully (< 9 chars)', () => {
-    expect(maskSaId('12345678')).toBe('12345678');
+  it('returns the input verbatim if it is too short to mask meaningfully (< 8 chars)', () => {
     expect(maskSaId('1234567')).toBe('1234567');
   });
 
-  it('masks 9-char input with a single bullet (boundary case)', () => {
-    // 9 chars: 6 head + 1 middle + 2 tail.
-    expect(maskSaId('123456789')).toBe('123456•89');
+  it('masks an 8-char input to 4 bullets + last 4 (boundary case)', () => {
+    expect(maskSaId('12345678')).toBe('••••5678');
   });
 
   it('scales the bullet run with longer inputs (defensive — should not happen for real SA IDs)', () => {
-    // 15 chars: 6 head + 7 middle + 2 tail.
-    expect(maskSaId('123456789012345')).toBe('123456•••••••45');
+    // 15 chars: 11 bullets + last 4.
+    expect(maskSaId('123456789012345')).toBe('•••••••••••2345');
   });
 });

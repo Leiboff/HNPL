@@ -107,8 +107,8 @@ function TimeoutView() {
         <h1 className="text-xl font-semibold text-gray-900">We couldn&apos;t confirm your card</h1>
         <p className="mt-1 text-sm text-gray-500 leading-relaxed">
           We waited 60 seconds and didn&apos;t see your card on file. If the
-          charge succeeded on Paystack the row should appear shortly —
-          otherwise try the verification again.
+          verification went through it should appear shortly — otherwise
+          try adding your card again.
         </p>
       </div>
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
