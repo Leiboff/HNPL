@@ -50,9 +50,12 @@ const DEFAULT_RADIUS = 25;
 
 type Props = {
   rows: DirectoryRow[];
+  /** v4: the navy PatientScreen header owns the "Find care" title, so
+   *  the Landing view suppresses its own duplicate hero heading. */
+  hideHero?: boolean;
 };
 
-export default function ExploreView({ rows }: Props) {
+export default function ExploreView({ rows, hideHero = false }: Props) {
   const searchParams = useSearchParams();
   const viewParam      = searchParams?.get('view');
   const specialtyParam = searchParams?.get('specialty');
@@ -111,6 +114,7 @@ export default function ExploreView({ rows }: Props) {
         <Landing
           categories={categories}
           totalPractitioners={cards.length}
+          hideHeading={hideHero}
           locationRow={
             <LocationRow
               label={rowLabel}

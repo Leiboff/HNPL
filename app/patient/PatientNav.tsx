@@ -3,17 +3,17 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-// Desktop sidebar labels are aligned with PatientBottomNav so the same
-// route reads the same in both viewports — the mobile tab is "Cards",
-// so the desktop entry is too. Previously "Payment Methods" on desktop
-// while mobile said "Cards" — visually the desktop link looked absent
-// to anyone scanning for the "Cards" affordance.
+// ─── PatientNav — desktop sidebar (md+) ──────────────────────────────────
+//
+// Labels mirror the mobile bottom nav so the same route reads the same in
+// both viewports. v4 collapsed five tabs to four: Home / Plans / Find care
+// / Account. Cards and Profile merged into Account; the standalone
+// /patient/payment-methods and /patient/profile routes redirect there.
 const NAV_LINKS = [
-  { href: '/patient',                 label: 'Dashboard'       },
-  { href: '/patient/orders',          label: 'Orders'          },
-  { href: '/patient/explore',         label: 'Find a Practice' },
-  { href: '/patient/payment-methods', label: 'Cards'           },
-  { href: '/patient/profile',         label: 'Profile'         },
+  { href: '/patient',         label: 'Home'      },
+  { href: '/patient/orders',  label: 'Plans'     },
+  { href: '/patient/explore', label: 'Find care' },
+  { href: '/patient/account', label: 'Account'   },
 ];
 
 export default function PatientNav() {
@@ -31,9 +31,17 @@ export default function PatientNav() {
         'hidden',
         // Desktop: vertical sidebar
         'md:flex md:flex-col md:w-56 md:border-r md:border-gray-200',
-        'md:sticky md:top-16 md:self-start md:min-h-[calc(100vh-4rem)]',
+        'md:sticky md:top-0 md:self-start md:min-h-screen',
       ].join(' ')}
     >
+      <Link
+        href="/patient"
+        className="px-4 py-4 text-lg font-semibold tracking-tight"
+        style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
+      >
+        <span style={{ color: '#13294B' }}>better</span>
+        <span style={{ color: '#15A89E' }}>now</span>
+      </Link>
       <div className="flex flex-col p-3 space-y-0.5">
         {NAV_LINKS.map(({ href, label }) => {
           const active = isActive(href);

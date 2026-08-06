@@ -2,7 +2,6 @@ import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PatientNav from './PatientNav';
 import PatientBottomNav from './PatientBottomNav';
-import ActionCentreBell from './ActionCentreBell';
 import InstallPrompt from '@/app/_pwa/InstallPrompt';
 import PostLoginPasskeyPrompt from './PostLoginPasskeyPrompt';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
@@ -81,20 +80,10 @@ export default async function PatientLayout({
     !permanentlyDismissed && loginCount >= nextShowAt;
 
   return (
-    <div className="min-h-screen bg-[#f7fbfb] flex flex-col">
-      {/* Top bar */}
-      <header className="sticky top-0 z-20 shrink-0 bg-white border-b border-gray-200">
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5">
-          <span
-            className="text-lg font-semibold tracking-tight"
-            style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
-          >
-            <span style={{ color: '#13294B' }}>better</span>
-            <span style={{ color: '#15A89E' }}>now</span>
-          </span>
-          <ActionCentreBell />
-        </div>
-      </header>
+    <div className="min-h-screen bg-[#F4F7F8] flex flex-col">
+      {/* v4: no global top bar. Each screen renders its own navy header
+          (PatientScreen) that runs to the top edge; the Action Centre bell
+          lives inside the Home hero. Desktop keeps the sidebar. */}
 
       {/* Body: sidebar + page content */}
       <div className="flex flex-row flex-1">

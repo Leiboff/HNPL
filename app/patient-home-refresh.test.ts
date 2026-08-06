@@ -137,10 +137,16 @@ describe('Part 2 — phone folded into Personal Details', () => {
 // ─── Part 3: Home dashboard ────────────────────────────────────────────
 
 describe('Part 3 — home dashboard', () => {
-  it('renders ApprovedBalanceCard + FindCareBar + MergedPlansCard', () => {
-    expect(HOME).toMatch(/ApprovedBalanceCard/);
-    expect(HOME).toMatch(/FindCareBar/);
-    expect(HOME).toMatch(/<MergedPlansCard/);
+  it('renders the v4 navy-shell home (PatientScreen + ladder + bill card + failed state)', () => {
+    // v4 rebuild: the balance is drawn into a navy hero (PatientScreen),
+    // plans carry the InstalmentLadder, a pending bill shows as
+    // HomeBillCard, and a failed/defaulted instalment flips to
+    // HomeFailedState. ApprovedBalanceCard / FindCareBar / MergedPlansCard
+    // are no longer composed on Home.
+    expect(HOME).toMatch(/PatientScreen/);
+    expect(HOME).toMatch(/InstalmentLadder/);
+    expect(HOME).toMatch(/<HomeBillCard/);
+    expect(HOME).toMatch(/<HomeFailedState/);
   });
 
   it('reads approved_credit_limit from profiles.select', () => {
@@ -200,22 +206,18 @@ describe('Part 3 — home dashboard', () => {
     expect(rmBlock![0]).toMatch(/linear-gradient/);
   });
 
-  it('layout order (bill pending): greeting → FindCareBar → billReview → ApprovedBalanceCard → MergedPlansCard', () => {
-    // Second-pass merge (2026-07-13): the separate InstalmentHero and
-    // YourPlansCard tiles are now a SINGLE MergedPlansCard so each
-    // practice appears exactly once. Bill-to-review still sits at the
-    // top; approved-balance beneath it; merged card takes the whole
-    // "you owe / your plans" slot.
-    const greeting   = HOME.indexOf('Hi, {profile?.first_name');
-    const findCare   = HOME.indexOf('<FindCareBar />');
-    const billReview = HOME.indexOf('{billReview}');
-    const balance    = HOME.indexOf('<ApprovedBalanceCard');
-    const merged     = HOME.indexOf('<MergedPlansCard');
-    expect(greeting).toBeGreaterThan(-1);
-    expect(findCare).toBeGreaterThan(greeting);
-    expect(billReview).toBeGreaterThan(findCare);
-    expect(balance).toBeGreaterThan(billReview);
-    expect(merged).toBeGreaterThan(balance);
+  it('layout order (v4): balance hero → waiting-on-you → next payment → your plans', () => {
+    // v4 reading order: what can I spend (navy hero), is anything waiting
+    // on me (bill card), what comes off next (Next payment), then the
+    // plan list.
+    const hero    = HOME.indexOf('Available to spend');
+    const bill    = HOME.indexOf('<HomeBillCard');
+    const nextPay = HOME.indexOf('Next payment');
+    const plans   = HOME.indexOf('Your plans');
+    expect(hero).toBeGreaterThan(-1);
+    expect(bill).toBeGreaterThan(hero);
+    expect(nextPay).toBeGreaterThan(bill);
+    expect(plans).toBeGreaterThan(nextPay);
   });
 
   it('push soft-ask is REMOVED from the home flow (moved to the action centre)', () => {
@@ -240,10 +242,13 @@ describe('Part 3 — home dashboard', () => {
     expect(existsSync(resolve(ROOT, 'app/patient/InstalmentHero.tsx'))).toBe(false);
   });
 
-  it('MergedPlansCard receives headline + row data plus active + total counts', () => {
-    expect(HOME).toMatch(/import\s+MergedPlansCard,\s*\{\s*type\s+MergedPlanRow,\s*type\s+MergedHeadline\s*\}\s+from\s+['"]\.\/MergedPlansCard['"]/);
+  it('builds active plan rows on the server and renders them with the ladder', () => {
+    // v4: the merged card is gone; Home derives planRows via
+    // computePlanProgress and renders each with an InstalmentLadder built
+    // from the paid/total counts.
     expect(HOME).toMatch(/computePlanProgress/);
-    expect(HOME).toMatch(/<MergedPlansCard[\s\S]*?headline=\{mergedHeadline\}[\s\S]*?activeCount=\{currentCount\}[\s\S]*?totalCount=\{totalCount\}[\s\S]*?rows=\{planRows\}/);
+    expect(HOME).toMatch(/const planRows/);
+    expect(HOME).toMatch(/ladderFromCounts\(r\.total, r\.paid\)/);
   });
 
   it('per-plan next instalment is computed on the server (nextByPlan map)', () => {
@@ -255,51 +260,32 @@ describe('Part 3 — home dashboard', () => {
     expect(HOME).toMatch(/nextByPlan\.get\(p\.id\)/);
   });
 
-  it('no-bill variant: billReview stays null and renders nothing between search + balance', () => {
-    // Pinning the render contract: billReview is initialised to null,
-    // stays null when pendingCount === 0, and the JSX slot between
-    // FindCareBar and ApprovedBalanceCard renders that null (so the
-    // layout is identical to the pre-reorder state).
-    expect(HOME).toMatch(/let billReview:\s*React\.ReactNode\s*=\s*null/);
-    // Every assignment to billReview (LHS) lives inside the `if
-    // (pendingCount > 0)` block. There are exactly TWO — the
-    // single-pending branch and the multi-pending branch.
-    const rhsAssigns = HOME.match(/billReview\s*=\s*\(/g) ?? [];
-    expect(rhsAssigns.length).toBe(2);
-    // And the initial-null declaration is followed by the pending-count guard.
-    expect(HOME).toMatch(/let billReview[\s\S]{0,80}?=\s*null[\s\S]*?if\s*\(\s*pendingCount\s*>\s*0\s*\)/);
+  it('pending bills render via HomeBillCard (mapped over pendingPlans)', () => {
+    // v4: the billReview local is gone; a pending bill is a HomeBillCard
+    // rendered per pending plan, wired to the existing declinePlan action.
+    expect(HOME).toMatch(/pendingPlans\.map/);
+    expect(HOME).toMatch(/<HomeBillCard/);
+    expect(HOME).toMatch(/declinePlan=\{declinePlan\}/);
+    const billCard = read('app/patient/HomeBillCard.tsx');
+    expect(billCard).toMatch(/data-testid="home-bill-card"/);
   });
 
-  it('bill-review card carries the data-testid so downstream tests can query it', () => {
-    // Two branches of billReview (single-pending / multi-pending)
-    // — both must expose the same testid.
-    expect(HOME.match(/data-testid="bill-to-review-card"/g)?.length ?? 0).toBe(2);
+  it('a failed/defaulted instalment flips Home into the missed-payment screen', () => {
+    // The trigger + the honest failed-state screen. HomeFailedState never
+    // prints a "no fee" guarantee; the retry date comes from the row's
+    // real next_attempt_date.
+    expect(HOME).toMatch(/status === 'failed' \|\| p\.status === 'defaulted'/);
+    expect(HOME).toMatch(/<HomeFailedState/);
+    expect(HOME).toMatch(/retryDate=\{urgent\.status === 'failed' \? urgent\.next_attempt_date : null\}/);
   });
 
-  it('bill-to-review copy lives ONLY inside billReview (not in the merged card path)', () => {
-    // The "Bill to Review" / "Bills to Review" JSX only appears inside
-    // the `if (pendingCount > 0)` block that builds billReview. The
-    // merged card path (mergedHeadline) has no bill-review copy.
-    const billReviewStart  = HOME.indexOf('let billReview');
-    const mergedStart      = HOME.indexOf('let mergedHeadline');
-    expect(billReviewStart).toBeGreaterThan(-1);
-    expect(mergedStart).toBeGreaterThan(billReviewStart);
-    // Both "Bill to Review" mentions in the code sit BEFORE mergedHeadline.
-    const billMatches = [...HOME.matchAll(/Bill[s]? to Review/g)].map(m => m.index ?? -1);
-    for (const idx of billMatches) {
-      expect(idx).toBeGreaterThan(billReviewStart);
-      expect(idx).toBeLessThan(mergedStart);
-    }
-  });
-
-  it('ApprovedBalanceCard visibility rule unchanged (still gated on approved_credit_limit)', () => {
-    // The page-level guard: approvedLimit is null → the card renders
-    // null internally. Pin that the page still passes the raw limit
-    // (not a fallback) so a regression that adds a defaulting shim
-    // fails here.
+  it('balance hero is gated on approved_credit_limit (no placeholder when null)', () => {
+    // v4 draws the balance into the navy hero instead of ApprovedBalanceCard,
+    // but the "real data only" rule holds: the raw limit is read and the
+    // hero only renders when it is non-null.
     expect(HOME).toMatch(/approvedLimit:\s*number \| null/);
     expect(HOME).toMatch(/\(profile\?\.approved_credit_limit as number \| null\) \?\? null/);
-    expect(HOME).toMatch(/<ApprovedBalanceCard limit=\{approvedLimit\}/);
+    expect(HOME).toMatch(/approvedLimit != null \?/);
   });
 
   it('dashboard no longer imports or renders the old passkey card', () => {
@@ -403,10 +389,13 @@ describe('MergedPlansCard — source-pin invariants', () => {
 });
 
 describe('Header action centre — bell replaces logout in patient header', () => {
-  it('patient header imports ActionCentreBell, NOT LogoutButton', () => {
-    expect(LAYOUT).toMatch(/from\s+['"]\.\/ActionCentreBell['"]/);
+  it('Action Centre bell lives in the Home hero (v4), and neither surface renders a LogoutButton', () => {
+    // v4 removed the global top bar; the bell moved into the Home navy
+    // hero (rendered on-dark). The layout no longer imports/renders it,
+    // and no LogoutButton appears anywhere in the shell.
+    expect(HOME).toMatch(/from\s+['"]\.\/ActionCentreBell['"]/);
+    expect(HOME).toMatch(/<ActionCentreBell\s+onDark/);
     expect(LAYOUT).not.toMatch(/from\s+['"]\.\/LogoutButton['"]/);
-    expect(LAYOUT).toMatch(/<ActionCentreBell\s*\/>/);
     expect(LAYOUT).not.toMatch(/<LogoutButton\s*\/>/);
   });
 

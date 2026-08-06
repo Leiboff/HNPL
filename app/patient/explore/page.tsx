@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import ExploreView from './ExploreView';
+import PatientScreen from '../PatientScreen';
 import type { DirectoryRow } from '@/lib/practitioner/grouping';
 
 // ─── Find a Practitioner ───────────────────────────────────────────────
@@ -58,13 +59,26 @@ export default async function ExplorePage() {
   // the column set (asserted by the source-text tests).
   const rows = (rawRows ?? []) as unknown as DirectoryRow[];
 
-  // The Landing screen owns its own hero heading + copy; the Results
-  // view owns its own back-link + search bar. The page shell here is
-  // deliberately empty of headings so the two views can each set
-  // their own tone without a mismatched outer H1.
+  // Distinct practitioners (a member can appear once per practice).
+  const practitionerCount = new Set(rows.map((r) => r.member_id)).size;
+
+  // v4: a navy header carries the title + count; ExploreView renders its
+  // search, filters and results on the sheet (its own Landing hero is
+  // suppressed via hideHero so the title isn't duplicated).
+  const header = (
+    <>
+      <p className="text-[24px] font-semibold text-white" style={{ letterSpacing: '-.025em' }}>Find care</p>
+      <p className="mt-1.5 text-[13.5px]" style={{ color: 'rgba(255,255,255,.62)' }}>
+        {practitionerCount > 0
+          ? `Pay later at ${practitionerCount} practitioner${practitionerCount === 1 ? '' : 's'} near you.`
+          : 'Pay later at practitioners near you.'}
+      </p>
+    </>
+  );
+
   return (
-    <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8">
-      <ExploreView rows={rows} />
-    </div>
+    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
+      <ExploreView rows={rows} hideHero />
+    </PatientScreen>
   );
 }
