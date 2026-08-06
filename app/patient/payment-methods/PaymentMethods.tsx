@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import PeachWidget from '@/app/_components/PeachWidget';
 import type {
   CardRow,
   ChangeDefaultResult,
   PreviewDefaultChange,
   RemoveCardResult,
-} from './page';
+} from './actions';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -76,6 +76,7 @@ export default function PaymentMethods({
   removeCard,
 }: Props) {
   const router       = useRouter();
+  const pathname     = usePathname();
   const searchParams = useSearchParams();
 
   const [cards,   setCards]   = useState<CardRow[]>(initialCards);
@@ -86,8 +87,10 @@ export default function PaymentMethods({
 
   // ── ?added=added|already banner from the Checkout V2 return route ──
   //     The return route uses server-side `redirect(...)` on success
-  //     so the browser lands here with the flag. Shown once per
-  //     navigation; the effect strips the query param after reading.
+  //     so the browser lands on the card surface with the flag. Shown
+  //     once per navigation; the effect strips the query param after
+  //     reading it, off whatever path we're mounted on (the card surface
+  //     moved into Account, so this must not hard-code a route).
   useEffect(() => {
     const flag = searchParams.get('added');
     if (!flag) return;
@@ -95,7 +98,7 @@ export default function PaymentMethods({
     const params = new URLSearchParams(searchParams.toString());
     params.delete('added');
     const qs = params.toString();
-    router.replace(qs ? `/patient/payment-methods?${qs}` : '/patient/payment-methods');
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
