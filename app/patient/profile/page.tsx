@@ -10,9 +10,20 @@ import ProfileLogoutSection from './ProfileLogoutSection';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
+import { normalizePhoneZA } from '@/lib/validation';
 
 async function updateProfile(data: { phone: string | null }): Promise<{ error: string | null }> {
   'use server';
+
+  // Trust-boundary validation (the client validates too, but this is the
+  // real gate). Empty clears the number; anything else must normalise to a
+  // valid SA mobile — stored in canonical E.164 (+27…) form.
+  const raw = data.phone?.trim() ?? '';
+  let phone: string | null = null;
+  if (raw) {
+    phone = normalizePhoneZA(raw);
+    if (!phone) return { error: 'Enter a valid South African mobile number.' };
+  }
 
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -20,7 +31,7 @@ async function updateProfile(data: { phone: string | null }): Promise<{ error: s
 
   const { error } = await supabase
     .from('profiles')
-    .update({ phone: data.phone })
+    .update({ phone })
     .eq('id', user.id);
 
   if (error) return { error: error.message };
