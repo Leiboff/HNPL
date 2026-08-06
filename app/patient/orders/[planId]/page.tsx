@@ -4,8 +4,10 @@ import { createClient } from '@/lib/supabase/server';
 import PatientScreen from '@/app/patient/PatientScreen';
 import InstalmentLadder, { ladderFromCounts } from '@/app/patient/InstalmentLadder';
 import PlanSettleAffordance from '../PlanSettleAffordance';
+import DeclinedPlanDetail from '../DeclinedPlanDetail';
 import { selfSettleInstalment, selfSettleEntirePlan } from '../settle-actions';
 import { computePlanProgress } from '@/lib/planProgress';
+import { isDeclinedPlan } from '@/lib/patient/planBucket';
 import {
   deriveInstalmentStatus,
   instalmentStatusLabel,
@@ -93,6 +95,19 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
   const practiceName = !practicesRaw
     ? 'Unknown Practice'
     : Array.isArray(practicesRaw) ? (practicesRaw[0]?.name ?? 'Unknown Practice') : practicesRaw.name;
+
+  // A declined bill never became a plan — no schedule, no card, no receipt.
+  // Render the minimal "what happened" view, not the active-plan template.
+  if (isDeclinedPlan(rawPlan.status as string)) {
+    return (
+      <DeclinedPlanDetail
+        practiceName={practiceName}
+        amount={Number(rawPlan.total_amount)}
+        invoiceNumber={(rawPlan.invoice_number as string | null) ?? null}
+        practiceReference={(rawPlan.practice_reference as string | null) ?? null}
+      />
+    );
+  }
 
   const payments = ((rawPlan.payments ?? []) as PaymentRow[])
     .filter((p) => p.kind !== 'settlement')

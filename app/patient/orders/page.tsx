@@ -6,13 +6,8 @@ import DefaultFreezeBanner from '../DefaultFreezeBanner';
 import PatientScreen from '../PatientScreen';
 import OrdersView from './OrdersView';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
+import { planBucket } from '@/lib/patient/planBucket';
 import { formatRand, todaySAST } from '../_format';
-
-// ─── Status buckets ───────────────────────────────────────────────────────────
-
-const PENDING_STATUSES  = new Set(['pending_acceptance', 'pending_first_payment']);
-const CURRENT_STATUSES  = new Set(['active']);
-const HISTORIC_STATUSES = new Set(['completed', 'declined', 'cancelled', 'defaulted']);
 
 // ─── Types (shared with OrdersView via props) ─────────────────────────────────
 
@@ -87,9 +82,13 @@ export default async function OrdersPage() {
   // Default-freeze rollup (authoritative single source of truth).
   const isFrozen = await isPatientFrozen(supabase, user.id);
 
-  const pendingPlans  = plans.filter((p) => PENDING_STATUSES.has(p.status));
-  const currentPlans  = plans.filter((p) => CURRENT_STATUSES.has(p.status));
-  const historicPlans = plans.filter((p) => HISTORIC_STATUSES.has(p.status));
+  // Bucketing is single-sourced in planBucket() so declined bills can't be
+  // classified as "finished" here while the detail screen treats them
+  // differently. declined gets its own bucket (no plan, no money taken).
+  const pendingPlans  = plans.filter((p) => planBucket(p.status) === 'pending');
+  const currentPlans  = plans.filter((p) => planBucket(p.status) === 'active');
+  const finishedPlans = plans.filter((p) => planBucket(p.status) === 'finished');
+  const declinedPlans = plans.filter((p) => planBucket(p.status) === 'declined');
 
   const hasInProgress = plans.some(
     (p) => p.status === 'pending_first_payment' || p.status === 'active',
@@ -131,7 +130,8 @@ export default async function OrdersPage() {
         <OrdersView
           pendingPlans={pendingPlans}
           currentPlans={currentPlans}
-          historicPlans={historicPlans}
+          finishedPlans={finishedPlans}
+          declinedPlans={declinedPlans}
           declinePlan={declinePlan}
           patientBlocked={patientBlocked}
           today={today}
