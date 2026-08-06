@@ -1,15 +1,26 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { normalizePhoneZA } from '@/lib/validation';
 
 // ─── Phone — edit-toggle field inside Personal details ────────────────
 //
 // Previously a separate accordion (own header, own body). Folded into
 // Personal details as one of its fields with the same edit-toggle
 // pattern as SalaryDaySection: display-only with a pencil affordance,
-// tap → editable + Save / Cancel. No change to how phone is stored
-// or validated server-side.
+// tap → editable + Save / Cancel.
+//
+// Two behaviours match SalaryDaySection:
+//   • The DISPLAYED value is a local mirror of the persisted phone — not
+//     the `current` prop directly. On save we advance it immediately so
+//     the row shows what was just saved (in canonical +27… form); the
+//     router.refresh() re-fetches the server value and the mirror re-syncs
+//     when the new prop lands. (Fixes the stale flash between "Saved." and
+//     the refresh completing.)
+//   • The number is validated as an SA mobile via the shared validator
+//     (never an inline regex) — client blocks an invalid save, and the
+//     server action re-validates as the real gate. Storage is E.164.
 
 type Props = {
   current:       string | null;
@@ -23,13 +34,16 @@ const inputCls =
 export default function PhoneField({ current, updateProfile }: Props) {
   const [editing, setEditing] = useState(false);
   const [phone,   setPhone]   = useState(current ?? '');
+  const [savedPhone, setSavedPhone] = useState(current ?? '');
   const [error,   setError]   = useState<string | null>(null);
   const [okMsg,   setOkMsg]   = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  useEffect(() => { setSavedPhone(current ?? ''); }, [current]);
+
   function reset() {
-    setPhone(current ?? '');
+    setPhone(savedPhone);
     setError(null);
     setOkMsg(null);
     setEditing(false);
@@ -38,10 +52,20 @@ export default function PhoneField({ current, updateProfile }: Props) {
   function onSave() {
     setError(null);
     setOkMsg(null);
+    // Empty clears the number; anything else must be a valid SA mobile.
+    const raw = phone.trim();
+    const normalized = raw ? normalizePhoneZA(raw) : null;
+    if (raw && !normalized) {
+      setError('Enter a valid South African mobile number (e.g. 082 123 4567).');
+      return;
+    }
     startTransition(async () => {
-      const r = await updateProfile({ phone: phone.trim() || null });
+      const r = await updateProfile({ phone: normalized });
       if (r.error) setError(r.error);
       else {
+        // Reflect the saved (normalised) value immediately — no stale flash.
+        setSavedPhone(normalized ?? '');
+        setPhone(normalized ?? '');
         setOkMsg('Saved.');
         setEditing(false);
         router.refresh();
@@ -67,7 +91,7 @@ export default function PhoneField({ current, updateProfile }: Props) {
             />
           ) : (
             <p className="text-sm font-medium text-gray-800" data-testid="profile-phone-value">
-              {current || '—'}
+              {savedPhone || '—'}
             </p>
           )}
         </div>
