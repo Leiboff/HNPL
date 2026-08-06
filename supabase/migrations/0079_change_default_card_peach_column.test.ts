@@ -104,13 +104,7 @@ describe('0079 — unchanged surface', () => {
   });
 });
 
-describe('callers still invoke the RPC unchanged', () => {
-  const HELPER = read('lib/changeDefaultCard.ts');
-  it('callChangeDefaultCardRpc calls supabase.rpc(\'change_default_card\', { p_card_id })', () => {
-    expect(HELPER).toMatch(/rpc\(\s*['"]change_default_card['"]\s*,\s*\{\s*p_card_id:\s*cardId\s*\}/);
-    // The consumed result keys still match the RPC's return shape.
-    expect(HELPER).toMatch(/result\.repointed_plans/);
-    expect(HELPER).toMatch(/result\.old_last_four/);
-    expect(HELPER).toMatch(/result\.new_last_four/);
-  });
-});
+// NOTE: the patient card surface no longer calls change_default_card — under
+// RULE 1 (migration 0083) "make default" is flag-only and repoints no plan,
+// so the old caller-seam pin (lib/changeDefaultCard.ts) was retired with it.
+// The migration SQL above is left in place (legacy/admin) and still pinned.

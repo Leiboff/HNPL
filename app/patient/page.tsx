@@ -101,6 +101,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
       .from('payment_methods')
       .select('card_brand, last_four, is_default')
       .eq('patient_id', user.id)
+      .is('archived_at', null)
       .order('is_default', { ascending: false }),
   ]);
 

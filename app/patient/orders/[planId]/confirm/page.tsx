@@ -39,6 +39,7 @@ export default async function ConfirmPage({
       .from('payment_methods')
       .select('id, card_brand, last_four, expiry_month, expiry_year, reusable, is_default')
       .eq('patient_id', user.id)
+      .is('archived_at', null)   // don't offer archived cards for a new plan
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false }),
     supabase

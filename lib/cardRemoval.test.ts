@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { planCardRemoval, type RemovalCard } from './cardRemoval';
 
 const card = (over: Partial<RemovalCard> & { id: string; created_at: string }): RemovalCard => ({
-  is_default: false,
+  is_default:         false,
+  collectsActivePlan: false,
   ...over,
 });
 
@@ -15,22 +16,36 @@ describe('planCardRemoval — not_found', () => {
   });
 });
 
-// ─── kind: 'block_only_card' ─────────────────────────────────────────────────
+// ─── kind: 'block_collecting' — the single, conditional block ────────────────
 
-describe('planCardRemoval — only-card guard', () => {
-  it('blocks removal when it would leave the patient with zero cards', () => {
+describe('planCardRemoval — blocks a card collecting an active plan', () => {
+  it('blocks when the card is collecting an active plan (even if non-default)', () => {
+    const plan = planCardRemoval(
+      'b',
+      [
+        card({ id: 'a', is_default: true,  created_at: '2026-01-01' }),
+        card({ id: 'b', is_default: false, created_at: '2026-02-01', collectsActivePlan: true }),
+      ],
+    );
+    expect(plan.kind).toBe('block_collecting');
+  });
+
+  it('blocks the default card too when it is collecting an active plan', () => {
     const plan = planCardRemoval(
       'a',
-      [card({ id: 'a', is_default: true, created_at: '2026-01-01' })],
+      [
+        card({ id: 'a', is_default: true, created_at: '2026-01-01', collectsActivePlan: true }),
+        card({ id: 'b', is_default: false, created_at: '2026-02-01' }),
+      ],
     );
-    expect(plan.kind).toBe('block_only_card');
+    expect(plan.kind).toBe('block_collecting');
   });
 });
 
-// ─── kind: 'remove_non_default' ──────────────────────────────────────────────
+// ─── kind: 'archive_non_default' ─────────────────────────────────────────────
 
-describe('planCardRemoval — non-default card removes freely', () => {
-  it('returns remove_non_default for a non-default card with siblings', () => {
+describe('planCardRemoval — non-default card archives freely', () => {
+  it('returns archive_non_default for a non-default card not collecting anything', () => {
     const plan = planCardRemoval(
       'b',
       [
@@ -38,23 +53,11 @@ describe('planCardRemoval — non-default card removes freely', () => {
         card({ id: 'b', is_default: false, created_at: '2026-02-01' }),
       ],
     );
-    expect(plan.kind).toBe('remove_non_default');
-  });
-
-  it('does not require choosing a target — under the invariant no plans should point at this card', () => {
-    const plan = planCardRemoval(
-      'b',
-      [
-        card({ id: 'a', is_default: true,  created_at: '2026-01-01' }),
-        card({ id: 'b', is_default: false, created_at: '2026-02-01' }),
-        card({ id: 'c', is_default: false, created_at: '2026-03-01' }),
-      ],
-    );
-    expect(plan.kind).toBe('remove_non_default');
+    expect(plan.kind).toBe('archive_non_default');
   });
 });
 
-// ─── kind: 'remove_default' ──────────────────────────────────────────────────
+// ─── kind: 'archive_default' ─────────────────────────────────────────────────
 
 describe('planCardRemoval — default card promotes newest other', () => {
   it('promotes the most recently added other card to default', () => {
@@ -66,41 +69,35 @@ describe('planCardRemoval — default card promotes newest other', () => {
         card({ id: 'c', is_default: false, created_at: '2026-03-01' }),
       ],
     );
-    expect(plan.kind).toBe('remove_default');
-    if (plan.kind !== 'remove_default') throw new Error('narrow');
+    expect(plan.kind).toBe('archive_default');
+    if (plan.kind !== 'archive_default') throw new Error('narrow');
     expect(plan.promoteToDefaultId).toBe('c');
   });
 
-  it('with exactly two cards, the other one is the promotion target', () => {
+  it('promoteToDefaultId is null when the default is the only card', () => {
     const plan = planCardRemoval(
       'a',
-      [
-        card({ id: 'a', is_default: true,  created_at: '2026-01-01' }),
-        card({ id: 'b', is_default: false, created_at: '2026-02-01' }),
-      ],
+      [card({ id: 'a', is_default: true, created_at: '2026-01-01' })],
     );
-    if (plan.kind !== 'remove_default') throw new Error('narrow');
-    expect(plan.promoteToDefaultId).toBe('b');
+    expect(plan.kind).toBe('archive_default');
+    if (plan.kind !== 'archive_default') throw new Error('narrow');
+    expect(plan.promoteToDefaultId).toBeNull();
   });
 });
 
-// ─── Invariant: never leaves zero defaults ───────────────────────────────────
+// ─── Removability is conditional, not blanket ────────────────────────────────
 
-describe('planCardRemoval — default-invariant preservation', () => {
-  it('removing the default ALWAYS names a successor (never null)', () => {
+describe('planCardRemoval — not a blanket block', () => {
+  it('a lone card that collects nothing active is still archivable', () => {
     const plan = planCardRemoval(
       'a',
-      [
-        card({ id: 'a', is_default: true,  created_at: '2026-01-01' }),
-        card({ id: 'b', is_default: false, created_at: '2026-02-01' }),
-      ],
+      [card({ id: 'a', is_default: true, created_at: '2026-01-01', collectsActivePlan: false })],
     );
-    if (plan.kind !== 'remove_default') throw new Error('narrow');
-    expect(typeof plan.promoteToDefaultId).toBe('string');
-    expect(plan.promoteToDefaultId.length).toBeGreaterThan(0);
+    // archivable (default → archive_default with no successor), NOT blocked.
+    expect(plan.kind).toBe('archive_default');
   });
 
-  it('removing a non-default card never changes the default (no promotion)', () => {
+  it('removing a non-default, non-collecting card never promotes anything', () => {
     const plan = planCardRemoval(
       'c',
       [
@@ -109,9 +106,7 @@ describe('planCardRemoval — default-invariant preservation', () => {
         card({ id: 'c', is_default: false, created_at: '2026-03-01' }),
       ],
     );
-    expect(plan.kind).toBe('remove_non_default');
-    // remove_non_default carries no "promoteToDefaultId" key — the existing
-    // default stays.
+    expect(plan.kind).toBe('archive_non_default');
     expect((plan as Record<string, unknown>).promoteToDefaultId).toBeUndefined();
   });
 });

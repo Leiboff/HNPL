@@ -1,39 +1,37 @@
 /**
- * Pure planner for the patient payment-methods page. Given the invariant
- * "active plans always collect from the default card", these decisions
- * become a lot simpler than the previous version:
+ * Pure planner for the patient card list. Under the new rules:
  *
- *   • Only card                → block, "Add another card first."
- *   • Non-default card         → free to delete (no plans can point at
- *                                it; any stray plan is recovered by the
- *                                server before deletion).
- *   • Default card with others → must change default first. We pick the
- *                                most recently added other card as the
- *                                target; the server invokes the
- *                                change_default_card RPC (which atomic-
- *                                ally flips flags + repoints plans +
- *                                writes plan_events), then deletes the
- *                                old card.
+ *   • DEFAULT is for NEW plans only — it does NOT bind existing plans, so
+ *     removing (archiving) the default carries no plan-repoint consequence.
+ *     A default being archived just promotes the newest other active card.
+ *   • A card CANNOT be removed while it is currently collecting an active
+ *     plan (its token backs an active / pending_first_payment plan). That
+ *     is the ONLY block — not a blanket "never delete", and not the old
+ *     "only card" block. A card collecting nothing active is always
+ *     archivable, even if it is the last card.
  *
- * The previous repoint-decision fields (`repointToCardId`,
- * `repointToToken`) are gone — the RPC owns that work atomically. The
- * client only needs to know "do we need to promote a different card to
- * default first, and which one".
+ * `collectsActivePlan` is authoritatively determined server-side (the
+ * archive_card RPC re-checks it in the database); this planner mirrors that
+ * verdict so the UI can disable "Remove" with an explanation and so the
+ * account surface can compute the default-reassignment target for copy.
  */
 
 export type RemovalCard = {
-  id:         string;
-  is_default: boolean;
-  created_at: string;
+  id:                 string;
+  is_default:         boolean;
+  created_at:         string;
+  /** True when this card's token backs an active/pending plan. */
+  collectsActivePlan: boolean;
 };
 
 export type CardRemovalPlan =
   | { kind: 'not_found' }
-  | { kind: 'block_only_card' }
-  /** Non-default card → can delete directly. */
-  | { kind: 'remove_non_default' }
-  /** Default card → promote `promoteToDefaultId` first, then delete. */
-  | { kind: 'remove_default'; promoteToDefaultId: string };
+  /** Blocked — the card is collecting an active plan. */
+  | { kind: 'block_collecting' }
+  /** Archivable non-default card. */
+  | { kind: 'archive_non_default' }
+  /** Archivable default — promote `promoteToDefaultId` (null if none left). */
+  | { kind: 'archive_default'; promoteToDefaultId: string | null };
 
 export function planCardRemoval(
   cardId:   string,
@@ -42,14 +40,16 @@ export function planCardRemoval(
   const card = allCards.find((c) => c.id === cardId);
   if (!card) return { kind: 'not_found' };
 
-  if (allCards.length <= 1) return { kind: 'block_only_card' };
+  // The single, conditional block.
+  if (card.collectsActivePlan) return { kind: 'block_collecting' };
 
-  if (!card.is_default) return { kind: 'remove_non_default' };
+  if (!card.is_default) return { kind: 'archive_non_default' };
 
-  // Removing the default — pick the newest other card as the new default.
+  // Archiving the default — promote the newest OTHER card (any remaining
+  // card; null when this was the only one).
   const newest = allCards
     .filter((c) => c.id !== cardId)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
 
-  return { kind: 'remove_default', promoteToDefaultId: newest.id };
+  return { kind: 'archive_default', promoteToDefaultId: newest?.id ?? null };
 }

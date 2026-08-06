@@ -78,7 +78,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
       .maybeSingle(),
     supabase
       .from('payment_methods')
-      .select('card_brand, last_four, is_default')
+      .select('card_brand, last_four, is_default, token')
       .eq('patient_id', user.id)
       .order('is_default', { ascending: false }),
   ]);
@@ -117,8 +117,15 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
   const prog  = computePlanProgress({ status: rawPlan.status, payments });
   const total = prog.totalPayments || (rawPlan.plan_type ?? payments.length);
 
-  const cards       = (rawCards ?? []) as { card_brand: string | null; last_four: string | null; is_default: boolean | null }[];
-  const chargeCard  = cards.find((c) => c.is_default) ?? cards[0] ?? null;
+  const cards       = (rawCards ?? []) as { card_brand: string | null; last_four: string | null; is_default: boolean | null; token: string | null }[];
+  // Show the card THIS plan actually collects from (its own bound
+  // peach_registration_id) — not the account default, which now applies to
+  // NEW plans only and may differ. Fall back to the default only when the
+  // plan's card can't be resolved (legacy/orphaned token).
+  const boundCard   = rawPlan.peach_registration_id
+    ? cards.find((c) => c.token === rawPlan.peach_registration_id) ?? null
+    : null;
+  const chargeCard  = boundCard ?? cards.find((c) => c.is_default) ?? cards[0] ?? null;
 
   const nextDueNumber = payments.find((p) => p.status !== 'collected' && p.status !== 'written_off')?.instalment_number ?? null;
   const today = todaySAST();
