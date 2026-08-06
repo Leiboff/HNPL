@@ -11,8 +11,14 @@
 //
 // The header content varies per screen (balance hero, a title, a back
 // row, a profile row) so it comes in as `header`. Presentational only —
-// a plain server component. On desktop it centres in a phone-ish column
-// beside the sidebar.
+// a plain server component.
+//
+// Width: mobile is the full-bleed phone column (max-w-md). On desktop the
+// shell widens to a comfortable, CENTRED column that scales with the
+// viewport and caps at max-w-5xl (1024px) — so content beside the sidebar
+// uses the space instead of reading as a stretched phone, while ultra-wide
+// screens stay capped (centred, symmetric margins — never a dead right-side
+// void). Every patient screen flows through here, so the width is uniform.
 
 const CANVAS = {
   navy: { bg: '#0B1F3A', glow: 'radial-gradient(72% 88% at 96% -8%, rgba(21,168,158,.34), transparent 62%)' },
@@ -37,7 +43,7 @@ export default function PatientScreen({
   const canvas = CANVAS[tone];
   return (
     <div style={{ background: '#F4F7F8', minHeight: '100%' }}>
-      <div className="mx-auto w-full max-w-md">
+      <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-5xl">
 
         {/* Navy header — runs to the top edge, teal glow overlay. */}
         <div className="relative" style={{ background: canvas.bg }}>
