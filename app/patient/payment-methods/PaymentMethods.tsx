@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import PeachWidget from '@/app/_components/PeachWidget';
+import { ADD_CARD_PARAM } from '@/lib/patient/cardReturn';
 import type {
   CardRow,
   ChangeDefaultResult,
@@ -99,6 +100,25 @@ export default function PaymentMethods({
     params.delete('added');
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // ── ?addCard=1 → auto-open the add-card widget ────────────────────
+  //     The "Try again" affordance on the verification result screen
+  //     returns here with this flag so a fresh registration RE-LAUNCHES
+  //     (rather than re-polling a finished checkout, which can never
+  //     succeed). Fire once, then strip the flag so a refresh or
+  //     back-nav doesn't re-open the widget.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (searchParams.get(ADD_CARD_PARAM) !== '1') return;
+    if (autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(ADD_CARD_PARAM);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    void handleAddCard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 

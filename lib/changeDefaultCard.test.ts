@@ -74,10 +74,13 @@ describe('regression: payment-methods server actions invoke the change_default_c
   // actions.ts) — NOT the payment-methods page, which is now an inert
   // redirect. Pinning this path keeps the RPC-seam assertions on the real
   // money-path module.
+  // Normalise CRLF→LF so the closing-brace extractor below (which keys on
+  // "\n}\n") is line-ending agnostic — git rewrites these files to CRLF on
+  // commit, which would otherwise break the match.
   const pageSrc = readFileSync(
     resolve(process.cwd(), 'app/patient/payment-methods/actions.ts'),
     'utf8',
-  );
+  ).replace(/\r\n/g, '\n');
 
   // Tight extractor: grab from `export async function NAME` up to the
   // first line that is exactly `}` at column 0 (the function's closing

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CARDS_SURFACE, cardCompletionRedirect } from './cardReturn';
+import { CARDS_SURFACE, ADD_CARD_PARAM, cardCompletionRedirect, cardRetryDestination } from './cardReturn';
 
 // ─── Tests — card-flow return destination ───────────────────────────────
 //
@@ -32,5 +32,15 @@ describe('cardCompletionRedirect', () => {
 
   it('no signal → cards surface, unflagged', () => {
     expect(cardCompletionRedirect({})).toBe('/patient/account');
+  });
+});
+
+describe('cardRetryDestination', () => {
+  it('re-launches a fresh add-card on the cards surface (not a re-poll URL)', () => {
+    expect(cardRetryDestination()).toBe(`/patient/account?${ADD_CARD_PARAM}=1`);
+    expect(cardRetryDestination()).toBe('/patient/account?addCard=1');
+    // Must NOT point back at the completion route with an old checkout.
+    expect(cardRetryDestination()).not.toContain('/complete');
+    expect(cardRetryDestination()).not.toContain('checkoutId');
   });
 });
