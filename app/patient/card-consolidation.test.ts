@@ -42,8 +42,10 @@ describe('money-path card actions live in a neutral module, not the redirect pag
     expect(PM_PAGE).not.toContain('createClient');
   });
 
-  it('the actions module owns previewDefaultChange / changeDefaultCard / removeCard', () => {
-    expect(PM_ACTIONS).toMatch(/export async function previewDefaultChange\(/);
+  it('the actions module owns changeDefaultCard / removeCard', () => {
+    // previewDefaultChange was retired with the make-default consequence
+    // dialog: the default no longer repoints existing plans (RULE 1), so
+    // there is nothing to preview.
     expect(PM_ACTIONS).toMatch(/export async function changeDefaultCard\(/);
     expect(PM_ACTIONS).toMatch(/export async function removeCard\(/);
   });

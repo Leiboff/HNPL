@@ -8,9 +8,10 @@ import { cardBrandLabel, cardBrandGradient } from '@/lib/patient/cardBrand';
 import type {
   CardRow,
   ChangeDefaultResult,
-  PreviewDefaultChange,
   RemoveCardResult,
 } from './actions';
+
+const LOCKED_REASON = 'Collecting an active plan — change the card on that plan first.';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,9 @@ function CardThumbnail({ brand }: { brand: string }) {
 
 type Props = {
   initialCards:               CardRow[];
+  /** Ids of cards currently collecting an active plan — cannot be removed
+      (RULE 2). Authoritatively re-checked server-side in archive_card. */
+  lockedCardIds:              string[];
   // Kicks off the Checkout V2 card-vault flow (Flow B). Returns
   // { checkoutId, shopperResultUrl }; the sheet mounts the widget
   // against those. No cross-page navigation.
@@ -43,29 +47,20 @@ type Props = {
     checkoutId?:      string;
     shopperResultUrl?: string;
   }>;
-  previewDefaultChange:       (cardId: string) => Promise<PreviewDefaultChange>;
   changeDefaultCard:          (cardId: string) => Promise<ChangeDefaultResult>;
   removeCard:                 (cardId: string) => Promise<RemoveCardResult>;
 };
 
 type Confirm =
   | { kind: 'none' }
-  | { kind: 'remove'; cardId: string }
-  | {
-      kind:           'make-default';
-      cardId:         string;
-      repointedPlans: number;
-      planRefs:       string[];
-      newLastFour:    string;
-      oldLastFour:    string | null;
-    };
+  | { kind: 'remove'; cardId: string };
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function PaymentMethods({
   initialCards,
+  lockedCardIds,
   initializeCardRegistration,
-  previewDefaultChange,
   changeDefaultCard,
   removeCard,
 }: Props) {
@@ -135,14 +130,17 @@ export default function PaymentMethods({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCardsKey]);
 
-  // ── Preview helper for the remove dialog (which target gets promoted).
+  // ── Which card the default moves to when archiving the current default.
+  //     Mirrors archive_card's "newest other active card" reassignment so
+  //     the confirm copy is accurate. Archiving a non-default card promotes
+  //     nothing.
   function previewRemoval(cardId: string) {
     const card = cards.find((c) => c.id === cardId);
     if (!card) return null;
     if (!card.is_default) return { willPromoteToDefault: false, target: null };
     const target = [...cards]
       .filter((c) => c.id !== cardId)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
     return { willPromoteToDefault: true, target };
   }
 
@@ -163,64 +161,28 @@ export default function PaymentMethods({
     });
   }
 
-  // ─── Make default ─────────────────────────────────────────────────────────
-
-  async function handleMakeDefaultClick(cardId: string) {
-    setError(null);
-    setNotice(null);
-    setLoading(true);
-    const preview = await previewDefaultChange(cardId);
-    setLoading(false);
-
-    if (preview.error !== null) {
-      setError(preview.error);
-      return;
-    }
-
-    // N = 0 → skip the dialog and apply the change immediately.
-    if (preview.repointedPlans === 0) {
-      await commitMakeDefault(cardId);
-      return;
-    }
-
-    // Otherwise open the consequence dialog.
-    setConfirm({
-      kind:           'make-default',
-      cardId,
-      repointedPlans: preview.repointedPlans,
-      planRefs:       preview.planRefs,
-      newLastFour:    preview.newLastFour,
-      oldLastFour:    preview.oldLastFour,
-    });
-  }
+  // ─── Make default (flag-only — applies to NEW plans only) ──────────────────
 
   async function commitMakeDefault(cardId: string) {
     setLoading(true);
     setError(null);
+    setNotice(null);
     const result = await changeDefaultCard(cardId);
     setLoading(false);
-    setConfirm({ kind: 'none' });
 
     if (result.error !== null) {
       setError(result.error);
       return;
     }
 
-    if (result.repointedPlans > 0) {
-      const plural = result.repointedPlans === 1 ? 'plan' : 'plans';
-      setNotice(
-        `${result.repointedPlans} active ${plural} now collecting from •••• ${result.newLastFour}.`,
-      );
-    } else if (result.changed) {
-      // Default flag flipped but no active plans were repointed — usually
-      // because there are no active plans yet. Surface confirmation so
-      // the user knows the click did something.
-      setNotice(`Default card is now •••• ${result.newLastFour}.`);
+    if (result.changed) {
+      // No plan is repointed — the default seeds NEW plans only.
+      setNotice(`Default for new plans is now •••• ${result.newLastFour}.`);
     }
     router.refresh();
   }
 
-  // ─── Remove ───────────────────────────────────────────────────────────────
+  // ─── Remove (soft-delete / archive) ─────────────────────────────────────────
 
   async function handleRemove(cardId: string) {
     setLoading(true);
@@ -236,10 +198,11 @@ export default function PaymentMethods({
       return;
     }
 
-    if (result.repointedPlans > 0) {
-      const plural = result.repointedPlans === 1 ? 'plan was' : 'plans were';
-      setNotice(`${result.repointedPlans} active ${plural} moved to your default card.`);
-    }
+    setNotice(
+      result.promotedLastFour
+        ? `Card removed. Default for new plans is now •••• ${result.promotedLastFour}.`
+        : 'Card removed.',
+    );
     router.refresh();
   }
 
@@ -299,9 +262,8 @@ export default function PaymentMethods({
       ) : (
         <div className="space-y-3">
           {cards.map((card) => {
-            const isConfirmRemove        = confirm.kind === 'remove'       && confirm.cardId === card.id;
-            const isConfirmMakeDefault   = confirm.kind === 'make-default' && confirm.cardId === card.id;
-            const onlyCard               = cards.length <= 1;
+            const isConfirmRemove        = confirm.kind === 'remove' && confirm.cardId === card.id;
+            const locked                 = lockedCardIds.includes(card.id);
             const removalPreview         = isConfirmRemove ? previewRemoval(card.id) : null;
             return (
               <div
@@ -328,13 +290,19 @@ export default function PaymentMethods({
                     <p className="text-xs text-gray-400 mt-0.5 truncate">
                       {card.cardholder_name} · Exp {formatExpiry(card.expiry_month, card.expiry_year)}
                     </p>
+                    {card.is_default && (
+                      // Microcopy: the default is consumed only when a NEW
+                      // plan is created — it never re-points existing plans.
+                      <p className="text-[11px] text-gray-400 mt-0.5">Default for new plans</p>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     {!card.is_default && (
                       <button
                         type="button"
-                        onClick={() => handleMakeDefaultClick(card.id)}
+                        onClick={() => commitMakeDefault(card.id)}
                         disabled={loading}
+                        title="Use this card for new plans. Existing plans are unaffected."
                         className="text-xs font-medium disabled:opacity-60 transition-colors"
                         style={{ color: '#15A89E' }}
                       >
@@ -344,20 +312,29 @@ export default function PaymentMethods({
                     <button
                       type="button"
                       onClick={() => {
-                        if (onlyCard) return;
+                        if (locked) return;
                         setError(null);
                         setNotice(null);
                         setConfirm({ kind: 'remove', cardId: card.id });
                       }}
-                      disabled={loading || onlyCard}
+                      disabled={loading || locked}
+                      aria-disabled={locked}
                       // Quiet at rest, red on hover/focus only.
                       className="text-xs font-medium text-gray-500 hover:text-red-700 focus-visible:text-red-700 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
-                      title={onlyCard ? 'Add another card first.' : undefined}
+                      title={locked ? LOCKED_REASON : undefined}
+                      data-testid={`remove-card-${card.id}`}
                     >
                       Remove
                     </button>
                   </div>
                 </div>
+
+                {/* Reason a locked card can't be removed (RULE 2). */}
+                {locked && (
+                  <p className="px-5 pb-3 -mt-1 text-[11px] leading-snug text-gray-400">
+                    {LOCKED_REASON}
+                  </p>
+                )}
 
                 {/* ── Confirm: Remove ─────────────────────────────────── */}
                 {isConfirmRemove && removalPreview && (
@@ -366,8 +343,8 @@ export default function PaymentMethods({
                       <p className="text-sm font-medium text-gray-900">Remove this card?</p>
                       <p className="text-xs text-gray-600 mt-1 leading-relaxed">
                         {removalPreview.willPromoteToDefault && removalPreview.target
-                          ? `Your default will change to ${removalPreview.target.card_brand} •••• ${removalPreview.target.last_four}. Active plans on this card will collect from there going forward.`
-                          : 'This card is not collecting any active plans. Removing it just takes it off your profile.'}
+                          ? `We'll archive this card — a secure reference is kept for reconciliation — and your default for new plans moves to ${removalPreview.target.card_brand} •••• ${removalPreview.target.last_four}. Active plans are unaffected; each keeps its own card.`
+                          : `We'll archive this card — a secure reference is kept for reconciliation — and take it off your list. Active plans are unaffected; each keeps its own card.`}
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -375,6 +352,7 @@ export default function PaymentMethods({
                         type="button"
                         onClick={() => handleRemove(card.id)}
                         disabled={loading}
+                        data-testid="confirm-remove"
                         className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60 transition-colors"
                       >
                         {loading ? 'Removing…' : 'Remove'}
@@ -390,44 +368,6 @@ export default function PaymentMethods({
                   </div>
                 )}
 
-                {/* ── Confirm: Make default ───────────────────────────── */}
-                {isConfirmMakeDefault && confirm.kind === 'make-default' && (
-                  <div className="border-t border-gray-100 bg-gray-50 px-5 py-4 space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">Make this card default?</p>
-                      <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                        {confirm.repointedPlans === 1
-                          ? `1 active plan will collect from •••• ${confirm.newLastFour} going forward.`
-                          : `${confirm.repointedPlans} active plans will collect from •••• ${confirm.newLastFour} going forward.`}
-                      </p>
-                      {confirm.planRefs.length > 0 && confirm.planRefs.length === confirm.repointedPlans && (
-                        <ul className="mt-2 text-xs text-gray-500 space-y-0.5">
-                          {confirm.planRefs.map((ref) => (
-                            <li key={ref} className="font-mono">· {ref}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => commitMakeDefault(card.id)}
-                        disabled={loading}
-                        className="rounded-lg px-4 py-1.5 text-sm font-medium text-white disabled:opacity-60 transition-all"
-                        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-                      >
-                        {loading ? 'Updating…' : 'Make default'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirm({ kind: 'none' })}
-                        className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             );
           })}

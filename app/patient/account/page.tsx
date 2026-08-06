@@ -18,7 +18,6 @@ import { maskSaId } from '@/lib/saIdMask';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import { normalizePhoneZA } from '@/lib/validation';
 import {
-  previewDefaultChange,
   changeDefaultCard,
   removeCard,
   type CardRow,
@@ -116,19 +115,26 @@ export default async function AccountPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const [{ data: profile }, { data: rawCards }, { data: rawPayments }] = await Promise.all([
+  const [{ data: profile }, { data: rawCards }, { data: rawPayments }, { data: rawPlans }] = await Promise.all([
     supabase
       .from('profiles')
       .select('first_name, last_name, email, phone, sa_id_number, salary_day')
       .eq('id', user.id)
       .single(),
+    // Active cards only — archived (soft-deleted) cards drop off the list.
+    // token is read server-side to compute the delete guard; it is NOT
+    // passed to the client (CardRow carries no token).
     supabase
       .from('payment_methods')
-      .select('id, card_brand, last_four, expiry_month, expiry_year, cardholder_name, is_default, created_at')
+      .select('id, card_brand, last_four, expiry_month, expiry_year, cardholder_name, is_default, created_at, token')
       .eq('patient_id', user.id)
+      .is('archived_at', null)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false }),
     supabase.from('payments').select('status, due_date, next_attempt_date').eq('patient_id', user.id).eq('kind', 'instalment'),
+    // Which cards are currently collecting an active plan → those cards
+    // cannot be removed. Determined here (and re-checked in archive_card).
+    supabase.from('plans').select('peach_registration_id').eq('patient_id', user.id).in('status', ['active', 'pending_first_payment']),
   ]);
 
   const firstName = (profile?.first_name as string | null) ?? '';
@@ -140,7 +146,18 @@ export default async function AccountPage() {
   const decryptedSaId = decryptIdForDisplay(profile?.sa_id_number as string | null | undefined);
   const saIdMasked    = maskSaId(decryptedSaId);
 
-  const cards = (rawCards ?? []) as CardRow[];
+  // Split the server-only token off before handing cards to the client.
+  const rawCardRows = (rawCards ?? []) as (CardRow & { token: string })[];
+  const cards: CardRow[] = rawCardRows.map(({ token: _token, ...row }) => row);
+
+  // Cards whose token backs an active/pending plan are locked against
+  // removal (RULE 2). Set of ids for the client to disable "Remove".
+  const activeTokens = new Set(
+    ((rawPlans ?? []) as { peach_registration_id: string | null }[])
+      .map((p) => p.peach_registration_id)
+      .filter((t): t is string => !!t),
+  );
+  const lockedCardIds = rawCardRows.filter((c) => activeTokens.has(c.token)).map((c) => c.id);
 
   // ── Honest payment record ─────────────────────────────────────────
   // "All on time" is only true when nothing is currently overdue AND there
@@ -219,8 +236,8 @@ export default async function AccountPage() {
       </p>
       <PaymentMethods
         initialCards={cards}
+        lockedCardIds={lockedCardIds}
         initializeCardRegistration={initializeCardRegistration}
-        previewDefaultChange={previewDefaultChange}
         changeDefaultCard={changeDefaultCard}
         removeCard={removeCard}
       />
