@@ -12,6 +12,7 @@ import { declinePlan } from './actions';
 import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computePlanProgress } from '@/lib/planProgress';
+import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { formatRand, formatDate, formatDayMonth, relativeDay, todaySAST } from './_format';
 
 // ─── Patient home dashboard — v4 ──────────────────────────────────────────
@@ -132,17 +133,19 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
   const usedPct = approvedLimit && approvedLimit > 0 ? Math.min(100, Math.max(0, (used / approvedLimit) * 100)) : 0;
 
   const effectiveDate = (p: UpcomingPayment): string => p.next_attempt_date ?? p.due_date;
+  const today = todaySAST();
 
   // ── Per-plan next instalment (no extra query) ─────────────────────
-  const nextByPlan = new Map<string, { amount: number; date: string }>();
+  const nextByPlan = new Map<string, { amount: number; date: string; overdue: boolean }>();
   for (const p of payments) {
     if (!p.plan_id) continue;
     const eff = effectiveDate(p);
     const existing = nextByPlan.get(p.plan_id);
     if (!existing || eff < existing.date) {
       nextByPlan.set(p.plan_id, {
-        amount: Number(p.amount) + Number(p.dunning_fees_cents ?? 0) / 100,
-        date:   eff,
+        amount:  Number(p.amount) + Number(p.dunning_fees_cents ?? 0) / 100,
+        date:    eff,
+        overdue: deriveInstalmentStatus(p, today) === 'overdue',
       });
     }
   }
@@ -167,6 +170,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         isPaidInFull: prog.isPaidInFull,
         nextAmount:   nxt?.amount ?? null,
         nextDate:     nxt?.date ?? null,
+        nextOverdue:  nxt?.overdue ?? false,
       };
     })
     .sort((a, b) => a.percent - b.percent);
@@ -201,14 +205,16 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
   }
 
   // ── Soonest scheduled instalment (drives the next-due card) ───────
-  const today = todaySAST();
   const sorted = [...payments].sort((a, b) => effectiveDate(a).localeCompare(effectiveDate(b)));
   const soonest = sorted[0] ?? null;
   const nextPayment = soonest
     ? {
-        amount: Number(soonest.amount) + Number(soonest.dunning_fees_cents ?? 0) / 100,
-        date:   effectiveDate(soonest),
-        planId: soonest.plan_id,
+        amount:  Number(soonest.amount) + Number(soonest.dunning_fees_cents ?? 0) / 100,
+        date:    effectiveDate(soonest),
+        planId:  soonest.plan_id,
+        // Derived, not trusted from the stored status: a scheduled row whose
+        // due date has passed is overdue and must not read as neutral here.
+        overdue: deriveInstalmentStatus(soonest, today) === 'overdue',
       }
     : null;
 
@@ -286,8 +292,8 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: 'rgba(19,41,75,.5)' }}>
-                  Next payment
+                <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: nextPayment.overdue ? '#B42318' : 'rgba(19,41,75,.5)' }}>
+                  {nextPayment.overdue ? 'Payment overdue' : 'Next payment'}
                 </p>
                 <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: '#13294B', letterSpacing: '-.04em' }}>
                   {formatRand(nextPayment.amount)}
@@ -295,13 +301,17 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
               </div>
               <span
                 className="flex-none text-[12px] font-semibold rounded-full px-3 py-2"
-                style={{ background: 'rgba(21,168,158,.13)', color: '#0F766E' }}
+                style={nextPayment.overdue
+                  ? { background: 'rgba(180,35,24,.1)', color: '#B42318' }
+                  : { background: 'rgba(21,168,158,.13)', color: '#0F766E' }}
               >
-                {relativeDay(nextPayment.date, today)}
+                {nextPayment.overdue ? 'Overdue' : relativeDay(nextPayment.date, today)}
               </span>
             </div>
-            <p className="text-[13.5px]" style={{ color: '#8496AA' }}>
-              {formatDayMonth(nextPayment.date)}
+            <p className="text-[13.5px]" style={{ color: nextPayment.overdue ? '#B42318' : '#8496AA' }}>
+              {nextPayment.overdue
+                ? <>Was due {formatDayMonth(nextPayment.date)} · {relativeDay(nextPayment.date, today)}</>
+                : formatDayMonth(nextPayment.date)}
               {cardBrand && cardLast4 ? <> · off your {cardBrand} ···· {cardLast4}</> : null}
             </p>
             <Link
@@ -309,7 +319,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
               className="text-center text-[14.5px] font-semibold text-white rounded-[14px] py-[14px]"
               style={{ background: '#0B1F3A' }}
             >
-              Pay it now
+              View &amp; pay
             </Link>
           </div>
         )}
@@ -340,9 +350,13 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
                 <div className="mt-[11px]">
                   <InstalmentLadder segments={ladderFromCounts(r.total, r.paid)} />
                 </div>
-                <p className="mt-[11px] text-[12.5px] tabular-nums" style={{ color: '#8496AA' }}>
+                <p className="mt-[11px] text-[12.5px] tabular-nums" style={{ color: r.nextOverdue ? '#B42318' : '#8496AA' }}>
                   {r.isPaidInFull ? 'Paid in full' : `${r.paid} of ${r.total} paid`}
-                  {r.nextAmount != null && r.nextDate ? ` · ${formatRand(r.nextAmount)} on ${formatDayMonth(r.nextDate)}` : ''}
+                  {r.nextAmount != null && r.nextDate
+                    ? r.nextOverdue
+                      ? ` · ${formatRand(r.nextAmount)} overdue since ${formatDayMonth(r.nextDate)}`
+                      : ` · ${formatRand(r.nextAmount)} on ${formatDayMonth(r.nextDate)}`
+                    : ''}
                 </p>
               </Link>
             ))}

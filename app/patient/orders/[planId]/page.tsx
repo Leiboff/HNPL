@@ -4,9 +4,17 @@ import { createClient } from '@/lib/supabase/server';
 import PatientScreen from '@/app/patient/PatientScreen';
 import InstalmentLadder, { ladderFromCounts } from '@/app/patient/InstalmentLadder';
 import PlanSettleAffordance from '../PlanSettleAffordance';
+import DeclinedPlanDetail from '../DeclinedPlanDetail';
 import { selfSettleInstalment, selfSettleEntirePlan } from '../settle-actions';
 import { computePlanProgress } from '@/lib/planProgress';
-import { formatRand, formatDate, relativeDay } from '@/app/patient/_format';
+import { isDeclinedPlan } from '@/lib/patient/planBucket';
+import {
+  deriveInstalmentStatus,
+  instalmentStatusLabel,
+  type InstalmentStatus,
+} from '@/lib/patient/instalmentStatus';
+import { cardBrandLabel } from '@/lib/patient/cardBrand';
+import { formatRand, formatDate, relativeDay, todaySAST } from '@/app/patient/_format';
 
 // ─── Plan detail (v4 screen 03) ──────────────────────────────────────────
 //
@@ -29,16 +37,23 @@ type PaymentRow = {
   kind: string;
 };
 
-function ScheduleBadge({ status }: { status: string }) {
-  const cfg =
-    status === 'collected'                     ? { label: 'Collected', bg: '#E7F6EC', fg: '#1E7A45' } :
-    status === 'failed' || status === 'defaulted' ? { label: status === 'defaulted' ? 'Overdue' : 'Retrying', bg: '#FCEAEA', fg: '#B42318' } :
-    status === 'processing'                    ? { label: 'Processing', bg: '#EAF1FB', fg: '#2B5FA8' } :
-    status === 'written_off'                   ? { label: 'Written off', bg: '#F1F5F6', fg: '#64748B' } :
-                                                 { label: 'Upcoming', bg: '#EAF1FB', fg: '#2B5FA8' };
+// Badge palette keyed off the DERIVED status (never the raw stored one),
+// so a scheduled row whose due date has passed reads "Overdue", not
+// "Upcoming".
+const BADGE_STYLE: Record<InstalmentStatus, { bg: string; fg: string }> = {
+  paid:        { bg: '#E7F6EC', fg: '#1E7A45' },
+  processing:  { bg: '#EAF1FB', fg: '#2B5FA8' },
+  due_today:   { bg: '#EAF1FB', fg: '#2B5FA8' },
+  upcoming:    { bg: '#EAF1FB', fg: '#2B5FA8' },
+  overdue:     { bg: '#FCEAEA', fg: '#B42318' },
+  written_off: { bg: '#F1F5F6', fg: '#64748B' },
+};
+
+function ScheduleBadge({ derived }: { derived: InstalmentStatus }) {
+  const cfg = BADGE_STYLE[derived];
   return (
     <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium" style={{ background: cfg.bg, color: cfg.fg }}>
-      {cfg.label}
+      {instalmentStatusLabel(derived)}
     </span>
   );
 }
@@ -82,6 +97,19 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
     ? 'Unknown Practice'
     : Array.isArray(practicesRaw) ? (practicesRaw[0]?.name ?? 'Unknown Practice') : practicesRaw.name;
 
+  // A declined bill never became a plan — no schedule, no card, no receipt.
+  // Render the minimal "what happened" view, not the active-plan template.
+  if (isDeclinedPlan(rawPlan.status as string)) {
+    return (
+      <DeclinedPlanDetail
+        practiceName={practiceName}
+        amount={Number(rawPlan.total_amount)}
+        invoiceNumber={(rawPlan.invoice_number as string | null) ?? null}
+        practiceReference={(rawPlan.practice_reference as string | null) ?? null}
+      />
+    );
+  }
+
   const payments = ((rawPlan.payments ?? []) as PaymentRow[])
     .filter((p) => p.kind !== 'settlement')
     .sort((a, b) => a.instalment_number - b.instalment_number);
@@ -93,6 +121,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
   const chargeCard  = cards.find((c) => c.is_default) ?? cards[0] ?? null;
 
   const nextDueNumber = payments.find((p) => p.status !== 'collected' && p.status !== 'written_off')?.instalment_number ?? null;
+  const today = todaySAST();
 
   // Outstanding set for the settle affordance (active plans only).
   const outstanding = payments.filter((p) => p.status === 'scheduled' || p.status === 'failed' || p.status === 'defaulted');
@@ -156,16 +185,23 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
           {payments.length === 0 ? (
             <p className="px-[18px] pb-[16px] text-[13px]" style={{ color: '#8496AA' }}>No schedule yet.</p>
           ) : payments.map((p) => {
-            const collected = p.status === 'collected';
+            const derived   = deriveInstalmentStatus(p, today);
+            const collected = derived === 'paid';
+            const overdue   = derived === 'overdue';
             const isNext    = !collected && p.instalment_number === nextDueNumber;
+            const effDate   = p.next_attempt_date ?? p.due_date;
             const rowDate   = collected
               ? `Paid ${formatDate((p.collected_at ?? p.due_date).slice(0, 10))}`
-              : `Due ${formatDate(p.next_attempt_date ?? p.due_date)}`;
+              : `${overdue ? 'Was due' : 'Due'} ${formatDate(effDate)}`;
+            const emphasise = isNext || overdue;
+            const ring      = overdue ? '#B42318' : isNext ? '#15A89E' : '#E2E8EE';
+            const dateColor = collected ? '#8496AA' : overdue ? '#B42318' : isNext ? '#13294B' : '#8496AA';
+            const amtColor  = emphasise ? '#13294B' : '#8496AA';
             return (
               <div
                 key={p.id}
                 className="flex items-center gap-3 px-[18px] py-[14px]"
-                style={{ borderTop: '1px solid #EEF2F5', background: isNext ? '#F5FCFB' : undefined }}
+                style={{ borderTop: '1px solid #EEF2F5', background: overdue ? '#FEF6F5' : isNext ? '#F5FCFB' : undefined }}
               >
                 {collected ? (
                   <span className="flex-none w-6 h-6 rounded-full flex items-center justify-center" style={{ background: '#F0FDF4' }}>
@@ -174,16 +210,16 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
                     </svg>
                   </span>
                 ) : (
-                  <span className="flex-none w-6 h-6 rounded-full" style={{ border: `2px solid ${isNext ? '#15A89E' : '#E2E8EE'}` }} />
+                  <span className="flex-none w-6 h-6 rounded-full" style={{ border: `2px solid ${ring}` }} />
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-[14px]" style={{ color: isNext ? '#13294B' : '#8496AA', fontWeight: isNext ? 600 : 400 }}>{rowDate}</p>
-                  {isNext && (
-                    <p className="mt-0.5 text-[12px]" style={{ color: '#8496AA' }}>{relativeDay(p.next_attempt_date ?? p.due_date)}</p>
+                  <p className="text-[14px]" style={{ color: dateColor, fontWeight: emphasise ? 600 : 400 }}>{rowDate}</p>
+                  {emphasise && (
+                    <p className="mt-0.5 text-[12px]" style={{ color: overdue ? '#B42318' : '#8496AA' }}>{relativeDay(effDate, today)}</p>
                   )}
                 </div>
-                <ScheduleBadge status={p.status} />
-                <span className="text-[14px] tabular-nums" style={{ color: isNext ? '#13294B' : '#8496AA', fontWeight: isNext ? 600 : 400 }}>
+                <ScheduleBadge derived={derived} />
+                <span className="text-[14px] tabular-nums" style={{ color: amtColor, fontWeight: emphasise ? 600 : 400 }}>
                   {formatRand(Number(p.amount))}
                 </span>
               </div>
@@ -198,7 +234,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
         >
           <div className="flex items-center gap-3 px-[18px] py-[16px]">
             <span className="flex-none w-10 h-7 rounded-[7px] flex items-center justify-center text-[9.5px] font-bold" style={{ background: '#F1F5F6', color: '#41556F', letterSpacing: '.06em' }}>
-              {(chargeCard?.card_brand ?? 'CARD').toUpperCase().slice(0, 4)}
+              {cardBrandLabel(chargeCard?.card_brand)}
             </span>
             <div className="flex-1 min-w-0">
               <p className="text-[14px] font-semibold tabular-nums" style={{ color: '#13294B' }}>

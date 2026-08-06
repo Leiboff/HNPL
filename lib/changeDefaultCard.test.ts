@@ -70,17 +70,24 @@ describe('callChangeDefaultCardRpc — the seam', () => {
 // invoking the seam.
 
 describe('regression: payment-methods server actions invoke the change_default_card seam', () => {
+  // The shared card actions live in a neutral module (payment-methods/
+  // actions.ts) — NOT the payment-methods page, which is now an inert
+  // redirect. Pinning this path keeps the RPC-seam assertions on the real
+  // money-path module.
+  // Normalise CRLF→LF so the closing-brace extractor below (which keys on
+  // "\n}\n") is line-ending agnostic — git rewrites these files to CRLF on
+  // commit, which would otherwise break the match.
   const pageSrc = readFileSync(
-    resolve(process.cwd(), 'app/patient/payment-methods/page.tsx'),
+    resolve(process.cwd(), 'app/patient/payment-methods/actions.ts'),
     'utf8',
-  );
+  ).replace(/\r\n/g, '\n');
 
   // Tight extractor: grab from `export async function NAME` up to the
   // first line that is exactly `}` at column 0 (the function's closing
   // brace, since the body is multi-line and ends with that pattern).
   function functionBody(name: string): string {
     const start = pageSrc.indexOf(`export async function ${name}(`);
-    if (start < 0) throw new Error(`server action "${name}" not found in page.tsx`);
+    if (start < 0) throw new Error(`server action "${name}" not found in actions.ts`);
     // Find the closing brace at column 0 after `start`.
     const after = pageSrc.indexOf('\n}\n', start);
     if (after < 0) throw new Error(`could not find closing brace of "${name}"`);
@@ -101,9 +108,17 @@ describe('regression: payment-methods server actions invoke the change_default_c
     expect(usesHelper || usesRpc).toBe(true);
   });
 
-  it('PaymentMethods.tsx wires previewDefaultChange and changeDefaultCard as props from page.tsx', () => {
-    expect(pageSrc).toMatch(/previewDefaultChange=\{previewDefaultChange\}/);
-    expect(pageSrc).toMatch(/changeDefaultCard=\{changeDefaultCard\}/);
+  it('the Account surface wires previewDefaultChange and changeDefaultCard as props into PaymentMethods', () => {
+    // v4 consolidation: the standalone /patient/payment-methods route now
+    // redirects to Account, which is the single surface that renders the
+    // card manager and wires these server actions (imported from
+    // payment-methods/page.tsx, where the actions still live).
+    const accountSrc = readFileSync(
+      resolve(process.cwd(), 'app/patient/account/page.tsx'),
+      'utf8',
+    );
+    expect(accountSrc).toMatch(/previewDefaultChange=\{previewDefaultChange\}/);
+    expect(accountSrc).toMatch(/changeDefaultCard=\{changeDefaultCard\}/);
 
     const clientSrc = readFileSync(
       resolve(process.cwd(), 'app/patient/payment-methods/PaymentMethods.tsx'),

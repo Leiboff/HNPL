@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import PeachWidget from '@/app/_components/PeachWidget';
+import { ADD_CARD_PARAM } from '@/lib/patient/cardReturn';
+import { cardBrandLabel, cardBrandGradient } from '@/lib/patient/cardBrand';
 import type {
   CardRow,
   ChangeDefaultResult,
   PreviewDefaultChange,
   RemoveCardResult,
-} from './page';
+} from './actions';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -19,20 +21,12 @@ function formatExpiry(month: number, year: number): string {
 // ─── Card thumbnail ───────────────────────────────────────────────────────────
 
 function CardThumbnail({ brand }: { brand: string }) {
-  const bg =
-    brand === 'Visa'       ? 'linear-gradient(135deg,#1a1f71,#4361ee)' :
-    brand === 'Mastercard' ? 'linear-gradient(135deg,#eb001b,#ff5f00)' :
-                             'linear-gradient(135deg,#13294B,#15A89E)';
-  const label =
-    brand === 'Visa'       ? 'VISA' :
-    brand === 'Mastercard' ? 'MC'   :
-                             brand.slice(0, 2).toUpperCase();
   return (
     <div
       className="w-11 h-8 rounded-lg flex items-center justify-center shrink-0 text-white text-[10px] font-black tracking-wider select-none"
-      style={{ background: bg }}
+      style={{ background: cardBrandGradient(brand) }}
     >
-      {label}
+      {cardBrandLabel(brand)}
     </div>
   );
 }
@@ -76,6 +70,7 @@ export default function PaymentMethods({
   removeCard,
 }: Props) {
   const router       = useRouter();
+  const pathname     = usePathname();
   const searchParams = useSearchParams();
 
   const [cards,   setCards]   = useState<CardRow[]>(initialCards);
@@ -86,8 +81,10 @@ export default function PaymentMethods({
 
   // ── ?added=added|already banner from the Checkout V2 return route ──
   //     The return route uses server-side `redirect(...)` on success
-  //     so the browser lands here with the flag. Shown once per
-  //     navigation; the effect strips the query param after reading.
+  //     so the browser lands on the card surface with the flag. Shown
+  //     once per navigation; the effect strips the query param after
+  //     reading it, off whatever path we're mounted on (the card surface
+  //     moved into Account, so this must not hard-code a route).
   useEffect(() => {
     const flag = searchParams.get('added');
     if (!flag) return;
@@ -95,7 +92,26 @@ export default function PaymentMethods({
     const params = new URLSearchParams(searchParams.toString());
     params.delete('added');
     const qs = params.toString();
-    router.replace(qs ? `/patient/payment-methods?${qs}` : '/patient/payment-methods');
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // ── ?addCard=1 → auto-open the add-card widget ────────────────────
+  //     The "Try again" affordance on the verification result screen
+  //     returns here with this flag so a fresh registration RE-LAUNCHES
+  //     (rather than re-polling a finished checkout, which can never
+  //     succeed). Fire once, then strip the flag so a refresh or
+  //     back-nav doesn't re-open the widget.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (searchParams.get(ADD_CARD_PARAM) !== '1') return;
+    if (autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(ADD_CARD_PARAM);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    void handleAddCard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 

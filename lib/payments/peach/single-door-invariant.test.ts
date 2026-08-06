@@ -91,7 +91,12 @@ describe('Single door — every capture surface mounts the V2 PeachWidget', () =
 
   it('card-add return route still redirects server-side on success (no widget re-entry)', () => {
     expect(PAYMENT_METHODS_RETURN).toContain("from 'next/navigation'");
-    expect(PAYMENT_METHODS_RETURN).toMatch(/redirect\(`\/patient\/payment-methods\?added=/);
+    // Server-side redirect on success. The literal destination moved into
+    // the shared cardCompletionRedirect() helper when card management folded
+    // into the Account tab, so the invariant is asserted THROUGH it: a
+    // redirect() resolving via cardCompletionRedirect with the added flag —
+    // never a client re-entry into the widget.
+    expect(PAYMENT_METHODS_RETURN).toMatch(/redirect\(cardCompletionRedirect\(\{\s*addedFlag:/);
   });
 });
 

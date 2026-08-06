@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { CARDS_SURFACE, cardRetryDestination } from '@/lib/patient/cardReturn';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ function SuccessView({ card }: { card: CardInfo }) {
         We verified your card with your bank — no money was taken. Your card is ready for future instalment payments.
       </p>
       <Link
-        href="/patient/payment-methods"
+        href={CARDS_SURFACE}
         className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
       >
         View my cards →
@@ -94,7 +95,7 @@ function SuccessView({ card }: { card: CardInfo }) {
   );
 }
 
-function TimeoutView({ reference }: { reference: string }) {
+function TimeoutView() {
   return (
     <ResultCard>
       <div className="flex items-center justify-center w-14 h-14 rounded-full bg-red-100 mx-auto">
@@ -106,22 +107,22 @@ function TimeoutView({ reference }: { reference: string }) {
         <h1 className="text-xl font-semibold text-gray-900">We couldn&apos;t confirm your card</h1>
         <p className="mt-1 text-sm text-gray-500 leading-relaxed">
           We waited 60 seconds and didn&apos;t see your card on file. If the
-          charge succeeded on Paystack the row should appear shortly —
-          otherwise try the verification again.
+          verification went through it should appear shortly — otherwise
+          try adding your card again.
         </p>
       </div>
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
         <Link
-          href={`/patient/payment-methods/complete?checkoutId=${encodeURIComponent(reference)}`}
+          href={cardRetryDestination()}
           className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
         >
           Try again
         </Link>
         <Link
-          href="/patient/payment-methods"
+          href={CARDS_SURFACE}
           className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-6 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
         >
-          View payment methods
+          View my cards
         </Link>
       </div>
     </ResultCard>
@@ -130,7 +131,7 @@ function TimeoutView({ reference }: { reference: string }) {
 
 // ─── Polling component ────────────────────────────────────────────────────────
 
-export default function PollingConfirmation({ since, reference }: { since: string; reference: string }) {
+export default function PollingConfirmation({ since }: { since: string }) {
   const [state, setState] = useState<PollingState>('polling');
   const [card,  setCard]  = useState<CardInfo | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(Math.ceil(POLL_TIMEOUT_MS / 1000));
@@ -176,6 +177,6 @@ export default function PollingConfirmation({ since, reference }: { since: strin
   }, [since]);
 
   if (state === 'success' && card) return <SuccessView card={card} />;
-  if (state === 'timeout')         return <TimeoutView reference={reference} />;
+  if (state === 'timeout')         return <TimeoutView />;
   return <PollingView secondsLeft={secondsLeft} />;
 }

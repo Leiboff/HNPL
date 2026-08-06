@@ -6,12 +6,14 @@ import InstalmentLadder, { type LadderSegment } from '../InstalmentLadder';
 import ProfileLogoutSection from '../profile/ProfileLogoutSection';
 import PaymentMethods from '../payment-methods/PaymentMethods';
 import { initializeCardRegistration } from '../actions';
+import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
+import { todaySAST } from '../_format';
 import {
   previewDefaultChange,
   changeDefaultCard,
   removeCard,
   type CardRow,
-} from '../payment-methods/page';
+} from '../payment-methods/actions';
 
 // ─── Account (v4 screen 06) ──────────────────────────────────────────────
 //
@@ -65,7 +67,7 @@ export default async function AccountPage() {
       .eq('patient_id', user.id)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false }),
-    supabase.from('payments').select('status').eq('patient_id', user.id).eq('kind', 'instalment'),
+    supabase.from('payments').select('status, due_date, next_attempt_date').eq('patient_id', user.id).eq('kind', 'instalment'),
   ]);
 
   const firstName = (profile?.first_name as string | null) ?? '';
@@ -81,11 +83,18 @@ export default async function AccountPage() {
   const cards = (rawCards ?? []) as CardRow[];
 
   // ── Honest payment record ─────────────────────────────────────────
-  const statuses    = ((rawPayments ?? []) as { status: string }[]).map((p) => p.status);
+  // "All on time" is only true when nothing is currently overdue AND there
+  // is no history of a miss. Overdue is derived (due date vs today) via the
+  // shared source of truth — the same verdict the Plans header and schedule
+  // show — so this card can never contradict them.
+  const today       = todaySAST();
+  const instalments = (rawPayments ?? []) as { status: string; due_date: string; next_attempt_date: string | null }[];
+  const statuses    = instalments.map((p) => p.status);
   const madeCount   = statuses.filter((s) => s === 'collected').length;
   const scheduled   = statuses.filter((s) => s === 'scheduled').length;
   const everMissed  = statuses.some((s) => s === 'failed' || s === 'defaulted' || s === 'retried');
-  const cleanRecord = madeCount > 0 && !everMissed;
+  const anyOverdue  = instalments.some((p) => deriveInstalmentStatus(p, today) === 'overdue');
+  const cleanRecord = madeCount > 0 && !everMissed && !anyOverdue;
 
   const CAP = 8;
   const paidSeg   = Math.min(madeCount, CAP);
@@ -145,9 +154,14 @@ export default async function AccountPage() {
           </p>
         </div>
 
-        {/* How you pay — the existing saved-card surface */}
+        {/* How you pay — the single card-management surface (v4 folds the
+            standalone /patient/payment-methods route in here). */}
         <div className="flex flex-col gap-[10px]">
           <p className="text-[11px] font-semibold uppercase px-1" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>How you pay</p>
+          <p className="px-1 text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
+            Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
+            certified payment partner. We only keep a secure reference to collect your instalments.
+          </p>
           <PaymentMethods
             initialCards={cards}
             initializeCardRegistration={initializeCardRegistration}
@@ -162,7 +176,7 @@ export default async function AccountPage() {
           className="rounded-[22px] bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
-          <SettingRow href="/patient/profile" title="Payday" sub={paydayLabel} />
+          <SettingRow href="/patient/profile?section=salary" title="Payday" sub={paydayLabel} />
           <SettingRow href="/patient/profile" title="Your details" sub="Cell number, personal info" />
           <SettingRow href="/patient/profile" title="Notifications" />
           <SettingRow href="/patient/profile" title="Sign in & security" />
