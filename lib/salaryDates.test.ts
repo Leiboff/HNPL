@@ -120,7 +120,9 @@ describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
   // renders or writes a salary_day must depend on the canonical set.
   const surfaces = [
     'app/patient/profile/SalaryDaySection.tsx',
-    'app/patient/profile/page.tsx',
+    // Salary-day capture moved onto the consolidated account page (the
+    // profile route is now an inert redirect).
+    'app/patient/account/page.tsx',
     'app/onboarding/identity/IdentityStepClient.tsx',
     'lib/onboarding/actions.ts',
   ];

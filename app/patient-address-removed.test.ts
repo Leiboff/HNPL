@@ -18,7 +18,12 @@ function read(p: string): string {
 
 const MIG_0059          = read('supabase/migrations/0059_drop_patient_address.sql');
 const PROFILE_PAGE      = read('app/patient/profile/page.tsx');
-const PROFILE_ACCORDION = read('app/patient/profile/ProfileAccordion.tsx');
+// Account + Profile consolidated onto ONE surface: the profile SELECT and
+// updateProfile action moved into the account page; the settings accordion
+// is now AccountAccordion. The POPIA "no address fields anywhere" invariant
+// is re-pointed to those successors.
+const ACCOUNT_PAGE      = read('app/patient/account/page.tsx');
+const ACCOUNT_ACCORDION = read('app/patient/account/AccountAccordion.tsx');
 // Post-0065 the standalone phone accordion is gone — phone is now
 // an inline edit-toggle field inside Personal details, owned by
 // PhoneField.tsx. This test still verifies the phone-only capture
@@ -50,39 +55,44 @@ describe('Migration 0059 — drops the six patient-address columns idempotently'
   });
 });
 
-describe('Patient profile page — no longer reads or writes address fields', () => {
-  it('the profile SELECT does not include address columns', () => {
+describe('Patient account page — no longer reads or writes address fields', () => {
+  it('the profile SELECT (now on the account page) does not include address columns', () => {
     for (const col of DROPPED) {
-      expect(PROFILE_PAGE).not.toMatch(new RegExp(`\\b${col}\\b`));
+      expect(ACCOUNT_PAGE).not.toMatch(new RegExp(`\\b${col}\\b`));
     }
   });
 
   it('the updateProfile server action accepts ONLY { phone } now', () => {
     // The action's parameter type narrowed to { phone: string | null }.
-    expect(PROFILE_PAGE).toMatch(/data:\s*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
+    expect(ACCOUNT_PAGE).toMatch(/data:\s*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
   });
 
   it('email + phone are still selected (we did NOT collateral-damage them)', () => {
-    expect(PROFILE_PAGE).toMatch(/\bemail\b/);
-    expect(PROFILE_PAGE).toMatch(/\bphone\b/);
+    expect(ACCOUNT_PAGE).toMatch(/\bemail\b/);
+    expect(ACCOUNT_PAGE).toMatch(/\bphone\b/);
+  });
+
+  it('the retired profile route is an inert redirect that touches no address columns', () => {
+    expect(PROFILE_PAGE).toContain("redirect('/patient/account')");
+    for (const col of DROPPED) {
+      expect(PROFILE_PAGE).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
   });
 });
 
-describe('ProfileAccordion — the "Contact & billing address" section is gone', () => {
-  // Post-0065 there is no standalone Phone section — phone folded
-  // into Personal Details. The accordion now exposes
-  // { personalDetails, salaryDay, notifications, passkeys }. Only
-  // the "no address-fields ANYWHERE" invariant matters for the
-  // address-removal test; the section shape moved on.
+describe('AccountAccordion — the "Contact & billing address" section is gone', () => {
+  // Post-consolidation the settings accordion is AccountAccordion. There is
+  // no standalone Phone or address section — phone folded into Personal
+  // details. Only the "no address-fields ANYWHERE" invariant matters here.
   it('no "contactAddress" or "billing address" copy remains in the accordion', () => {
-    expect(PROFILE_ACCORDION).not.toMatch(/contactAddress/);
-    expect(PROFILE_ACCORDION).not.toMatch(/billing address/i);
+    expect(ACCOUNT_ACCORDION).not.toMatch(/contactAddress/);
+    expect(ACCOUNT_ACCORDION).not.toMatch(/billing address/i);
   });
 
   it('accordion no longer has a standalone "Phone number" section title', () => {
     // Phone is inline within Personal details (PhoneField). The
     // standalone accordion header is gone.
-    expect(PROFILE_ACCORDION).not.toMatch(/title="Phone number"/);
+    expect(ACCOUNT_ACCORDION).not.toMatch(/title="Phone number"/);
   });
 });
 

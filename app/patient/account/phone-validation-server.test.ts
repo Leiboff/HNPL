@@ -5,18 +5,19 @@ import { resolve } from 'node:path';
 // ─── Guard: the phone save path validates SERVER-SIDE ───────────────────
 //
 // The client blocks an invalid save, but the server action is the real
-// gate. updateProfile is an inline 'use server' action in page.tsx (not
-// exported), so this is a source-text pin: it must normalise via the
-// shared validator, reject on failure, and never write the raw input.
-// Any refactor that drops the server check trips this.
+// gate. updateProfile is an inline 'use server' action — it moved from the
+// (now redirect-only) profile route into the consolidated account page, so
+// this pin follows it here. It must normalise via the shared validator,
+// reject on failure, and never write the raw input. Any refactor that drops
+// the server check trips this.
 
 function read(p: string): string {
   return readFileSync(resolve(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
 }
 
-const PAGE = read('app/patient/profile/page.tsx');
+const PAGE = read('app/patient/account/page.tsx');
 
-describe('profile phone save — server-side validation', () => {
+describe('account phone save — server-side validation', () => {
   it('imports the shared SA-phone normaliser (never an inline regex)', () => {
     expect(PAGE).toMatch(/import\s*\{[^}]*normalizePhoneZA[^}]*\}\s*from\s*['"]@\/lib\/validation['"]/);
   });
