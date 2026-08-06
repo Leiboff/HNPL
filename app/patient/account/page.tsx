@@ -1,13 +1,22 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import PatientScreen from '../PatientScreen';
 import InstalmentLadder, { type LadderSegment } from '../InstalmentLadder';
-import ProfileLogoutSection from '../profile/ProfileLogoutSection';
 import PaymentMethods from '../payment-methods/PaymentMethods';
+import PhoneField from '../profile/PhoneField';
+import SalaryDaySection from '../profile/SalaryDaySection';
+import NotificationsToggle from '../profile/NotificationsToggle';
+import PasskeysSection from '../profile/PasskeysSection';
+import ProfileLogoutSection from '../profile/ProfileLogoutSection';
+import AccountAccordion from './AccountAccordion';
 import { initializeCardRegistration } from '../actions';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { todaySAST } from '../_format';
+import { decryptIdForDisplay } from '@/lib/idEncryption';
+import { maskSaId } from '@/lib/saIdMask';
+import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
+import { normalizePhoneZA } from '@/lib/validation';
 import {
   previewDefaultChange,
   changeDefaultCard,
@@ -15,19 +24,74 @@ import {
   type CardRow,
 } from '../payment-methods/actions';
 
-// ─── Account (v4 screen 06) ──────────────────────────────────────────────
+// ─── Account — the single settings surface (v4, consolidated) ────────────
 //
-// Cards and Profile merge into one Account tab. A navy header carries the
-// identity; the sheet holds an honest payment record, the saved cards
-// (the existing PaymentMethods surface), and a flat list of settings rows.
+// Account and Profile are now ONE page, ONE pattern. A navy header carries
+// the identity; the sheet holds the honest payment record, the settings
+// accordion (Personal details — with phone + salary date nested — then
+// Notifications and Security & sign-in), the card-management surface
+// ("How you pay"), and a single Help + Log out. The old /patient/profile
+// route redirects here, so there is exactly one place for each control.
 //
-// Honesty (per the build decision): the "Your record" card shows the
-// count of payments actually made — no invented rewards tier, and NO
-// "we'll review your limit" promise (that policy doesn't exist in code).
-//
-// The deeper editors (payday, personal details, notifications, security)
-// live on their own routes and are reached from the settings rows —
-// matching the design's tap-through rows.
+// Honesty (per the build decision): "Your record" shows the count of
+// payments actually made — no invented rewards tier, no "we'll review your
+// limit" promise (that policy doesn't exist in code).
+
+// ─── Server actions (moved here from the retired profile route) ──────────
+
+async function updateProfile(data: { phone: string | null }): Promise<{ error: string | null }> {
+  'use server';
+
+  // Trust-boundary validation (the client validates too, but this is the
+  // real gate). Empty clears the number; anything else must normalise to a
+  // valid SA mobile — stored in canonical E.164 (+27…) form.
+  const raw = data.phone?.trim() ?? '';
+  let phone: string | null = null;
+  if (raw) {
+    phone = normalizePhoneZA(raw);
+    if (!phone) return { error: 'Enter a valid South African mobile number.' };
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Session expired. Please log in again.' };
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ phone })
+    .eq('id', user.id);
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/patient/account');
+  return { error: null };
+}
+
+// Changes apply to FUTURE plans only — a plan's own `salary_day` column is
+// snapshotted at plan creation, so existing schedules are untouched. The
+// profile is the salary_day source of truth; checkout READS it server-side.
+async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
+  'use server';
+
+  if (!isAllowedSalaryDay(day)) {
+    return { error: `Salary day must be one of: ${ALLOWED_SALARY_DAYS.join(', ')}.` };
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Session expired. Please log in again.' };
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ salary_day: day })
+    .eq('id', user.id);
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/patient/account');
+  revalidatePath('/patient');
+  return { error: null };
+}
 
 function Chevron() {
   return (
@@ -37,20 +101,13 @@ function Chevron() {
   );
 }
 
-function SettingRow({ href, title, sub, external = false }: { href: string; title: string; sub?: string; external?: boolean }) {
-  const inner = (
-    <>
-      <div className="min-w-0">
-        <p className="text-[14.5px] font-semibold" style={{ color: '#13294B' }}>{title}</p>
-        {sub && <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>{sub}</p>}
-      </div>
-      <Chevron />
-    </>
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#13294B', opacity: 0.45 }}>{label}</p>
+      <p className="text-sm font-medium text-gray-800">{value || '—'}</p>
+    </div>
   );
-  const cls = 'flex items-center justify-between gap-3 px-[18px] py-[17px] hover:bg-gray-50 transition-colors';
-  return external
-    ? <a href={href} className={cls} style={{ borderTop: '1px solid #EEF2F5' }}>{inner}</a>
-    : <Link href={href} className={cls} style={{ borderTop: '1px solid #EEF2F5' }}>{inner}</Link>;
 }
 
 export default async function AccountPage() {
@@ -60,7 +117,11 @@ export default async function AccountPage() {
   if (!user) redirect('/login');
 
   const [{ data: profile }, { data: rawCards }, { data: rawPayments }] = await Promise.all([
-    supabase.from('profiles').select('first_name, last_name, email, salary_day').eq('id', user.id).single(),
+    supabase
+      .from('profiles')
+      .select('first_name, last_name, email, phone, sa_id_number, salary_day')
+      .eq('id', user.id)
+      .single(),
     supabase
       .from('payment_methods')
       .select('id, card_brand, last_four, expiry_month, expiry_year, cardholder_name, is_default, created_at')
@@ -75,10 +136,9 @@ export default async function AccountPage() {
   const fullName  = [firstName, lastName].filter(Boolean).join(' ') || '—';
   const initials  = [firstName[0], lastName[0]].filter(Boolean).join('').toUpperCase() || '?';
   const salaryDay = (profile?.salary_day as number | null) ?? null;
-  const paydayLabel =
-    salaryDay == null   ? 'Not set yet' :
-    salaryDay >= 31     ? 'Last day of the month' :
-                          `Day ${salaryDay} of the month`;
+
+  const decryptedSaId = decryptIdForDisplay(profile?.sa_id_number as string | null | undefined);
+  const saIdMasked    = maskSaId(decryptedSaId);
 
   const cards = (rawCards ?? []) as CardRow[];
 
@@ -124,6 +184,49 @@ export default async function AccountPage() {
     </div>
   );
 
+  // ── Personal details body — locked identity + phone + nested salary ──
+  const personalDetails = (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+        <ReadOnlyField label="First name"   value={firstName} />
+        <ReadOnlyField label="Last name"    value={lastName} />
+        <ReadOnlyField label="SA ID number" value={saIdMasked || ''} />
+        <ReadOnlyField label="Email"        value={profile?.email ?? ''} />
+      </div>
+      <div className="border-t border-gray-100 pt-4">
+        <PhoneField current={profile?.phone ?? null} updateProfile={updateProfile} />
+      </div>
+      <div className="border-t border-gray-100 pt-4">
+        <SalaryDaySection current={salaryDay} saveSalaryDay={saveSalaryDay} />
+      </div>
+      <p className="text-xs text-gray-400 border-t border-gray-100 pt-4">
+        Name, SA ID and email are locked for security.{' '}
+        <a href="mailto:support@betternow.co.za" className="underline underline-offset-2 hover:text-gray-600 transition-colors">
+          Contact support
+        </a>{' '}
+        if these need to change.
+      </p>
+    </div>
+  );
+
+  // ── How you pay — the single card-management surface ─────────────────
+  const howYouPay = (
+    <div className="flex flex-col gap-[10px]">
+      <p className="text-[11px] font-semibold uppercase px-1" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>How you pay</p>
+      <p className="px-1 text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
+        Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
+        certified payment partner. We only keep a secure reference to collect your instalments.
+      </p>
+      <PaymentMethods
+        initialCards={cards}
+        initializeCardRegistration={initializeCardRegistration}
+        previewDefaultChange={previewDefaultChange}
+        changeDefaultCard={changeDefaultCard}
+        removeCard={removeCard}
+      />
+    </div>
+  );
+
   return (
     <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
@@ -154,33 +257,29 @@ export default async function AccountPage() {
           </p>
         </div>
 
-        {/* How you pay — the single card-management surface (v4 folds the
-            standalone /patient/payment-methods route in here). */}
-        <div className="flex flex-col gap-[10px]">
-          <p className="text-[11px] font-semibold uppercase px-1" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>How you pay</p>
-          <p className="px-1 text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
-            Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
-            certified payment partner. We only keep a secure reference to collect your instalments.
-          </p>
-          <PaymentMethods
-            initialCards={cards}
-            initializeCardRegistration={initializeCardRegistration}
-            previewDefaultChange={previewDefaultChange}
-            changeDefaultCard={changeDefaultCard}
-            removeCard={removeCard}
-          />
-        </div>
+        {/* Settings — one accordion pattern; cards ("How you pay") sit
+            inline between Personal details and the rest. */}
+        <AccountAccordion
+          personalDetails={personalDetails}
+          howYouPay={howYouPay}
+          notifications={<NotificationsToggle />}
+          security={<PasskeysSection />}
+        />
 
-        {/* Settings */}
+        {/* Help + Log out — once. */}
         <div
           className="rounded-[22px] bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
-          <SettingRow href="/patient/profile?section=salary" title="Payday" sub={paydayLabel} />
-          <SettingRow href="/patient/profile" title="Your details" sub="Cell number, personal info" />
-          <SettingRow href="/patient/profile" title="Notifications" />
-          <SettingRow href="/patient/profile" title="Sign in & security" />
-          <SettingRow href="mailto:support@betternow.co.za" title="Get help" external />
+          <a
+            href="mailto:support@betternow.co.za"
+            className="flex items-center justify-between gap-3 px-[18px] py-[17px] hover:bg-gray-50 transition-colors"
+          >
+            <div className="min-w-0">
+              <p className="text-[14.5px] font-semibold" style={{ color: '#13294B' }}>Get help</p>
+            </div>
+            <Chevron />
+          </a>
         </div>
 
         <ProfileLogoutSection />

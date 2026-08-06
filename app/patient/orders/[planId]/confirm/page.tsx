@@ -87,11 +87,11 @@ export default async function ConfirmPage({
           </p>
           <div className="flex flex-col items-center gap-3">
             <Link
-              href="/patient/profile"
+              href="/patient/account?section=personal"
               className="inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
               style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
-              Go to profile →
+              Go to account →
             </Link>
             <Link href="/patient/orders" className="text-sm text-gray-500 hover:underline">
               Back to orders

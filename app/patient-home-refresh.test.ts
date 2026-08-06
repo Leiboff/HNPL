@@ -18,7 +18,11 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 
 const MIG          = read('supabase/migrations/0065_credit_limit_and_passkey_prompt_cap.sql');
 const PROFILE_PAGE = read('app/patient/profile/page.tsx');
-const PROFILE_ACC  = read('app/patient/profile/ProfileAccordion.tsx');
+// Account + Profile consolidated: salary date, phone, and their server
+// actions now live on the account page / AccountAccordion. The profile
+// route is an inert redirect. Wiring pins re-point to the successors.
+const ACCOUNT_PAGE = read('app/patient/account/page.tsx');
+const ACCOUNT_ACC  = read('app/patient/account/AccountAccordion.tsx');
 const HOME         = read('app/patient/page.tsx');
 const LAYOUT       = read('app/patient/layout.tsx');
 const CHECKOUT_ACT = read('app/checkout/[token]/actions.ts');
@@ -63,11 +67,11 @@ describe('Migration 0065 — schema shape', () => {
 // ─── Part 1: Salary date on profile, checkout reads-profile ───────────
 
 describe('Part 1 — salary date is profile-only', () => {
-  it('profile page renders the SalaryDaySection with a saveSalaryDay server action', () => {
-    expect(PROFILE_PAGE).toMatch(/SalaryDaySection/);
-    expect(PROFILE_PAGE).toMatch(/saveSalaryDay/);
-    // Belt-and-braces: the accordion enumerates a salary-day slot.
-    expect(PROFILE_ACC).toMatch(/Salary date/);
+  it('account page renders the SalaryDaySection with a saveSalaryDay server action', () => {
+    expect(ACCOUNT_PAGE).toMatch(/SalaryDaySection/);
+    expect(ACCOUNT_PAGE).toMatch(/saveSalaryDay/);
+    // Belt-and-braces: salary date is nested inside Personal details.
+    expect(ACCOUNT_PAGE).toMatch(/Personal details|personalDetails/);
   });
 
   it('the home dashboard no longer contains a salary-day form', () => {
@@ -107,26 +111,26 @@ describe('Part 1 — salary date is profile-only', () => {
     expect(CHECKOUT_FORM).toMatch(/setForceSalaryDayPicker\(true\)/);
   });
 
-  it('salary-day server action lives on the profile page (revalidates both /patient/profile and /patient)', () => {
-    expect(PROFILE_PAGE).toMatch(/revalidatePath\('\/patient\/profile'\)/);
-    expect(PROFILE_PAGE).toMatch(/revalidatePath\('\/patient'\)/);
+  it('salary-day server action lives on the account page (revalidates both /patient/account and /patient)', () => {
+    expect(ACCOUNT_PAGE).toMatch(/revalidatePath\('\/patient\/account'\)/);
+    expect(ACCOUNT_PAGE).toMatch(/revalidatePath\('\/patient'\)/);
   });
 });
 
 // ─── Part 2: Phone inside Personal Details ────────────────────────────
 
 describe('Part 2 — phone folded into Personal Details', () => {
-  it('profile accordion no longer exposes a standalone "Phone number" section', () => {
-    expect(PROFILE_ACC).not.toMatch(/Phone number/);
-    // The old accordion had 4 sections; new one has personal / salary
-    // / notifications / security. No 'phone' section key.
-    expect(PROFILE_ACC).not.toMatch(/SectionKey.*phone/);
+  it('account settings accordion no longer exposes a standalone "Phone number" section', () => {
+    expect(ACCOUNT_ACC).not.toMatch(/Phone number/);
+    // Post-consolidation the accordion has personal / notifications /
+    // security section keys (salary is nested in personal). No 'phone' key.
+    expect(ACCOUNT_ACC).not.toMatch(/SectionKey.*phone/);
   });
 
-  it('profile page renders <PhoneField> inline within Personal Details', () => {
-    expect(PROFILE_PAGE).toMatch(/PhoneField/);
+  it('account page renders <PhoneField> inline within Personal Details', () => {
+    expect(ACCOUNT_PAGE).toMatch(/PhoneField/);
     // No import of the old PhoneForm module.
-    expect(PROFILE_PAGE).not.toMatch(/from ['"]\.\/PhoneForm['"]/);
+    expect(ACCOUNT_PAGE).not.toMatch(/from ['"]\.\/PhoneForm['"]/);
   });
 
   it('PhoneForm.tsx has been removed', () => {
@@ -435,11 +439,12 @@ describe('Header action centre — bell replaces logout in patient header', () =
   });
 });
 
-describe('Logout is on Profile (not the header)', () => {
-  it('Profile page imports + renders ProfileLogoutSection', () => {
-    const PROF = read('app/patient/profile/page.tsx');
-    expect(PROF).toMatch(/import\s+ProfileLogoutSection\s+from\s+['"]\.\/ProfileLogoutSection['"]/);
-    expect(PROF).toMatch(/<ProfileLogoutSection\s*\/>/);
+describe('Logout is on Account (not the header)', () => {
+  it('Account page imports + renders ProfileLogoutSection (once, post-consolidation)', () => {
+    expect(ACCOUNT_PAGE).toMatch(/import\s+ProfileLogoutSection\s+from\s+['"]\.\.\/profile\/ProfileLogoutSection['"]/);
+    expect(ACCOUNT_PAGE).toMatch(/<ProfileLogoutSection\s*\/>/);
+    // The retired profile route no longer renders it (no duplicate log out).
+    expect(PROFILE_PAGE).not.toMatch(/ProfileLogoutSection/);
   });
 
   it('ProfileLogoutSection uses the shared logoutAndRedirect helper', () => {

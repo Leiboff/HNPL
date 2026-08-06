@@ -146,11 +146,11 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
         <p className="mt-6 text-center text-xs text-gray-400">
           Wrong number?{' '}
           <Link
-            href="/patient/profile"
+            href="/patient/account?section=personal"
             className="font-semibold hover:underline"
             style={{ color: '#13294B' }}
           >
-            Update it in your profile after sign-in
+            Update it in your account after sign-in
           </Link>
         </p>
       </div>

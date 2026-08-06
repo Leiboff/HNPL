@@ -11,7 +11,7 @@ const BOTTOM_NAV = read('app/patient/PatientBottomNav.tsx');
 const LANDING    = read('app/patient/explore/Landing.tsx');
 const HOME       = read('app/patient/page.tsx');
 const ACCOUNT    = read('app/patient/account/page.tsx');
-const PROFILE_ACC = read('app/patient/profile/ProfileAccordion.tsx');
+const ACCOUNT_ACC = read('app/patient/account/AccountAccordion.tsx');
 const THUMB      = read('app/patient/payment-methods/PaymentMethods.tsx');
 const DETAIL     = read('app/patient/orders/[planId]/page.tsx');
 const POLLING    = read('app/patient/payment-methods/complete/PollingConfirmation.tsx');
@@ -40,12 +40,14 @@ describe('home next-payment CTA labels the two-step action', () => {
   });
 });
 
-describe('payday deep-link', () => {
-  it('the Account Payday row links into the salary section', () => {
-    expect(ACCOUNT).toContain('/patient/profile?section=salary');
-  });
-  it('the profile accordion honours the ?section deep-link', () => {
-    expect(PROFILE_ACC).toContain("searchParams?.get('section')");
+describe('salary-date deep-link', () => {
+  // Post-consolidation: salary date lives nested inside Personal details on
+  // the single Account page. The old "Payday" row (→ /patient/profile) is
+  // gone; deep-linking is now the account settings accordion honouring
+  // ?section (legacy ?section=salary resolves to Personal details).
+  it('the account settings accordion honours the ?section deep-link', () => {
+    expect(ACCOUNT_ACC).toContain("searchParams?.get('section')");
+    expect(ACCOUNT_ACC).toContain("if (value === 'salary') return 'personal'");
   });
 });
 
