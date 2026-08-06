@@ -5,6 +5,7 @@ import HomeBillCard from '@/app/patient/HomeBillCard';
 import InstalmentLadder, { ladderFromCounts } from '@/app/patient/InstalmentLadder';
 import { computePlanProgress } from '@/lib/planProgress';
 import { planCompletionDate } from '@/lib/planAnchor';
+import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { formatRand, formatDate, formatDayMonth } from '@/app/patient/_format';
 import type { PlanRow } from './page';
 
@@ -89,23 +90,25 @@ function SectionHeading({ label, tone = 'muted' }: { label: string; tone?: 'mute
   );
 }
 
-function nextOutstanding(plan: PlanRow) {
+function nextOutstanding(plan: PlanRow, today: string) {
   const out = [...plan.payments]
     .filter((p) => p.status !== 'collected' && p.status !== 'written_off')
     .sort((a, b) => a.instalment_number - b.instalment_number)[0];
   if (!out) return null;
   return {
-    amount: Number(out.amount) + Number(out.dunning_fees_cents ?? 0) / 100,
-    date:   out.next_attempt_date ?? out.due_date,
-    failed: out.status === 'failed' || out.status === 'defaulted',
+    amount:  Number(out.amount) + Number(out.dunning_fees_cents ?? 0) / 100,
+    date:    out.next_attempt_date ?? out.due_date,
+    // Overdue is derived (due date vs today), not read from the stored
+    // status — so a past-due `scheduled` row reads red here too.
+    overdue: deriveInstalmentStatus(out, today) === 'overdue',
   };
 }
 
 // ── Active "Paying off" card — taps through to the detail screen ───────
-function PayingOffCard({ plan }: { plan: PlanRow }) {
+function PayingOffCard({ plan, today }: { plan: PlanRow; today: string }) {
   const prog  = computePlanProgress({ status: plan.status, payments: plan.payments });
   const total = prog.totalPayments || (plan.plan_type ?? 0);
-  const next  = nextOutstanding(plan);
+  const next  = nextOutstanding(plan, today);
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
@@ -125,8 +128,12 @@ function PayingOffCard({ plan }: { plan: PlanRow }) {
         <InstalmentLadder segments={ladderFromCounts(total, prog.paidCount)} />
       </div>
       <div className="mt-[13px] flex items-center justify-between gap-3 tabular-nums">
-        <span className="text-[12.5px]" style={{ color: next?.failed ? '#DC2626' : '#8496AA' }}>
-          {next ? `${formatRand(next.amount)} on ${formatDayMonth(next.date)}` : `${prog.paidCount} of ${total} paid`}
+        <span className="text-[12.5px]" style={{ color: next?.overdue ? '#B42318' : '#8496AA' }}>
+          {next
+            ? next.overdue
+              ? `${formatRand(next.amount)} overdue since ${formatDayMonth(next.date)}`
+              : `${formatRand(next.amount)} on ${formatDayMonth(next.date)}`
+            : `${prog.paidCount} of ${total} paid`}
         </span>
         <span className="text-[13.5px] font-semibold" style={{ color: '#13294B' }}>
           {prog.isPaidInFull ? 'Paid in full' : `${formatRand(prog.remainingAmount)} left`}
@@ -171,6 +178,9 @@ type Props = {
   historicPlans:  PlanRow[];
   declinePlan:    (planId: string) => Promise<{ error: string | null }>;
   patientBlocked: boolean;
+  /** Server-computed SAST date (YYYY-MM-DD) so overdue derivation matches
+      the other surfaces and doesn't drift on client hydration. */
+  today:          string;
 };
 
 export default function OrdersView({
@@ -179,6 +189,7 @@ export default function OrdersView({
   historicPlans,
   declinePlan,
   patientBlocked,
+  today,
 }: Props) {
   const nothing = pendingPlans.length === 0 && currentPlans.length === 0 && historicPlans.length === 0;
 
@@ -230,7 +241,7 @@ export default function OrdersView({
       {currentPlans.length > 0 && (
         <div className="flex flex-col gap-[10px]">
           <SectionHeading label="Paying off" />
-          {currentPlans.map((plan) => <PayingOffCard key={plan.id} plan={plan} />)}
+          {currentPlans.map((plan) => <PayingOffCard key={plan.id} plan={plan} today={today} />)}
         </div>
       )}
 
