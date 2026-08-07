@@ -74,6 +74,26 @@ describe('Single door — every capture surface mounts the V2 PeachWidget', () =
     expect(CONFIRM_FORM).not.toContain('PeachCopyAndPayWidget');
   });
 
+  it('add-card (zero-amount vault) widgets run in registration mode; payment widgets do not', () => {
+    // The two card-vault surfaces relabel the form for saving a card; the
+    // two real-charge surfaces keep Peach's payment copy. Pin the mode on
+    // the widget nearest each addCardWidget / payWidget usage.
+    const pmAdd = PAYMENT_METHODS_UI.slice(PAYMENT_METHODS_UI.indexOf('<PeachWidget'));
+    expect(pmAdd).toMatch(/<PeachWidget[\s\S]{0,120}mode="registration"/);
+
+    const cfAdd = CONFIRM_FORM.slice(CONFIRM_FORM.indexOf('if (addCardWidget)'));
+    expect(cfAdd).toMatch(/<PeachWidget[\s\S]{0,120}mode="registration"/);
+
+    // Payment surfaces: no registration relabel (Peach's "Pay Now" is correct).
+    const RESUME_CAPTURE = read('app/checkout/[token]/ResumeCapture.tsx');
+    expect(RESUME_CAPTURE).not.toContain('mode="registration"');
+    // ConfirmForm's payWidget branch (before the addCardWidget branch) is
+    // a real charge — it must not carry the registration relabel.
+    const cfPay = CONFIRM_FORM.slice(0, CONFIRM_FORM.indexOf('if (addCardWidget)'));
+    expect(cfPay).toContain('<PeachWidget');
+    expect(cfPay).not.toContain('mode="registration"');
+  });
+
   it('card-add return route reads checkoutId + calls provider.getCheckoutStatus (V2), not a resourcePath', () => {
     expect(PAYMENT_METHODS_RETURN).toContain('getCheckoutStatus');
     expect(PAYMENT_METHODS_RETURN).toContain('checkoutId');
