@@ -12,9 +12,9 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 
+// Surfaces that consume the derivation DIRECTLY.
 const SURFACES: Array<[string, string]> = [
   ['home hero + your-plans rows', 'app/patient/page.tsx'],
-  ['plans header (overdue count)', 'app/patient/orders/page.tsx'],
   ['plans list (paying-off cards)', 'app/patient/orders/OrdersView.tsx'],
   ['plan detail (schedule rows)', 'app/patient/orders/[planId]/page.tsx'],
   ['account record card', 'app/patient/account/page.tsx'],
@@ -25,10 +25,21 @@ describe('every status surface consumes the shared derivation', () => {
     expect(read(path)).toMatch(/deriveInstalmentStatus[\s\S]*from '@\/lib\/patient\/instalmentStatus'/);
   });
 
-  it('the Plans header counts overdue via the derivation, not a raw failed/defaulted test', () => {
-    const src = read('app/patient/orders/page.tsx');
-    expect(src).toMatch(/deriveInstalmentStatus\([^)]*\)\s*===\s*'overdue'/);
-    // The old, contradicting rule must be gone from the overdue count.
-    expect(src).not.toMatch(/pmt\.status === 'failed' \|\| pmt\.status === 'defaulted'/);
+  it('the Plans header + home overdue total count overdue via one shared helper (which uses the derivation)', () => {
+    // The Plans header and the home hero's overdue total now read from the
+    // summariseOutstanding helper instead of each counting overdue inline —
+    // one source, so they can never disagree. The helper itself derives
+    // overdue via deriveInstalmentStatus, never a raw failed/defaulted test.
+    const plans = read('app/patient/orders/page.tsx');
+    const home  = read('app/patient/page.tsx');
+    expect(plans).toMatch(/from '@\/lib\/patient\/outstanding'/);
+    expect(plans).toMatch(/summariseOutstanding\(/);
+    expect(home).toMatch(/summariseOutstanding\(/);
+    // Old inline overdue rule is gone from the Plans header.
+    expect(plans).not.toMatch(/pmt\.status === 'failed' \|\| pmt\.status === 'defaulted'/);
+
+    const helper = read('lib/patient/outstanding.ts');
+    expect(helper).toMatch(/deriveInstalmentStatus\([^)]*\)\s*===\s*'overdue'/);
+    expect(helper).not.toMatch(/=== 'failed'\s*\|\|\s*[\w.]*=== 'defaulted'/);
   });
 });

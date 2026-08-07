@@ -5,7 +5,7 @@ import { isPatientFrozen } from '@/lib/patient/freeze';
 import DefaultFreezeBanner from '../DefaultFreezeBanner';
 import PatientScreen from '../PatientScreen';
 import OrdersView from './OrdersView';
-import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
+import { summariseOutstanding } from '@/lib/patient/outstanding';
 import { planBucket } from '@/lib/patient/planBucket';
 import { formatRand, todaySAST } from '../_format';
 
@@ -100,17 +100,13 @@ export default async function OrdersPage() {
   // "Overdue" is derived (due date vs today), never read from the stored
   // status — otherwise a past-due `scheduled` row would go uncounted and
   // the header would claim "nothing overdue" while the schedule shows it.
-  const outstandingStatuses = new Set(['scheduled', 'processing', 'failed', 'defaulted']);
   const today = todaySAST();
-  let outstandingCents = 0;
-  let overdueCount = 0;
-  for (const p of currentPlans) {
-    for (const pmt of p.payments) {
-      if (!outstandingStatuses.has(pmt.status)) continue;
-      outstandingCents += Math.round(Number(pmt.amount) * 100) + Number(pmt.dunning_fees_cents ?? 0);
-      if (deriveInstalmentStatus(pmt, today) === 'overdue') overdueCount += 1;
-    }
-  }
+  // Shared source of truth — the home hero reads the SAME helper so the two
+  // surfaces can never disagree on the total or the overdue count.
+  const { outstandingCents, overdueCount } = summariseOutstanding(
+    currentPlans.flatMap((p) => p.payments),
+    today,
+  );
   const summary =
     currentPlans.length === 0 && pendingPlans.length === 0
       ? 'Nothing outstanding'
