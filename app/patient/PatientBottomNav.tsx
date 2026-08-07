@@ -78,7 +78,11 @@ export default function PatientBottomNav() {
             <Link
               key={href}
               href={href}
-              className="flex-1 flex flex-col items-center justify-center gap-[5px]"
+              // Full-cell tap target: flex-1 for width, h-full to fill the
+              // 68px bar height explicitly (not relying on implicit stretch),
+              // min-h-[44px] as a floor. Icon + label + padding are all one
+              // hit area.
+              className="flex-1 flex flex-col items-center justify-center gap-[5px] h-full min-h-[44px]"
               style={{ color: active ? '#15A89E' : '#94A3B8', transition: 'color 0.15s' }}
             >
               <Icon active={active} />
