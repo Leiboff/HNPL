@@ -224,6 +224,7 @@ export default function PaymentMethods({
             </p>
           </div>
           <PeachWidget
+            mode="registration"
             checkoutId={addCardWidget.checkoutId}
             entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={addCardWidget.shopperResultUrl}

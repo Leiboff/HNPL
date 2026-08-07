@@ -332,6 +332,7 @@ export default function ConfirmForm({
             We verify your card with your bank — no money is taken.
           </p>
           <PeachWidget
+            mode="registration"
             checkoutId={addCardWidget.checkoutId}
             entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={addCardWidget.shopperResultUrl}

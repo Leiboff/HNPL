@@ -57,7 +57,28 @@ type Props = {
   checkoutId:        string;
   entityId:          string;         // The Checkout V2 `key` — public.
   shopperResultUrl:  string;         // Where onCompleted navigates.
+  // Which flow this widget serves. 'payment' (default) keeps Peach's
+  // payment copy ("Pay Now" / "…complete the payment") — correct when a
+  // real amount is being charged. 'registration' is the zero-amount card
+  // vault (add/save a card); it relabels the card-only form with
+  // registration wording via the SDK's customisations.card options, so
+  // the shopper isn't told to "pay" when nothing is being charged.
+  mode?:             'payment' | 'registration';
 };
+
+// Brand the embedded widget so it reads as part of BetterNow, not a bare
+// processor form. brand.primary drives the widget's button/border/accent
+// colour (Embedded SDK theming); we use the app's primary navy. Applied to
+// every instance for a consistent look across the pay and add-card flows.
+const BRAND_PRIMARY = '#13294B';
+
+// Registration-flow copy (SDK customisations.card.*). Centralised here so
+// every add-card surface (account "How you pay", the confirm add-card
+// branch) stays in sync.
+const REGISTRATION_CARD_COPY = {
+  submitButtonText: 'Save card',
+  headingText: { default: 'Add your card', savedCards: 'Your cards' },
+} as const;
 
 // Loose Checkout shape — checkout.js is loaded at runtime; we don't have
 // its types. The V2 API is:
@@ -75,7 +96,7 @@ function readCheckoutGlobal(): CheckoutGlobal | null {
   return null;
 }
 
-export default function PeachWidget({ checkoutId, entityId, shopperResultUrl }: Props) {
+export default function PeachWidget({ checkoutId, entityId, shopperResultUrl, mode = 'payment' }: Props) {
   const containerRef      = useRef<HTMLDivElement | null>(null);
   const initiatedForRef   = useRef<string | null>(null);
   const [scriptReady, setScriptReady] = useState<boolean>(() => {
@@ -191,8 +212,17 @@ export default function PeachWidget({ checkoutId, entityId, shopperResultUrl }: 
         // frequency taught us about. The shopper's identity (email,
         // given name, surname) still travels on the server-side
         // customer block; only the address inputs are dropped.
+        //
+        // theme.brand.primary brands the widget; the registration copy
+        // (submitButtonText / headingText) applies only in 'registration'
+        // mode so a zero-amount card vault isn't labelled "Pay Now". All
+        // are SDK-side render options, never /v2/checkout body fields.
         customisations: {
-          card: { showBillingFields: false },
+          theme: { brand: { primary: BRAND_PRIMARY } },
+          card: {
+            showBillingFields: false,
+            ...(mode === 'registration' ? REGISTRATION_CARD_COPY : {}),
+          },
         },
         events: {
           onCompleted: () => navigateBack('completed'),
@@ -206,7 +236,7 @@ export default function PeachWidget({ checkoutId, entityId, shopperResultUrl }: 
       console.error('[PeachWidget] Checkout.initiate threw', err);
       setError('Could not start the payment form. Please refresh the page and try again.');
     }
-  }, [scriptReady, checkoutId, entityId, shopperResultUrl, targetId]);
+  }, [scriptReady, checkoutId, entityId, shopperResultUrl, targetId, mode]);
 
   return (
     // `peach-embed` sizes the SDK-injected iframe host-side (globals.css):

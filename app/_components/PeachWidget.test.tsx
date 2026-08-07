@@ -41,7 +41,12 @@ type CheckoutOpts = {
   key:        string;
   checkoutId: string;
   customisations?: {
-    card?: { showBillingFields?: boolean };
+    theme?: { brand?: { primary?: string } };
+    card?: {
+      showBillingFields?: boolean;
+      submitButtonText?:  string;
+      headingText?:       { default?: string; savedCards?: string };
+    };
   };
   events: {
     onCompleted: () => void;
@@ -63,6 +68,9 @@ type RenderLog = {
   key:                     string;
   checkoutId:              string;
   showBillingFields?:      boolean;
+  brandPrimary?:           string;
+  submitButtonText?:       string;
+  headingDefault?:         string;
 };
 
 function installFakeCheckoutGlobal(renderLog: RenderLog[]): FakeCheckoutGlobal {
@@ -78,6 +86,9 @@ function installFakeCheckoutGlobal(renderLog: RenderLog[]): FakeCheckoutGlobal {
             key:                   opts.key,
             checkoutId:            opts.checkoutId,
             showBillingFields:     opts.customisations?.card?.showBillingFields,
+            brandPrimary:          opts.customisations?.theme?.brand?.primary,
+            submitButtonText:      opts.customisations?.card?.submitButtonText,
+            headingDefault:        opts.customisations?.card?.headingText?.default,
           });
         },
       };
@@ -204,6 +215,48 @@ describe('PeachWidget — render() is only called once both script-ready AND tar
 
     expect(renderLog).toHaveLength(1);
     expect(renderLog[0].showBillingFields).toBe(false);
+  });
+
+  it('brands every instance (theme.brand.primary) and keeps payment copy by default (no registration relabel)', () => {
+    const renderLog: RenderLog[] = [];
+    render(
+      <PeachWidget
+        checkoutId={CHECKOUT_ID}
+        entityId={ENTITY_ID}
+        shopperResultUrl={SHOPPER_RESULT}
+      />,
+    );
+    installFakeCheckoutGlobal(renderLog);
+    act(() => { fireLatestScriptOnLoad(); });
+
+    expect(renderLog).toHaveLength(1);
+    // Branded (a non-empty hex applied host-side).
+    expect(renderLog[0].brandPrimary).toMatch(/^#[0-9a-fA-F]{6}$/);
+    // Default (payment) mode: Peach's own copy — we DON'T override the
+    // button or heading, so a real charge still reads "Pay Now".
+    expect(renderLog[0].submitButtonText).toBeUndefined();
+    expect(renderLog[0].headingDefault).toBeUndefined();
+  });
+
+  it('mode="registration" relabels the card-only form with registration copy (no "Pay Now" on a zero-amount vault)', () => {
+    const renderLog: RenderLog[] = [];
+    render(
+      <PeachWidget
+        mode="registration"
+        checkoutId={CHECKOUT_ID}
+        entityId={ENTITY_ID}
+        shopperResultUrl={SHOPPER_RESULT}
+      />,
+    );
+    installFakeCheckoutGlobal(renderLog);
+    act(() => { fireLatestScriptOnLoad(); });
+
+    expect(renderLog).toHaveLength(1);
+    expect(renderLog[0].submitButtonText).toBe('Save card');
+    expect(renderLog[0].headingDefault).toBe('Add your card');
+    // Still card-only + branded.
+    expect(renderLog[0].showBillingFields).toBe(false);
+    expect(renderLog[0].brandPrimary).toMatch(/^#[0-9a-fA-F]{6}$/);
   });
 
   it('short-circuits the script inject when window.Checkout is already present', () => {
