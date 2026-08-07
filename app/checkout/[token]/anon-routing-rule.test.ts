@@ -774,13 +774,19 @@ describe('post-success UX — hero-first, skippable password, collapsed hand-off
     expect(WIDGET).toMatch(/data-testid="peach-widget" className="peach-embed"/);
   });
 
-  it('globals.css sizes the injected iframe full-width + min-height, no nested scroll (mobile + desktop)', () => {
-    // One width-agnostic rule → applies at 390px and desktop alike.
+  it('globals.css contains the injected widget within the mobile viewport (min-width reset + overflow-x contained), full-width, min-height floor, no fixed-height/nested-scroll clip', () => {
+    // iframe: full-width, capped to the container, and min-width reset so an
+    // SDK intrinsic/min width can't force it wider than a 360–390px phone.
     expect(GLOBALS).toMatch(/\.peach-embed iframe/);
     expect(GLOBALS).toMatch(/width:\s*100%\s*!important/);
+    expect(GLOBALS).toMatch(/max-width:\s*100%\s*!important/);
+    expect(GLOBALS).toMatch(/min-width:\s*0\s*!important/);
     expect(GLOBALS).toMatch(/min-height:\s*\d+px/);
-    // Host adds NO fixed-height clip and NO nested scrollbar.
-    expect(GLOBALS).toMatch(/\.peach-embed\s*\{[^}]*overflow:\s*visible/);
+    // Wrapper CONTAINS horizontal overflow rather than letting it spill to
+    // the viewport (regression guard against the old `overflow: visible`).
+    expect(GLOBALS).toMatch(/\.peach-embed\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(GLOBALS).not.toMatch(/\.peach-embed\s*\{[^}]*overflow:\s*visible/);
+    // Still NO fixed-height clip and NO nested scrollbar.
     expect(GLOBALS).not.toMatch(/\.peach-embed[^}]*max-height/);
     expect(GLOBALS).not.toMatch(/\.peach-embed[^}]*overflow:\s*auto/);
   });
