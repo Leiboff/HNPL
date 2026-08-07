@@ -30,6 +30,12 @@ export default function DeclinedPlanDetail({
   invoiceNumber:     string | null;
   practiceReference: string | null;
 }) {
+  // Normalise the merchant name before it's interpolated into copy: collapse
+  // internal whitespace runs and trim the ends. A whitespace-dirty value
+  // (stray leading/trailing/double spaces from the DB) then can't glue to the
+  // adjacent word ("Physiosto send") or render a double space.
+  const practice = practiceName.replace(/\s+/g, ' ').trim();
+
   const refSegments: string[] = [];
   if (invoiceNumber)     refSegments.push(`Ref ${invoiceNumber}`);
   if (practiceReference) refSegments.push(`Practice ref ${practiceReference}`);
@@ -47,7 +53,7 @@ export default function DeclinedPlanDetail({
             <path d="m15 6-6 6 6 6" />
           </svg>
         </Link>
-        <span className="text-[15.5px] font-semibold text-white truncate">{practiceName}</span>
+        <span className="text-[15.5px] font-semibold text-white truncate">{practice}</span>
       </div>
 
       <div className="mt-[24px]">
@@ -75,7 +81,7 @@ export default function DeclinedPlanDetail({
         >
           <p className="text-[15px] font-semibold" style={{ color: '#13294B' }}>What happened</p>
           <p className="mt-2 text-[13.5px] leading-[1.55]" style={{ color: '#5B6B7F' }}>
-            You told us this bill from {practiceName} wasn&rsquo;t yours, so we didn&rsquo;t set up a
+            You told us this bill from {practice} wasn&rsquo;t yours, so we didn&rsquo;t set up a
             payment plan and <span className="font-semibold" style={{ color: '#13294B' }}>no money was taken</span>.
           </p>
         </div>
@@ -89,7 +95,7 @@ export default function DeclinedPlanDetail({
             What to do next
           </div>
           <p className="px-[18px] pb-[15px] text-[13.5px] leading-[1.55]" style={{ color: '#5B6B7F' }}>
-            If you declined this by mistake, ask {practiceName} to send it again — or get in touch and
+            If you declined this by mistake, ask {practice} to send it again — or get in touch and
             we&rsquo;ll help sort it out.
           </p>
           <a
