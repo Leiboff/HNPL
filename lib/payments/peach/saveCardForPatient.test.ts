@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fingerprintForCard, chooseCardSaveAction } from './saveCardForPatient';
 
 // Pure-function tests only. The DB path is exercised behaviourally by
@@ -82,5 +84,33 @@ describe('chooseCardSaveAction — insert/update/already_saved', () => {
   it('existing with different token → update (token refresh)', () => {
     expect(chooseCardSaveAction({ id: 'c1', token: 'OLD' }, false, 'NEW'))
       .toEqual({ action: 'update', cardId: 'c1' });
+  });
+});
+
+// ─── archived-aware save wiring (the re-add bug fix) ─────────────────
+//
+// Two source-level invariants the re-add fix depends on. Behaviour is
+// proven in 0084_refresh_card_token_unarchive.rpc.test.ts (resurrect +
+// sane default); these pin the TS side so a refactor can't silently undo
+// them.
+describe('saveCardForPatient — archived-aware wiring', () => {
+  const SRC = readFileSync(resolve(process.cwd(), 'lib/payments/peach/saveCardForPatient.ts'), 'utf8')
+    .replace(/\r\n/g, '\n');
+
+  it('the fingerprint dedupe query does NOT exclude archived rows (so a re-add resurrects, not duplicates)', () => {
+    // Isolate the dedupe SELECT (signature lookup) and assert it carries no
+    // archived_at filter — matching an archived row is what routes a re-add
+    // into the resurrecting 'update' branch.
+    const dedupe = SRC.slice(SRC.indexOf(".eq('signature', signature)") - 200, SRC.indexOf(".eq('signature', signature)") + 40);
+    expect(dedupe).toContain(".eq('signature', signature)");
+    expect(dedupe).not.toContain("archived_at");
+  });
+
+  it('the "first card → default" count is scoped to ACTIVE cards only', () => {
+    // isFirst decides is_default on insert; it must count active cards, so a
+    // new card added when only archived ones remain still becomes default.
+    const countBlock = SRC.slice(SRC.indexOf('const { count }'), SRC.indexOf('const isFirst'));
+    expect(countBlock).toContain("count: 'exact'");
+    expect(countBlock).toContain(".is('archived_at', null)");
   });
 });
