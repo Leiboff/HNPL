@@ -13,6 +13,7 @@ import { availableBalance, type PaymentForBalance } from '@/lib/patient/approved
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computePlanProgress } from '@/lib/planProgress';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
+import { summariseOutstanding } from '@/lib/patient/outstanding';
 import { formatRand, formatDate, formatDayMonth, relativeDay, todaySAST } from './_format';
 
 // ─── Patient home dashboard — v4 ──────────────────────────────────────────
@@ -219,6 +220,19 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
       }
     : null;
 
+  // True overdue total across ALL plans — the SAME helper the Plans header
+  // uses, so the hero can never show one instalment's amount while several
+  // are overdue (which let a patient underpay and stay in arrears). Only
+  // reached when there's no failed/defaulted row (those short-circuit to
+  // HomeFailedState above), so `payments` here is the scheduled/processing set.
+  const overdue = summariseOutstanding(payments, today);
+  // Aggregate framing only when MORE THAN ONE is overdue; a single overdue
+  // instalment keeps its exact amount + singular framing.
+  const overdueAll =
+    nextPayment?.overdue && overdue.overdueCount > 1
+      ? { amount: overdue.overdueCents / 100, count: overdue.overdueCount }
+      : null;
+
   const initials = `${(firstName ?? '').charAt(0)}${(lastName ?? '').charAt(0)}`.toUpperCase()
     || greetName.charAt(0).toUpperCase();
 
@@ -297,7 +311,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
                   {nextPayment.overdue ? 'Payment overdue' : 'Next payment'}
                 </p>
                 <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: '#13294B', letterSpacing: '-.04em' }}>
-                  {formatRand(nextPayment.amount)}
+                  {formatRand(overdueAll ? overdueAll.amount : nextPayment.amount)}
                 </p>
               </div>
               <span
@@ -306,17 +320,20 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
                   ? { background: 'rgba(180,35,24,.1)', color: '#B42318' }
                   : { background: 'rgba(21,168,158,.13)', color: '#0F766E' }}
               >
-                {nextPayment.overdue ? 'Overdue' : relativeDay(nextPayment.date, today)}
+                {nextPayment.overdue
+                  ? (overdueAll ? `${overdueAll.count} overdue` : 'Overdue')
+                  : relativeDay(nextPayment.date, today)}
               </span>
             </div>
             <p className="text-[13.5px]" style={{ color: nextPayment.overdue ? '#B42318' : '#8496AA' }}>
-              {nextPayment.overdue
-                ? <>Was due {formatDayMonth(nextPayment.date)} · {relativeDay(nextPayment.date, today)}</>
-                : formatDayMonth(nextPayment.date)}
-              {cardBrand && cardLast4 ? <> · off your {cardBrand} ···· {cardLast4}</> : null}
+              {overdueAll
+                ? <>{overdueAll.count} overdue payments across your plans · pay them all to catch up</>
+                : nextPayment.overdue
+                  ? <>Was due {formatDayMonth(nextPayment.date)} · {relativeDay(nextPayment.date, today)}{cardBrand && cardLast4 ? <> · off your {cardBrand} ···· {cardLast4}</> : null}</>
+                  : <>{formatDayMonth(nextPayment.date)}{cardBrand && cardLast4 ? <> · off your {cardBrand} ···· {cardLast4}</> : null}</>}
             </p>
             <Link
-              href={nextPayment.planId ? `/patient/orders/${nextPayment.planId}` : '/patient/orders'}
+              href={overdueAll ? '/patient/orders' : (nextPayment.planId ? `/patient/orders/${nextPayment.planId}` : '/patient/orders')}
               className="text-center text-[14.5px] font-semibold text-white rounded-[14px] py-[14px]"
               style={{ background: '#0B1F3A' }}
             >
