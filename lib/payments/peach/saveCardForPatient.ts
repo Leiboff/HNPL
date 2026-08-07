@@ -85,10 +85,15 @@ export async function saveCardForPatient(
     ? `${profile.first_name} ${profile.last_name}`.trim()
     : (card.holder ?? '');
 
+  // "First card" for default purposes means the first ACTIVE card — a
+  // default only makes sense among cards the patient can actually use.
+  // Archived (removed) rows are excluded, so a genuinely-new card added
+  // when the patient has only archived cards still becomes the default.
   const { count } = await supabase
     .from('payment_methods')
     .select('id', { count: 'exact', head: true })
-    .eq('patient_id', patientId);
+    .eq('patient_id', patientId)
+    .is('archived_at', null);
   const isFirst = (count ?? 0) === 0;
 
   const signature = fingerprintForCard({
@@ -99,6 +104,11 @@ export async function saveCardForPatient(
   });
 
   // ── Fingerprint path: dedup possible ────────────────────────────────
+  // Deliberately spans ARCHIVED rows too (no archived_at filter): re-adding
+  // a card the patient removed must match its existing archived row and take
+  // the 'update' branch, which resurrects it (refresh_card_token clears
+  // archived_at) — NOT insert a duplicate active row. Filtering archived out
+  // here would re-break that.
   if (signature) {
     const { data: existing } = await supabase
       .from('payment_methods')
