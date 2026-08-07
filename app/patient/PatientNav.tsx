@@ -49,8 +49,12 @@ export default function PatientNav() {
             <Link
               key={href}
               href={href}
+              // Full-row tap target: explicit block-level flex box (not
+              // relying on implicit flex-item stretch), w-full so the whole
+              // row width is clickable, min-h-[44px] so the padding + label
+              // form one ≥44px hit area (was ~36px, content-height only).
               className={[
-                'px-3 py-2 text-sm font-medium rounded-lg transition-colors',
+                'flex items-center w-full min-h-[44px] px-3 text-sm font-medium rounded-lg transition-colors',
                 active
                   ? 'bg-[#13294B]/10 text-[#13294B]'
                   : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
