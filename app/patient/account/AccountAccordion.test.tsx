@@ -4,10 +4,12 @@ import AccountAccordion from './AccountAccordion';
 
 // ─── AccountAccordion — one settings pattern, no duplicate sections ─────
 //
-// Three disclosure sections (Personal details, Notifications, Security &
-// sign-in) with the cards block inline between the first and the rest.
-// Deep-link ?section=<key> opens that one; legacy ?section=salary resolves
-// to Personal details (salary now lives nested inside it).
+// FOUR disclosure sections in ONE accordion system (Personal details, How
+// you pay, Notifications, Security & sign-in) — no section is a foreign
+// flat block. "How you pay" starts open so cards stay visible, but it's a
+// real toggleable section like the others. Deep-link ?section=<key> opens
+// that one; legacy ?section=salary resolves to Personal details (salary now
+// lives nested inside it).
 
 let sectionParam: string | null = null;
 vi.mock('next/navigation', () => ({
@@ -30,21 +32,41 @@ describe('AccountAccordion', () => {
     sectionParam = null;
     renderAccordion();
     expect(screen.getAllByText('Personal details')).toHaveLength(1);
+    expect(screen.getAllByText('How you pay')).toHaveLength(1);
     expect(screen.getAllByText('Notifications')).toHaveLength(1);
     expect(screen.getAllByText('Security & sign-in')).toHaveLength(1);
   });
 
-  it('renders the cards block inline (always visible, not gated by a toggle)', () => {
+  it('every settings section shares one affordance: a toggle button + panel', () => {
+    // Consistency guarantee — four accordion header buttons, no foreign
+    // flat block. Each header controls a disclosure panel (aria-expanded).
     sectionParam = null;
     renderAccordion();
-    expect(screen.getByText('HOW_YOU_PAY_BODY')).toBeTruthy();
+    const headings = ['Personal details', 'How you pay', 'Notifications', 'Security & sign-in'];
+    headings.forEach((h) => {
+      const btn = screen.getByText(h).closest('button');
+      expect(btn).toBeTruthy();
+      expect(btn!.getAttribute('aria-expanded')).toBeTruthy();
+    });
   });
 
-  it('sections start collapsed with no deep-link', () => {
+  it('"How you pay" is a real section (own toggle) and starts open so cards stay visible', () => {
     sectionParam = null;
     renderAccordion();
-    const buttons = screen.getAllByRole('button');
-    buttons.forEach((b) => expect(b.getAttribute('aria-expanded')).toBe('false'));
+    const payBtn = screen.getByText('How you pay').closest('button')!;
+    expect(payBtn.getAttribute('aria-expanded')).toBe('true'); // open on load
+    expect(screen.getByText('HOW_YOU_PAY_BODY')).toBeTruthy();
+    // …but it's a real toggle, not a permanent flat block: tapping collapses it.
+    fireEvent.click(payBtn);
+    expect(payBtn.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('the other settings sections start collapsed with no deep-link', () => {
+    sectionParam = null;
+    renderAccordion();
+    ['Personal details', 'Notifications', 'Security & sign-in'].forEach((h) => {
+      expect(screen.getByText(h).closest('button')!.getAttribute('aria-expanded')).toBe('false');
+    });
   });
 
   it('tapping a heading expands only that section', () => {

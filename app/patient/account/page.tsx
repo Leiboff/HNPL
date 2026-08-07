@@ -227,10 +227,11 @@ export default async function AccountPage() {
   );
 
   // ── How you pay — the single card-management surface ─────────────────
+  // Body only: the "How you pay" heading is now the accordion section
+  // header (AccountAccordion), so it isn't repeated here.
   const howYouPay = (
     <div className="flex flex-col gap-[10px]">
-      <p className="text-[11px] font-semibold uppercase px-1" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>How you pay</p>
-      <p className="px-1 text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
+      <p className="text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
         Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
         certified payment partner. We only keep a secure reference to collect your instalments.
       </p>
