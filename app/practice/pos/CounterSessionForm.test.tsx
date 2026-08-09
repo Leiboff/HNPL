@@ -39,7 +39,6 @@ function renderForm(overrides: {
   render(
     <CounterSessionForm
       providers={PROVIDERS}
-      practiceId="practice-1"
       issueCounterSession={issueCounterSession}
       expireCounterSession={expireCounterSession}
       getCounterSessionStage={getCounterSessionStage}
