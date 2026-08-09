@@ -11,6 +11,7 @@ import {
 } from './actions';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
+import { decryptId, maskId } from '@/lib/idEncryption';
 
 // The fresh-vs-resume decision reads the session cookie + plan state
 // per request — the RSC output for this URL is different for the
@@ -62,6 +63,22 @@ type InvitationRpcRow = {
   practice_reference:  string | null;
 };
 
+// ─── POS counter session (migration 0085) — the SA-ID-keyed sibling of
+// the email invitation above. No email; sa_id_number arrives encrypted
+// and is decrypted+masked server-side below, never shipped as plaintext.
+type SessionRpcRow = {
+  plan_id:             string;
+  practice_name:       string | null;
+  plan_total_amount:   number | string;
+  invoice_number:      string | null;
+  practice_reference:  string | null;
+  sa_id_number:        string;
+};
+
+type ResolvedToken =
+  | { kind: 'invitation'; row: InvitationRpcRow }
+  | { kind: 'session';    row: SessionRpcRow };
+
 function InvalidLinkCard({ reason }: { reason: string }) {
   return (
     <div className="min-h-screen flex items-center justify-center px-5 py-12 bg-[#FAFBFD]">
@@ -98,30 +115,52 @@ export default async function CheckoutPage({
     return <InvalidLinkCard reason="The checkout link is missing or malformed." />;
   }
 
-  // Anon-callable RPC. No direct SELECT on patient_invitations — the
-  // function is the ONLY anon surface, and it returns a single row
-  // exactly when the invitation is non-expired + unaccepted + plan is
-  // payable. A null / empty result collapses the three previously-
-  // distinct UX states (invalid / expired / already-accepted) into
-  // one generic message; the privacy fix is worth that.
+  // Anon-callable RPCs. No direct SELECT on patient_invitations or
+  // checkout_sessions — these functions are the ONLY anon surface for
+  // each, and each returns a single row exactly when its token is
+  // still valid + its plan is payable. A null / empty result from BOTH
+  // collapses every "invalid" reason into one generic message; the
+  // privacy fix (0049) is worth that, and the same posture extends to
+  // the session token (0085).
+  //
+  // Try the email-invitation token first (the far more common path
+  // today), then fall back to a POS counter-session token. The two
+  // token spaces don't overlap (different tables, different random
+  // generation), so this is unambiguous.
   const supabase = await createClient();
 
-  const { data: rpcRows, error: rpcErr } = await supabase.rpc('get_invitation_by_token', {
+  const { data: invRpcRows, error: invRpcErr } = await supabase.rpc('get_invitation_by_token', {
     p_token: token,
   });
-
-  if (rpcErr) {
-    console.error('[checkout] get_invitation_by_token failed', rpcErr.message);
+  if (invRpcErr) {
+    console.error('[checkout] get_invitation_by_token failed', invRpcErr.message);
     return <InvalidLinkCard reason="Couldn't load this invitation. Please try again in a moment." />;
   }
 
-  // If the function returned nothing, the link is invalid / expired /
-  // already accepted / or its plan has moved out of an acceptable
-  // state. Send any logged-in caller home to their portal as a
-  // courtesy (a returning patient whose bill is already settled
+  let resolved: ResolvedToken | null = null;
+  const invRows = (invRpcRows ?? []) as InvitationRpcRow[];
+  if (invRows.length > 0) {
+    resolved = { kind: 'invitation', row: invRows[0] };
+  } else {
+    const { data: sessionRpcRows, error: sessionRpcErr } = await supabase.rpc('get_checkout_session_by_token', {
+      p_token: token,
+    });
+    if (sessionRpcErr) {
+      console.error('[checkout] get_checkout_session_by_token failed', sessionRpcErr.message);
+      return <InvalidLinkCard reason="Couldn't load this checkout. Please try again in a moment." />;
+    }
+    const sessionRows = (sessionRpcRows ?? []) as SessionRpcRow[];
+    if (sessionRows.length > 0) {
+      resolved = { kind: 'session', row: sessionRows[0] };
+    }
+  }
+
+  // If neither function returned a row, the link/QR is invalid /
+  // expired / already used / or its plan has moved out of an
+  // acceptable state. Send any logged-in caller home to their portal
+  // as a courtesy (a returning patient whose bill is already settled
   // belongs there).
-  const rows = (rpcRows ?? []) as InvitationRpcRow[];
-  if (rows.length === 0) {
+  if (!resolved) {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) redirect('/patient');
     return (
@@ -129,7 +168,7 @@ export default async function CheckoutPage({
     );
   }
 
-  const row          = rows[0];
+  const row          = resolved.row;
   const practiceName = row.practice_name ?? 'your practice';
 
   // ── Anonymous-Checkout structural rule ────────────────────────────
@@ -278,25 +317,39 @@ export default async function CheckoutPage({
     redirect('/patient?reason=invitation_not_yours');
   }
 
-  // Logged out — check for an existing account. Two signals:
+  // Logged out — check for an existing account.
+  //
+  // For an INVITATION token, two signals:
   //   1. plan.patient_id (bill was created for a matching email, or
   //      a returning patient's second bill).
   //   2. findExistingAuthUser by invitation email (covers the #6
   //      race: bill created for a new email, patient signed up
   //      organically before clicking the link).
+  //
+  // For a SESSION token (POS counter QR) there is no email signal at
+  // all — recognition of "already has a BetterNow account" happens
+  // ONLY via this device's own login state, which was already checked
+  // above (the sessionUser branch). A logged-out scan always renders
+  // CheckoutForm: even if this same person has an account under some
+  // other device/session, we don't search for it — matching how
+  // QR-at-counter BNPL checkouts elsewhere recognize returning
+  // customers (their own device's session), not a background identity
+  // lookup. See the practice-bill-POS-checkout investigation.
   let existingAccount = false;
-  if (planPatientId) {
-    existingAccount = true;
-  } else {
-    try {
-      const found = await findExistingAuthUser(svcForLookup, row.email);
-      existingAccount = !!found;
-    } catch (err) {
-      console.warn('[checkout] findExistingAuthUser failed (non-fatal)',
-        err instanceof Error ? err.message : err);
-      // Fall through — a lookup blip should not lock out a truly-new
-      // patient. The confirm page's own guard is the second line of
-      // defence for the wrong-owner path.
+  if (resolved.kind === 'invitation') {
+    if (planPatientId) {
+      existingAccount = true;
+    } else {
+      try {
+        const found = await findExistingAuthUser(svcForLookup, resolved.row.email);
+        existingAccount = !!found;
+      } catch (err) {
+        console.warn('[checkout] findExistingAuthUser failed (non-fatal)',
+          err instanceof Error ? err.message : err);
+        // Fall through — a lookup blip should not lock out a truly-new
+        // patient. The confirm page's own guard is the second line of
+        // defence for the wrong-owner path.
+      }
     }
   }
 
@@ -309,7 +362,8 @@ export default async function CheckoutPage({
   // stored, we skip the checkout picker (it's derivable server-side
   // at initiateCheckout time). Otherwise the form shows the inline
   // picker so the value is captured once and persisted alongside
-  // the plan creation.
+  // the plan creation. Session tokens have no known email yet — the
+  // picker always renders for them, same as any first-time patient.
   //
   // Service-role client scoped to a single lookup by email — safe
   // because the invitation RPC (SECURITY DEFINER) already proved
@@ -317,44 +371,65 @@ export default async function CheckoutPage({
   // reason we default to "no salary day known" and the picker
   // renders — never blocks the flow.
   let initialSalaryDay: number | null = null;
-  try {
-    const svc = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { persistSession: false } },
-    );
-    const { data: existingProfile } = await svc
-      .from('profiles')
-      .select('salary_day')
-      .eq('email', row.email)
-      .maybeSingle();
-    const stored = existingProfile?.salary_day as number | null | undefined;
-    if (isAllowedSalaryDay(stored)) initialSalaryDay = stored;
-  } catch (err) {
-    console.warn('[checkout] salary_day lookup failed (non-fatal)',
-      err instanceof Error ? err.message : err);
+  if (resolved.kind === 'invitation') {
+    try {
+      const svc = createServiceClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { persistSession: false } },
+      );
+      const { data: existingProfile } = await svc
+        .from('profiles')
+        .select('salary_day')
+        .eq('email', resolved.row.email)
+        .maybeSingle();
+      const stored = existingProfile?.salary_day as number | null | undefined;
+      if (isAllowedSalaryDay(stored)) initialSalaryDay = stored;
+    } catch (err) {
+      console.warn('[checkout] salary_day lookup failed (non-fatal)',
+        err instanceof Error ? err.message : err);
+    }
   }
 
-  // ── viewed_at stamp ────────────────────────────────────────────────────
+  // ── viewed_at / scanned_at stamp ────────────────────────────────────────
   // Drives the practice-side "Viewed" lifecycle signal (the receptionist
-  // wants to know the patient at least opened the link). The RPC is
-  // idempotent — it only writes on the first call per invitation — so
-  // re-loading the page does not overwrite the original timestamp.
+  // wants to know the patient at least opened the link/scanned the QR).
+  // Both RPCs are idempotent — they only write on the first call per
+  // row — so re-loading the page does not overwrite the original
+  // timestamp.
   //
   // CRITICAL: this MUST NOT block the patient. A transient RPC failure
   // (DB hiccup, the migration not yet applied) is non-fatal — we render
   // the form regardless. The promise is awaited so the request lifecycle
   // captures it, but any error is swallowed.
   try {
-    const { error: stampErr } = await supabase.rpc('stamp_invitation_viewed', { p_token: token });
+    const stampRpc = resolved.kind === 'invitation' ? 'stamp_invitation_viewed' : 'stamp_checkout_session_scanned';
+    const { error: stampErr } = await supabase.rpc(stampRpc, { p_token: token });
     if (stampErr) {
-      console.warn('[checkout] stamp_invitation_viewed failed (non-fatal)', stampErr.message);
+      console.warn(`[checkout] ${stampRpc} failed (non-fatal)`, stampErr.message);
     }
   } catch (err) {
     console.warn(
-      '[checkout] stamp_invitation_viewed threw (non-fatal)',
+      '[checkout] viewed/scanned stamp threw (non-fatal)',
       err instanceof Error ? err.message : err,
     );
+  }
+
+  // ── SA ID display for the session case ─────────────────────────────────
+  // Decrypt + mask server-side only — CheckoutForm receives the masked
+  // string as a display-only prop (e.g. "•••••••••0086") and renders the
+  // field read-only. The plaintext never reaches a client-rendered prop;
+  // initiateCheckout re-derives it server-side from the session row
+  // itself when it writes profiles.sa_id_number, ignoring any client-
+  // submitted value for a session-sourced token.
+  let maskedSaId: string | null = null;
+  if (resolved.kind === 'session') {
+    try {
+      maskedSaId = maskId(decryptId(resolved.row.sa_id_number));
+    } catch (err) {
+      console.error('[checkout] failed to decrypt session SA ID for display', err instanceof Error ? err.message : err);
+      return <InvalidLinkCard reason="Couldn't load this checkout. Please try again in a moment." />;
+    }
   }
 
   return (
@@ -377,12 +452,14 @@ export default async function CheckoutPage({
       <main className="mx-auto max-w-md px-5 py-8 sm:py-10">
         <CheckoutForm
           token={token}
-          email={row.email}
+          email={resolved.kind === 'invitation' ? resolved.row.email : ''}
           practiceName={practiceName}
           totalAmount={Number(row.plan_total_amount)}
           invoiceNumber={row.invoice_number}
           practiceReference={row.practice_reference}
           initialSalaryDay={initialSalaryDay}
+          prefilledSaId={maskedSaId}
+          requireEmail={resolved.kind === 'session'}
           initiateCheckout={initiateCheckout}
           requestPhoneOtp={requestPhoneOtp}
           verifyPhoneOtp={verifyPhoneOtp}

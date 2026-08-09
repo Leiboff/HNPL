@@ -69,7 +69,9 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
   });
 
   it('logged-out AND existing account (plan.patient_id OR email match) → /login?next=…', () => {
-    expect(PAGE).toMatch(/findExistingAuthUser\(\s*svcForLookup\s*,\s*row\.email\s*\)/);
+    // Only checked for an invitation-sourced token — a POS session
+    // token has no email signal (see resolved.kind === 'invitation' gate).
+    expect(PAGE).toMatch(/findExistingAuthUser\(\s*svcForLookup\s*,\s*resolved\.row\.email\s*\)/);
     expect(PAGE).toMatch(/redirect\(\s*`\/login\?next=\$\{encodeURIComponent\(confirmPath\)\}`\s*\)/);
   });
 
@@ -86,7 +88,7 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
     expect(PAGE).toMatch(/console\.warn\([^)]*findExistingAuthUser/);
     // A lookup blip must not redirect — the block sits inside a try
     // whose catch falls through, keeping existingAccount = false.
-    const idx = PAGE.indexOf('findExistingAuthUser(svcForLookup, row.email)');
+    const idx = PAGE.indexOf('findExistingAuthUser(svcForLookup, resolved.row.email)');
     expect(idx).toBeGreaterThan(0);
     const chunk = PAGE.slice(idx - 100, idx + 400);
     expect(chunk).toMatch(/try\s*\{/);
@@ -552,12 +554,18 @@ describe('checkout completion classifies V2 status correctly (FIX 1: no false de
     expect(POLL).toMatch(/MAX_RELOADS/);
   });
 
-  it('rejected → the declined ErrorCard; success → plan activation (status active)', () => {
+  it('rejected → the declined ErrorCard; success → plan activation via the shared helper', () => {
     expect(COMPLETE).toMatch(/if \(classified === 'rejected'\)\s*\{\s*return <ErrorCard/);
     // SUCCESS branch (below the pending/rejected returns) performs the
-    // idempotent activation: instalment collected + plan active.
-    expect(COMPLETE).toMatch(/status:\s*'collected'/);
-    expect(COMPLETE).toMatch(/\.update\(\{ status: 'active' \}\)/);
+    // idempotent activation (instalment collected + plan active + payout
+    // inserted) via the SAME shared activateFirstInstalment helper the
+    // portal payment-complete route and the Peach webhook use — not its
+    // own inline payments/plans writes. See payouts-gap.test.ts for the
+    // dedicated regression coverage of this wiring.
+    expect(COMPLETE).toMatch(
+      /import\s*\{\s*activateFirstInstalment\s*\}\s*from\s*'@\/lib\/payments\/activateFirstInstalment'/,
+    );
+    expect(COMPLETE).toMatch(/await activateFirstInstalment\(/);
   });
 
   it('purpose gate uses peachRefPurpose(ref) === \'c\' (NOT the stale hnpl_co_ literal prefix)', () => {

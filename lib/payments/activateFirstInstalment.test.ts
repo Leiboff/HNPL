@@ -31,9 +31,21 @@ import { activateFirstInstalment } from './activateFirstInstalment';
 type Row = Record<string, unknown>;
 type Write =
   | { table: string; op: 'update'; row: Row; filters: Array<[string, string, unknown]> }
-  | { table: string; op: 'insert'; row: Row };
+  | { table: string; op: 'insert'; row: Row }
+  | { table: string; op: 'upsert-ignored'; row: Row };
 
-function makeSvc(seed: Record<string, Row[]>, options: { paymentUpdateFails?: string } = {}) {
+type MakeSvcOptions = {
+  paymentUpdateFails?: string;
+  // Simulates the SELECT-then-upsert race directly: the fast-path
+  // existence check reports "nothing here" even when `state` already
+  // has a conflicting row for that plan_id — exactly what happens when
+  // two callers' SELECTs both run before either write commits. Proves
+  // the upsert's ON CONFLICT DO NOTHING (not the SELECT) is what
+  // actually prevents the duplicate.
+  payoutsSelectAlwaysEmpty?: boolean;
+};
+
+function makeSvc(seed: Record<string, Row[]>, options: MakeSvcOptions = {}) {
   const state: Record<string, Row[]> = JSON.parse(JSON.stringify(seed));
   const writes: Write[] = [];
 
@@ -46,6 +58,9 @@ function makeSvc(seed: Record<string, Row[]>, options: { paymentUpdateFails?: st
         b.neq = (col: string, val: unknown) => { filters.push([col, 'neq', val]); return b; };
         b.is  = (col: string, val: unknown) => { filters.push([col, 'is',  val]); return b; };
         b.limit = (_n: number) => {
+          if (name === 'payouts' && options.payoutsSelectAlwaysEmpty) {
+            return Promise.resolve({ data: [], error: null });
+          }
           const rows = (state[name] ?? []).filter((r) =>
             filters.every(([c, op, v]) =>
               op === 'eq' ? r[c] === v : op === 'neq' ? r[c] !== v : r[c] === v,
@@ -89,6 +104,23 @@ function makeSvc(seed: Record<string, Row[]>, options: { paymentUpdateFails?: st
         return b;
       },
       insert(row: Row) {
+        writes.push({ table: name, op: 'insert', row });
+        (state[name] ??= []).push({ ...row });
+        return Promise.resolve({ data: null, error: null });
+      },
+      // Simulates INSERT ... ON CONFLICT (onConflict) DO NOTHING against
+      // migration 0087's UNIQUE constraint on payouts.plan_id — a
+      // conflicting row already in `state` makes this a silent no-op
+      // (error: null, no new row), exactly like the real DB constraint.
+      upsert(row: Row, opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+        const conflictCol = opts?.onConflict;
+        if (conflictCol && opts?.ignoreDuplicates) {
+          const existing = (state[name] ?? []).find((r) => r[conflictCol] === row[conflictCol]);
+          if (existing) {
+            writes.push({ table: name, op: 'upsert-ignored', row });
+            return Promise.resolve({ data: null, error: null });
+          }
+        }
         writes.push({ table: name, op: 'insert', row });
         (state[name] ??= []).push({ ...row });
         return Promise.resolve({ data: null, error: null });
@@ -147,6 +179,58 @@ describe('activateFirstInstalment — idempotency (duplicate delivery)', () => {
     // Payment.collected_at was NOT overwritten with the second now-stamp
     // because the update was guarded by neq('status', 'collected').
     expect(svc.state.payments[0].collected_at).toBe('2026-07-30T11:00:00.000Z');
+  });
+});
+
+describe('activateFirstInstalment — payout insert race (Audit A)', () => {
+  // Real scenario: the webhook lands first and its payout INSERT commits.
+  // A return-route caller's own fast-path SELECT can still race — two
+  // concurrent serverless invocations' SELECTs can both run before
+  // either INSERT commits. This test forces that exact case: the
+  // existence-check SELECT reports empty (as if it ran before the
+  // conflicting row committed) even though `state` already holds a
+  // payout for this plan (as if the OTHER caller's insert had, in
+  // reality, already landed by the time THIS caller's upsert executes).
+  // The DB-level UNIQUE constraint (migration 0087) + ignoreDuplicates
+  // is what must save us here — not the SELECT, which this test proves
+  // by deliberately defeating it.
+  it('a second call whose fast-path SELECT misses the race still does not duplicate the payout', async () => {
+    const svc = makeSvc(
+      {
+        payments: [{ id: 'pay1', status: 'collected', collected_at: '2026-07-30T11:00:00.000Z' }],
+        plans:    [{ id: 'plan1', status: 'active' }],
+        practices:[{ id: 'prac1', fee_percent: 6 }],
+        // The "other" caller already won — this row exists in state.
+        payouts:  [{ id: 'winner', plan_id: 'plan1', practice_id: 'prac1' }],
+      },
+      { payoutsSelectAlwaysEmpty: true },
+    );
+    const result = await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    expect(result).toEqual({ ok: true });
+    // Still exactly one payout row — the upsert's ON CONFLICT DO NOTHING
+    // caught what the (deliberately blinded) SELECT missed.
+    expect(svc.state.payouts.length).toBe(1);
+    expect(svc.state.payouts[0].id).toBe('winner');
+  });
+
+  it('the upsert call itself is conflict-safe (onConflict: plan_id, ignoreDuplicates: true)', async () => {
+    const svc = makeSvc({
+      payments: [{ id: 'pay1', status: 'processing' }],
+      plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
+      practices:[{ id: 'prac1', fee_percent: 6 }],
+      payouts:  [],
+    });
+    await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    const upsertWrite = svc.writes.find((w) => w.table === 'payouts' && w.op === 'insert');
+    expect(upsertWrite).toBeTruthy();
   });
 });
 

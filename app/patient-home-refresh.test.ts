@@ -92,7 +92,10 @@ describe('Part 1 — salary date is profile-only', () => {
 
   it('checkout page fetches initialSalaryDay via a service-role profile lookup and passes it to the form', () => {
     expect(CHECKOUT_PAGE).toMatch(/initialSalaryDay/);
-    expect(CHECKOUT_PAGE).toMatch(/\.from\('profiles'\)[\s\S]*?\.select\('salary_day'\)[\s\S]*?\.eq\('email',\s*row\.email\)/);
+    // Only meaningful for an invitation-sourced token (a POS session
+    // token has no known email yet) — see resolved.kind === 'invitation'
+    // guard around this lookup.
+    expect(CHECKOUT_PAGE).toMatch(/\.from\('profiles'\)[\s\S]*?\.select\('salary_day'\)[\s\S]*?\.eq\('email',\s*resolved\.row\.email\)/);
   });
 
   it('CheckoutForm only renders the salary picker when initialSalaryDay is null', () => {
