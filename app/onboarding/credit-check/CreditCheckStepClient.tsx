@@ -50,7 +50,7 @@ export default function CreditCheckStepClient() {
         className="mt-auto flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
         style={{ background: '#15A89E', boxShadow: loading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
       >
-        {loading ? 'Checking…' : 'Run check'}
+        {loading ? 'Assessing…' : 'Run check'}
       </button>
     </div>
   );

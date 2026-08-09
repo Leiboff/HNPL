@@ -8,6 +8,7 @@ import HomeBillCard from './HomeBillCard';
 import HomeFailedState from './HomeFailedState';
 import DefaultFreezeBanner from './DefaultFreezeBanner';
 import PatientWelcomeBanner from './PatientWelcomeBanner';
+import TestBalanceNotice from './TestBalanceNotice';
 import { declinePlan } from './actions';
 import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
 import { isPatientFrozen } from '@/lib/patient/freeze';
@@ -281,6 +282,11 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
   return (
     <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
+
+        {/* Test-balance notice — MUST accompany the balance hero above.
+            Shown whenever a limit is set (the balance is a stubbed test
+            grant, not real credit). Shared, non-dismissable component. */}
+        {approvedLimit != null && <TestBalanceNotice />}
 
         {welcome === '1' && <PatientWelcomeBanner firstName={firstName} />}
 
