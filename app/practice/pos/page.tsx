@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
-import { issueCounterSession } from './actions';
+import { issueCounterSession, expireCounterSession, getCounterSessionStage, acknowledgeCounterSession } from './actions';
 import CounterSessionForm from './CounterSessionForm';
 
 // ─── /practice/pos — counter QR bill issuance ───────────────────────────
@@ -132,6 +132,9 @@ export default async function PosPage({
           providers={providers}
           practiceId={practiceId}
           issueCounterSession={issueCounterSession}
+          expireCounterSession={expireCounterSession}
+          getCounterSessionStage={getCounterSessionStage}
+          acknowledgeCounterSession={acknowledgeCounterSession}
         />
       </main>
     </div>

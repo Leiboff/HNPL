@@ -150,6 +150,19 @@ async function resolveCheckoutToken(
     };
   }
 
+  // Lazy fail-safe (Build C): a session nobody explicitly closed still
+  // promptly declines its plan the moment anyone next touches this
+  // token — including a retried/replayed initiateCheckout call that
+  // bypasses the get_checkout_session_by_token RPC entirely. Best-effort
+  // — this resolver's own WHERE clause below already excludes an
+  // expired session regardless of whether this call succeeds.
+  try {
+    await svc.rpc('expire_stale_checkout_session', { p_token: token });
+  } catch (err) {
+    console.warn('[checkout] expire_stale_checkout_session (lazy) failed (non-fatal)',
+      err instanceof Error ? err.message : err);
+  }
+
   const { data: session } = await svc
     .from('checkout_sessions')
     .select('plan_id, practice_id, sa_id_number')

@@ -121,7 +121,13 @@ describe('migration 0085 — checkout_sessions table + RPCs', () => {
   it('enables RLS with no anon/authenticated INSERT or UPDATE policy — service-role only writes', () => {
     expect(MIGRATION_SESSIONS).toMatch(/ALTER TABLE checkout_sessions ENABLE ROW LEVEL SECURITY/);
     expect(MIGRATION_SESSIONS).not.toMatch(/FOR INSERT/);
-    expect(MIGRATION_SESSIONS).not.toMatch(/FOR UPDATE/);
+    // Precise to RLS POLICY grammar (CREATE POLICY ... FOR UPDATE) —
+    // bounded to a single statement (up to its terminating semicolon) so
+    // this can't false-positive across an unrelated LATER "SELECT ...
+    // FOR UPDATE" row-locking clause, which expire_stale_checkout_session
+    // legitimately uses (Build C) to serialize against a concurrent
+    // activateFirstInstalment.
+    expect(MIGRATION_SESSIONS).not.toMatch(/CREATE POLICY[^;]*?FOR UPDATE/);
   });
 
   it('get_checkout_session_by_token is SECURITY DEFINER, granted to anon, and excludes email from its return shape', () => {

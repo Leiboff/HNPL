@@ -8,7 +8,7 @@ import {
   MAX_BILL_AMOUNT,
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
-import type { IssueCounterSessionResult } from './actions';
+import type { IssueCounterSessionResult, CounterSessionStage } from './actions';
 import type { ProviderOption } from './page';
 
 // ─── CounterSessionForm ──────────────────────────────────────────────
@@ -24,9 +24,24 @@ import type { ProviderOption } from './page';
 // immediately — the teller is never blocked waiting on one patient's
 // phone-side flow before starting the next. (The full multi-session
 // board showing all concurrent sessions is a separate piece; this
-// form alone already doesn't block on one session's outcome.)
+// form alone already doesn't block on one session's outcome.) Clicking
+// it while the session is still non-terminal ALSO closes it out
+// server-side (first-timer hard-stop) — see handleStartNext.
+//
+// First-timer hard-stop: the countdown reaching zero fires
+// expireCounterSession (natural — only acts once actually expired) so
+// an abandoned session promptly declines its plan rather than sitting
+// as a pending off-site bill. A lazy fail-safe on the server (migration
+// 0085's expire_stale_checkout_session, called from every read site)
+// covers the case where this client-side call never fires at all.
+//
+// Confirm-at-counter: a lightweight poll (NOT the full realtime board —
+// that's a separate piece) watches for the session reaching 'completed'
+// so the teller can explicitly acknowledge it. Missing/skipping an
+// acknowledgment never blocks "Start next patient".
 
 const SESSION_TTL_S = 120;
+const STAGE_POLL_MS = 3000;
 
 function formatRand(n: number) {
   const [integer, decimal] = n.toFixed(2).split('.');
@@ -43,11 +58,17 @@ type Props = {
     providerId:  string;
     practiceId:  string;
   }) => Promise<IssueCounterSessionResult>;
+  expireCounterSession: (token: string, opts?: { force?: boolean }) => Promise<{ error: string | null }>;
+  getCounterSessionStage: (token: string) => Promise<{ error: string | null; stage?: CounterSessionStage }>;
+  acknowledgeCounterSession: (token: string) => Promise<{ error: string | null }>;
 };
 
 type Issued = { token: string; expiresAt: string; billAmount: number };
 
-export default function CounterSessionForm({ providers, practiceId, issueCounterSession }: Props) {
+export default function CounterSessionForm({
+  providers, practiceId,
+  issueCounterSession, expireCounterSession, getCounterSessionStage, acknowledgeCounterSession,
+}: Props) {
   const [billAmount, setBillAmount] = useState('');
   const [saIdNumber, setSaIdNumber] = useState('');
   const [cellNumber, setCellNumber] = useState('');
@@ -57,7 +78,13 @@ export default function CounterSessionForm({ providers, practiceId, issueCounter
   const [issued, setIssued] = useState<Issued | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(SESSION_TTL_S);
+  const [stage, setStage] = useState<CounterSessionStage | null>(null);
+  const [acknowledging, setAcknowledging] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  // Guards the natural-expiry trigger so it fires exactly once per
+  // issued session, not on every 1s countdown tick after hitting zero.
+  const expiredFiredRef = useRef(false);
 
   const parsedAmount = parseFloat(billAmount);
   const amountValid = billAmount !== '' && isAllowedBillAmount(parsedAmount);
@@ -103,14 +130,44 @@ export default function CounterSessionForm({ providers, practiceId, issueCounter
         setError(result.error ?? 'Something went wrong. Please try again.');
         return;
       }
+      expiredFiredRef.current = false;
+      setStage(null);
+      setAcknowledging(false);
+      setAcknowledged(false);
       setIssued({ token: result.token, expiresAt: result.expiresAt, billAmount: parsedAmount });
     });
   }
 
   function handleStartNext() {
+    // First-timer hard-stop: moving to the next patient IS abandonment
+    // of a still-open session, independent of whether the 2-minute
+    // timer has actually run out yet. force:true closes it immediately;
+    // fire-and-forget — the reset below must never wait on this, and
+    // the lazy fail-safe (called from every read site on this token)
+    // still catches it even if this specific call fails outright.
+    if (issued && stage !== 'completed' && stage !== 'declined' && stage !== 'expired') {
+      void expireCounterSession(issued.token, { force: true }).catch(() => {
+        // Non-fatal — the server-side lazy fail-safe is the backstop.
+      });
+    }
     setIssued(null);
     setQrDataUrl(null);
     setError(null);
+    setStage(null);
+    setAcknowledging(false);
+    setAcknowledged(false);
+  }
+
+  async function handleAcknowledge() {
+    if (!issued) return;
+    setAcknowledging(true);
+    const result = await acknowledgeCounterSession(issued.token);
+    setAcknowledging(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setAcknowledged(true);
   }
 
   // ── Render the QR once a session is issued ─────────────────────────
@@ -126,23 +183,85 @@ export default function CounterSessionForm({ providers, practiceId, issueCounter
   }, [issued]);
 
   // ── Countdown ────────────────────────────────────────────────────────
+  // First-timer hard-stop: the moment the clock actually reaches zero,
+  // fire expireCounterSession(force:false) exactly once. force:false
+  // means the server only acts if expires_at has genuinely passed —
+  // matches this trigger's own semantics (a real timeout, not an
+  // explicit abandon). Fire-and-forget: the till's own display already
+  // flips to "QR expired" from secondsLeft alone, and the lazy
+  // fail-safe on the server is the backstop if this call is dropped.
   useEffect(() => {
     if (!issued) return;
     const tick = () => {
       const remaining = Math.max(0, Math.round((new Date(issued.expiresAt).getTime() - Date.now()) / 1000));
       setSecondsLeft(remaining);
+      if (remaining <= 0 && !expiredFiredRef.current) {
+        expiredFiredRef.current = true;
+        void expireCounterSession(issued.token, { force: false }).catch(() => {
+          // Non-fatal — the server-side lazy fail-safe is the backstop.
+        });
+      }
     };
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [issued]);
+  }, [issued, expireCounterSession]);
 
-  const expired = issued !== null && secondsLeft <= 0;
+  // ── Stage poll (Build D: confirm-at-counter) ────────────────────────
+  // Minimal — a single-column read, not a realtime subscription (that's
+  // the future multi-session board's job). Stops once the session
+  // reaches any terminal stage; no point polling further.
+  useEffect(() => {
+    if (!issued) return;
+    if (stage === 'completed' || stage === 'declined' || stage === 'expired') return;
+    let cancelled = false;
+    const poll = async () => {
+      const result = await getCounterSessionStage(issued.token);
+      if (!cancelled && result.stage) setStage(result.stage);
+    };
+    poll();
+    const id = window.setInterval(poll, STAGE_POLL_MS);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [issued, stage, getCounterSessionStage]);
+
+  const expired = issued !== null && (secondsLeft <= 0 || stage === 'expired' || stage === 'declined');
 
   if (issued) {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center space-y-5">
-        {expired ? (
+        {error && (
+          <div role="alert" className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
+        {stage === 'completed' ? (
+          <>
+            <h2 className="text-xl font-semibold text-gray-900">Payment received</h2>
+            <p className="text-sm text-gray-500">
+              {formatRand(issued.billAmount)} — the patient completed checkout on their phone.
+            </p>
+            {/* Confirm-at-counter: the teller's OWN acknowledgment/record-
+                keeping step. Separate from and after the patient's own
+                automatic payment confirmation (which already happened —
+                that's what got us to stage='completed'). Purely additive:
+                skipping this never blocks "Start next patient" below. */}
+            {acknowledged ? (
+              <p className="text-sm font-medium text-green-700" data-testid="pos-acknowledged">
+                Acknowledged ✓
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={handleAcknowledge}
+                disabled={acknowledging}
+                data-testid="pos-acknowledge-button"
+                className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+              >
+                {acknowledging ? 'Acknowledging…' : 'Acknowledge'}
+              </button>
+            )}
+          </>
+        ) : expired ? (
           <>
             <h2 className="text-xl font-semibold text-gray-900">QR expired</h2>
             <p className="text-sm text-gray-500">
@@ -185,7 +304,7 @@ export default function CounterSessionForm({ providers, practiceId, issueCounter
   }
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6">
+    <form ref={formRef} onSubmit={handleSubmit} data-testid="pos-entry-form" className="space-y-5 rounded-2xl border border-gray-200 bg-white p-6">
       <div>
         <label htmlFor="pos-provider" className="block text-sm font-medium text-gray-700 mb-1.5">
           Provider
