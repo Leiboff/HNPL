@@ -8,8 +8,7 @@ import {
   MAX_BILL_AMOUNT,
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
-import type { IssueCounterSessionResult, CounterSessionStage } from './actions';
-import type { ProviderOption } from './page';
+import type { IssueCounterSessionResult, CounterSessionStage, ProviderOption } from './actions';
 
 // ─── CounterSessionForm ──────────────────────────────────────────────
 //
@@ -49,14 +48,15 @@ function formatRand(n: number) {
 }
 
 type Props = {
-  providers:  ProviderOption[];
-  practiceId: string;
+  providers: ProviderOption[];
+  // deviceSecret is injected by TillShell's withDeviceRecovery wrapper —
+  // this component stays unaware of the device-auth mechanism entirely,
+  // same as it was unaware of user-session auth before this feature.
   issueCounterSession: (data: {
     billAmount:  number;
     saIdNumber:  string;
     cellNumber?: string;
     providerId:  string;
-    practiceId:  string;
   }) => Promise<IssueCounterSessionResult>;
   expireCounterSession: (token: string, opts?: { force?: boolean }) => Promise<{ error: string | null }>;
   getCounterSessionStage: (token: string) => Promise<{ error: string | null; stage?: CounterSessionStage }>;
@@ -66,7 +66,7 @@ type Props = {
 type Issued = { token: string; expiresAt: string; billAmount: number };
 
 export default function CounterSessionForm({
-  providers, practiceId,
+  providers,
   issueCounterSession, expireCounterSession, getCounterSessionStage, acknowledgeCounterSession,
 }: Props) {
   const [billAmount, setBillAmount] = useState('');
@@ -119,7 +119,6 @@ export default function CounterSessionForm({
         saIdNumber: saId,
         cellNumber: cellNumber.trim() || undefined,
         providerId,
-        practiceId,
       });
 
       // Clear the ID from this component's state regardless of outcome
