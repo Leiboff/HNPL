@@ -8,6 +8,8 @@ import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
+import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
+import { stubLivenessCheck } from '@/lib/onboarding/liveness/stubLivenessCheck';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -197,13 +199,24 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
   return { error: null, nextPath: finalize.nextPath };
 }
 
-// ─── runCreditCheck ────────────────────────────────────────────────────
+// ─── runCreditCheck (affordability step) ───────────────────────────────
 //
-// Integration seam. Today: with ENABLE_CREDIT_CHECK on, this is a stub
-// that marks the check as 'passed'; a real credit + affordability
-// integration will replace the body. With the flag OFF, saveIdAndSalaryDay
-// auto-passes so this action isn't reached. Included for the flag-on
-// path.
+// Integration seam. The pass/fail decision AND the granted limit come
+// from ONE isolated policy module — lib/underwriting/stubAffordabilityPolicy
+// — which currently STUBS an unconditional R5,000 grant with no bureau
+// call and no affordability computation (see that module's banner). A real
+// underwriting integration replaces that module; this action needs no
+// change because it already persists whatever the policy returns.
+//
+// On approval we persist BOTH:
+//   • approved_credit_limit  (rands = limitCents/100) — the granted test
+//     balance the dashboard reads. Written via service-role so the 0065
+//     column-lock permits it. The amount is NEVER hardcoded here — it is
+//     read from the policy's limitCents.
+//   • credit_check_status='passed' — satisfies the onboarding step.
+// A non-approval (the stub never returns one today, but the real policy
+// will) records 'failed' and does not advance — proving the decision is
+// genuinely load-bearing and swappable.
 
 export async function runCreditCheck(): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
@@ -213,13 +226,24 @@ export async function runCreditCheck(): Promise<ActionResult> {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  // Stub — real integration replaces this block. Placeholder pass
-  // preserves the flow while the bureau contract is wired up.
+  const decision = stubAffordabilityPolicy();
+  const now = new Date().toISOString();
+
+  if (!decision.approved) {
+    await svc()
+      .from('profiles')
+      .update({ credit_check_status: 'failed', credit_check_completed_at: now })
+      .eq('id', loaded.userId);
+    return { error: 'We could not approve an amount right now.' };
+  }
+
   const { error } = await svc()
     .from('profiles')
     .update({
+      // Granted test balance — amount comes from the policy, not a literal.
+      approved_credit_limit:     decision.limitCents / 100,
       credit_check_status:       'passed',
-      credit_check_completed_at: new Date().toISOString(),
+      credit_check_completed_at: now,
     })
     .eq('id', loaded.userId);
   if (error) return { error: error.message };
@@ -243,6 +267,13 @@ export async function runLiveness(): Promise<ActionResult> {
   if (!loaded.ok) return { error: loaded.error };
   if (!currentFlags().liveness) {
     return { error: null, nextPath: '/onboarding' };
+  }
+
+  // Pass/fail decision comes from ONE isolated module — the current stub
+  // always returns 'pass' (no real check; see its banner). Gating on the
+  // result keeps it swappable: return 'fail' there and the step blocks.
+  if (stubLivenessCheck() !== 'pass') {
+    return { error: 'We could not verify it was you. Please try again.' };
   }
 
   const now = new Date().toISOString();

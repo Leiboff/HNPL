@@ -10,6 +10,13 @@
 // This is a server component (no interactivity). The patient dashboard
 // server-renders it into the page. No client-side state, no client
 // writes — the limit is admin-set only (0065 column-lock).
+//
+// The displayed limit is currently a STUBBED test grant (see
+// lib/underwriting/stubAffordabilityPolicy), so this card ALWAYS renders
+// the shared TestBalanceNotice alongside the amount — the notice can't be
+// shown here and forgotten, because it's part of the card itself.
+
+import TestBalanceNotice from './TestBalanceNotice';
 
 type Props = {
   /** Patient's approved credit limit — NULL when no limit set. */
@@ -30,23 +37,27 @@ export default function ApprovedBalanceCard({ limit, available }: Props) {
   if (limit == null) return null;
 
   return (
-    <div
-      className="rounded-2xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6"
-      style={{
-        background: 'linear-gradient(135deg, #13294B 0%, #1B3A6C 60%, #15A89E 145%)',
-        color:      '#ffffff',
-      }}
-      data-testid="approved-balance-card"
-    >
-      <p className="text-xs font-semibold uppercase tracking-widest opacity-80">
-        Approved balance
-      </p>
-      <p className="mt-3 text-4xl sm:text-5xl font-bold tabular-nums" data-testid="approved-balance-available">
-        {formatRand(available)}
-      </p>
-      <p className="mt-1 text-sm opacity-80">
-        available of {formatRand(limit)} approved
-      </p>
+    <div className="flex flex-col gap-3">
+      <div
+        className="rounded-2xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6"
+        style={{
+          background: 'linear-gradient(135deg, #13294B 0%, #1B3A6C 60%, #15A89E 145%)',
+          color:      '#ffffff',
+        }}
+        data-testid="approved-balance-card"
+      >
+        <p className="text-xs font-semibold uppercase tracking-widest opacity-80">
+          Approved balance
+        </p>
+        <p className="mt-3 text-4xl sm:text-5xl font-bold tabular-nums" data-testid="approved-balance-available">
+          {formatRand(available)}
+        </p>
+        <p className="mt-1 text-sm opacity-80">
+          available of {formatRand(limit)} approved
+        </p>
+      </div>
+      {/* Inseparable from the balance — a stubbed test grant, not real credit. */}
+      <TestBalanceNotice />
     </div>
   );
 }
