@@ -69,7 +69,9 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
   });
 
   it('logged-out AND existing account (plan.patient_id OR email match) → /login?next=…', () => {
-    expect(PAGE).toMatch(/findExistingAuthUser\(\s*svcForLookup\s*,\s*row\.email\s*\)/);
+    // Only checked for an invitation-sourced token — a POS session
+    // token has no email signal (see resolved.kind === 'invitation' gate).
+    expect(PAGE).toMatch(/findExistingAuthUser\(\s*svcForLookup\s*,\s*resolved\.row\.email\s*\)/);
     expect(PAGE).toMatch(/redirect\(\s*`\/login\?next=\$\{encodeURIComponent\(confirmPath\)\}`\s*\)/);
   });
 
@@ -86,7 +88,7 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
     expect(PAGE).toMatch(/console\.warn\([^)]*findExistingAuthUser/);
     // A lookup blip must not redirect — the block sits inside a try
     // whose catch falls through, keeping existingAccount = false.
-    const idx = PAGE.indexOf('findExistingAuthUser(svcForLookup, row.email)');
+    const idx = PAGE.indexOf('findExistingAuthUser(svcForLookup, resolved.row.email)');
     expect(idx).toBeGreaterThan(0);
     const chunk = PAGE.slice(idx - 100, idx + 400);
     expect(chunk).toMatch(/try\s*\{/);

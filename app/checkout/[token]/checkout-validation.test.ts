@@ -135,18 +135,27 @@ describe('/checkout/[token] initiate — Peach V2 standingInstruction shape', ()
   });
 });
 
-describe('CheckoutForm — email is read-only (not in the schema)', () => {
-  it("there is no editable <input> for email in the form (the invitation pre-fills it)", () => {
-    // The BillSummary renders `to {email}` as plain text. There must
-    // be no `type="email"` input nor any `id="checkout-email"` input.
-    expect(form).not.toMatch(/<input[^>]*type\s*=\s*['"]email['"]/);
-    expect(form).not.toMatch(/id\s*=\s*['"]checkout-email['"]/);
+describe('CheckoutForm — email is read-only for the invitation flow, collected only for a POS session (requireEmail)', () => {
+  // Post-0085: a POS counter-session token has no known email (unlike
+  // an invitation, which resolves it server-side from the token) — the
+  // form now collects one, but ONLY when the page passes
+  // requireEmail={true} (resolved.kind === 'session'). This was the
+  // deliberate future change this describe block's original comment
+  // anticipated; the gate below is that deliberate choice made
+  // explicit rather than a silent regression.
+  it('the email <input> exists but is gated behind requireEmail (not rendered for the invitation flow)', () => {
+    expect(form).toMatch(/\{requireEmail\s*&&\s*\(/);
+    expect(form).toMatch(/<input[^>]*type\s*=\s*['"]email['"]/);
+    expect(form).toMatch(/id\s*=\s*['"]checkout-email['"]/);
   });
 
-  it('email is NOT a key in the validation schema', () => {
-    // Defensive: a future "let the patient correct the email" change
-    // would need to add the field with isValidEmail. This test forces
-    // that to be a deliberate choice.
-    expect(form).not.toMatch(/\bemail\s*:\s*\{\s*validate\s*:/);
+  it('email IS a key in the validation schema, but its validator no-ops unless requireEmail', () => {
+    expect(form).toMatch(/\bemail\s*:\s*\{\s*validate\s*:/);
+    expect(form).toMatch(/if\s*\(!requireEmail\)\s*return\s*null;/);
+  });
+
+  it('uses the shared isValidEmail validator, not an inline regex (banned outside lib/validation/)', () => {
+    expect(form).toMatch(/import\s*\{[^}]*isValidEmail[^}]*\}\s*from\s*'@\/lib\/validation'/);
+    expect(form).toMatch(/isValidEmail\(v\.email\.trim\(\)\)/);
   });
 });

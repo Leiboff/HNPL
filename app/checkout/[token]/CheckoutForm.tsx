@@ -8,6 +8,7 @@ import {
   normalizePhoneZA,
   validateSaId,
   saIdAge,
+  isValidEmail,
 } from '@/lib/validation';
 import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
 import {
@@ -86,6 +87,22 @@ type Props = {
    * is persisted alongside the plan.
    */
   initialSalaryDay:   number | null;
+  /**
+   * Set for a POS counter-session token (migration 0085) — the SA ID
+   * was already captured + encrypted at the till. When present, the SA
+   * ID field renders as a locked, masked display (e.g. "•••••••••0086")
+   * instead of free text; the client never submits a real ID for this
+   * token type, initiateCheckout re-derives it server-side from the
+   * session row.
+   */
+  prefilledSaId?:     string | null;
+  /**
+   * Set for a POS counter-session token — there is no invitation email
+   * to source the account from, so the form collects one here (unlike
+   * the invitation flow, where email is resolved server-side from the
+   * token and never a client-input field).
+   */
+  requireEmail?:      boolean;
   initiateCheckout:   (input: {
     token:       string;
     firstName:   string;
@@ -94,6 +111,7 @@ type Props = {
     phone:       string;
     planType:    2 | 3;
     salaryDay?:  number | null;
+    email?:      string;
   }) => Promise<
     | { ok: true;  checkoutId: string; amountCents: number; shopperResultUrl: string }
     | { ok: false; error: string }
@@ -223,6 +241,7 @@ type DetailsFields = {
   lastName:      string;
   saIdNumber:    string;
   phone:         string;
+  email:         string;
   termsAccepted: boolean;
 };
 
@@ -231,6 +250,7 @@ const BLANK_DETAILS: DetailsFields = {
   lastName:      '',
   saIdNumber:    '',
   phone:         '',
+  email:         '',
   termsAccepted: false,
 };
 
@@ -243,6 +263,7 @@ export default function CheckoutForm({
   // (practice + amount) carries the deal now.
   token, practiceName, totalAmount,
   initialSalaryDay,
+  prefilledSaId, requireEmail,
   initiateCheckout, requestPhoneOtp, verifyPhoneOtp,
 }: Props) {
   const [step, setStep] = useState<Step>(1);
@@ -276,6 +297,10 @@ export default function CheckoutForm({
     lastName:   { validate: (v) => v.lastName.trim()  ? null : 'Last name is required.' },
     saIdNumber: {
       validate: (v) => {
+        // Locked/pre-filled from a POS session (migration 0085) — the
+        // field renders read-only below and was already validated at
+        // issuance; nothing for this form to check.
+        if (prefilledSaId) return null;
         const r = validateSaId(v.saIdNumber);
         if (!r.valid) return SA_ID_GENERIC_ERROR;
         const age = saIdAge(v.saIdNumber);
@@ -293,10 +318,18 @@ export default function CheckoutForm({
       validate: (v) =>
         normalizePhoneZA(v.phone) ? null : 'Enter a valid South African cellphone number.',
     },
+    email: {
+      validate: (v) => {
+        // Only required for a POS session token — the invitation flow
+        // already knows the email server-side and never shows this field.
+        if (!requireEmail) return null;
+        return isValidEmail(v.email.trim()) ? null : 'Enter a valid email address.';
+      },
+    },
     termsAccepted: {
       validate: (v) => v.termsAccepted ? null : 'Please accept the payment-plan terms to continue.',
     },
-  }), []);
+  }), [prefilledSaId, requireEmail]);
 
   const { errors, handleBlur, validateAll } = useFieldValidation(details, schema);
 
@@ -412,7 +445,10 @@ export default function CheckoutForm({
           token,
           firstName:  details.firstName,
           lastName:   details.lastName,
-          saIdNumber: details.saIdNumber.trim(),
+          // Locked/pre-filled (POS session) → send nothing; the server
+          // derives the real SA ID from the session row itself and
+          // ignores this field entirely for a session-sourced token.
+          saIdNumber: prefilledSaId ? '' : details.saIdNumber.trim(),
           phone:      details.phone.trim(),
           planType,
           // Only send the client-picked value when the picker was
@@ -421,6 +457,10 @@ export default function CheckoutForm({
           // would be silently ignored, but we omit it to make the
           // wire trace unambiguous.
           salaryDay:  showSalaryDayPicker ? salaryDay : null,
+          // Only meaningful (and only shown) for a POS session token —
+          // the invitation flow resolves email server-side from the
+          // token and this is omitted.
+          email:      requireEmail ? details.email.trim() : undefined,
         });
         if (!result.ok) {
           // The server's "verify_phone_required" code means the row
@@ -594,20 +634,55 @@ export default function CheckoutForm({
             <label htmlFor="checkout-saIdNumber" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
               SA ID number
             </label>
-            <input
-              id="checkout-saIdNumber"
-              type="text"
-              inputMode="numeric"
-              maxLength={SA_ID_LEN}
-              value={details.saIdNumber}
-              onChange={setText('saIdNumber')}
-              onBlur={onBlur('saIdNumber')}
-              aria-invalid={!!errors.saIdNumber}
-              placeholder="13 digits"
-              className={`${inputClass(!!errors.saIdNumber)} font-mono tabular-nums tracking-wide`}
-            />
+            {prefilledSaId ? (
+              // Captured + encrypted at the till (migration 0085). Locked
+              // and masked — this form never re-collects or re-displays
+              // the plaintext ID.
+              <input
+                id="checkout-saIdNumber"
+                type="text"
+                readOnly
+                disabled
+                value={prefilledSaId}
+                data-testid="checkout-said-locked"
+                className={`${inputClass(false)} font-mono tabular-nums tracking-wide bg-[#F5F7FA] text-[#7A8AA0] cursor-not-allowed`}
+              />
+            ) : (
+              <input
+                id="checkout-saIdNumber"
+                type="text"
+                inputMode="numeric"
+                maxLength={SA_ID_LEN}
+                value={details.saIdNumber}
+                onChange={setText('saIdNumber')}
+                onBlur={onBlur('saIdNumber')}
+                aria-invalid={!!errors.saIdNumber}
+                placeholder="13 digits"
+                className={`${inputClass(!!errors.saIdNumber)} font-mono tabular-nums tracking-wide`}
+              />
+            )}
             {errors.saIdNumber && <p className="mt-1.5 text-xs text-[#D14141]">{errors.saIdNumber}</p>}
           </div>
+
+          {requireEmail && (
+            <div>
+              <label htmlFor="checkout-email" className="block text-sm font-medium text-[#3A4B66] mb-1.5">
+                Email
+              </label>
+              <input
+                id="checkout-email"
+                type="email"
+                autoComplete="email"
+                value={details.email}
+                onChange={setText('email')}
+                onBlur={onBlur('email')}
+                aria-invalid={!!errors.email}
+                placeholder="you@example.com"
+                className={inputClass(!!errors.email)}
+              />
+              {errors.email && <p className="mt-1.5 text-xs text-[#D14141]">{errors.email}</p>}
+            </div>
+          )}
 
           <div>
             <label htmlFor="checkout-phone" className="block text-sm font-medium text-[#3A4B66] mb-1.5">

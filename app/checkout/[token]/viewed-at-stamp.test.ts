@@ -36,9 +36,15 @@ function read(p: string): string {
 const PAGE      = read('app/checkout/[token]/page.tsx');
 const MIGRATION = read('supabase/migrations/0050_invitation_viewed_and_realtime.sql');
 
-describe('Checkout page stamps viewed_at via the RPC', () => {
-  it('calls supabase.rpc("stamp_invitation_viewed", { p_token: token })', () => {
+describe('Checkout page stamps viewed_at / scanned_at via the RPC', () => {
+  // Post-0085: the page also serves POS counter-session tokens
+  // (checkout_sessions), which have their own stamp RPC
+  // (stamp_checkout_session_scanned). The call is now polymorphic —
+  // resolved.kind picks which RPC name to call — but both still route
+  // through the same p_token-keyed supabase.rpc(...) call site.
+  it('calls supabase.rpc(stampRpc, { p_token: token }) for both stamp_invitation_viewed and stamp_checkout_session_scanned', () => {
     expect(PAGE).toMatch(/stamp_invitation_viewed/);
+    expect(PAGE).toMatch(/stamp_checkout_session_scanned/);
     expect(PAGE).toMatch(/p_token\s*:\s*token/);
   });
 
@@ -46,14 +52,14 @@ describe('Checkout page stamps viewed_at via the RPC', () => {
     // The stamp block lives between the row-resolution code and the
     // form-render JSX. Find it and assert the try/catch is in place.
     expect(PAGE).toMatch(
-      /try\s*\{[\s\S]*?stamp_invitation_viewed[\s\S]*?\}\s*catch/,
+      /try\s*\{[\s\S]*?stamp_invitation_viewed[\s\S]*?stamp_checkout_session_scanned[\s\S]*?\}\s*catch/,
     );
   });
 
   it('logs but does not re-throw (the patient flow continues either way)', () => {
     // Either branch (the soft Postgrest error OR the throw catch)
     // funnels into a warn-style log, never a redirect or render bail.
-    expect(PAGE).toMatch(/console\.warn\([^)]*stamp_invitation_viewed/);
+    expect(PAGE).toMatch(/console\.warn\(`\[checkout\] \$\{stampRpc\} failed/);
   });
 });
 

@@ -18,8 +18,10 @@ import {
   normalizePhoneZA,
   validateSaId,
   saIdAge,
+  isValidEmail,
   type SaIdInvalidReason,
 } from '@/lib/validation';
+import { decryptId } from '@/lib/idEncryption';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
@@ -97,6 +99,9 @@ export type InitiateCheckoutInput = {
   token:       string;
   firstName:   string;
   lastName:    string;
+  // For a POS session token (checkout_sessions), the SA ID is already
+  // known server-side and this is ignored — send ''. For an invitation
+  // token it's the patient-typed value, validated below as before.
   saIdNumber:  string;
   phone:       string;
   planType:    2 | 3;
@@ -106,7 +111,63 @@ export type InitiateCheckoutInput = {
   // profile and this field are unset, the server returns
   // `missing_salary_day` and the client shows an inline prompt.
   salaryDay?:  number | null;
+  // Required ONLY for a POS session token — an invitation token
+  // resolves email server-side and this is ignored if sent.
+  email?:      string;
 };
+
+// ─── Polymorphic token resolution ─────────────────────────────────────
+//
+// A /checkout/[token] token is either an emailed patient_invitations
+// token or a POS counter checkout_sessions token (migration 0085) —
+// see the practice-bill-POS-checkout investigation for why these are
+// separate tables rather than one overloaded model. Both
+// initiateCheckout and resumeFirstInstalmentCapture need "which plan/
+// practice does this token point at", so the lookup is shared here.
+type ResolvedCheckoutToken =
+  | { kind: 'invitation'; planId: string; practiceId: string; email: string }
+  // saIdNumber is still ENCRYPTED (v1: format) — the caller decrypts.
+  | { kind: 'session';    planId: string; practiceId: string; saIdNumber: string };
+
+async function resolveCheckoutToken(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  svc: any,
+  token: string,
+): Promise<ResolvedCheckoutToken | null> {
+  const { data: invitation } = await svc
+    .from('patient_invitations')
+    .select('plan_id, practice_id, email')
+    .eq('token', token)
+    .gt('expires_at', new Date().toISOString())
+    .is('accepted_at', null)
+    .maybeSingle();
+  if (invitation) {
+    return {
+      kind:       'invitation',
+      planId:     invitation.plan_id as string,
+      practiceId: invitation.practice_id as string,
+      email:      (invitation.email as string).trim().toLowerCase(),
+    };
+  }
+
+  const { data: session } = await svc
+    .from('checkout_sessions')
+    .select('plan_id, practice_id, sa_id_number')
+    .eq('token', token)
+    .in('stage', ['created', 'scanned'])
+    .gt('expires_at', new Date().toISOString())
+    .maybeSingle();
+  if (session) {
+    return {
+      kind:       'session',
+      planId:     session.plan_id as string,
+      practiceId: session.practice_id as string,
+      saIdNumber: session.sa_id_number as string,
+    };
+  }
+
+  return null;
+}
 
 export type InitiateCheckoutResult =
   | {
@@ -134,21 +195,13 @@ export type InitiateCheckoutResult =
   | { ok: false; error: string; frozen: true };
 
 export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
-  const { token, firstName, lastName, saIdNumber, phone, planType } = input;
+  const { token, firstName, lastName, phone, planType } = input;
   const clientSalaryDay: number | null =
     typeof input.salaryDay === 'number' ? input.salaryDay : null;
 
   if (!token)                  return { ok: false, error: 'Missing token.' };
   if (!firstName.trim())       return { ok: false, error: 'First name is required.' };
   if (!lastName.trim())        return { ok: false, error: 'Last name is required.' };
-
-  const saIdResult = validateSaId(saIdNumber);
-  if (!saIdResult.valid) return { ok: false, error: saIdErrorMessage(saIdResult.reason) };
-
-  const age = saIdAge(saIdNumber);
-  if (age === null || age < MIN_AGE) {
-    return { ok: false, error: `You must be ${MIN_AGE} or older to accept a payment plan.` };
-  }
 
   const normalizedPhone = normalizePhoneZA(phone);
   if (!normalizedPhone) return { ok: false, error: 'Enter a valid South African cellphone number.' };
@@ -166,18 +219,46 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     { auth: { persistSession: false } },
   );
 
-  // ── 1. Validate the invitation (existence, expiry, not-accepted) ──────
-  const { data: invitation } = await svc
-    .from('patient_invitations')
-    .select('id, email, plan_id, practice_id')
-    .eq('token', token)
-    .gt('expires_at', new Date().toISOString())
-    .is('accepted_at', null)
-    .maybeSingle();
+  // ── 1. Resolve the token — invitation OR POS session ──────────────────
+  const resolved = await resolveCheckoutToken(svc, token);
+  if (!resolved) return { ok: false, error: 'This checkout link is no longer valid.' };
 
-  if (!invitation) return { ok: false, error: 'This invitation link is no longer valid.' };
-
-  const normalizedEmail = (invitation.email as string).trim().toLowerCase();
+  // saIdNumber source + validation forks on token kind:
+  //   • invitation — patient-typed, validated here as always.
+  //   • session    — already captured + validated at the till; decrypt
+  //     the session's stored value server-side and IGNORE whatever the
+  //     client sent for saIdNumber (the field is locked/masked on the
+  //     phone-side form — see CheckoutForm's prefilledSaId). Re-run the
+  //     same validate+age checks defensively; they should always pass
+  //     since issueCounterSession already ran them at issuance.
+  let saIdPlain: string;
+  let normalizedEmail: string;
+  if (resolved.kind === 'invitation') {
+    const saIdResult = validateSaId(input.saIdNumber);
+    if (!saIdResult.valid) return { ok: false, error: saIdErrorMessage(saIdResult.reason) };
+    const age = saIdAge(input.saIdNumber);
+    if (age === null || age < MIN_AGE) {
+      return { ok: false, error: `You must be ${MIN_AGE} or older to accept a payment plan.` };
+    }
+    saIdPlain       = input.saIdNumber;
+    normalizedEmail = resolved.email;
+  } else {
+    try {
+      saIdPlain = decryptId(resolved.saIdNumber);
+    } catch (err) {
+      console.error('[checkout] failed to decrypt session SA ID', err instanceof Error ? err.message : err);
+      return { ok: false, error: 'Encryption error — please contact support.' };
+    }
+    const saIdResult = validateSaId(saIdPlain);
+    if (!saIdResult.valid) return { ok: false, error: saIdErrorMessage(saIdResult.reason) };
+    const age = saIdAge(saIdPlain);
+    if (age === null || age < MIN_AGE) {
+      return { ok: false, error: `You must be ${MIN_AGE} or older to accept a payment plan.` };
+    }
+    const emailInput = (input.email ?? '').trim().toLowerCase();
+    if (!isValidEmail(emailInput)) return { ok: false, error: 'Enter a valid email address.' };
+    normalizedEmail = emailInput;
+  }
 
   // ── 2. Fetch the plan (need plan.patient_id BEFORE the user decision) ─
   // Why early: the discriminator below uses plan.patient_id to tell
@@ -188,7 +269,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   const { data: plan } = await svc
     .from('plans')
     .select('id, total_amount, status, application_id, practice_id, patient_id')
-    .eq('id', invitation.plan_id)
+    .eq('id', resolved.planId)
     .maybeSingle();
 
   if (!plan) return { ok: false, error: 'This bill no longer exists.' };
@@ -290,7 +371,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       email_confirm:  true,
       user_metadata:  {
         role:                   'patient',
-        invited_by_practice_id: invitation.practice_id,
+        invited_by_practice_id: resolved.practiceId,
       },
     });
     if (createErr || !created.user) {
@@ -350,7 +431,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // may have corrected a typo.
   let encryptedSaId: string;
   try {
-    encryptedSaId = encryptId(saIdNumber.trim());
+    encryptedSaId = encryptId(saIdPlain.trim());
   } catch {
     return { ok: false, error: 'Encryption error — please contact support.' };
   }
@@ -680,22 +761,16 @@ export async function resumeFirstInstalmentCapture(
     { auth: { persistSession: false } },
   );
 
-  // ── 1. Validate the invitation (mirrors initiateCheckout guard) ──
-  const { data: invitation } = await svc
-    .from('patient_invitations')
-    .select('id, email, plan_id, practice_id')
-    .eq('token', token)
-    .gt('expires_at', new Date().toISOString())
-    .is('accepted_at', null)
-    .maybeSingle();
-
-  if (!invitation) return { ok: false, error: 'This invitation link is no longer valid.' };
+  // ── 1. Resolve the token — invitation OR POS session (mirrors
+  // initiateCheckout's guard; see resolveCheckoutToken above) ──────
+  const resolved = await resolveCheckoutToken(svc, token);
+  if (!resolved) return { ok: false, error: 'This checkout link is no longer valid.' };
 
   // ── 2. Validate plan: owned by session user + uncaptured ─────────
   const { data: plan } = await svc
     .from('plans')
     .select('id, patient_id, status, peach_registration_id, plan_type, total_amount')
-    .eq('id', invitation.plan_id)
+    .eq('id', resolved.planId)
     .maybeSingle();
 
   if (!plan) return { ok: false, error: 'This bill no longer exists.' };
