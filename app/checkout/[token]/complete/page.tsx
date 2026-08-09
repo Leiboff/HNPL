@@ -255,12 +255,25 @@ export default async function CheckoutCompletePage({
     }
   }
 
-  // Mark the invitation accepted (idempotent).
+  // Mark the invitation accepted (idempotent). A no-op (0 rows) when
+  // this token was a POS session token instead — no patient_invitations
+  // row exists for it.
   await svc
     .from('patient_invitations')
     .update({ accepted_at: new Date().toISOString() })
     .eq('token', token)
     .is('accepted_at', null);
+
+  // Advance the POS counter session to its terminal stage (idempotent).
+  // A no-op (0 rows) when this token was an email invitation instead —
+  // no checkout_sessions row exists for it. Matches by plan_id (not
+  // token) since the session's own token may differ in shape but always
+  // points at this same plan.
+  await svc
+    .from('checkout_sessions')
+    .update({ stage: 'completed' })
+    .eq('plan_id', planId)
+    .neq('stage', 'completed');
 
   // ── Make sure the patient is still authenticated for /done ────────
   // If their session dropped during the widget interaction (rare — the

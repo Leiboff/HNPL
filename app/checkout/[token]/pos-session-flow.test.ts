@@ -33,6 +33,7 @@ function read(p: string): string {
 const PAGE       = read('app/checkout/[token]/page.tsx');
 const FORM       = read('app/checkout/[token]/CheckoutForm.tsx');
 const ACTIONS     = read('app/checkout/[token]/actions.ts');
+const COMPLETE_PAGE = read('app/checkout/[token]/complete/page.tsx');
 const MIGRATION_SESSIONS = read('supabase/migrations/0085_checkout_sessions.sql');
 const MIGRATION_OTP      = read('supabase/migrations/0086_phone_verification_pos_token.sql');
 
@@ -139,5 +140,16 @@ describe('migration 0086 — phone OTP gate recognizes POS session tokens', () =
     expect(MIGRATION_OTP).toMatch(/FROM patient_invitations/);
     expect(MIGRATION_OTP).toMatch(/FROM checkout_sessions/);
     expect(MIGRATION_OTP).toMatch(/stage IN \('created', 'scanned'\)/);
+  });
+});
+
+describe('checkout completion route — checkout_sessions reaches a terminal stage', () => {
+  it('advances checkout_sessions.stage to completed by plan_id (idempotent; no-op for an invitation-sourced plan)', () => {
+    const idx = COMPLETE_PAGE.indexOf("from('checkout_sessions')");
+    expect(idx).toBeGreaterThan(0);
+    const chunk = COMPLETE_PAGE.slice(idx, idx + 200);
+    expect(chunk).toMatch(/stage:\s*'completed'/);
+    expect(chunk).toMatch(/\.eq\('plan_id',\s*planId\)/);
+    expect(chunk).toMatch(/\.neq\('stage',\s*'completed'\)/);
   });
 });
