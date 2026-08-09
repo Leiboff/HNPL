@@ -552,12 +552,18 @@ describe('checkout completion classifies V2 status correctly (FIX 1: no false de
     expect(POLL).toMatch(/MAX_RELOADS/);
   });
 
-  it('rejected → the declined ErrorCard; success → plan activation (status active)', () => {
+  it('rejected → the declined ErrorCard; success → plan activation via the shared helper', () => {
     expect(COMPLETE).toMatch(/if \(classified === 'rejected'\)\s*\{\s*return <ErrorCard/);
     // SUCCESS branch (below the pending/rejected returns) performs the
-    // idempotent activation: instalment collected + plan active.
-    expect(COMPLETE).toMatch(/status:\s*'collected'/);
-    expect(COMPLETE).toMatch(/\.update\(\{ status: 'active' \}\)/);
+    // idempotent activation (instalment collected + plan active + payout
+    // inserted) via the SAME shared activateFirstInstalment helper the
+    // portal payment-complete route and the Peach webhook use — not its
+    // own inline payments/plans writes. See payouts-gap.test.ts for the
+    // dedicated regression coverage of this wiring.
+    expect(COMPLETE).toMatch(
+      /import\s*\{\s*activateFirstInstalment\s*\}\s*from\s*'@\/lib\/payments\/activateFirstInstalment'/,
+    );
+    expect(COMPLETE).toMatch(/await activateFirstInstalment\(/);
   });
 
   it('purpose gate uses peachRefPurpose(ref) === \'c\' (NOT the stale hnpl_co_ literal prefix)', () => {

@@ -6,6 +6,7 @@ import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { peachRefPurpose } from '@/lib/payments/peach/refs';
+import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
 import PendingAutoRefresh from './PendingAutoRefresh';
 
 // ─── /checkout/[token]/complete — Peach Checkout V2 return route ────
@@ -214,19 +215,45 @@ export default async function CheckoutCompletePage({
       .is('peach_initial_transaction_id', null);
   }
 
-  // Mark instalment #1 as collected (idempotent).
-  await svc
-    .from('payments')
-    .update({ status: 'collected', collected_at: new Date().toISOString() })
-    .eq('id', payment.id)
-    .eq('status', 'processing');
-
-  // Activate the plan (idempotent).
-  await svc
+  // Mark instalment #1 collected + activate the plan + insert the
+  // payouts row — via the SAME shared, idempotent helper the portal
+  // payment-complete route and the Peach webhook use.
+  //
+  // Previously this route did its own inline payments/plans updates
+  // and never inserted a payouts row. Because this synchronous path
+  // typically wins the race to flip plans.status to 'active' (same
+  // request, no round-trip to Peach's async webhook infra), the
+  // webhook's own dedup guard — `if (plan.status === 'active') return`
+  // in handlePaymentSuccess — would see the plan already active and
+  // skip calling activateFirstInstalment entirely, permanently losing
+  // the payout for that plan. Routing through the shared helper here
+  // closes that gap: whichever writer gets there first creates the
+  // payout, and the other's call is a no-op via the helper's own
+  // preconditions.
+  const { data: planForActivation } = await svc
     .from('plans')
-    .update({ status: 'active' })
+    .select('id, total_amount, practice_id, provider_id')
     .eq('id', planId)
-    .eq('status', 'pending_first_payment');
+    .maybeSingle();
+
+  if (planForActivation) {
+    const activateResult = await activateFirstInstalment(svc, {
+      paymentId: payment.id as string,
+      plan: {
+        id:           planForActivation.id as string,
+        total_amount: planForActivation.total_amount,
+        practice_id:  planForActivation.practice_id,
+        provider_id:  (planForActivation as { provider_id?: string | null }).provider_id ?? null,
+        patient_id:   patientId,
+      },
+    });
+    if (!activateResult.ok) {
+      console.error('PEACH CHECKOUT COMPLETE ALERT ACTIVATION-FAILED:', {
+        checkoutId, planId, step: activateResult.step, error: activateResult.error,
+        note: 'money moved at Peach; awaiting webhook reconcile',
+      });
+    }
+  }
 
   // Mark the invitation accepted (idempotent).
   await svc
