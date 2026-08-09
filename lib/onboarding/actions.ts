@@ -1,5 +1,6 @@
 'use server';
 
+import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
@@ -8,6 +9,7 @@ import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
+import { ONBOARDING_ADVANCE_COOKIE, ONBOARDING_ADVANCE_TTL_SECONDS, isDraftExpired } from './draft';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -37,7 +39,7 @@ function svc() {
 
 // Small helper — the shape of the profile columns computeOnboarding reads.
 const PROFILE_SELECT =
-  'phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed';
+  'phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed, onboarding_last_active_at';
 
 async function loadUserAndProfile() {
   const supabase = await createClient();
@@ -68,7 +70,40 @@ async function loadUserAndProfile() {
       liveness_verified_at: profile.liveness_verified_at as string | null,
       onboarding_completed: profile.onboarding_completed as boolean,
     } satisfies ProfileForOnboarding,
+    // Not part of ProfileForOnboarding (the pure state model doesn't need
+    // it) — kept alongside for the draft-resume actions below, which DO
+    // care how stale the draft is.
+    onboardingLastActiveAt: profile.onboarding_last_active_at as string | null,
   };
+}
+
+// ─── Draft-resume bookkeeping ──────────────────────────────────────────
+//
+// Sets the short-lived "just advanced" cookie (see lib/onboarding/draft.ts)
+// so the immediately-following /onboarding load treats this as a direct
+// continuation of the step that just completed, not a stale return that
+// needs the "Welcome back" interstitial.
+async function markOnboardingAdvance(userId: string): Promise<void> {
+  const cookieStore = await cookies();
+  cookieStore.set(ONBOARDING_ADVANCE_COOKIE, userId, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure:   process.env.NODE_ENV === 'production',
+    maxAge:   ONBOARDING_ADVANCE_TTL_SECONDS,
+    path:     '/',
+  });
+}
+
+// Bumps the draft's last-activity stamp (profiles.onboarding_last_active_at)
+// and marks the advance cookie. Called on every step write so the resume
+// gate can compute 30-day expiry and distinguish "still going" from "came
+// back after leaving".
+async function touchDraftActivity(userId: string): Promise<void> {
+  await svc()
+    .from('profiles')
+    .update({ onboarding_last_active_at: new Date().toISOString() })
+    .eq('id', userId);
+  await markOnboardingAdvance(userId);
 }
 
 // Central "am I done? if so, flag it" helper. Called at the end of
@@ -79,6 +114,7 @@ async function maybeFinalize(
   user:   UserForOnboarding,
   profile: ProfileForOnboarding,
 ): Promise<{ done: boolean; nextPath: string }> {
+  await touchDraftActivity(userId);
   const status = computeOnboarding(user, profile, currentFlags());
   if (status.done && !profile.onboarding_completed) {
     // Write-once-true. Persist so future flag flips can't retro-lock.
@@ -272,4 +308,82 @@ export async function refreshOnboardingState(): Promise<ActionResult> {
   if (!loaded.ok) return { error: loaded.error };
   const finalize = await maybeFinalize(loaded.userId, loaded.user, loaded.profile);
   return { error: null, nextPath: finalize.nextPath };
+}
+
+// ─── Draft-resume interstitial actions ─────────────────────────────────
+//
+// Backing the "Welcome back — continue your application?" gate at
+// /onboarding. Neither action ever runs silently — both are only
+// reachable from an explicit button press on that interstitial, which
+// itself only renders when a genuine in-progress draft exists (see the
+// router's resume gate in app/onboarding/page.tsx).
+
+// ─── continueOnboardingDraft ────────────────────────────────────────────
+//
+// "Continue" — re-confirms this is the same authenticated patient (the
+// interstitial displayed their masked verified email/phone before this
+// was ever callable) and forwards to wherever computeOnboarding says
+// they left off. Data is untouched; only the activity stamp moves.
+
+export async function continueOnboardingDraft(): Promise<ActionResult> {
+  const loaded = await loadUserAndProfile();
+  if (!loaded.ok) return { error: loaded.error };
+
+  // Server-side enforcement, not just the interstitial hiding the
+  // button: an expired (30+ day) draft can only be started over, even
+  // if this action were called directly.
+  if (isDraftExpired(loaded.onboardingLastActiveAt)) {
+    return { error: 'This application has expired. Please start over.' };
+  }
+
+  await touchDraftActivity(loaded.userId);
+  const status = computeOnboarding(loaded.user, loaded.profile, currentFlags());
+  return { error: null, nextPath: status.done ? '/patient' : status.path };
+}
+
+// ─── startOverOnboardingDraft ───────────────────────────────────────────
+//
+// "Start over" — clears the DRAFT fields only (everything captured from
+// the phone step onward: phone, SA ID, salary day, credit check,
+// liveness). Deliberately leaves untouched:
+//   • the verified contact itself — auth.users.email_confirmed_at (or
+//     the Google OAuth link) is never re-required; "start over" means
+//     redo the application, not redo proving who you are. The draft
+//     only ever existed because that verification already happened.
+//   • terms_accepted_at / terms_version / privacy_version (T&Cs
+//     acceptance is out of scope for this action).
+// Resets onboarding_last_active_at to now — a fresh draft, fresh clock.
+
+export async function startOverOnboardingDraft(): Promise<ActionResult> {
+  const loaded = await loadUserAndProfile();
+  if (!loaded.ok) return { error: loaded.error };
+
+  const now = new Date().toISOString();
+  const { error } = await svc()
+    .from('profiles')
+    .update({
+      phone:                     null,
+      phone_verified_at:         null,
+      sa_id_number:              null,
+      salary_day:                null,
+      credit_check_status:       null,
+      credit_check_completed_at: null,
+      liveness_verified_at:      null,
+      onboarding_last_active_at: now,
+    })
+    .eq('id', loaded.userId);
+  if (error) return { error: error.message };
+
+  await markOnboardingAdvance(loaded.userId);
+
+  const freshProfile: ProfileForOnboarding = {
+    ...loaded.profile,
+    phone_verified_at:    null,
+    sa_id_number:         null,
+    salary_day:           null,
+    credit_check_status:  null,
+    liveness_verified_at: null,
+  };
+  const status = computeOnboarding(loaded.user, freshProfile, currentFlags());
+  return { error: null, nextPath: status.done ? '/patient' : status.path };
 }

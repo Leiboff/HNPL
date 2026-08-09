@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { setPhoneForOnboarding } from '@/lib/onboarding/actions';
+import { setPhoneForOnboarding, refreshOnboardingState } from '@/lib/onboarding/actions';
 import {
   requestPhoneOtpForUser,
   verifyPhoneOtpForUser,
@@ -163,7 +163,15 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
       phoneDisplay={displayPhone}
       requestCode={requestPhoneOtpForUser}
       verifyCode={verifyPhoneOtpForUser}
-      onVerified={() => { window.location.href = '/onboarding'; }}
+      onVerified={async () => {
+        // verifyPhoneOtpForUser (the OTP RPC itself, untouched here) has
+        // already stamped phone_verified_at. This bumps the draft's
+        // activity stamp + advance signal so the /onboarding router
+        // continues straight through instead of showing the resume
+        // interstitial for a step we're already mid-completing.
+        await refreshOnboardingState();
+        window.location.href = '/onboarding';
+      }}
       onChangeNumber={() => setStage('phone-entry')}
       shell={inlineShell}
     />
