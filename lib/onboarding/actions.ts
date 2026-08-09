@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { encryptId } from '@/lib/idEncryption';
+import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { currentFlags } from '@/lib/featureFlags';
@@ -157,8 +157,14 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
   }
 
   let encrypted: string;
+  let lookupHash: string;
   try {
-    encrypted = encryptId(cleanedId);
+    encrypted  = encryptId(cleanedId);
+    // Deterministic blind index (migration 0085) — see
+    // lib/idEncryption.ts's hashIdForLookup. Populated alongside the
+    // encrypted value so this, the primary organic-signup ID-capture
+    // path, is findable by SA ID going forward.
+    lookupHash = hashIdForLookup(cleanedId);
   } catch {
     return { error: 'Encryption error — please contact support.' };
   }
@@ -166,8 +172,9 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
   const flags = currentFlags();
 
   const patch: Record<string, unknown> = {
-    sa_id_number: encrypted,
-    salary_day:   input.salaryDay,
+    sa_id_number:      encrypted,
+    sa_id_lookup_hash: lookupHash,
+    salary_day:        input.salaryDay,
   };
 
   // Credit-check seam. Flag-off auto-passes so the state model can

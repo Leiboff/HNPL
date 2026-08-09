@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { randomBytes } from 'crypto';
-import { encryptId, decryptId, maskId, decryptIdForDisplay } from './idEncryption';
+import { encryptId, decryptId, maskId, decryptIdForDisplay, hashIdForLookup } from './idEncryption';
 
 // ---------------------------------------------------------------------------
 // Test key setup
@@ -15,11 +15,15 @@ import { encryptId, decryptId, maskId, decryptIdForDisplay } from './idEncryptio
 const ENV_VAR = 'SA_ID_ENCRYPTION_KEY';
 const TEST_KEY_B64 = randomBytes(32).toString('base64');
 
+const LOOKUP_ENV_VAR = 'SA_ID_LOOKUP_HMAC_KEY';
+const TEST_LOOKUP_KEY_B64 = randomBytes(32).toString('base64');
+
 // Realistic 13-digit South African ID number used throughout.
 const SA_ID = '9001015800086';
 
 beforeAll(() => {
   process.env[ENV_VAR] = TEST_KEY_B64;
+  process.env[LOOKUP_ENV_VAR] = TEST_LOOKUP_KEY_B64;
 });
 
 // ---------------------------------------------------------------------------
@@ -177,5 +181,61 @@ describe('decryptIdForDisplay', () => {
     const corrupted = [v, ivB64, tagB64, ct.toString('base64')].join(':');
     expect(() => decryptIdForDisplay(corrupted)).not.toThrow();
     expect(decryptIdForDisplay(corrupted)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hashIdForLookup — deterministic blind index (migration 0085)
+// ---------------------------------------------------------------------------
+
+describe('hashIdForLookup — determinism', () => {
+  it('produces the SAME hash for the same plaintext (unlike encryptId)', () => {
+    const first  = hashIdForLookup(SA_ID);
+    const second = hashIdForLookup(SA_ID);
+    expect(first).toBe(second);
+  });
+
+  it('produces different hashes for different plaintext', () => {
+    expect(hashIdForLookup(SA_ID)).not.toBe(hashIdForLookup('8501015800087'));
+  });
+
+  it('is a 64-char lowercase hex string (SHA-256 digest)', () => {
+    expect(hashIdForLookup(SA_ID)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('hashIdForLookup — key separation from SA_ID_ENCRYPTION_KEY', () => {
+  it('uses a DIFFERENT key than encryptId — flipping the encryption key does not change the hash', () => {
+    const before = hashIdForLookup(SA_ID);
+    const savedEncKey = process.env[ENV_VAR];
+    process.env[ENV_VAR] = randomBytes(32).toString('base64');
+    const after = hashIdForLookup(SA_ID);
+    process.env[ENV_VAR] = savedEncKey;
+    expect(after).toBe(before);
+  });
+
+  it('flipping the lookup key DOES change the hash', () => {
+    const before = hashIdForLookup(SA_ID);
+    const saved = process.env[LOOKUP_ENV_VAR];
+    process.env[LOOKUP_ENV_VAR] = randomBytes(32).toString('base64');
+    const after = hashIdForLookup(SA_ID);
+    process.env[LOOKUP_ENV_VAR] = saved;
+    expect(after).not.toBe(before);
+  });
+});
+
+describe('hashIdForLookup — key validation', () => {
+  afterEach(() => {
+    process.env[LOOKUP_ENV_VAR] = TEST_LOOKUP_KEY_B64;
+  });
+
+  it('throws a clear error naming the env var when the key is missing', () => {
+    delete process.env[LOOKUP_ENV_VAR];
+    expect(() => hashIdForLookup(SA_ID)).toThrow(LOOKUP_ENV_VAR);
+  });
+
+  it('throws mentioning "32 bytes" when the key is too short', () => {
+    process.env[LOOKUP_ENV_VAR] = Buffer.from('tooshort').toString('base64');
+    expect(() => hashIdForLookup(SA_ID)).toThrow(/32 bytes/);
   });
 });

@@ -6,7 +6,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef } from '@/lib/payments/peach/refs';
-import { encryptId } from '@/lib/idEncryption';
+import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
@@ -349,8 +349,18 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // fields here. For returning patients we always overwrite — they
   // may have corrected a typo.
   let encryptedSaId: string;
+  let saIdLookupHash: string;
   try {
-    encryptedSaId = encryptId(saIdNumber.trim());
+    const trimmedSaId = saIdNumber.trim();
+    encryptedSaId  = encryptId(trimmedSaId);
+    // Deterministic blind index (migration 0085) — lets a future lookup
+    // find this profile by SA ID without decrypting every row. Populated
+    // on every write going forward; encryptId failing above already
+    // short-circuits this on a bad key, so a failure here would only
+    // happen if SA_ID_LOOKUP_HMAC_KEY specifically is misconfigured while
+    // SA_ID_ENCRYPTION_KEY is fine — treat that the same as any other
+    // encryption-config error rather than silently skipping the hash.
+    saIdLookupHash = hashIdForLookup(trimmedSaId);
   } catch {
     return { ok: false, error: 'Encryption error — please contact support.' };
   }
@@ -363,6 +373,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     last_name:          lastName.trim(),
     phone:              normalizedPhone,
     sa_id_number:       encryptedSaId,
+    sa_id_lookup_hash:  saIdLookupHash,
     salary_day:         salaryDay,
     // Phone-verification fact lands together with everything else this
     // action writes. Idempotent on retry — upsert re-applies the same

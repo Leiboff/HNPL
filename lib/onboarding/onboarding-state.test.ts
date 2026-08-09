@@ -381,9 +381,9 @@ describe('Onboarding state module — cached-true short-circuit', () => {
 });
 
 describe('Onboarding server actions — validation + encryption + no raw logging', () => {
-  it('imports the existing AES-256-GCM encryptId helper', () => {
+  it('imports the existing AES-256-GCM encryptId helper (+ the SA ID lookup hash)', () => {
     expect(ACTIONS_TS).toMatch(/from ['"]@\/lib\/idEncryption['"]/);
-    expect(ACTIONS_TS).toMatch(/import \{ encryptId \}/);
+    expect(ACTIONS_TS).toMatch(/import \{ encryptId, hashIdForLookup \}/);
   });
 
   it('imports validateSaId + isAllowedSalaryDay from the shared helpers', () => {
