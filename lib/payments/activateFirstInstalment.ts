@@ -78,10 +78,18 @@ export async function activateFirstInstalment(
     return { ok: false, step: 'plan', error: planErr.message };
   }
 
-  // ── 3. Payout — one row per plan. If the sync path and the webhook
-  // both race here we'd get a duplicate row. Guard by an existence
-  // check on plan_id (cheap; the practice payouts table is small
-  // per-plan). Non-fatal — a payout can be inserted manually.
+  // ── 3. Payout — one row per plan. Three independent callers can each
+  // reach this point for the SAME plan (anon checkout return, portal
+  // payment-complete return, Peach webhook) — only the webhook guards
+  // itself against re-entry via plans.status; the other two call this
+  // helper unconditionally. The existence check below is a fast-path
+  // (skip the fee lookup + calc when we already know a payout exists)
+  // but is NOT the correctness guarantee — two calls' SELECTs can both
+  // land before either INSERT commits. The authoritative guarantee is
+  // the DB-level UNIQUE constraint on payouts.plan_id (migration 0087)
+  // combined with the upsert below: the losing write is rejected by the
+  // constraint and ignoreDuplicates turns that rejection into a benign
+  // no-op instead of an error.
   const { data: existingPayouts } = await supabase
     .from('payouts')
     .select('id')
@@ -130,7 +138,13 @@ export async function activateFirstInstalment(
     }
   }
 
-  const { error: payoutErr } = await supabase.from('payouts').insert(payoutRow);
+  // upsert + ignoreDuplicates → INSERT ... ON CONFLICT (plan_id) DO
+  // NOTHING. If a concurrent caller already won the insert, this is a
+  // silent no-op (error is null) rather than a unique-violation error —
+  // exactly the idempotent behaviour a second/third caller needs.
+  const { error: payoutErr } = await supabase
+    .from('payouts')
+    .upsert(payoutRow, { onConflict: 'plan_id', ignoreDuplicates: true });
   if (payoutErr) {
     return { ok: false, step: 'payout', error: payoutErr.message };
   }
