@@ -19,6 +19,14 @@ type Props = {
    * link rather than expose a dead route.
    */
   isBrandAdmin?: boolean;
+  /**
+   * True when the current user has manager-tier authority over the
+   * current practice — can_manage_practice OR isBrandAdmin. Drives
+   * whether the sidebar shows the "Till devices" link
+   * (/practice/pos/devices), matching the exact authority
+   * guardTillManager() checks server-side.
+   */
+  canManageTill?: boolean;
 };
 
 export default function PracticeShell({
@@ -26,12 +34,13 @@ export default function PracticeShell({
   children,
   practiceId,
   isBrandAdmin = false,
+  canManageTill = false,
 }: Props) {
   return (
     <div className="min-h-screen bg-[#f7fbfb]">
       <PracticeHeader practiceName={practiceName} />
       <div className="flex">
-        <PracticeNav practiceId={practiceId} isBrandAdmin={isBrandAdmin} />
+        <PracticeNav practiceId={practiceId} isBrandAdmin={isBrandAdmin} canManageTill={canManageTill} />
         <div className="flex-1 min-w-0">{children}</div>
       </div>
     </div>

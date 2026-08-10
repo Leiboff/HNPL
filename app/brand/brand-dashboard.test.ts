@@ -508,6 +508,28 @@ describe('Single entry point — only "Open branch" links from the brand surface
   });
 });
 
+// ─── Till devices entry point — missing-entry-point fix ────────────────
+//
+// Till/PIN admin (/practice/pos/devices) was previously reachable from
+// the brand branch strip only by typing the URL directly. Each branch
+// card now carries a second, parallel link, parameterised by that
+// branch's own id — "Brand user overseeing branch X sees a link to X's
+// device admin" is true by construction here since GroupDashboard only
+// ever receives `branches` already scoped to the caller's own groups
+// (see the brand/page.tsx query-scoping test above,
+// `.in('group_id', groupIds)`) — a branch the caller does NOT oversee
+// never reaches this component at all, so there is no per-branch runtime
+// check to test here; the scoping test already covers "no link for a
+// branch you don't oversee".
+
+describe('Till devices link — parameterised per branch, alongside Open branch', () => {
+  it('renders a till-devices link scoped to each branch id', () => {
+    expect(GROUP_DASH).toMatch(/data-testid={`branch-till-devices-\${b\.id}`}/);
+    expect(GROUP_DASH).toMatch(/href={`\/practice\/pos\/devices\?practiceId=\$\{b\.id\}`}/);
+    expect(GROUP_DASH).toMatch(/Till devices/);
+  });
+});
+
 // ─── Old DoctorsSection is gone; TeamSection replaces it ──────────────
 
 describe('DoctorsSection removed; TeamSection is the roster surface', () => {

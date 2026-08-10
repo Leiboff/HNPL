@@ -2,12 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── devices/actions — manager-gated till administration ──────────────────
 //
-// Normal per-user login model (guardTillManager, can_manage_practice) —
-// UNCHANGED auth, same generic filter-tracking mock style as
+// Normal per-user login model (guardTillManager, can_manage_practice OR
+// brand-admin) — same generic filter-tracking mock style as
 // activateFirstInstalment.test.ts / app/practice/pos/actions.test.ts.
-// Covers: non-manager rejected / manager succeeds for each export, plus
-// setTillPin's format validation and revokeDevice's own-practice scope
-// check (belt-and-braces on top of the RLS UPDATE policy).
+// Covers: non-manager rejected / manager succeeds for each export,
+// setTillPin's format validation, revokeDevice's resolve-then-guard
+// scoping, AND the brand-admin fallback added for the missing-entry-
+// point fix — a caller with NO practice_members row at all on a
+// practice, but an active practice_group_members row on that practice's
+// brand, must be authorized exactly like a per-practice manager.
+//
+// Both createClient (@/lib/supabase/server) and createClient
+// (@supabase/supabase-js) are mocked onto the SAME in-memory state —
+// guardTillManager's brand fallback and every data operation below now
+// go through the service-role client (svc()), while auth.getUser() and
+// the practice_members/practice_group_members checks stay on the
+// caller's own authenticated client; both must see one consistent world.
 
 type Row = Record<string, unknown>;
 const inserts: Array<{ table: string; row: Row }> = [];
@@ -69,6 +79,9 @@ function makeClient() {
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => makeClient()),
 }));
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => makeClient()),
+}));
 
 beforeEach(() => {
   inserts.length = 0;
@@ -80,12 +93,21 @@ beforeEach(() => {
       { user_id: 'manager-1', practice_id: 'practice-1', active: true, can_manage_practice: true, created_at: '2024-01-01' },
       { user_id: 'biller-1',  practice_id: 'practice-1', active: true, can_manage_practice: false, created_at: '2024-01-01' },
     ],
+    // practice-3 has NO practice_members rows at all — it's reachable
+    // ONLY via brand-admin authority, the exact gap this fix closes.
+    practice_group_members: [
+      { user_id: 'brand-admin-1', group_id: 'group-1', active: true },
+      { user_id: 'ex-brand-admin', group_id: 'group-1', active: false },
+    ],
     till_devices: [
       { id: 'device-1', practice_id: 'practice-1', label: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
       { id: 'device-other', practice_id: 'practice-2', label: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
+      { id: 'device-3', practice_id: 'practice-3', label: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
     ],
     practices: [
-      { id: 'practice-1', till_pin_hash: null },
+      { id: 'practice-1', till_pin_hash: null, group_id: 'group-solo-1' },
+      { id: 'practice-2', till_pin_hash: null, group_id: 'group-solo-2' },
+      { id: 'practice-3', till_pin_hash: null, group_id: 'group-1' },
     ],
     till_device_registration_codes: [],
   };
@@ -167,7 +189,7 @@ describe('listDevices — manager success', () => {
   });
 });
 
-describe('revokeDevice — manager success + own-practice scope check', () => {
+describe('revokeDevice — manager success + resolve-then-guard scoping', () => {
   it('sets revoked_at + revoked_by on the manager\'s own device', async () => {
     const result = await revokeDevice('device-1');
     expect(result.error).toBeNull();
@@ -176,12 +198,74 @@ describe('revokeDevice — manager success + own-practice scope check', () => {
     expect(row.revoked_by).toBe('manager-1');
   });
 
-  it('refuses to revoke a device belonging to a DIFFERENT practice', async () => {
+  it('refuses to revoke a device belonging to a practice the caller has no authority over', async () => {
     const result = await revokeDevice('device-other');
-    expect(result.error).toMatch(/not found/i);
+    expect(result.error).toMatch(/permission/i);
     const row = state.till_devices.find((d) => d.id === 'device-other')!;
     expect(row.revoked_at).toBeNull();
     expect(updates).toHaveLength(0);
+  });
+
+  it('reports a device id that matches no row at all as not found (distinct from a permission error)', async () => {
+    const result = await revokeDevice('nonexistent-device');
+    expect(result.error).toMatch(/not found/i);
+    expect(updates).toHaveLength(0);
+  });
+});
+
+describe('guardTillManager — brand-admin fallback (no practice_members row at all)', () => {
+  it('generateDeviceRegistrationCode succeeds for a brand-admin of the practice\'s group', async () => {
+    sessionUserId = 'brand-admin-1';
+    const result = await generateDeviceRegistrationCode('practice-3');
+    expect(result.error).toBeNull();
+    expect(inserts[0].row.practice_id).toBe('practice-3');
+    expect(inserts[0].row.created_by).toBe('brand-admin-1');
+  });
+
+  it('listDevices succeeds for a brand-admin and returns that branch\'s devices', async () => {
+    sessionUserId = 'brand-admin-1';
+    const result = await listDevices('practice-3');
+    expect(result.error).toBeNull();
+    expect(result.devices).toHaveLength(1);
+    expect(result.devices![0].id).toBe('device-3');
+  });
+
+  it('revokeDevice succeeds for a brand-admin revoking a device on their branch', async () => {
+    sessionUserId = 'brand-admin-1';
+    const result = await revokeDevice('device-3');
+    expect(result.error).toBeNull();
+    const row = state.till_devices.find((d) => d.id === 'device-3')!;
+    expect(row.revoked_at).toBeTruthy();
+    expect(row.revoked_by).toBe('brand-admin-1');
+  });
+
+  it('setTillPin succeeds for a brand-admin setting the PIN on their branch', async () => {
+    sessionUserId = 'brand-admin-1';
+    const result = await setTillPin('123456', 'practice-3');
+    expect(result.error).toBeNull();
+    expect(state.practices.find((p) => p.id === 'practice-3')!.till_pin_hash).toBeTruthy();
+  });
+
+  it('rejects a caller who is a brand-admin of a DIFFERENT group', async () => {
+    sessionUserId = 'brand-admin-1';
+    // practice-1 belongs to group-solo-1, not group-1.
+    const result = await generateDeviceRegistrationCode('practice-1');
+    expect(result.error).toMatch(/permission/i);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('rejects a DEACTIVATED brand-admin membership', async () => {
+    sessionUserId = 'ex-brand-admin';
+    const result = await listDevices('practice-3');
+    expect(result.error).toMatch(/permission/i);
+  });
+
+  it('does not weaken the plain per-practice-manager path — manager-1 on practice-1 is unaffected', async () => {
+    sessionUserId = 'manager-1';
+    const result = await listDevices('practice-1');
+    expect(result.error).toBeNull();
+    expect(result.devices).toHaveLength(1);
+    expect(result.devices![0].id).toBe('device-1');
   });
 });
 

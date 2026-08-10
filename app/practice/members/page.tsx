@@ -101,6 +101,7 @@ export default async function MembersPage({
       practiceName={practiceName}
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
+      canManageTill={isManager || isBrandAdmin}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-8 pb-20">
         <MembersView

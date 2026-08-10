@@ -324,7 +324,12 @@ export default function GroupDashboard({
                   {bucket.count} active {bucket.count === 1 ? 'plan' : 'plans'} · net
                 </p>
 
-                {/* Single entry point — the branch page is the ONE way in. */}
+                {/* The branch page is the ONE way in for editing branch
+                    details/team/banking. Till devices is a second,
+                    parallel entry point — its own screen
+                    (/practice/pos/devices), not a section of the branch
+                    page — so it's a sibling link here rather than
+                    something reached via "Open branch →". */}
                 <div className="mt-3 flex flex-wrap gap-3 text-xs">
                   <Link
                     href={`/brand/branch/${b.id}`}
@@ -333,6 +338,14 @@ export default function GroupDashboard({
                     data-testid={`branch-drilldown-${b.id}`}
                   >
                     Open branch →
+                  </Link>
+                  <Link
+                    href={`/practice/pos/devices?practiceId=${b.id}`}
+                    className="font-semibold underline underline-offset-2"
+                    style={{ color: '#13294B' }}
+                    data-testid={`branch-till-devices-${b.id}`}
+                  >
+                    Till devices →
                   </Link>
                 </div>
               </li>
