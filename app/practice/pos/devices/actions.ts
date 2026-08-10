@@ -5,6 +5,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import {
   hashTillSecret,
   generateRegistrationCode,
+  generateTillPin,
 } from '@/lib/auth/tillDevice';
 
 // ─── Till device administration — manager-gated, normal login ─────────────
@@ -120,8 +121,20 @@ export async function generateDeviceRegistrationCode(practiceId?: string): Promi
   const guard = await guardTillManager(practiceId);
   if (!guard.ok) return { error: guard.error };
 
-  const code      = generateRegistrationCode();
-  const codeHash  = hashTillSecret(code);
+  const code = generateRegistrationCode();
+  let codeHash: string;
+  try {
+    codeHash = hashTillSecret(code);
+  } catch {
+    // hashTillSecret throws if TILL_AUTH_PEPPER isn't configured in this
+    // environment (lib/auth/tillDevice.ts's pepper()) — a real deploy-
+    // config gap this exact call hit in production (uncaught, it crashed
+    // the whole Server Action with no error boundary in the /practice
+    // route tree to catch it). Same posture as issueCounterSession's
+    // encryptId try/catch: fail into a clear, actionable error instead
+    // of an unhandled throw.
+    return { error: 'Server configuration error — please contact support.' };
+  }
   const expiresAt = new Date(Date.now() + REGISTRATION_CODE_TTL_MS).toISOString();
 
   const { error } = await svc().from('till_device_registration_codes').insert({
@@ -223,7 +236,14 @@ export async function setTillPin(pin: string, practiceId?: string): Promise<{ er
   const guard = await guardTillManager(practiceId);
   if (!guard.ok) return { error: guard.error };
 
-  const pinHash = hashTillSecret(pin);
+  let pinHash: string;
+  try {
+    pinHash = hashTillSecret(pin);
+  } catch {
+    // See generateDeviceRegistrationCode's identical try/catch — same
+    // TILL_AUTH_PEPPER misconfiguration, same fix.
+    return { error: 'Server configuration error — please contact support.' };
+  }
   const { error: practiceErr } = await svc()
     .from('practices')
     .update({ till_pin_hash: pinHash })
@@ -237,6 +257,21 @@ export async function setTillPin(pin: string, practiceId?: string): Promise<{ er
   if (resetErr) return { error: resetErr.message };
 
   return { error: null };
+}
+
+// ─── generateTillPinValue ───────────────────────────────────────────────
+//
+// Pure generation — does NOT persist anything. Manager-gated (same
+// guard as every other action here), returns a candidate 6-digit PIN
+// for the manager to review (masked/revealed client-side) and then
+// submit through setTillPin, which is the only thing that actually
+// hashes + stores it. Mirrors generateDeviceRegistrationCode's "shown
+// once, never persisted in plaintext" shape.
+
+export async function generateTillPinValue(practiceId?: string): Promise<{ error: string | null; pin?: string }> {
+  const guard = await guardTillManager(practiceId);
+  if (!guard.ok) return { error: guard.error };
+  return { error: null, pin: generateTillPin() };
 }
 
 // ─── hasTillPin ─────────────────────────────────────────────────────────
