@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TILL_DEVICE_SECRET_KEY } from './tillStorage';
+import PinInput from './PinInput';
 import CounterSessionForm from './CounterSessionForm';
 import type {
   DeviceStatus,
@@ -145,16 +146,12 @@ export default function TillShell({
             <h1 className="text-xl font-semibold text-gray-900">Till locked</h1>
             <p className="mt-1 text-sm text-gray-500">Enter the practice PIN to continue.</p>
           </div>
-          <input
-            type="text"
-            inputMode="numeric"
-            maxLength={6}
-            autoComplete="off"
+          <PinInput
             value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+            onChange={setPin}
             placeholder="PIN"
-            data-testid="till-pin-input"
-            className="w-full rounded-lg border border-gray-300 px-3.5 py-3 text-lg font-mono tracking-widest text-center text-gray-900"
+            testId="till-pin-input"
+            className="py-3 text-lg"
           />
           {pinError && (
             <div role="alert" className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">

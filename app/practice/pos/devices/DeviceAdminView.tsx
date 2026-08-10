@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import PinInput from '../PinInput';
 import type { GenerateCodeResult, DeviceRow } from './actions';
 
 // ─── DeviceAdminView ────────────────────────────────────────────────────
@@ -10,7 +11,11 @@ import type { GenerateCodeResult, DeviceRow } from './actions';
 //      or persisted client-side beyond this render).
 //   2. Set/reset the practice till PIN — the "no PIN set" state is made
 //      obvious (a banner), since no device at this practice can unlock
-//      until one exists.
+//      until one exists. The PIN field is masked by default (PinInput)
+//      with an optional "Generate a PIN" shortcut — either way, nothing
+//      is hashed/stored until the manager submits the form; a generated
+//      value sits in the same client-only state a manually-typed one
+//      would, shown once via the reveal toggle, never logged.
 //   3. List + revoke registered devices.
 
 function formatDate(iso: string | null): string {
@@ -25,15 +30,17 @@ type Props = {
   generateDeviceRegistrationCode: (practiceId?: string) => Promise<GenerateCodeResult>;
   revokeDevice:                   (deviceId: string) => Promise<{ error: string | null }>;
   setTillPin:                     (pin: string, practiceId?: string) => Promise<{ error: string | null }>;
+  generateTillPinValue:           (practiceId?: string) => Promise<{ error: string | null; pin?: string }>;
 };
 
 export default function DeviceAdminView({
   practiceId, initialDevices, hasPin,
-  generateDeviceRegistrationCode, revokeDevice, setTillPin,
+  generateDeviceRegistrationCode, revokeDevice, setTillPin, generateTillPinValue,
 }: Props) {
   const [devices, setDevices] = useState(initialDevices);
   const [pinConfigured, setPinConfigured] = useState(hasPin);
   const [pinInput, setPinInput] = useState('');
+  const [pinVisible, setPinVisible] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinSaved, setPinSaved] = useState(false);
   const [codeResult, setCodeResult] = useState<GenerateCodeResult | null>(null);
@@ -68,11 +75,29 @@ export default function DeviceAdminView({
         return;
       }
       setPinInput('');
+      setPinVisible(false);
       setPinConfigured(true);
       setPinSaved(true);
       // Resetting the PIN also clears every device's lockout — reflect
       // that locally so the list doesn't show a stale locked state.
       setDevices((prev) => prev.map((d) => ({ ...d })));
+    });
+  }
+
+  function handleGeneratePin() {
+    setPinError(null);
+    setPinSaved(false);
+    startTransition(async () => {
+      const result = await generateTillPinValue(practiceId);
+      if (result.error || !result.pin) {
+        setPinError(result.error ?? 'Could not generate a PIN. Please try again.');
+        return;
+      }
+      setPinInput(result.pin);
+      // Reveal it immediately — the manager needs to actually read the
+      // value to note it down before submitting; they can still hide it
+      // again via the same toggle.
+      setPinVisible(true);
     });
   }
 
@@ -131,30 +156,41 @@ export default function DeviceAdminView({
           One PIN shared by every registered till at this practice. Resetting it also clears any
           lockouts and immediately requires the new PIN everywhere.
         </p>
-        <form onSubmit={handleSetPin} className="flex items-end gap-3">
-          <div>
+        <form onSubmit={handleSetPin} className="space-y-3">
+          <div className="max-w-[240px]">
             <label htmlFor="till-pin" className="block text-sm font-medium text-gray-700 mb-1.5">
               {pinConfigured ? 'New PIN' : 'Set PIN'}
             </label>
-            <input
+            <PinInput
               id="till-pin"
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              autoComplete="off"
               value={pinInput}
-              onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+              onChange={setPinInput}
               placeholder="4-6 digits"
-              className="rounded-lg border border-gray-300 px-3.5 py-2.5 text-base font-mono tracking-widest text-gray-900"
+              testId="till-pin-input"
+              visible={pinVisible}
+              onVisibleChange={setPinVisible}
+              className="text-base"
             />
           </div>
-          <button
-            type="submit"
-            disabled={isPending}
-            className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
-          >
-            {pinConfigured ? 'Reset PIN' : 'Set PIN'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleGeneratePin}
+              disabled={isPending}
+              data-testid="till-pin-generate"
+              className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+            >
+              Generate a PIN
+            </button>
+            <button
+              type="submit"
+              disabled={isPending}
+              data-testid="till-pin-submit"
+              className="inline-flex items-center justify-center rounded-lg bg-[#13294B] px-5 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
+            >
+              {pinConfigured ? 'Reset PIN' : 'Set PIN'}
+            </button>
+          </div>
         </form>
         {pinError && <p role="alert" className="text-sm text-red-700">{pinError}</p>}
         {pinSaved && <p className="text-sm text-green-700">PIN saved.</p>}
