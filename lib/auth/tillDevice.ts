@@ -67,6 +67,18 @@ export function generateDeviceSecret(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+/** Cryptographically-random 6-digit numeric till PIN — same
+ * length/RNG convention as lib/sms/otp.ts's generateOtpCode
+ * (crypto.randomInt is bias-free across [0, max), unlike
+ * Math.random().toString().slice(...)). Numeric-only by design; this
+ * function generates a candidate value only — it is NOT persisted here,
+ * the manager still must submit it through setTillPin to hash + store
+ * it, same two-step shape as a registration code being shown once. */
+export function generateTillPin(): string {
+  const n = crypto.randomInt(0, 1_000_000);
+  return n.toString().padStart(6, '0');
+}
+
 function svc() {
   return createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

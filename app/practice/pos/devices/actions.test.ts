@@ -118,6 +118,7 @@ import {
   listDevices,
   revokeDevice,
   setTillPin,
+  generateTillPinValue,
   hasTillPin,
 } from './actions';
 
@@ -311,5 +312,98 @@ describe('hasTillPin — manager success', () => {
     state.practices[0].till_pin_hash = 'some-hash';
     const result = await hasTillPin();
     expect(result.hasPin).toBe(true);
+  });
+});
+
+// ─── Regression: TILL_AUTH_PEPPER missing in the deployed environment ─────
+//
+// PRODUCTION BUG this guards: "This page couldn't load" on Set PIN /
+// Generate Code turned out to be an UNCAUGHT exception —
+// hashTillSecret() (lib/auth/tillDevice.ts) throws if TILL_AUTH_PEPPER
+// isn't configured, and neither generateDeviceRegistrationCode nor
+// setTillPin wrapped that call, so the throw crossed the 'use server'
+// boundary with no error.tsx anywhere in the /practice route tree to
+// catch it — reproduced directly against the REAL (unmocked)
+// lib/auth/tillDevice module with TILL_AUTH_PEPPER deleted, giving:
+//   Error: TILL_AUTH_PEPPER is not set
+//     at pepper (lib/auth/tillDevice.ts:38:11)
+//     at hashTillSecret (lib/auth/tillDevice.ts:54:53)
+//     at generateDeviceRegistrationCode (app/practice/pos/devices/actions.ts:124:21)
+// The RLS/schema layer was ruled out separately (see
+// 0088_till_devices.manager_writes.rls.test.ts — the exact INSERT/UPDATE
+// statements these two actions issue succeed cleanly against real
+// Postgres) — this was never a sibling of the checkout_sessions RLS gap.
+//
+// Every OTHER test in this file (and in lib/auth/tillDevice.test.ts,
+// unlockTill.test.ts, etc.) sets TILL_AUTH_PEPPER in beforeEach — which
+// is exactly how a missing-in-production pepper went untested: nothing
+// in the existing suite ever exercised the unset case for these two call
+// sites specifically. These tests deliberately delete it.
+describe('generateDeviceRegistrationCode / setTillPin — TILL_AUTH_PEPPER misconfigured', () => {
+  it('generateDeviceRegistrationCode returns a graceful error instead of throwing', async () => {
+    delete process.env.TILL_AUTH_PEPPER;
+    await expect(generateDeviceRegistrationCode('practice-1')).resolves.toEqual({
+      error: expect.stringMatching(/configuration/i),
+    });
+    expect(inserts).toHaveLength(0);
+  });
+
+  it('setTillPin returns a graceful error instead of throwing', async () => {
+    delete process.env.TILL_AUTH_PEPPER;
+    await expect(setTillPin('123456', 'practice-1')).resolves.toEqual({
+      error: expect.stringMatching(/configuration/i),
+    });
+    expect(updates).toHaveLength(0);
+  });
+});
+
+// ─── generateTillPinValue — pure generation, manager-gated, never persisted ──
+
+describe('generateTillPinValue', () => {
+  it('rejects a non-manager', async () => {
+    sessionUserId = 'biller-1';
+    const result = await generateTillPinValue('practice-1');
+    expect(result.error).toMatch(/permission/i);
+    expect(result.pin).toBeUndefined();
+  });
+
+  it('returns a 6-digit numeric PIN for a manager, and writes NOTHING to the database', async () => {
+    const result = await generateTillPinValue('practice-1');
+    expect(result.error).toBeNull();
+    expect(result.pin).toMatch(/^\d{6}$/);
+    // Pure generation — setTillPin is a SEPARATE, explicit submit step.
+    expect(inserts).toHaveLength(0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('succeeds for a brand-admin too (same guard as every other action here)', async () => {
+    sessionUserId = 'brand-admin-1';
+    const result = await generateTillPinValue('practice-3');
+    expect(result.error).toBeNull();
+    expect(result.pin).toMatch(/^\d{6}$/);
+  });
+
+  it('adversarial: generated PINs are not a fixed or predictable value across repeated calls', async () => {
+    const pins = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const result = await generateTillPinValue('practice-1');
+      pins.add(result.pin!);
+    }
+    // A fixed/broken generator would collapse to 1 (or a handful of)
+    // distinct value(s) across 50 draws. crypto.randomInt over a
+    // 1-in-a-million space should produce (essentially always) 50
+    // distinct values — assert a high floor rather than exactly 50 to
+    // avoid a theoretically-possible-but-vanishingly-unlikely flake.
+    expect(pins.size).toBeGreaterThan(45);
+  });
+
+  it('respects the same TILL_AUTH_PEPPER-unset guard as the other actions (generation itself needs no pepper, but stays consistent)', async () => {
+    // generateTillPin() doesn't hash anything, so it's unaffected by a
+    // missing pepper — confirms this action doesn't accidentally depend
+    // on hashTillSecret at all.
+    delete process.env.TILL_AUTH_PEPPER;
+    const result = await generateTillPinValue('practice-1');
+    expect(result.error).toBeNull();
+    expect(result.pin).toMatch(/^\d{6}$/);
   });
 });

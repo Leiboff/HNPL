@@ -5,6 +5,7 @@ import {
   generateDeviceRegistrationCode,
   revokeDevice,
   setTillPin,
+  generateTillPinValue,
   listDevices,
 } from './actions';
 import DeviceAdminView from './DeviceAdminView';
@@ -126,6 +127,7 @@ export default async function DevicesPage({
           generateDeviceRegistrationCode={generateDeviceRegistrationCode}
           revokeDevice={revokeDevice}
           setTillPin={setTillPin}
+          generateTillPinValue={generateTillPinValue}
         />
       </main>
     </div>
