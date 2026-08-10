@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import {
   hashTillSecret,
   generateRegistrationCode,
@@ -15,9 +16,30 @@ import {
 // can_manage_practice). This file does NOT touch the device-auth
 // mechanism itself (lib/auth/tillDevice.ts) — it only administers the
 // rows that mechanism reads. A biller who can issue bills cannot reach
-// any of these actions; only can_manage_practice can.
+// any of these actions; only can_manage_practice OR brand-admin
+// authority over the practice (below) can.
+//
+// Data reads/writes below go through the SERVICE-ROLE client, guarded
+// solely by guardTillManager() — mirroring app/brand/actions.ts's
+// TeamSection actions, which face the exact same "per-practice manager
+// OR brand-admin" bimodal authority and made the same choice: RLS
+// (is_practice_manager) only recognises practice_members, so a brand-
+// admin-only caller (a practice_group_members row with no matching
+// practice_members row on this specific branch) would pass the app-
+// level guard but then have every authenticated-client query silently
+// blocked by RLS. till_devices/till_device_registration_codes' RLS
+// (migration 0088) is untouched by this — is_practice_manager() stays
+// exactly as narrow as it always was for every OTHER table it gates.
 
 const REGISTRATION_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes, one-time
+
+function svc() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+}
 
 // ─── Scoped manager guard ──────────────────────────────────────────────
 //
@@ -27,6 +49,15 @@ const REGISTRATION_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes, one-time
 // active memberships) — a manager administering till devices is exactly
 // the same "which of my practices" question createBill already had to
 // solve.
+//
+// Brand-admin fallback: when the caller has no (or an insufficiently
+// privileged) practice_members row on this SPECIFIC practice, fall back
+// to checking practice_group_members on the practice's own brand —
+// exactly app/brand/actions.ts's guardBrandAdminOfPractice, resolving
+// group_id via service-role first (RLS on practices is relationship-
+// scoped, so the caller's own session client would silently return null
+// for a practice they can't already see through practice_members,
+// conflating "wrong group" with "no such practice").
 type GuardOk  = { ok: true;  userId: string; practiceId: string };
 type GuardErr = { ok: false; error: string };
 
@@ -44,8 +75,25 @@ async function guardTillManager(practiceId?: string): Promise<GuardOk | GuardErr
       .eq('active',              true)
       .eq('can_manage_practice', true)
       .maybeSingle();
-    if (!membership) return { ok: false, error: 'You do not have permission to manage that practice.' };
-    return { ok: true, userId: user.id, practiceId: membership.practice_id as string };
+    if (membership) return { ok: true, userId: user.id, practiceId: membership.practice_id as string };
+
+    const { data: practice } = await svc()
+      .from('practices')
+      .select('group_id')
+      .eq('id', practiceId)
+      .maybeSingle();
+    if (practice?.group_id) {
+      const { data: brandMembership } = await supabase
+        .from('practice_group_members')
+        .select('user_id')
+        .eq('group_id', practice.group_id as string)
+        .eq('user_id',  user.id)
+        .eq('active',   true)
+        .maybeSingle();
+      if (brandMembership) return { ok: true, userId: user.id, practiceId };
+    }
+
+    return { ok: false, error: 'You do not have permission to manage that practice.' };
   }
 
   const { data: memberships } = await supabase
@@ -72,13 +120,11 @@ export async function generateDeviceRegistrationCode(practiceId?: string): Promi
   const guard = await guardTillManager(practiceId);
   if (!guard.ok) return { error: guard.error };
 
-  const supabase = await createClient();
-
   const code      = generateRegistrationCode();
   const codeHash  = hashTillSecret(code);
   const expiresAt = new Date(Date.now() + REGISTRATION_CODE_TTL_MS).toISOString();
 
-  const { error } = await supabase.from('till_device_registration_codes').insert({
+  const { error } = await svc().from('till_device_registration_codes').insert({
     practice_id: guard.practiceId,
     code_hash:   codeHash,
     created_by:  guard.userId,
@@ -106,8 +152,7 @@ export async function listDevices(practiceId?: string): Promise<{ error: string 
   const guard = await guardTillManager(practiceId);
   if (!guard.ok) return { error: guard.error };
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  const { data, error } = await svc()
     .from('till_devices')
     .select('id, label, registered_at, revoked_at, last_activity_at, unlocked_at')
     .eq('practice_id', guard.practiceId)
@@ -132,27 +177,28 @@ export async function listDevices(practiceId?: string): Promise<{ error: string 
 // Immediate — the very next requireUnlockedDevice call for this device
 // (any till action) rejects on revoked_at IS NOT NULL, even if it was
 // mid-unlocked-session. No caching anywhere in that check.
+//
+// Resolves the device's OWN practice_id first (service-role — same
+// "resolve before checking" reasoning as guardTillManager's brand
+// fallback: an authenticated-client read would silently return null for
+// a device this caller can't already see, conflating "someone else's
+// device" with "no such device"), then guards SCOPED to that practice —
+// this is what lets a brand-admin (no practice_members row at all)
+// revoke a device on a branch they administer only via
+// practice_group_members.
 
 export async function revokeDevice(deviceId: string): Promise<{ error: string | null }> {
-  const guard = await guardTillManager();
-  if (!guard.ok) return { error: guard.error };
-
-  const supabase = await createClient();
-
-  // Scope-check the target belongs to the manager's own practice before
-  // touching it — the RLS UPDATE policy (is_practice_manager) is the
-  // real enforcement, this is belt-and-braces so a wrong-practice id
-  // reads as a clear error rather than a silent 0-row update.
-  const { data: device } = await supabase
+  const { data: device } = await svc()
     .from('till_devices')
     .select('id, practice_id')
     .eq('id', deviceId)
     .maybeSingle();
-  if (!device || (device.practice_id as string) !== guard.practiceId) {
-    return { error: 'Device not found on your practice.' };
-  }
+  if (!device) return { error: 'Device not found.' };
 
-  const { error } = await supabase
+  const guard = await guardTillManager(device.practice_id as string);
+  if (!guard.ok) return { error: guard.error };
+
+  const { error } = await svc()
     .from('till_devices')
     .update({ revoked_at: new Date().toISOString(), revoked_by: guard.userId })
     .eq('id', deviceId);
@@ -177,16 +223,14 @@ export async function setTillPin(pin: string, practiceId?: string): Promise<{ er
   const guard = await guardTillManager(practiceId);
   if (!guard.ok) return { error: guard.error };
 
-  const supabase = await createClient();
-
   const pinHash = hashTillSecret(pin);
-  const { error: practiceErr } = await supabase
+  const { error: practiceErr } = await svc()
     .from('practices')
     .update({ till_pin_hash: pinHash })
     .eq('id', guard.practiceId);
   if (practiceErr) return { error: practiceErr.message };
 
-  const { error: resetErr } = await supabase
+  const { error: resetErr } = await svc()
     .from('till_devices')
     .update({ pin_attempts: 0, pin_locked_until: null })
     .eq('practice_id', guard.practiceId);
@@ -204,8 +248,7 @@ export async function hasTillPin(practiceId?: string): Promise<{ error: string |
   const guard = await guardTillManager(practiceId);
   if (!guard.ok) return { error: guard.error };
 
-  const supabase = await createClient();
-  const { data, error } = await supabase
+  const { data, error } = await svc()
     .from('practices')
     .select('till_pin_hash')
     .eq('id', guard.practiceId)

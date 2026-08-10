@@ -5,10 +5,12 @@ import { usePathname } from 'next/navigation';
 
 // ─── Practice sidebar nav ────────────────────────────────────────────
 //
-// Two everyday links + one conditional link for brand-admins:
+// Everyday links + two conditional links gated on manager-tier authority:
 //
 //   Dashboard         — /practice
 //   Team              — /practice/members
+//   Till devices       — /practice/pos/devices?practiceId={id}  (manager
+//                         or brand-admin only)
 //   Practice details  — /brand/branch/{practiceId}   (brand-admin only)
 //
 // Why the "Practice details" link points into /brand/branch/{id}:
@@ -25,18 +27,28 @@ import { usePathname } from 'next/navigation';
 // route would notFound() them, and hiding a dead link is friendlier
 // than surfacing one.
 //
+// "Till devices" was previously reachable ONLY by typing the URL
+// directly — there was no link to it anywhere (single-practice sidebar
+// or the brand branch strip). canManageTill is can_manage_practice OR
+// isBrandAdmin — the exact same two-way authority
+// app/practice/pos/devices/actions.ts's guardTillManager() now checks,
+// so a visible link and a working destination always agree. The
+// destination re-verifies server-side regardless (this is a visibility
+// gate, not the authorization boundary).
+//
 // The `?practiceId=` scope forwards onto /practice + /practice/members
-// so a brand-admin with N≥2 branches keeps their current-branch
-// context when navigating between sidebar entries. Solo callers
-// (isBrandAdmin=true, N=1) get the same URLs without the query
-// suffix — page-level fallback resolves the same practice.
+// + /practice/pos/devices so a brand-admin with N≥2 branches keeps
+// their current-branch context when navigating between sidebar entries.
+// Solo callers (isBrandAdmin=true, N=1) get the same URLs without the
+// query suffix — page-level fallback resolves the same practice.
 
 type Props = {
-  practiceId?:   string;
-  isBrandAdmin?: boolean;
+  practiceId?:     string;
+  isBrandAdmin?:   boolean;
+  canManageTill?:  boolean;
 };
 
-export default function PracticeNav({ practiceId, isBrandAdmin = false }: Props) {
+export default function PracticeNav({ practiceId, isBrandAdmin = false, canManageTill = false }: Props) {
   const pathname = usePathname();
 
   const scopeSuffix = practiceId
@@ -47,6 +59,9 @@ export default function PracticeNav({ practiceId, isBrandAdmin = false }: Props)
     { href: `/practice${scopeSuffix}`,         label: 'Dashboard'       },
     { href: `/practice/members${scopeSuffix}`, label: 'Team'            },
   ];
+  if (canManageTill) {
+    links.push({ href: `/practice/pos/devices${scopeSuffix}`, label: 'Till devices' });
+  }
   if (isBrandAdmin && practiceId) {
     links.push({ href: `/brand/branch/${practiceId}`, label: 'Practice details' });
   }

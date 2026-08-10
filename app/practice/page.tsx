@@ -149,6 +149,7 @@ export default async function PracticeDashboardPage({
       practiceName={practiceName}
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
+      canManageTill={picked.can_manage_practice || isBrandAdmin}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-10 space-y-6 sm:space-y-8">
 
