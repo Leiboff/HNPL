@@ -4,16 +4,39 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutAndRedirect } from '@/lib/auth/logout';
+import { getPracticeManagerLinks } from './practiceManagerLinks';
 
+// Base mobile links — Dashboard + Manage Practice. Deliberately this
+// component's OWN wording ("Manage Practice" vs. PracticeNav's "Team")
+// — that divergence predates this fix and was never the bug. The
+// CONDITIONAL links (Till devices, Practice details) come from
+// getPracticeManagerLinks (./practiceManagerLinks) instead of being
+// hand-repeated here — see PracticeNav.tsx's comment for why: that
+// hand-repetition is exactly what let "Till devices" reach desktop but
+// not mobile in the first place.
 const LINKS = [
   { href: '/practice',         label: 'Dashboard'       },
   { href: '/practice/members', label: 'Manage Practice' },
 ];
 
-export default function PracticeHeader({ practiceName }: { practiceName: string }) {
+type Props = {
+  practiceName:    string;
+  practiceId?:     string;
+  isBrandAdmin?:   boolean;
+  canManageTill?:  boolean;
+};
+
+export default function PracticeHeader({
+  practiceName,
+  practiceId,
+  isBrandAdmin  = false,
+  canManageTill = false,
+}: Props) {
   const [open, setOpen]   = useState(false);
   const pathname          = usePathname();
   const menuRef           = useRef<HTMLDivElement>(null);
+
+  const links = [...LINKS, ...getPracticeManagerLinks({ practiceId, canManageTill, isBrandAdmin })];
 
   // Close on route change
   useEffect(() => { setOpen(false); }, [pathname]);
@@ -32,7 +55,8 @@ export default function PracticeHeader({ practiceName }: { practiceName: string 
   // redirect must run unconditionally on flaky mobile networks.
 
   function isActive(href: string) {
-    return href === '/practice' ? pathname === '/practice' : pathname.startsWith(href);
+    const path = href.split('?')[0];
+    return path === '/practice' ? pathname === '/practice' : pathname.startsWith(path);
   }
 
   return (
@@ -79,7 +103,7 @@ export default function PracticeHeader({ practiceName }: { practiceName: string 
       {/* Mobile dropdown menu */}
       {open && (
         <div className="md:hidden border-t border-gray-100 bg-white px-3 pb-3 pt-2 space-y-0.5">
-          {LINKS.map(({ href, label }) => {
+          {links.map(({ href, label }) => {
             const active = isActive(href);
             return (
               <Link

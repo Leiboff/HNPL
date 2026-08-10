@@ -278,8 +278,17 @@ describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
   });
 
   it('PracticeNav renders a Practice-details link ONLY when isBrandAdmin && practiceId', () => {
-    expect(NAV).toMatch(/isBrandAdmin\s*&&\s*practiceId/);
-    expect(NAV).toMatch(/\/brand\/branch\/\$\{practiceId\}/);
+    // The conditional now lives in the shared getPracticeManagerLinks
+    // helper (practiceManagerLinks.ts) — PracticeNav (desktop) and
+    // PracticeHeader (mobile) both consume it instead of each
+    // re-implementing the conditional, which is what let "Till
+    // devices" reach one surface and not the other. Assert the
+    // conditional itself lives there, AND that PracticeNav actually
+    // wires into it rather than reimplementing its own copy.
+    const MANAGER_LINKS = read('app/practice/practiceManagerLinks.ts');
+    expect(MANAGER_LINKS).toMatch(/isBrandAdmin\s*&&\s*practiceId/);
+    expect(MANAGER_LINKS).toMatch(/\/brand\/branch\/\$\{practiceId\}/);
+    expect(NAV).toMatch(/getPracticeManagerLinks/);
   });
 
   it('Dashboard resolves isBrandAdmin from practice_group_members membership', () => {

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { getPracticeManagerLinks } from './practiceManagerLinks';
 
 // ─── Practice sidebar nav ────────────────────────────────────────────
 //
@@ -36,6 +37,15 @@ import { usePathname } from 'next/navigation';
 // destination re-verifies server-side regardless (this is a visibility
 // gate, not the authorization boundary).
 //
+// The two CONDITIONAL links (Till devices, Practice details) come from
+// getPracticeManagerLinks (./practiceManagerLinks) — the SAME function
+// PracticeHeader's mobile menu uses — rather than being hand-repeated
+// here. That's what fixed the original bug (Till devices reaching
+// desktop but not mobile): a link added to one hand-maintained array
+// and not the other. Dashboard/Team stay this component's own base
+// list — their labels already differ from PracticeHeader's mobile
+// wording ("Manage Practice") by design, which was never the bug.
+//
 // The `?practiceId=` scope forwards onto /practice + /practice/members
 // + /practice/pos/devices so a brand-admin with N≥2 branches keeps
 // their current-branch context when navigating between sidebar entries.
@@ -58,13 +68,8 @@ export default function PracticeNav({ practiceId, isBrandAdmin = false, canManag
   const links: Array<{ href: string; label: string }> = [
     { href: `/practice${scopeSuffix}`,         label: 'Dashboard'       },
     { href: `/practice/members${scopeSuffix}`, label: 'Team'            },
+    ...getPracticeManagerLinks({ practiceId, canManageTill, isBrandAdmin }),
   ];
-  if (canManageTill) {
-    links.push({ href: `/practice/pos/devices${scopeSuffix}`, label: 'Till devices' });
-  }
-  if (isBrandAdmin && practiceId) {
-    links.push({ href: `/brand/branch/${practiceId}`, label: 'Practice details' });
-  }
 
   function isActive(href: string) {
     const path = href.split('?')[0];
