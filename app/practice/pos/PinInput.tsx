@@ -66,17 +66,52 @@ export default function PinInput({
     else setInternalVisible(next);
   }
 
+  // Accept a digit-only PIN, or REJECT the edit outright — never silently
+  // keep the digits out of a non-numeric value.
+  //
+  // This used to be `value.replace(/\D/g, '')`, which looked like harmless
+  // input sanitising but was the whole bug: a password manager autofilling
+  // a saved site credential ("Passw6rd") got quietly reduced to its digits
+  // ("6"), so the masked field showed the credential's ~7 dots and the
+  // reveal toggle then rendered a bare "6" — a value the manager never
+  // chose and that unlockTill would never accept. Rejecting the edit
+  // instead means React's controlled-input restore puts the previous good
+  // value straight back, so junk can neither become the PIN nor destroy a
+  // PIN already in the field.
+  //
+  // Normal typing is unaffected: a stray letter is ignored keystroke-by-
+  // keystroke (same end state the old strip produced), and a pasted PIN
+  // with surrounding whitespace is trimmed rather than thrown away.
+  function handleChange(raw: string) {
+    const next = raw.trim();
+    if (next === '') { onChange(''); return; }
+    // Length cap too: maxLength stops a human typing past it but does NOT
+    // constrain a programmatic/autofill write, so an autofilled numeric
+    // credential (a long account number) must not land here either.
+    if (!/^\d+$/.test(next) || next.length > maxLength) return;
+    onChange(next);
+  }
+
   return (
     <div className="relative">
       <input
         id={id}
+        name={id}
         type={visible ? 'text' : 'password'}
         inputMode="numeric"
         maxLength={maxLength}
-        autoComplete="off"
+        // NOT "off": Chrome ignores autocomplete="off" on type="password"
+        // and fills a saved credential anyway. "new-password" is the value
+        // it actually honours, and the data-* attributes are the
+        // equivalent opt-outs for 1Password / LastPass / Bitwarden.
+        autoComplete="new-password"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        data-bwignore="true"
+        data-form-type="other"
         disabled={disabled}
         value={value}
-        onChange={(e) => onChange(e.target.value.replace(/\D/g, ''))}
+        onChange={(e) => handleChange(e.target.value)}
         placeholder={placeholder}
         data-testid={testId}
         className={`w-full pr-10 rounded-lg border border-gray-300 px-3.5 py-2.5 font-mono tracking-widest text-gray-900 disabled:opacity-60 ${className}`}
