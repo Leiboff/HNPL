@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PracticeShell from '../PracticeShell';
+import { resolvePracticeShellAuthority } from '../practiceShellAuthority';
 import MembersView from './MembersView';
 import type { MemberRow } from './MembersView';
 
@@ -62,22 +63,10 @@ export default async function MembersPage({
   const practiceName = practiceInfo?.name ?? 'Practice';
 
   // ── Brand-admin gate for the sidebar's "Practice details" link ────
-  const { data: practiceGroupRow } = await supabase
-    .from('practices')
-    .select('group_id')
-    .eq('id', practiceId)
-    .maybeSingle();
-  let isBrandAdmin = false;
-  if (practiceGroupRow?.group_id) {
-    const { data: brandMembership } = await supabase
-      .from('practice_group_members')
-      .select('user_id')
-      .eq('group_id', practiceGroupRow.group_id)
-      .eq('user_id',  user.id)
-      .eq('active',   true)
-      .maybeSingle();
-    isBrandAdmin = !!brandMembership;
-  }
+  // Shared resolver — see ../practiceShellAuthority.
+  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
+    supabase, user.id, practiceId, isManager,
+  );
 
   // ── Fetch all members (active + inactive) with profile join ───────────────
   const { data: rawMembers } = await supabase
@@ -101,7 +90,7 @@ export default async function MembersPage({
       practiceName={practiceName}
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
-      canManageTill={isManager || isBrandAdmin}
+      canManageTill={canManageTill}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-8 pb-20">
         <MembersView

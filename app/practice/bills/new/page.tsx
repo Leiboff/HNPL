@@ -4,6 +4,8 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
 import { createBill } from './actions';
 import BillForm from './BillForm';
+import PracticeShell from '@/app/practice/PracticeShell';
+import { resolvePracticeShellAuthority } from '@/app/practice/practiceShellAuthority';
 
 export type { CreateBillSummary, CreateBillResult } from './actions';
 
@@ -56,15 +58,18 @@ export default async function NewBillPage({
   // resolve to the same practice for the same URL.
   const { data: rawMemberships } = await supabase
     .from('practice_members')
-    .select('practice_id, created_at, practices(id, name, fee_percent)')
+    // can_manage_practice added for the nav shell's permission-gated links
+    // (resolved, never assumed — see resolvePracticeShellAuthority below).
+    .select('practice_id, created_at, can_manage_practice, practices(id, name, fee_percent)')
     .eq('user_id', user.id)
     .eq('active', true)
     .order('created_at', { ascending: true });
 
   const memberRowsRaw = (rawMemberships ?? []) as unknown as Array<{
-    practice_id: string;
-    created_at:  string;
-    practices:   PracticeInfo | PracticeInfo[] | null;
+    practice_id:         string;
+    created_at:          string;
+    can_manage_practice: boolean;
+    practices:           PracticeInfo | PracticeInfo[] | null;
   }>;
   const memberRows = memberRowsRaw.map((m) => ({
     ...m,
@@ -120,26 +125,18 @@ export default async function NewBillPage({
     };
   });
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="mx-auto max-w-3xl px-6 py-4 flex items-center justify-between">
-          <div>
-            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-              <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-            </span>
-            <span className="ml-2 text-sm text-gray-400">— {practice.name}</span>
-          </div>
-          <a
-            href={`/practice?practiceId=${practiceId}`}
-            className="text-sm text-[#15A89E] hover:text-[#13294B]"
-          >
-            ← Back to dashboard
-          </a>
-        </div>
-      </header>
+  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
+    supabase, user.id, practiceId, picked.can_manage_practice,
+  );
 
-      <main className="mx-auto max-w-3xl px-6 py-12">
+  return (
+    <PracticeShell
+      practiceName={practice.name}
+      practiceId={practiceId}
+      isBrandAdmin={isBrandAdmin}
+      canManageTill={canManageTill}
+    >
+      <main className="px-4 sm:px-6 py-6 sm:py-10 max-w-3xl">
         <div className="mb-8">
           <h1 className="text-3xl font-semibold text-gray-900">New Bill</h1>
           <p className="mt-2 text-gray-500">
@@ -155,6 +152,6 @@ export default async function NewBillPage({
           createBill={createBill}
         />
       </main>
-    </div>
+    </PracticeShell>
   );
 }
