@@ -158,6 +158,9 @@ export type DeviceRow = {
   userAgent:       string | null;
   registeredAt:    string;
   revokedAt:       string | null;
+  // Resolved manager name for the audit trail (Revoked tab) — null if not
+  // revoked, or if the revoking profile has since been deleted/renamed away.
+  revokedBy:       string | null;
   lastActivityAt:  string | null;
   unlockedAt:      string | null;
 };
@@ -168,19 +171,37 @@ export async function listDevices(practiceId?: string): Promise<{ error: string 
 
   const { data, error } = await svc()
     .from('till_devices')
-    .select('id, label, user_agent, registered_at, revoked_at, last_activity_at, unlocked_at')
+    .select('id, label, user_agent, registered_at, revoked_at, revoked_by, last_activity_at, unlocked_at')
     .eq('practice_id', guard.practiceId)
     .order('registered_at', { ascending: false });
   if (error) return { error: error.message };
 
+  const rows = data ?? [];
+
+  // Resolve each distinct revoker id to a display name once, not per row —
+  // most practices revoke devices rarely, so this stays a handful of calls
+  // even on a long device list.
+  const revokerIds = [...new Set(rows.map((d) => d.revoked_by as string | null).filter((id): id is string => !!id))];
+  const revokerNames = new Map<string, string>();
+  for (const id of revokerIds) {
+    const { data: profile } = await svc()
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('id', id)
+      .maybeSingle();
+    const name = [profile?.first_name, profile?.last_name].filter(Boolean).join(' ').trim();
+    if (name) revokerNames.set(id, name);
+  }
+
   return {
     error: null,
-    devices: (data ?? []).map((d) => ({
+    devices: rows.map((d) => ({
       id:             d.id as string,
       label:          d.label as string | null,
       userAgent:      d.user_agent as string | null,
       registeredAt:   d.registered_at as string,
       revokedAt:      d.revoked_at as string | null,
+      revokedBy:      d.revoked_by ? (revokerNames.get(d.revoked_by as string) ?? null) : null,
       lastActivityAt: d.last_activity_at as string | null,
       unlockedAt:     d.unlocked_at as string | null,
     })),

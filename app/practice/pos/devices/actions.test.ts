@@ -198,6 +198,25 @@ describe('listDevices — manager success', () => {
     // Name + raw UA (→ model) flow through for the admin view to render.
     expect(result.devices![0].label).toBe('Front desk PC');
     expect(result.devices![0].userAgent).toContain('SM-S911B');
+    expect(result.devices![0].revokedBy).toBeNull();
+  });
+
+  it('resolves revoked_by to the revoking manager\'s name for the Revoked-tab audit trail', async () => {
+    state.profiles = [{ id: 'manager-1', first_name: 'Jane', last_name: 'Doe' }];
+    state.till_devices[0].revoked_at = '2024-03-01T00:00:00Z';
+    state.till_devices[0].revoked_by = 'manager-1';
+
+    const result = await listDevices();
+    expect(result.devices![0].revokedBy).toBe('Jane Doe');
+  });
+
+  it('falls back to null (not a crash) when the revoking profile no longer resolves', async () => {
+    state.till_devices[0].revoked_at = '2024-03-01T00:00:00Z';
+    state.till_devices[0].revoked_by = 'deleted-profile';
+
+    const result = await listDevices();
+    expect(result.error).toBeNull();
+    expect(result.devices![0].revokedBy).toBeNull();
   });
 });
 

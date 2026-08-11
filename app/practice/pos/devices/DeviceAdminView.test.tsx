@@ -41,9 +41,21 @@ function renderView(overrides: {
 }
 
 const S23_UA = 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
+const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
 const DEVICE: DeviceRow = {
   id: 'device-1', label: 'Front desk PC', userAgent: S23_UA,
-  registeredAt: '2024-01-01T08:00:00Z', revokedAt: null, lastActivityAt: null, unlockedAt: null,
+  registeredAt: '2024-01-01T08:00:00Z', revokedAt: null, revokedBy: null, lastActivityAt: null, unlockedAt: null,
+};
+// Shares BOTH label and OS-derived model with DEVICE — the code (Part 2)
+// is the only thing that can tell these two apart.
+const TWIN_DEVICE: DeviceRow = {
+  id: 'device-2', label: 'Front desk PC', userAgent: S23_UA,
+  registeredAt: '2024-01-02T08:00:00Z', revokedAt: null, revokedBy: null, lastActivityAt: null, unlockedAt: null,
+};
+const REVOKED_DEVICE: DeviceRow = {
+  id: 'device-3', label: 'Old reception PC', userAgent: WINDOWS_UA,
+  registeredAt: '2023-06-01T08:00:00Z', revokedAt: '2024-02-01T10:00:00Z', revokedBy: 'Jane Doe',
+  lastActivityAt: '2024-01-30T09:00:00Z', unlockedAt: '2024-01-30T08:00:00Z',
 };
 
 describe('DeviceAdminView — Set PIN vs Reset PIN label', () => {
@@ -154,6 +166,87 @@ describe('DeviceAdminView — device name + model + rename', () => {
     // Client-side guard fires first — server action never called on blank.
     await waitFor(() => expect(screen.getByText(/enter a name/i)).toBeTruthy());
     expect(relabelDevice).not.toHaveBeenCalled();
+  });
+});
+
+describe('DeviceAdminView — device code (Part 2)', () => {
+  it('shows a distinct code for two devices that share BOTH a label and a model', () => {
+    renderView({ initialDevices: [DEVICE, TWIN_DEVICE] });
+    const codeA = screen.getByTestId('device-code-device-1').textContent;
+    const codeB = screen.getByTestId('device-code-device-2').textContent;
+    expect(codeA).toBeTruthy();
+    expect(codeB).toBeTruthy();
+    expect(codeA).not.toBe(codeB);
+  });
+
+  it('the code is stable across re-renders (not regenerated per render)', () => {
+    const { rerender } = render(
+      <DeviceAdminView
+        practiceId="practice-1"
+        initialDevices={[DEVICE]}
+        hasPin={false}
+        generateDeviceRegistrationCode={vi.fn()}
+        revokeDevice={vi.fn()}
+        setTillPin={vi.fn()}
+        generateTillPinValue={vi.fn()}
+        relabelDevice={vi.fn()}
+      />,
+    );
+    const first = screen.getByTestId('device-code-device-1').textContent;
+    rerender(
+      <DeviceAdminView
+        practiceId="practice-1"
+        initialDevices={[DEVICE]}
+        hasPin={false}
+        generateDeviceRegistrationCode={vi.fn()}
+        revokeDevice={vi.fn()}
+        setTillPin={vi.fn()}
+        generateTillPinValue={vi.fn()}
+        relabelDevice={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('device-code-device-1').textContent).toBe(first);
+  });
+});
+
+describe('DeviceAdminView — Active / Revoked tabs (Part 3)', () => {
+  it('defaults to the Active tab on load', () => {
+    renderView({ initialDevices: [DEVICE, REVOKED_DEVICE] });
+    expect(screen.getByTestId('tab-active').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('active-device-list')).toBeTruthy();
+    expect(screen.queryByTestId('revoked-device-list')).toBeNull();
+  });
+
+  it('partitions devices correctly: active-only in Active, revoked-only in Revoked', () => {
+    renderView({ initialDevices: [DEVICE, REVOKED_DEVICE] });
+    expect(screen.getByText('Front desk PC')).toBeTruthy();
+    expect(screen.queryByText('Old reception PC')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('tab-revoked'));
+    expect(screen.getByText('Old reception PC')).toBeTruthy();
+    expect(screen.queryByText('Front desk PC')).toBeNull();
+  });
+
+  it('the Revoked tab shows registered/last-active/revoked-date-and-by and the device code, with NO rename/revoke controls', () => {
+    renderView({ initialDevices: [REVOKED_DEVICE] });
+    fireEvent.click(screen.getByTestId('tab-revoked'));
+
+    expect(screen.getByTestId('revoked-info-device-3').textContent).toMatch(/Revoked.*by Jane Doe/);
+    expect(screen.getByTestId('device-code-device-3').textContent).toBeTruthy();
+    expect(screen.getByTestId('revoked-device-list').textContent).toMatch(/Registered.*Last active/);
+
+    expect(screen.queryByTestId('rename-device-3')).toBeNull();
+    expect(screen.queryByTestId('revoke-device-3')).toBeNull();
+  });
+
+  it('the Active tab keeps Rename/Revoke available; the Revoked tab never gains them', () => {
+    renderView({ initialDevices: [DEVICE, REVOKED_DEVICE] });
+    expect(screen.getByTestId('rename-device-1')).toBeTruthy();
+    expect(screen.getByTestId('revoke-device-1')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('tab-revoked'));
+    expect(screen.queryByTestId('rename-device-3')).toBeNull();
+    expect(screen.queryByTestId('revoke-device-3')).toBeNull();
   });
 });
 

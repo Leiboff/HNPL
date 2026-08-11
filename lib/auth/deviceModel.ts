@@ -60,3 +60,26 @@ export function describeDevice(userAgent: string | null | undefined): string {
 
   return 'Unknown device';
 }
+
+// ─── deviceCode — short, stable, visually-distinct code from a device's id ─
+//
+// till_devices.id (UUID primary key) is the only column guaranteed unique
+// per registration by construction — a manager can rename a device to any
+// label (including a duplicate one) and two devices can share the same
+// derived model (e.g. two identical till PCs), so label+model alone can't
+// tell them apart. secret_hash is also unique, but it's the hashed
+// credential itself — even a truncated slice of security material has no
+// business appearing on a screen other staff can see over someone's
+// shoulder. The id has neither problem: it carries no secret, and it
+// already exists (Postgres mints it at INSERT), so no new column is
+// needed.
+//
+// A UUID v4's last 6 hex chars carry 24 bits of its randomness — plenty to
+// keep two devices at the same small practice visually distinct, and (since
+// it's a stored id, not derived from mutable fields) it never changes
+// across reloads or a rename.
+
+export function deviceCode(id: string): string {
+  const hex = id.replace(/-/g, '').slice(-6);
+  return hex.toUpperCase();
+}
