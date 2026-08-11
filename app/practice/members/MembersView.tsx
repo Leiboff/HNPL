@@ -137,6 +137,22 @@ function countManagers(members: MemberRow[], excludeId?: string): number {
   return members.filter(m => m.active && m.can_manage_practice && m.id !== excludeId).length;
 }
 
+// Copy for the "Last manager" tag, matching the rule ACTUALLY enforced in
+// code rather than a guess. Client: isLastManager = this member holds
+// can_manage_practice AND countManagers(members, thisId) === 0, i.e. no
+// OTHER *active* member holds can_manage_practice. Server enforces the
+// identical count in both updateMember (rejecting the removal of
+// can_manage_practice) and disableMember — see app/practice/members/
+// actions.ts's two "Last manager guardrail" blocks.
+//
+// Note it hinges on the can_manage_practice CAPABILITY, not on the
+// admin/provider role — which is why the tag legitimately appears on a
+// doctor's row, the exact thing that made it confusing.
+const LAST_MANAGER_EXPLAINER =
+  'This is the only active member who can manage the practice. Every practice needs at '
+  + 'least one, so they can\'t be disabled or have management rights removed until you give '
+  + 'those rights to someone else.';
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function MembersView({ members: initialMembers, currentUserId, isManager }: Props) {
@@ -155,6 +171,9 @@ export default function MembersView({ members: initialMembers, currentUserId, is
 
   const [flashMsg,     setFlashMsg]     = useState<string | null>(null);
   const [flashError,   setFlashError]   = useState<string | null>(null);
+
+  // Which row's "Last manager" explanation is expanded (tap/click path).
+  const [lastManagerHelpId, setLastManagerHelpId] = useState<string | null>(null);
 
   // ── Derived lists ──────────────────────────────────────────────────────────
   const activeProviders = members.filter(m => m.active && m.role === 'provider');
@@ -338,16 +357,41 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                 <button
                   onClick={() => setConfirmingId(m.id)}
                   className="text-xs font-medium text-red-500 hover:text-red-700 transition-colors px-2 py-1 rounded-lg hover:bg-red-50"
-                  title={isLastManager ? 'Last practice manager — cannot disable' : undefined}
                 >
                   Disable
                 </button>
               )}
+              {/* "Last manager" replaces the Disable button (canDisable is
+                  false whenever isLastManager is true), so without an
+                  explanation it reads as an unexplained label on a row that
+                  is mysteriously missing its action. Hover shows the reason
+                  via title; tapping toggles it inline, since title never
+                  fires on touch. */}
               {isManager && !opts.isMe && isLastManager && !isEditing && (
-                <span className="text-[10px] text-gray-400 italic">Last manager</span>
+                <button
+                  type="button"
+                  onClick={() => setLastManagerHelpId(prev => (prev === m.id ? null : m.id))}
+                  title={LAST_MANAGER_EXPLAINER}
+                  aria-label={`Last manager. ${LAST_MANAGER_EXPLAINER}`}
+                  aria-expanded={lastManagerHelpId === m.id}
+                  data-testid={`last-manager-tag-${m.id}`}
+                  className="text-[10px] text-gray-400 italic underline decoration-dotted underline-offset-2 hover:text-gray-600 cursor-help transition-colors"
+                >
+                  Last manager
+                </button>
               )}
             </div>
           </div>
+
+          {lastManagerHelpId === m.id && (
+            <p
+              role="note"
+              data-testid={`last-manager-help-${m.id}`}
+              className="mt-2 rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-600"
+            >
+              {LAST_MANAGER_EXPLAINER}
+            </p>
+          )}
 
           {/* Details */}
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 items-center">
@@ -614,17 +658,49 @@ export default function MembersView({ members: initialMembers, currentUserId, is
         </div>
       )}
 
-      {/* ── Section: Admin staff ── */}
-      <div className="mb-8">
-        <SectionLabel>Admin staff</SectionLabel>
-        <div className="space-y-3">
-          {meAsMember && meAsMember.role === 'admin' && renderCard(meAsMember, { isMe: true })}
-          {otherAdmins.map(m => renderCard(m))}
-          {!meAsMember && activeAdmins.length === 0 && (
-            <p className="text-sm text-gray-400 py-4 text-center">No admin members.</p>
-          )}
-        </div>
-      </div>
+      {/* ── Section: Admin staff ──
+          The empty state is keyed off what this section ACTUALLY renders
+          (my own card, only when my role is 'admin', plus otherAdmins).
+          It used to be `!meAsMember && activeAdmins.length === 0`, which
+          required the viewer NOT to be a member of the practice at all —
+          true only for a brand-admin. So a practice's own manager whose
+          role is 'provider' (a solo practitioner, the common case) saw a
+          bare "Admin staff" heading with nothing under it. */}
+      {(() => {
+        const showsMyAdminCard = !!meAsMember && meAsMember.role === 'admin';
+        const adminCardCount   = (showsMyAdminCard ? 1 : 0) + otherAdmins.length;
+        return (
+          <div className="mb-8">
+            <SectionLabel>Admin staff</SectionLabel>
+            <div className="space-y-3">
+              {showsMyAdminCard && renderCard(meAsMember!, { isMe: true })}
+              {otherAdmins.map(m => renderCard(m))}
+              {adminCardCount === 0 && (
+                <div
+                  data-testid="admin-staff-empty"
+                  className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-5 py-6 text-center"
+                >
+                  <p className="text-sm font-medium text-gray-600">No admin staff added yet</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Admin staff can create bills and manage the practice without being a
+                    treating provider.
+                  </p>
+                  {isManager && !showAdd && (
+                    <button
+                      onClick={() => { setShowAdd(true); closeEdit(); setConfirmingId(null); }}
+                      data-testid="admin-staff-empty-add"
+                      className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-semibold text-white transition-all hover:shadow-lg"
+                      style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+                    >
+                      + Add team member
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Section: Disabled ── */}
       {disabledMembers.length > 0 && (

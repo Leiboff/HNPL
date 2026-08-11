@@ -204,6 +204,21 @@ export default function LoginPage() {
             </div>
           </div>
 
+          {/* The "For patients" caption above belongs to the GOOGLE button
+              (staff accounts are invite-provisioned and use email +
+              password). Sitting directly above this divider, though, it read
+              as labelling everything below it — leaving practice staff unsure
+              this password form was for them at all. This one line says the
+              form is shared; it deliberately does not touch the Google or
+              passkey options. */}
+          <p
+            data-testid="password-audience-cue"
+            className="mb-4 text-center text-xs text-gray-500"
+          >
+            For <span className="font-medium text-gray-700">patients and practices</span> — sign in
+            with the email you registered.
+          </p>
+
           <form onSubmit={handleSubmit} noValidate className="space-y-5">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
