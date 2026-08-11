@@ -151,13 +151,35 @@ export default function GroupDashboard({
     });
   }, [branches, perBranchNet]);
 
+  // ── By doctor ────────────────────────────────────────────────────────
+  //
+  // This ranked list used to live ONLY on /brand/branch/[practiceId]
+  // (BranchPerformance's "By doctor" block). That page now pivots into
+  // the practice's own dashboard, so the list would have been lost
+  // outright: /brand had a doctor FILTER but never rendered a per-doctor
+  // breakdown, and the practice dashboard doesn't either — you could
+  // read one doctor's total at a time but never see them ranked.
+  //
+  // It belongs here, where the rest of the rollup now lives, and it costs
+  // nothing to compute: computeRevenue has always returned byProvider,
+  // and it was simply unused on this screen. Following the same filter
+  // state as the hero, trend and strip means the per-BRANCH view the
+  // branch page used to give is reproduced by setting the Practice
+  // filter — with cross-branch ranking available as well, which the
+  // branch page could not do.
+  const sortedDoctors = useMemo(
+    () => [...summary.byProvider].sort((a, b) => b.net - a.net),
+    [summary],
+  );
+
   return (
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
       <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>My practices</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Revenue across every practice you run. Tap a practice to see per-doctor performance and manage its team.
+            Revenue across every practice you run. Per-doctor performance is below; tap a practice
+            to open its own dashboard.
           </p>
         </div>
       </header>
@@ -279,6 +301,41 @@ export default function GroupDashboard({
 
       {/* Trend */}
       <BrandMonthlyChart points={monthly} />
+
+      {/* By doctor — see sortedDoctors above for why this lives here now. */}
+      <section
+        aria-labelledby="group-doctors-heading"
+        className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm p-6"
+      >
+        <h2
+          id="group-doctors-heading"
+          className="text-xs font-semibold uppercase tracking-widest"
+          style={{ color: '#13294B', opacity: 0.55 }}
+        >
+          By doctor
+        </h2>
+        {sortedDoctors.length === 0 ? (
+          <p className="text-xs text-gray-500 mt-3" data-testid="group-doctor-breakdown-empty">
+            No plans attributed to a doctor yet.
+          </p>
+        ) : (
+          <ul className="divide-y divide-gray-100 mt-3" data-testid="group-doctor-breakdown">
+            {sortedDoctors.map((d) => (
+              <li key={d.id} className="py-2 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{d.label}</p>
+                  <p className="text-[11px] text-gray-500">
+                    {d.count} active {d.count === 1 ? 'plan' : 'plans'}
+                  </p>
+                </div>
+                <p className="text-sm font-semibold whitespace-nowrap" style={{ color: '#13294B' }}>
+                  {formatRand(d.net)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* Practice performance strip */}
       <section aria-labelledby="branches-heading" className="space-y-3">

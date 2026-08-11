@@ -2,31 +2,35 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { getPracticeManagerLinks } from './practiceManagerLinks';
+import { getPracticeManagerLinks, getBrandExitLink } from './practiceManagerLinks';
 
 // ─── Practice sidebar nav ────────────────────────────────────────────
 //
-// Everyday links + two conditional links gated on manager-tier authority:
+// An optional exit link, the everyday links, and two conditional links
+// gated on manager-tier authority:
 //
+//   ← All practices   — /brand                       (brand-admin with
+//                         2+ practices in the brand only)
 //   Dashboard         — /practice
 //   Team              — /practice/members
 //   Till devices       — /practice/pos/devices?practiceId={id}  (manager
 //                         or brand-admin only)
-//   Practice details  — /brand/branch/{practiceId}   (brand-admin only)
+//   Practice details  — /practice/details?practiceId={id}  (brand-admin
+//                         only)
 //
-// Why the "Practice details" link points into /brand/branch/{id}:
-//   That's the ONLY place with a working practice-edit UI (address +
-//   banking) and matching server actions. Adding a second edit
-//   surface on the /practice side would fork the write path and
-//   drift from the brand-admin edit form. Instead the sidebar
-//   surfaces the existing edit page as a first-class nav item for
-//   brand-admins of the current practice's brand — the exact set
-//   of users who can actually SAVE those changes.
+// "Practice details" used to deep-link into /brand/branch/{id}, because
+// that was then the ONLY place with a working practice-edit UI. That
+// route was doing double duty — a multi-branch performance view AND the
+// de-facto settings page — so it now pivots into the practice dashboard
+// and the settings moved to /practice/details, inside this shell. The
+// write path did not fork: /practice/details renders the same two forms
+// against the same updateBranchDetails / updateBranchBanking actions.
 //
-// A non-brand-admin (e.g. a practice_admin invited into a branch of
-// someone else's brand) doesn't see this link at all — the /brand
-// route would notFound() them, and hiding a dead link is friendlier
-// than surfacing one.
+// The gate is unchanged. A non-brand-admin (e.g. a practice_admin
+// invited into a branch of someone else's brand) doesn't see the link at
+// all — /practice/details notFound()s them exactly as the brand route
+// did, since brand-admin of the practice's group is the authority both
+// save actions enforce.
 //
 // "Till devices" was previously reachable ONLY by typing the URL
 // directly — there was no link to it anywhere (single-practice sidebar
@@ -53,19 +57,32 @@ import { getPracticeManagerLinks } from './practiceManagerLinks';
 // query suffix — page-level fallback resolves the same practice.
 
 type Props = {
-  practiceId?:     string;
-  isBrandAdmin?:   boolean;
-  canManageTill?:  boolean;
+  practiceId?:          string;
+  isBrandAdmin?:        boolean;
+  canManageTill?:       boolean;
+  brandPracticeCount?:  number;
 };
 
-export default function PracticeNav({ practiceId, isBrandAdmin = false, canManageTill = false }: Props) {
+export default function PracticeNav({
+  practiceId,
+  isBrandAdmin = false,
+  canManageTill = false,
+  brandPracticeCount = 0,
+}: Props) {
   const pathname = usePathname();
 
   const scopeSuffix = practiceId
     ? `?practiceId=${encodeURIComponent(practiceId)}`
     : '';
 
+  // "← All practices" sits ABOVE the base list — it exits upward to the
+  // brand view rather than being a peer of Dashboard/Team. Comes from the
+  // same shared source as the conditional links (getBrandExitLink) so it
+  // isn't hand-written on either surface.
+  const exitLink = getBrandExitLink({ isBrandAdmin, brandPracticeCount });
+
   const links: Array<{ href: string; label: string }> = [
+    ...(exitLink ? [exitLink] : []),
     { href: `/practice${scopeSuffix}`,         label: 'Dashboard'       },
     { href: `/practice/members${scopeSuffix}`, label: 'Team'            },
     ...getPracticeManagerLinks({ practiceId, canManageTill, isBrandAdmin }),

@@ -125,9 +125,10 @@ export default async function NewBillPage({
     };
   });
 
-  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
-    supabase, user.id, practiceId, picked.can_manage_practice,
-  );
+  const { isBrandAdmin, canManageTill, brandPracticeCount } =
+    await resolvePracticeShellAuthority(
+      supabase, user.id, practiceId, picked.can_manage_practice,
+    );
 
   return (
     <PracticeShell
@@ -135,6 +136,7 @@ export default async function NewBillPage({
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
       canManageTill={canManageTill}
+      brandPracticeCount={brandPracticeCount}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-10 max-w-3xl">
         <div className="mb-8">

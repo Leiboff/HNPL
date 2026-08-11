@@ -1,7 +1,9 @@
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import PracticeShell from '../PracticeShell';
 import { resolvePracticeShellAuthority } from '../practiceShellAuthority';
+import { resolvePracticeViewer } from '../practiceViewer';
 import MembersView from './MembersView';
 import type { MemberRow } from './MembersView';
 
@@ -30,46 +32,49 @@ export default async function MembersPage({
     else redirect('/login');
   }
 
-  // ── Step 3: active membership — post-0062 a brand-admin has N≥2 rows.
-  // Match /practice dashboard's pattern (order+limit, not .single()).
-  const { data: rawMemberships } = await supabase
-    .from('practice_members')
-    .select('practice_id, can_manage_practice, created_at, practices(name)')
-    .eq('user_id', user.id)
-    .eq('active', true)
-    .order('created_at', { ascending: true });
-
-  const memberRowsRaw = (rawMemberships ?? []) as unknown as Array<{
-    practice_id:         string;
-    can_manage_practice: boolean | null;
-    created_at:          string;
-    practices:           { name: string } | { name: string }[] | null;
-  }>;
-  const memberRows = memberRowsRaw.map((m) => ({
-    ...m,
-    practices: Array.isArray(m.practices) ? (m.practices[0] ?? null) : m.practices,
-  }));
-
-  if (memberRows.length === 0) redirect('/practice');
-
-  const requestedId = params.practiceId;
-  const picked =
-    (requestedId && memberRows.find((m) => m.practice_id === requestedId)) ||
-    memberRows[0];
-
-  const practiceId   = picked.practice_id;
-  const isManager    = (picked.can_manage_practice as boolean) ?? false;
-  const practiceInfo = picked.practices;
-  const practiceName = practiceInfo?.name ?? 'Practice';
-
-  // ── Brand-admin gate for the sidebar's "Practice details" link ────
-  // Shared resolver — see ../practiceShellAuthority.
-  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
-    supabase, user.id, practiceId, isManager,
+  // ── Step 3: which practice, by what authority ─────────────────────────
+  //
+  // Shared with the dashboard (../practiceViewer): an active
+  // practice_members row, or — for an explicit ?practiceId= the caller
+  // holds no membership on — real brand-admin authority over that
+  // practice's group. The brand path matters here because
+  // /brand/branch/[practiceId] now pivots into the practice dashboard,
+  // and "Team" is a persistent nav link from there: without it a
+  // brand-admin with no practice_members row on the branch would click
+  // Team and be bounced straight back to the dashboard.
+  //
+  // isManager comes from canManagePractice, which the resolver reports as
+  // FALSE on the brand path. So a brand-admin-only viewer reads the
+  // roster and gets no member-editing UI — matching the server, where
+  // app/practice/members/actions.ts guardManager() is
+  // can_manage_practice-only with no brand path. No rights are widened
+  // here; the read is simply no longer refused.
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
   );
 
+  const viewer = await resolvePracticeViewer(supabase, svc, user.id, params.practiceId);
+  if (viewer.kind === 'setup')  redirect('/practice');
+  if (viewer.kind === 'denied') notFound();
+
+  const { practiceId, canManagePractice, viaBrandAdmin } = viewer.scope;
+  const isManager    = canManagePractice;
+  const practiceName = viewer.scope.practiceName || 'Practice';
+
+  // ── Nav-shell authority — shared resolver, see ../practiceShellAuthority.
+  const { isBrandAdmin, canManageTill, brandPracticeCount } =
+    await resolvePracticeShellAuthority(
+      supabase, user.id, practiceId, isManager,
+    );
+
   // ── Fetch all members (active + inactive) with profile join ───────────────
-  const { data: rawMembers } = await supabase
+  // Service-role only on the brand path, for the documented reason: the
+  // profiles join is not reachable for a brand-admin-only caller (0061
+  // widened practice_members but deliberately not profiles).
+  const reader = viaBrandAdmin ? svc : supabase;
+  const { data: rawMembers } = await reader
     .from('practice_members')
     .select(`
       id, user_id, role, active,
@@ -91,6 +96,7 @@ export default async function MembersPage({
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
       canManageTill={canManageTill}
+      brandPracticeCount={brandPracticeCount}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-8 pb-20">
         <MembersView

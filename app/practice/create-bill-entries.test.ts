@@ -87,10 +87,14 @@ describe('CreateBillButton is the gate-aware single source of truth', () => {
 });
 
 describe('every dashboard entry point uses CreateBillButton', () => {
+  // /brand/branch/[practiceId] used to be a third entry point with its
+  // own branch-scoped CTA. It is now a redirect into /practice, so the
+  // brand-admin arrives at the dashboard's own CreateBillButton with
+  // ?practiceId= already set — one entry point instead of two, and the
+  // branch-scoping assertions below moved onto the pivot itself.
   it.each([
     'app/practice/page.tsx',
     'app/practice/BillsBlock.tsx',
-    'app/brand/branch/[practiceId]/page.tsx',
   ])('%s imports CreateBillButton and does not render a bare /practice/bills/new <a>', (path) => {
     const src = readSrc(path);
     expect(src).toMatch(/CreateBillButton/);
@@ -107,7 +111,7 @@ describe('every dashboard entry point uses CreateBillButton', () => {
   });
 });
 
-describe('/brand/branch/[practiceId] CTA is scoped to THE BRANCH', () => {
+describe('a brand-admin opening a branch still gets a BRANCH-SCOPED bill CTA', () => {
   // A brand-admin with N≥2 branches must land on a bill scoped to the
   // branch they were viewing — CreateBillButton forwards practiceId=X
   // onto /practice/bills/new which reads searchParams.practiceId and
@@ -115,24 +119,32 @@ describe('/brand/branch/[practiceId] CTA is scoped to THE BRANCH', () => {
   // The payout, patient-facing practice name, and refs all resolve
   // through plans.practice_id, so scoping the CTA to the branch id is
   // sufficient to attribute the bill correctly.
+  //
+  // /brand/branch/[practiceId] used to carry that CTA itself. It now
+  // redirects into the practice dashboard CARRYING the branch id, and the
+  // dashboard's own CreateBillButton is already scoped to the practice it
+  // resolved — so the guarantee is preserved through the pivot rather
+  // than by a second copy of the button. What must hold: the pivot
+  // forwards the id, and the dashboard scopes its CTA to it.
 
-  const SRC = readSrc('app/brand/branch/[practiceId]/page.tsx');
+  const PIVOT     = readSrc('app/brand/branch/[practiceId]/page.tsx');
+  const DASHBOARD = readSrc('app/practice/page.tsx');
 
-  it('imports the shared trading-gate check and computes gate for this page', () => {
-    expect(SRC).toMatch(/import \{[^}]*checkTradingGate[^}]*\} from '@\/lib\/practice\/tradingGate'/);
-    expect(SRC).toMatch(/checkTradingGate\(s, practiceId\)/);
+  it('the pivot forwards the branch id onto the dashboard', () => {
+    expect(PIVOT).toMatch(/redirect\(`\/practice\?practiceId=\$\{encodeURIComponent\(practiceId\)\}`\)/);
   });
 
-  it('renders CreateBillButton with variant="primary" and forwards practiceId to scope the bill to THIS branch', () => {
-    expect(SRC).toMatch(/<CreateBillButton\s+gate=\{gate\}\s+variant="primary"\s+practiceId=\{practiceId\}\s*\/>/);
+  it('the dashboard scopes its CTA to the resolved practice', () => {
+    expect(DASHBOARD).toMatch(/<CreateBillButton\s+gate=\{gate\}\s+variant="primary"\s+practiceId=\{practiceId\}\s*\/>/);
   });
 
-  it('renders the co-located banking hint when the gate fails on banking (fix is on this same page)', () => {
-    expect(SRC).toMatch(/gate\.reason === 'no_banking'/);
-    expect(SRC).toMatch(/branch-banking-hint/);
-    expect(SRC).toMatch(/#banking/);
+  it('the banking hint + #banking anchor moved WITH the banking form to /practice/details', () => {
+    const DETAILS = readSrc('app/practice/details/page.tsx');
+    expect(DETAILS).toMatch(/gate\.reason === 'no_banking'/);
+    expect(DETAILS).toMatch(/branch-banking-hint/);
+    expect(DETAILS).toMatch(/#banking/);
     // BranchBankingForm is wrapped in the anchor target on the same page.
-    expect(SRC).toMatch(/id="banking"/);
+    expect(DETAILS).toMatch(/id="banking"/);
   });
 });
 

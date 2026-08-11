@@ -39,6 +39,19 @@ export type PracticeShellAuthority = {
   /** can_manage_practice OR isBrandAdmin — the exact authority
    *  app/practice/pos/devices/actions.ts's guardTillManager() checks. */
   canManageTill: boolean;
+  /**
+   * How many practices sit in this practice's brand. 1 for a standalone
+   * practice and for a solo owner's silently auto-created 1-practice
+   * brand; 0 when the caller is not a brand-admin (not resolved — the
+   * count is only ever consulted for brand-admins).
+   *
+   * Drives the "All practices" exit link. isBrandAdmin ALONE is not a
+   * usable signal for it: post-0062 every solo owner is auto-brand-admin
+   * of their own 1-practice brand, and /brand redirects n=1 straight
+   * back to /practice — so linking there for them would be a no-op that
+   * also leaks brand vocabulary the n=1 UX rule deliberately hides.
+   */
+  brandPracticeCount: number;
 };
 
 export async function resolvePracticeShellAuthority(
@@ -68,5 +81,21 @@ export async function resolvePracticeShellAuthority(
     isBrandAdmin = !!brandMembership;
   }
 
-  return { isBrandAdmin, canManageTill: canManagePractice || isBrandAdmin };
+  // Only resolved for a brand-admin — nothing else consults it, and a
+  // practice's own staff must not pay for a query whose answer would
+  // only ever be used to show them a link they can't have.
+  let brandPracticeCount = 0;
+  if (isBrandAdmin && groupId) {
+    const { count } = await supabase
+      .from('practices')
+      .select('id', { count: 'exact', head: true })
+      .eq('group_id', groupId);
+    brandPracticeCount = count ?? 1;
+  }
+
+  return {
+    isBrandAdmin,
+    canManageTill: canManagePractice || isBrandAdmin,
+    brandPracticeCount,
+  };
 }

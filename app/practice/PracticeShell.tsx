@@ -30,6 +30,16 @@ type Props = {
    * (./practiceManagerLinks) so they can't diverge again.
    */
   canManageTill?: boolean;
+  /**
+   * Practices in the current practice's brand, from
+   * resolvePracticeShellAuthority. Drives the "← All practices" exit
+   * link on BOTH nav surfaces (see getBrandExitLink) — a brand-admin
+   * sitting inside one branch's dashboard needs a persistent way back to
+   * the brand view, and a practice's own staff must never see it.
+   * isBrandAdmin alone is not the condition: a solo owner is
+   * auto-brand-admin of their own 1-practice brand.
+   */
+  brandPracticeCount?: number;
 };
 
 export default function PracticeShell({
@@ -38,6 +48,7 @@ export default function PracticeShell({
   practiceId,
   isBrandAdmin = false,
   canManageTill = false,
+  brandPracticeCount = 0,
 }: Props) {
   return (
     <div className="min-h-screen bg-[#f7fbfb]">
@@ -46,9 +57,15 @@ export default function PracticeShell({
         practiceId={practiceId}
         isBrandAdmin={isBrandAdmin}
         canManageTill={canManageTill}
+        brandPracticeCount={brandPracticeCount}
       />
       <div className="flex">
-        <PracticeNav practiceId={practiceId} isBrandAdmin={isBrandAdmin} canManageTill={canManageTill} />
+        <PracticeNav
+          practiceId={practiceId}
+          isBrandAdmin={isBrandAdmin}
+          canManageTill={canManageTill}
+          brandPracticeCount={brandPracticeCount}
+        />
         <div className="flex-1 min-w-0">{children}</div>
       </div>
     </div>
