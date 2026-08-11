@@ -35,7 +35,31 @@ describe('PracticeHeader mobile menu — Till devices link visibility', () => {
     render(<PracticeHeader practiceName="Test Practice" practiceId="practice-1" canManageTill isBrandAdmin />);
     openMenu();
     expect(screen.getByRole('link', { name: 'Till devices' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Practice details' }).getAttribute('href')).toBe('/brand/branch/practice-1');
+    expect(screen.getByRole('link', { name: 'Practice details' }).getAttribute('href'))
+      .toBe('/practice/details?practiceId=practice-1');
+  });
+
+  it('shows "← All practices" for a brand-admin with 2+ practices, above the base list', () => {
+    render(
+      <PracticeHeader practiceName="Test Practice" practiceId="practice-1" isBrandAdmin brandPracticeCount={4} />,
+    );
+    openMenu();
+    expect(screen.getByRole('link', { name: '← All practices' }).getAttribute('href')).toBe('/brand');
+    const labels = screen.getAllByRole('link').map((el) => el.textContent);
+    expect(labels[0]).toBe('← All practices');
+  });
+
+  it('hides "← All practices" from a solo owner and from a practice\'s own staff', () => {
+    const { unmount } = render(
+      <PracticeHeader practiceName="Test Practice" practiceId="practice-1" isBrandAdmin brandPracticeCount={1} />,
+    );
+    openMenu();
+    expect(screen.queryByRole('link', { name: '← All practices' })).toBeNull();
+    unmount();
+
+    render(<PracticeHeader practiceName="Test Practice" practiceId="practice-1" canManageTill brandPracticeCount={9} />);
+    openMenu();
+    expect(screen.queryByRole('link', { name: '← All practices' })).toBeNull();
   });
 
   it('the base Dashboard / Manage Practice links and Sign out are still present', () => {

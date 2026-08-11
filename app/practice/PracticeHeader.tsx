@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutAndRedirect } from '@/lib/auth/logout';
-import { getPracticeManagerLinks } from './practiceManagerLinks';
+import { getPracticeManagerLinks, getBrandExitLink } from './practiceManagerLinks';
 
 // Base mobile links — Dashboard + Manage Practice. Deliberately this
 // component's OWN wording ("Manage Practice" vs. PracticeNav's "Team")
@@ -20,10 +20,11 @@ const LINKS = [
 ];
 
 type Props = {
-  practiceName:    string;
-  practiceId?:     string;
-  isBrandAdmin?:   boolean;
-  canManageTill?:  boolean;
+  practiceName:         string;
+  practiceId?:          string;
+  isBrandAdmin?:        boolean;
+  canManageTill?:       boolean;
+  brandPracticeCount?:  number;
 };
 
 export default function PracticeHeader({
@@ -31,12 +32,21 @@ export default function PracticeHeader({
   practiceId,
   isBrandAdmin  = false,
   canManageTill = false,
+  brandPracticeCount = 0,
 }: Props) {
   const [open, setOpen]   = useState(false);
   const pathname          = usePathname();
   const menuRef           = useRef<HTMLDivElement>(null);
 
-  const links = [...LINKS, ...getPracticeManagerLinks({ practiceId, canManageTill, isBrandAdmin })];
+  // Same shared source as the conditional links, and the same position
+  // (above the base list) as the desktop sidebar — see getBrandExitLink.
+  const exitLink = getBrandExitLink({ isBrandAdmin, brandPracticeCount });
+
+  const links = [
+    ...(exitLink ? [exitLink] : []),
+    ...LINKS,
+    ...getPracticeManagerLinks({ practiceId, canManageTill, isBrandAdmin }),
+  ];
 
   // Close on route change
   useEffect(() => { setOpen(false); }, [pathname]);

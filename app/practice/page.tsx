@@ -1,9 +1,10 @@
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
 import PracticeShell from './PracticeShell';
 import { resolvePracticeShellAuthority } from './practiceShellAuthority';
+import { resolvePracticeViewer } from './practiceViewer';
 import PracticeDashboardClient from './PracticeDashboardClient';
 import CreateBillButton from './CreateBillButton';
 import { PlanSummary } from './billHelpers';
@@ -33,54 +34,53 @@ export default async function PracticeDashboardPage({
     else redirect('/login');
   }
 
-  // Post-0062: a brand owner can be a member of multiple practices (one
-  // per practice in their brand). The dashboard scopes to ONE practice
-  // at a time — picked either by ?practiceId= (when switching from the
-  // brand index) or, when absent, the first practice the user joined.
-  // .single() would fail for n=2+; .order().limit(1) is safe at n=1
-  // and consistent at n>=2.
-  const { data: memberships } = await supabase
-    .from('practice_members')
-    .select('practice_id, can_manage_practice, created_at, practices(name, fee_percent)')
-    .eq('user_id', user.id)
-    .eq('active', true)
-    .order('created_at', { ascending: true });
+  // ── Which practice, and by what authority? ────────────────────────────
+  //
+  // Post-0062 a brand owner is a member of multiple practices (one per
+  // branch), so the dashboard scopes to ONE practice at a time — picked
+  // by ?practiceId= or, when absent, the first practice they joined.
+  //
+  // Extracted to ./practiceViewer because this page is now also where a
+  // brand-admin lands when they click into a branch
+  // (/brand/branch/[practiceId] pivots here). The resolver keeps the two
+  // authority paths distinct — an active practice_members row, or an
+  // active practice_group_members row for the practice's group — and
+  // never converts brand-admin authority into a practice-member
+  // capability. See its header for why the brand path reads with
+  // service-role and why an unmatched explicit ?practiceId= is now
+  // rejected instead of silently falling back to a different practice.
+  const svc = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
 
-  // Supabase typegen leans toward `{ practices: T[] }` for joined
-  // rows even when the FK is to-one — we cast through unknown and
-  // normalise below so the rest of the page sees the to-one shape we
-  // expect.
-  const memberRowsRaw = (memberships ?? []) as unknown as Array<{
-    practice_id:         string;
-    can_manage_practice: boolean;
-    created_at:          string;
-    practices: { name: string; fee_percent: number } | Array<{ name: string; fee_percent: number }> | null;
-  }>;
-  const memberRows = memberRowsRaw.map((m) => ({
-    ...m,
-    practices: Array.isArray(m.practices) ? (m.practices[0] ?? null) : m.practices,
-  }));
+  const viewer = await resolvePracticeViewer(supabase, svc, user.id, params.practiceId);
+  if (viewer.kind === 'setup')  redirect('/practice/setup');
+  if (viewer.kind === 'denied') notFound();
 
-  if (memberRows.length === 0) redirect('/practice/setup');
+  const {
+    practiceId, practiceName, feePercent,
+    canManagePractice, viaBrandAdmin, membershipCount,
+  } = viewer.scope;
 
-  const requestedId = params.practiceId;
-  const picked =
-    (requestedId && memberRows.find((m) => m.practice_id === requestedId)) ||
-    memberRows[0];
+  // Practice-scoped reads run on the caller's own client (RLS) on the
+  // member path — byte-identical to before for a practice's own staff.
+  // On the brand path they run with service-role, scoped to the single
+  // practice the resolver just authorized: RLS's is_practice_member only
+  // recognises practice_members, and profiles was deliberately never
+  // widened for brand-admins, so an authenticated-client read would
+  // return no plans and no patient/provider names — the same reason
+  // /practice/pos/devices and the old branch page read this way.
+  const reader = viaBrandAdmin ? svc : supabase;
 
-  const practiceInfo = picked.practices;
-  const practiceName = practiceInfo?.name ?? '';
-  const feePercent   = Number(practiceInfo?.fee_percent ?? 6);
-  const practiceId   = picked.practice_id;
-
-  // Brand context — how many practices does this user own / belong to?
+  // Brand context — how many practices does this user belong to?
   // Drives the n=1-vs-n>=2 UX rule: brand wording is hidden at n=1
   // and surfaces at n>=2. We DO NOT compute brand name here — the
   // dashboard shouldn't say "brand X" for a solo user even if they
   // have a (silent, auto-created) brand row.
-  const practiceCount = memberRows.length;
+  const practiceCount = membershipCount;
 
-  const { data: rawPlans } = await supabase
+  const { data: rawPlans } = await reader
     .from('plans')
     .select(`
       id, total_amount, status, created_at, invoice_number, practice_reference,
@@ -100,16 +100,14 @@ export default async function PracticeDashboardPage({
   // Same check the bill-creation server action enforces. Drives whether the
   // "+ Create a bill" CTA renders or whether we show a status panel pointing
   // at the unmet condition. Server-action is still the authoritative reject.
-  const svc = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  );
+  // (Service-role either way — it always was; the gate is a property of
+  // the practice, not of the viewer.)
   const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
 
   const providerIds = [...new Set(plans.map((p) => p.provider_id).filter((id): id is string => Boolean(id)))];
   const specialtyMap: Record<string, string> = {};
   if (providerIds.length > 0) {
-    const { data: memberRows } = await supabase
+    const { data: memberRows } = await reader
       .from('practice_members')
       .select('user_id, specialty')
       .eq('practice_id', practiceId)
@@ -119,21 +117,26 @@ export default async function PracticeDashboardPage({
     }
   }
 
-  // ── Brand-admin gate for the "Practice details" sidebar link ─────
+  // ── Nav-shell authority ──────────────────────────────────────────
   //
-  // Resolves whether the caller can reach /brand/branch/{practiceId}
-  // successfully — i.e. is an active practice_group_members row for
-  // this practice's brand. Post-0062 the solo owner is auto-brand-
-  // admin of their own 1-practice brand, so this is true for the
-  // standalone case. A branch-admin invited into someone else's
-  // brand returns false, and the sidebar link is hidden — matching
-  // the /brand/branch page's notFound() guard.
+  // Resolves whether the caller is an active practice_group_members row
+  // for this practice's brand, which gates the "Practice details" link
+  // (/practice/details — the same authority its two save actions
+  // enforce) and, at 2+ practices in the brand, the "← All practices"
+  // exit link. Post-0062 the solo owner is auto-brand-admin of their own
+  // 1-practice brand, so isBrandAdmin is true for the standalone case —
+  // which is exactly why the exit link keys off brandPracticeCount too.
   //
-  // Extracted to ./practiceShellAuthority so all four shell-rendering
-  // screens resolve it the same way instead of keeping four copies.
-  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
-    supabase, user.id, practiceId, picked.can_manage_practice,
-  );
+  // Resolved on the caller's OWN client and from canManagePractice as
+  // the resolver reported it — on the brand path that is false, so a
+  // brand-admin does not pick up practice-member capabilities here.
+  //
+  // Shared with the other shell-rendering screens via
+  // ./practiceShellAuthority rather than copied per screen.
+  const { isBrandAdmin, canManageTill, brandPracticeCount } =
+    await resolvePracticeShellAuthority(
+      supabase, user.id, practiceId, canManagePractice,
+    );
 
   return (
     <PracticeShell
@@ -141,6 +144,7 @@ export default async function PracticeDashboardPage({
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
       canManageTill={canManageTill}
+      brandPracticeCount={brandPracticeCount}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-10 space-y-6 sm:space-y-8">
 
@@ -208,16 +212,16 @@ export default async function PracticeDashboardPage({
             {gate.reason === 'no_banking' && (
               // /practice/setup is the initial-signup flow; it redirects
               // away for anyone who already has a practice_members row
-              // (i.e. anyone hitting this panel). Send users to the
-              // brand-side branch edit page — the only place where the
-              // BankingForm lives and the only path with a working
-              // update action (updateBranchBanking). The page's own
-              // guard (practice_group_members membership) enforces
+              // (i.e. anyone hitting this panel). Send users to
+              // /practice/details — where the BankingForm and its
+              // working update action (updateBranchBanking) live, and
+              // straight to the banking anchor on it. That page's guard
+              // (practice_group_members membership) enforces
               // brand-admin-only edit; a non-brand-admin lands on
               // notFound() there, which is correct — they can't set
               // their branch's banking.
               <a
-                href={`/brand/branch/${practiceId}`}
+                href={`/practice/details?practiceId=${practiceId}#banking`}
                 className="mt-2 inline-block font-semibold underline underline-offset-2"
                 style={{ color: '#13294B' }}
               >

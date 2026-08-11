@@ -530,31 +530,143 @@ describe('Till devices link — parameterised per branch, alongside Open branch'
   });
 });
 
-// ─── Old DoctorsSection is gone; TeamSection replaces it ──────────────
+// ─── The branch page became a pivot; what happened to its sections ────
+//
+// /brand/branch/[practiceId] was doing double duty — a multi-branch
+// PERFORMANCE view AND the de-facto practice SETTINGS page — and it sat
+// outside the /practice tree, so PracticeShell never wrapped it. It now
+// redirects into the practice's own dashboard. Its sections went:
+//
+//   performance + by-doctor → /brand (this file's own by-doctor pins
+//                             below cover the new home)
+//   details + banking       → /practice/details
+//   team                    → /practice/members
+//
+// BranchPerformance.tsx and TeamSection.tsx are deliberately KEPT on
+// disk, unmounted, rather than deleted:
+//   • BranchPerformance's content is fully reproduced at /brand (hero
+//     net, trend, and now the by-doctor list) — the file is redundant,
+//     not load-bearing.
+//   • TeamSection is the one section whose removal is NOT purely
+//     redundant. /practice/members covers it for any brand-admin holding
+//     a practice_members row — which createBranch always creates
+//     (role='admin', can_manage_practice=true), so it covers every brand
+//     admin the product itself makes. A brand-admin with NO such row
+//     reads the roster there but gets no editing UI, because
+//     app/practice/members/actions.ts guardManager() is
+//     can_manage_practice-only. Keeping the component and its four
+//     still-guarded actions means covering that case later is a mount,
+//     not a rewrite.
 
-describe('DoctorsSection removed; TeamSection is the roster surface', () => {
-  it('DoctorsSection.tsx no longer exists', () => {
+describe('the branch page is now a pivot into the practice dashboard', () => {
+  it('DoctorsSection.tsx no longer exists (unchanged)', () => {
     expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/DoctorsSection.tsx'))).toBe(false);
   });
 
-  it('the branch page uses TeamSection', () => {
-    expect(BRANCH_PAGE).toMatch(/from ['"]\.\/TeamSection['"]/);
-    expect(BRANCH_PAGE).toMatch(/<TeamSection/);
-    expect(BRANCH_PAGE).not.toMatch(/DoctorsSection/);
+  it('redirects to the practice dashboard carrying the branch id', () => {
+    expect(BRANCH_PAGE).toMatch(/redirect\(`\/practice\?practiceId=\$\{encodeURIComponent\(practiceId\)\}`\)/);
   });
 
-  it('branch page fetches ALL roles (no eq role=provider filter)', () => {
-    // The old page had .eq('role', 'provider') on practice_members;
-    // the new one omits that filter to include admins + staff.
-    const membersReadIdx = BRANCH_PAGE.indexOf(".from('practice_members')");
-    const scope = BRANCH_PAGE.slice(membersReadIdx, membersReadIdx + 600);
-    expect(scope).not.toMatch(/\.eq\('role', 'provider'\)/);
-    expect(scope).toMatch(/can_manage_practice/);
-    expect(scope).toMatch(/can_create_bills/);
+  it('renders nothing itself — no sections, no data reads, no service-role client', () => {
+    expect(BRANCH_PAGE).not.toMatch(/<TeamSection/);
+    expect(BRANCH_PAGE).not.toMatch(/<BranchPerformance/);
+    expect(BRANCH_PAGE).not.toMatch(/<BranchDetailsForm/);
+    expect(BRANCH_PAGE).not.toMatch(/<BranchBankingForm/);
+    expect(BRANCH_PAGE).not.toMatch(/createServiceClient/);
+    expect(BRANCH_PAGE).not.toMatch(/computeRevenue/);
   });
 
-  it('branch page wires the four team actions', () => {
-    expect(BRANCH_PAGE).toMatch(/addTeamMember,\s+updateTeamMember,\s+deactivateTeamMember,\s+reactivateTeamMember/);
+  it('does NOT re-implement its own authorization gate', () => {
+    // Authorization belongs to the destination: /practice resolves the
+    // viewer via practiceViewer.ts, which authorises an explicit
+    // ?practiceId= by an active practice_members row OR an active
+    // practice_group_members row for the practice's group, and
+    // notFound()s anything else. A narrower duplicate gate here is what
+    // made the brand-admin path 404 on /practice/pos/devices once before.
+    // Comments stripped first — the file explains the delegation in prose,
+    // naming both notFound() and practice_group_members. What must not
+    // exist is a real gate in the code.
+    const code = BRANCH_PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toMatch(/notFound\(/);
+    expect(code).not.toMatch(/practice_group_members/);
+
+    const VIEWER = read('app/practice/practiceViewer.ts');
+    expect(VIEWER).toMatch(/practice_group_members/);
+    expect(VIEWER).toMatch(/kind: 'denied'/);
+  });
+
+  it('the route still EXISTS so every inbound link resolves (no 404s)', () => {
+    expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/page.tsx'))).toBe(true);
+    // "Open branch →" on the brand index, and the revalidatePath calls in
+    // app/brand/actions.ts, both still point here.
+    expect(GROUP_DASH).toMatch(/href=\{`\/brand\/branch\/\$\{b\.id\}`\}/);
+  });
+
+  it('the two unmounted components are still on disk, ready to re-home', () => {
+    expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/TeamSection.tsx'))).toBe(true);
+    expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/BranchPerformance.tsx'))).toBe(true);
+    // And the four brand-side team actions they need are untouched.
+    expect(ACTIONS).toMatch(/export async function addTeamMember/);
+    expect(ACTIONS).toMatch(/export async function updateTeamMember/);
+    expect(ACTIONS).toMatch(/export async function deactivateTeamMember/);
+    expect(ACTIONS).toMatch(/export async function reactivateTeamMember/);
+  });
+
+  it('the details + banking forms moved to /practice/details, not copied', () => {
+    expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/BranchDetailsForm.tsx'))).toBe(false);
+    expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/BranchBankingForm.tsx'))).toBe(false);
+    expect(existsSync(resolve(ROOT, 'app/practice/details/BranchDetailsForm.tsx'))).toBe(true);
+    expect(existsSync(resolve(ROOT, 'app/practice/details/BranchBankingForm.tsx'))).toBe(true);
+  });
+});
+
+// ─── By doctor moved to /brand — the ONE view the pivot would have lost ─
+//
+// /brand/branch/[practiceId] was the only place a per-doctor ranked list
+// was rendered. /brand had a doctor FILTER but no breakdown, and the
+// practice dashboard has a provider filter but no breakdown either — so
+// you could read one doctor's total at a time and never see them ranked.
+// computeRevenue has always returned byProvider; it was simply unused on
+// the group screen.
+
+describe('GroupDashboard renders the per-doctor breakdown the branch page used to own', () => {
+  it('renders a ranked by-doctor list from the already-computed byProvider rows', () => {
+    expect(GROUP_DASH).toMatch(/summary\.byProvider/);
+    expect(GROUP_DASH).toMatch(/group-doctor-breakdown/);
+    expect(GROUP_DASH).toMatch(/By doctor/);
+  });
+
+  it('ranks by net descending — same ordering the branch page used', () => {
+    expect(GROUP_DASH).toMatch(/sort\(\(a, b\) => b\.net - a\.net\)/);
+  });
+
+  it('has an empty state rather than a bare heading', () => {
+    expect(GROUP_DASH).toMatch(/group-doctor-breakdown-empty/);
+    expect(GROUP_DASH).toMatch(/No plans attributed to a doctor yet/);
+  });
+
+  it('follows the SAME filter state as the hero, trend and strip', () => {
+    // It reads `summary`, which is computeRevenue over filteredPlans —
+    // so setting the Practice filter reproduces exactly the per-branch
+    // list the branch page gave, and leaving it clear ranks across
+    // branches, which the branch page could not do.
+    expect(GROUP_DASH).toMatch(/const sortedDoctors = useMemo\(\s*\n?\s*\(\) => \[\.\.\.summary\.byProvider\]/);
+    expect(GROUP_DASH).toMatch(/computeRevenue\(filteredPlans/);
+  });
+
+  it('stays NET-only, like every other figure on the brand surface', () => {
+    const idx = GROUP_DASH.indexOf('group-doctor-breakdown');
+    const block = GROUP_DASH.slice(idx, idx + 900);
+    expect(block).toMatch(/formatRand\(d\.net\)/);
+    expect(block).not.toMatch(/d\.gross/);
+  });
+
+  it('the header copy no longer promises per-doctor performance behind a tap', () => {
+    // It used to read "Tap a practice to see per-doctor performance and
+    // manage its team" — both halves became false when the branch page
+    // stopped rendering either.
+    expect(GROUP_DASH).not.toMatch(/Tap a practice to see per-doctor performance/);
+    expect(GROUP_DASH).toMatch(/Per-doctor performance is below/);
   });
 });
 

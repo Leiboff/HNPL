@@ -36,6 +36,48 @@ describe('PracticeNav — Till devices link visibility', () => {
     render(<PracticeNav practiceId="practice-1" canManageTill isBrandAdmin />);
     expect(screen.getByRole('link', { name: 'Team' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Till devices' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Practice details' }).getAttribute('href')).toBe('/brand/branch/practice-1');
+    // Practice details now points INSIDE the shell's own tree. It used to
+    // deep-link to /brand/branch/{id}, which was doubling as a
+    // multi-branch performance view; that route pivots into the practice
+    // dashboard now and the settings live at /practice/details.
+    expect(screen.getByRole('link', { name: 'Practice details' }).getAttribute('href'))
+      .toBe('/practice/details?practiceId=practice-1');
+  });
+});
+
+// ─── "← All practices" exit link ───────────────────────────────────────
+//
+// A brand-admin who clicks into a branch lands in that practice's
+// ordinary dashboard, so they need a persistent way back to /brand.
+// isBrandAdmin alone can't gate it: post-0062 every solo owner is
+// auto-brand-admin of their own 1-practice brand and /brand redirects
+// n=1 straight back to /practice.
+
+describe('PracticeNav — brand exit link', () => {
+  it('shows "← All practices" for a brand-admin with 2+ practices in the brand', () => {
+    render(<PracticeNav practiceId="practice-1" isBrandAdmin brandPracticeCount={3} />);
+    expect(screen.getByRole('link', { name: '← All practices' }).getAttribute('href')).toBe('/brand');
+  });
+
+  it('hides it for a SOLO owner — brand-admin of their own 1-practice brand', () => {
+    render(<PracticeNav practiceId="practice-1" isBrandAdmin brandPracticeCount={1} />);
+    expect(screen.queryByRole('link', { name: '← All practices' })).toBeNull();
+  });
+
+  it("hides it from a practice's OWN staff, even a manager", () => {
+    render(<PracticeNav practiceId="practice-1" canManageTill brandPracticeCount={5} />);
+    expect(screen.queryByRole('link', { name: '← All practices' })).toBeNull();
+  });
+
+  it('hides it by default when the props are omitted', () => {
+    render(<PracticeNav practiceId="practice-1" />);
+    expect(screen.queryByRole('link', { name: '← All practices' })).toBeNull();
+  });
+
+  it('renders it ABOVE Dashboard — it exits upward, it is not a peer', () => {
+    render(<PracticeNav practiceId="practice-1" isBrandAdmin brandPracticeCount={2} />);
+    const labels = screen.getAllByRole('link').map((el) => el.textContent);
+    expect(labels[0]).toBe('← All practices');
+    expect(labels[1]).toBe('Dashboard');
   });
 });

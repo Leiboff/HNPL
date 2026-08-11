@@ -291,7 +291,11 @@ export async function updateBranchDetails(input: UpdateBranchDetailsInput): Prom
   if (error) return { error: error.message };
 
   revalidatePath('/brand');
-  revalidatePath(`/brand/branch/${input.practiceId}`);
+  // The details form moved to /practice/details (BranchDetailsForm went
+  // with it, unchanged); /brand/branch/{id} is now just a redirect there
+  // is nothing to revalidate on. The action itself — guard, validation,
+  // column allowlist, UPDATE — is untouched.
+  revalidatePath('/practice/details');
   return { error: null };
 }
 
@@ -651,6 +655,9 @@ export async function updateBranchBanking(input: UpdateBranchBankingInput): Prom
   if (error) return { error: error.message };
 
   revalidatePath('/brand');
-  revalidatePath(`/brand/branch/${input.practiceId}`);
+  // Same as updateBranchDetails: BranchBankingForm now renders on
+  // /practice/details. Guard, validation and the column allowlist below
+  // are untouched — only the path being revalidated moved with the form.
+  revalidatePath('/practice/details');
   return { error: null };
 }

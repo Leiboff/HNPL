@@ -257,14 +257,18 @@ describe('updateBranchBanking — SA banking shape validation', () => {
 
 // ─── Practice-side sidebar nav — Part A UI (2026-07-21) ────────────────
 //
-// The /practice sidebar now shows a "Practice details" link that
-// deep-links into /brand/branch/{practiceId}. The link is
-// conditional on isBrandAdmin — a non-brand-admin practice_admin
-// would land on the brand page's notFound() guard, and hiding a
-// dead route is friendlier than surfacing it. Also — the trading
-// gate's "no_banking" CTA used to point to /practice/setup (dead
-// redirect for existing practices); it now points to the same
-// /brand/branch/{id} edit page.
+// The /practice sidebar shows a "Practice details" link, conditional on
+// isBrandAdmin — a non-brand-admin practice_admin would land on the
+// destination's notFound() guard, and hiding a dead route is friendlier
+// than surfacing it. Also — the trading gate's "no_banking" CTA used to
+// point to /practice/setup (a dead redirect for existing practices).
+//
+// UPDATED: both used to point into /brand/branch/{practiceId}, which was
+// doing double duty as a multi-branch performance view AND the de-facto
+// settings page. That route now pivots into the practice dashboard and
+// the settings live at /practice/details, inside the shell. The gate is
+// unchanged — brand-admin of the practice's group is exactly the
+// authority updateBranchDetails/updateBranchBanking enforce.
 
 describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
   const NAV        = read('app/practice/PracticeNav.tsx');
@@ -287,7 +291,7 @@ describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
     // wires into it rather than reimplementing its own copy.
     const MANAGER_LINKS = read('app/practice/practiceManagerLinks.ts');
     expect(MANAGER_LINKS).toMatch(/isBrandAdmin\s*&&\s*practiceId/);
-    expect(MANAGER_LINKS).toMatch(/\/brand\/branch\/\$\{practiceId\}/);
+    expect(MANAGER_LINKS).toMatch(/\/practice\/details\$\{scopeSuffix\}/);
     expect(NAV).toMatch(/getPracticeManagerLinks/);
   });
 
@@ -298,15 +302,21 @@ describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
     expect(DASHBOARD).toMatch(/isBrandAdmin/);
   });
 
-  it('Dashboard trading-gate no-banking CTA points to /brand/branch/{practiceId} (not /practice/setup)', () => {
+  it('Dashboard trading-gate no-banking CTA points at the banking anchor on /practice/details (not /practice/setup)', () => {
     // /practice/setup is the initial-signup flow and redirects
-    // established users away. The banking edit lives on the brand
-    // branch page.
+    // established users away. The banking edit now lives on
+    // /practice/details — and the CTA deep-links to its #banking anchor,
+    // which the page renders around BranchBankingForm.
     const noBankingBlockIdx = DASHBOARD.indexOf("gate.reason === 'no_banking'");
     expect(noBankingBlockIdx).toBeGreaterThan(0);
-    const ctaBlock = DASHBOARD.slice(noBankingBlockIdx, noBankingBlockIdx + 800);
-    expect(ctaBlock).toMatch(/\/brand\/branch\/\$\{practiceId\}/);
+    const ctaBlock = DASHBOARD.slice(noBankingBlockIdx, noBankingBlockIdx + 900);
+    expect(ctaBlock).toMatch(/\/practice\/details\?practiceId=\$\{practiceId\}#banking/);
     expect(ctaBlock).not.toMatch(/href="\/practice\/setup"/);
+    expect(ctaBlock).not.toMatch(/\/brand\/branch\//);
+
+    const DETAILS = read('app/practice/details/page.tsx');
+    expect(DETAILS).toMatch(/id="banking"/);
+    expect(DETAILS).toMatch(/<BranchBankingForm/);
   });
 });
 

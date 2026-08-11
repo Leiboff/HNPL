@@ -28,25 +28,38 @@ import PracticeHeader from './PracticeHeader';
 vi.mock('next/navigation', () => ({ usePathname: () => '/practice' }));
 vi.mock('@/lib/auth/logout', () => ({ logoutAndRedirect: vi.fn() }));
 
-type Combo = { practiceId?: string; canManageTill: boolean; isBrandAdmin: boolean };
+type Combo = {
+  practiceId?: string;
+  canManageTill: boolean;
+  isBrandAdmin: boolean;
+  brandPracticeCount?: number;
+};
 
 // Every combination that produces a DIFFERENT conditional-link set —
 // including the practiceId-omitted case, since Practice details drops
-// out but Till devices doesn't.
+// out but Till devices doesn't, and both sides of the brandPracticeCount
+// threshold that gates the "← All practices" exit link (a solo owner is
+// brand-admin of their own 1-practice brand, so isBrandAdmin alone does
+// not decide it).
 const COMBOS: Combo[] = [
   { practiceId: 'practice-1', canManageTill: false, isBrandAdmin: false },
   { practiceId: 'practice-1', canManageTill: true,  isBrandAdmin: false },
   { practiceId: 'practice-1', canManageTill: false, isBrandAdmin: true  },
   { practiceId: 'practice-1', canManageTill: true,  isBrandAdmin: true  },
   { practiceId: undefined,    canManageTill: true,  isBrandAdmin: true  },
+  { practiceId: 'practice-1', canManageTill: true,  isBrandAdmin: true,  brandPracticeCount: 1 },
+  { practiceId: 'practice-1', canManageTill: true,  isBrandAdmin: true,  brandPracticeCount: 3 },
+  { practiceId: 'practice-1', canManageTill: false, isBrandAdmin: false, brandPracticeCount: 3 },
 ];
 
 type Link = { href: string; label: string };
 
 // Only the CONDITIONAL links are compared — Dashboard/Team vs. Dashboard/
 // Manage Practice are each surface's own base wording by design, not
-// part of what diverged.
-const CONDITIONAL_LABELS = new Set(['Till devices', 'Practice details']);
+// part of what diverged. "← All practices" is included: it's
+// permission-gated and spliced onto both surfaces from the same shared
+// source, so it's exactly the class of link that diverged before.
+const CONDITIONAL_LABELS = new Set(['Till devices', 'Practice details', '← All practices']);
 
 function conditionalLinks(): Link[] {
   return screen.getAllByRole('link')
@@ -56,7 +69,12 @@ function conditionalLinks(): Link[] {
 
 function desktopLinksFor(combo: Combo): Link[] {
   const { unmount } = render(
-    <PracticeNav practiceId={combo.practiceId} canManageTill={combo.canManageTill} isBrandAdmin={combo.isBrandAdmin} />,
+    <PracticeNav
+      practiceId={combo.practiceId}
+      canManageTill={combo.canManageTill}
+      isBrandAdmin={combo.isBrandAdmin}
+      brandPracticeCount={combo.brandPracticeCount}
+    />,
   );
   const links = conditionalLinks();
   unmount();
@@ -70,6 +88,7 @@ function mobileLinksFor(combo: Combo): Link[] {
       practiceId={combo.practiceId}
       canManageTill={combo.canManageTill}
       isBrandAdmin={combo.isBrandAdmin}
+      brandPracticeCount={combo.brandPracticeCount}
     />,
   );
   // The mobile menu only renders once the hamburger is opened.
