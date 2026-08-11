@@ -501,7 +501,16 @@ describe('embedded checkout widget is card-only — no billing-address form (FIX
   }
 
   it('PeachWidget passes customisations.card.showBillingFields=false to Checkout.initiate', () => {
-    expect(WIDGET).toMatch(/customisations:\s*\{[\s\S]{0,80}card:\s*\{\s*showBillingFields:\s*false\s*\}/);
+    // Pins that showBillingFields:false is the FIRST key of the card block
+    // without requiring it to be the ONLY one. The previous pin ended in
+    // `false\s*\}`, which silently depended on `card` having exactly one
+    // key — so merging the widget theming/registration-copy work (which
+    // added a sibling `...REGISTRATION_CARD_COPY` spread right after it,
+    // and a `theme` block above) turned this red while the behaviour was
+    // never broken. The behavioural counterpart is
+    // PeachWidget.test.tsx's `renderLog[0].showBillingFields === false`,
+    // which reads what actually reaches the SDK.
+    expect(WIDGET).toMatch(/customisations:\s*\{[\s\S]{0,160}card:\s*\{\s*showBillingFields:\s*false\b/);
   });
 
   it('showBillingFields is NOT sent on the server /v2/checkout body (avoids the unknown-field reject)', () => {
