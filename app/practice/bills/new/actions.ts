@@ -57,10 +57,27 @@ export type CreateBillInput = {
   practiceId?:        string;
 };
 
+// ─── User-facing failure copy ────────────────────────────────────────────
+//
+// The email provider's own error is operationally useful but must NEVER
+// reach the screen. It shipped verbatim to practice users, e.g.:
+//   Resend 422: {"statusCode":422,"name":"validation_error","message":"Invalid `to` field..."}
+// — the raw provider payload, in front of a receptionist. Every raw
+// provider/database string is now logged server-side and replaced with one
+// of these before it crosses the 'use server' boundary.
+const EMAIL_FAILED_MESSAGE =
+  'We couldn\'t send this bill by email. Please check the address and try again.';
+const BILL_SAVE_FAILED_MESSAGE =
+  'We couldn\'t save this bill. Please try again — if it keeps happening, contact support.';
+
 /** Outcome of the auto-sent email. */
 export type InvitationEmailResult = {
   sent:    boolean;
-  /** Present when sent=false — copy to surface to the provider. */
+  /**
+   * Present when sent=false. ALWAYS plain-language copy written here —
+   * never the provider's raw message/JSON. The raw text goes to the
+   * server log only (see the console.error calls at each send site).
+   */
   error?:  string;
   /**
    * The patient email we attempted to send to. Provider sees this
@@ -297,7 +314,10 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     bill_amount: billAmount,
     status:      'pending',
   });
-  if (appError) return { error: `Failed to create application: ${appError.message}` };
+  if (appError) {
+    console.error('[createBill] Failed to create application', appError.message);
+    return { error: BILL_SAVE_FAILED_MESSAGE };
+  }
 
   const planId = crypto.randomUUID();
   const { error: planError } = await supabase.from('plans').insert({
@@ -313,7 +333,8 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   });
   if (planError) {
     await supabase.from('applications').delete().eq('id', applicationId);
-    return { error: `Failed to create plan: ${planError.message}` };
+    console.error('[createBill] Failed to create plan', planError.message);
+    return { error: BILL_SAVE_FAILED_MESSAGE };
   }
 
   const trimmedRef = practiceReference?.trim() || undefined;
@@ -329,6 +350,10 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
       amount:       billAmount,
       dashboardUrl,
     });
+    if (!emailResult.ok) {
+      // Raw provider text stays here, in the log, where it's useful.
+      console.error('[createBill] existing-patient bill email failed', emailResult.error);
+    }
 
     return {
       error: null,
@@ -344,7 +369,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
           email:         normalizedEmail,
           emailDelivery: {
             sent:  emailResult.ok,
-            error: emailResult.ok ? undefined : emailResult.error,
+            error: emailResult.ok ? undefined : EMAIL_FAILED_MESSAGE,
             to:    normalizedEmail,
           },
         },
@@ -369,7 +394,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
 
   if (inviteError) {
     console.error('[createBill] Failed to create invitation', inviteError.message);
-    return { error: `Failed to create invitation: ${inviteError.message}` };
+    return { error: BILL_SAVE_FAILED_MESSAGE };
   }
 
   const checkoutUrl = `${appUrl}/checkout/${token}`;
@@ -380,6 +405,10 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     checkoutUrl,
     expiresAt,
   });
+  if (!emailResult.ok) {
+    // Raw provider text stays here, in the log, where it's useful.
+    console.error('[createBill] invitation email failed', emailResult.error);
+  }
 
   return {
     error: null,
@@ -397,7 +426,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
         invitationId,
         emailDelivery: {
           sent:  emailResult.ok,
-          error: emailResult.ok ? undefined : emailResult.error,
+          error: emailResult.ok ? undefined : EMAIL_FAILED_MESSAGE,
           to:    normalizedEmail,
         },
       },

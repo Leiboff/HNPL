@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { calculateFee } from '@/lib/finance';
+import { isValidEmail } from '@/lib/validation/email';
 import {
   isAllowedBillAmount,
   MIN_BILL_AMOUNT,
@@ -57,10 +58,13 @@ function SuccessPanel({
   summary,
   feePercent,
   onReset,
+  dashboardHref,
 }: {
   summary: CreateBillSummary;
   feePercent: number;
   onReset: () => void;
+  /** Practice-scoped dashboard URL, same ?practiceId= shape the page header uses. */
+  dashboardHref: string;
 }) {
   const isInvite         = !!summary.invitation;
   const isExisting       = !!summary.existingAccount;
@@ -164,12 +168,29 @@ function SuccessPanel({
         </dl>
       </div>
 
-      <button
-        onClick={onReset}
-        className="text-sm font-medium text-[#13294B] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline transition-colors"
-      >
-        Create another bill →
-      </button>
+      {/* ── Exits ─────────────────────────────────────────────────────
+          The page shell does have a "← Back to dashboard" link, but it
+          sits in a NON-sticky header and this panel is tall (waiting
+          panel + payout breakdown), so on a phone the only visible
+          action after creating a bill was "Create another bill". Both
+          exits now live together at the end of the panel, reachable in
+          one click without scrolling back up. */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <button
+          onClick={onReset}
+          data-testid="create-another-bill"
+          className="text-sm font-medium text-[#13294B] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline transition-colors"
+        >
+          Create another bill →
+        </button>
+        <a
+          href={dashboardHref}
+          data-testid="back-to-dashboard"
+          className="text-sm font-medium text-[#3A4B66] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline transition-colors"
+        >
+          ← Back to dashboard
+        </a>
+      </div>
     </div>
   );
 }
@@ -182,15 +203,54 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
   const [loading,          setLoading]          = useState(false);
   const [error,            setError]            = useState<string | null>(null);
   const [summary,          setSummary]          = useState<CreateBillSummary | null>(null);
+  // Per-field validation messages, surfaced next to the field they
+  // belong to. Plain state (not an array) so a repeated submit on the
+  // same invalid data overwrites rather than stacking duplicates.
+  const [amountError,      setAmountError]      = useState<string | null>(null);
+  const [emailError,       setEmailError]       = useState<string | null>(null);
+  const [providerError,    setProviderError]    = useState<string | null>(null);
 
   const billAmount = parseFloat(billAmountStr);
   const validAmount = isAllowedBillAmount(billAmount);
   const preview = validAmount ? calculateFee(billAmount, feePercent) : null;
 
+  const AMOUNT_RANGE_MESSAGE =
+    `Enter an amount between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!validAmount) return;
-    if (!providerId) { setError('Please select a healthcare provider.'); return; }
+
+    // Validate EVERY field up front and surface a specific message next
+    // to each offender. This used to be `if (!validAmount) return;` — a
+    // bare early return that set no state at all, so an out-of-range
+    // amount produced a completely silent no-op (no error, no request).
+    // The submit button was ALSO disabled on the same condition, so the
+    // click never even reached this handler. Both halves are fixed: the
+    // button now only blocks while a request is in flight, and every
+    // rejection path below writes a visible message.
+    const trimmedEmail = patientEmail.trim();
+    const nextEmailError = !trimmedEmail
+      ? 'Enter the patient\'s email address.'
+      : !isValidEmail(trimmedEmail)
+        ? 'Enter a valid email address, e.g. patient@example.com.'
+        : null;
+    const nextAmountError = !billAmountStr.trim()
+      ? 'Enter a bill amount.'
+      : !validAmount
+        ? AMOUNT_RANGE_MESSAGE
+        : null;
+    const nextProviderError = !providerId ? 'Select a healthcare provider.' : null;
+
+    setEmailError(nextEmailError);
+    setAmountError(nextAmountError);
+    setProviderError(nextProviderError);
+
+    if (nextEmailError || nextAmountError || nextProviderError) {
+      // A general banner too, so the reason is apparent even if the
+      // offending field is scrolled out of view.
+      setError('Please fix the highlighted fields and try again.');
+      return;
+    }
 
     setError(null);
     setSummary(null);
@@ -205,7 +265,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
     // even though the server-side work has completed.
     try {
       const result = await createBill({
-        patientEmail:     patientEmail.trim(),
+        patientEmail:     trimmedEmail,
         billAmount,
         practiceReference: practiceReference.trim() || undefined,
         providerId,
@@ -240,21 +300,38 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
       <SuccessPanel
         summary={summary}
         feePercent={feePercent}
+        dashboardHref={`/practice?practiceId=${encodeURIComponent(practiceId)}`}
         onReset={() => {
           setSummary(null);
           setPatientEmail('');
           setBillAmountStr('');
           setPracticeReference('');
           setProviderId(providers.length === 1 ? providers[0].userId : '');
+          setError(null);
+          setAmountError(null);
+          setEmailError(null);
+          setProviderError(null);
         }}
       />
     );
   }
 
-  const INPUT = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+  const INPUT = 'w-full rounded-lg border px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1';
+  // Error variant is a real visual state on the field itself — the old
+  // form only had permanently-gray helper text, which is what made an
+  // invalid amount indistinguishable from a valid one.
+  const OK_BORDER  = 'border-gray-300 focus:border-blue-500 focus:ring-blue-500';
+  const ERR_BORDER = 'border-red-500 bg-red-50 focus:border-red-500 focus:ring-red-500';
+  const fieldClass = (hasError: boolean) => `${INPUT} ${hasError ? ERR_BORDER : OK_BORDER}`;
+  const FIELD_ERROR = 'mt-1 text-xs font-medium text-red-700';
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    // noValidate: we render our OWN inline messages. Left to the browser,
+    // native constraint validation (type="email"/min/max) intercepts submit
+    // with a transient bubble and handleSubmit never runs, so the styled
+    // per-field errors below would never appear. The attributes stay on the
+    // inputs for semantics/assistive tech.
+    <form onSubmit={handleSubmit} noValidate className="space-y-6">
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-6">
 
         {/* Healthcare provider */}
@@ -266,8 +343,10 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
             id="providerId"
             required
             value={providerId}
-            onChange={e => setProviderId(e.target.value)}
-            className={INPUT}
+            onChange={e => { setProviderId(e.target.value); setProviderError(null); }}
+            aria-invalid={!!providerError}
+            aria-describedby={providerError ? 'providerId-error' : undefined}
+            className={fieldClass(!!providerError)}
           >
             {providers.length !== 1 && <option value="">Select provider…</option>}
             {providers.map(p => (
@@ -276,6 +355,11 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
               </option>
             ))}
           </select>
+          {providerError && (
+            <p id="providerId-error" role="alert" data-testid="provider-error" className={FIELD_ERROR}>
+              {providerError}
+            </p>
+          )}
         </div>
 
         {/* Patient email */}
@@ -288,13 +372,21 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
             type="email"
             required
             value={patientEmail}
-            onChange={e => setPatientEmail(e.target.value)}
+            onChange={e => { setPatientEmail(e.target.value); setEmailError(null); }}
             placeholder="patient@example.com"
-            className={INPUT}
+            aria-invalid={!!emailError}
+            aria-describedby={emailError ? 'patientEmail-error' : 'patientEmail-hint'}
+            className={fieldClass(!!emailError)}
           />
-          <p className="mt-1 text-xs text-gray-400">
-            If the patient doesn&apos;t have an account yet, we&apos;ll send them an invitation link.
-          </p>
+          {emailError ? (
+            <p id="patientEmail-error" role="alert" data-testid="email-error" className={FIELD_ERROR}>
+              {emailError}
+            </p>
+          ) : (
+            <p id="patientEmail-hint" className="mt-1 text-xs text-gray-400">
+              If the patient doesn&apos;t have an account yet, we&apos;ll send them an invitation link.
+            </p>
+          )}
         </div>
 
         {/* Bill amount */}
@@ -312,14 +404,22 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
               max={MAX_BILL_AMOUNT}
               step="0.01"
               value={billAmountStr}
-              onChange={e => setBillAmountStr(e.target.value)}
+              onChange={e => { setBillAmountStr(e.target.value); setAmountError(null); }}
               placeholder="0.00"
-              className="w-full rounded-lg border border-gray-300 pl-7 pr-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              aria-invalid={!!amountError}
+              aria-describedby={amountError ? 'billAmount-error' : 'billAmount-hint'}
+              className={`w-full rounded-lg border pl-7 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 ${amountError ? ERR_BORDER : OK_BORDER}`}
             />
           </div>
-          <p className="mt-1 text-xs text-gray-400">
-            Between {formatRandLimit(MIN_BILL_AMOUNT)} and {formatRandLimit(MAX_BILL_AMOUNT)}
-          </p>
+          {amountError ? (
+            <p id="billAmount-error" role="alert" data-testid="amount-error" className={FIELD_ERROR}>
+              {amountError}
+            </p>
+          ) : (
+            <p id="billAmount-hint" className="mt-1 text-xs text-gray-400">
+              Between {formatRandLimit(MIN_BILL_AMOUNT)} and {formatRandLimit(MAX_BILL_AMOUNT)}
+            </p>
+          )}
         </div>
 
         {/* Practice reference */}
@@ -368,9 +468,15 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
         </div>
       )}
 
+      {/* Disabled ONLY while a request is in flight. It used to also be
+          disabled on `!validAmount || !patientEmail.trim() || !providerId`,
+          which is the other half of the reported silent failure: a click on
+          invalid data dispatched no event at all, so nothing could explain
+          why. Now every click either submits or renders the reasons above. */}
       <button
         type="submit"
-        disabled={loading || !validAmount || !patientEmail.trim() || !providerId}
+        disabled={loading}
+        data-testid="submit-bill"
         className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
         style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
       >
