@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import PinInput from '../PinInput';
+import { describeDevice } from '@/lib/auth/deviceModel';
 import type { GenerateCodeResult, DeviceRow } from './actions';
 
 // ─── DeviceAdminView ────────────────────────────────────────────────────
@@ -31,13 +32,17 @@ type Props = {
   revokeDevice:                   (deviceId: string) => Promise<{ error: string | null }>;
   setTillPin:                     (pin: string, practiceId?: string) => Promise<{ error: string | null }>;
   generateTillPinValue:           (practiceId?: string) => Promise<{ error: string | null; pin?: string }>;
+  relabelDevice:                  (deviceId: string, label: string) => Promise<{ error: string | null }>;
 };
 
 export default function DeviceAdminView({
   practiceId, initialDevices, hasPin,
-  generateDeviceRegistrationCode, revokeDevice, setTillPin, generateTillPinValue,
+  generateDeviceRegistrationCode, revokeDevice, setTillPin, generateTillPinValue, relabelDevice,
 }: Props) {
   const [devices, setDevices] = useState(initialDevices);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [pinConfigured, setPinConfigured] = useState(hasPin);
   const [pinInput, setPinInput] = useState('');
   const [pinVisible, setPinVisible] = useState(false);
@@ -107,6 +112,31 @@ export default function DeviceAdminView({
       if (!result.error) {
         setDevices((prev) => prev.map((d) => (d.id === deviceId ? { ...d, revokedAt: new Date().toISOString() } : d)));
       }
+    });
+  }
+
+  function startRename(d: DeviceRow) {
+    setRenameError(null);
+    setEditingId(d.id);
+    setEditLabel(d.label ?? '');
+  }
+
+  function handleRenameSave(deviceId: string) {
+    const next = editLabel.trim();
+    setRenameError(null);
+    if (!next) {
+      setRenameError('Enter a name for this till.');
+      return;
+    }
+    startTransition(async () => {
+      const result = await relabelDevice(deviceId, next);
+      if (result.error) {
+        setRenameError(result.error);
+        return;
+      }
+      setDevices((prev) => prev.map((d) => (d.id === deviceId ? { ...d, label: next } : d)));
+      setEditingId(null);
+      setEditLabel('');
     });
   }
 
@@ -204,24 +234,73 @@ export default function DeviceAdminView({
         ) : (
           <ul className="divide-y divide-gray-100">
             {devices.map((d) => (
-              <li key={d.id} className="py-3 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{d.label ?? 'Unnamed till'}</p>
-                  <p className="text-xs text-gray-500">
-                    Registered {formatDate(d.registeredAt)} · Last active {formatDate(d.lastActivityAt)}
-                  </p>
-                  {d.revokedAt && <p className="text-xs text-red-700 mt-0.5">Revoked {formatDate(d.revokedAt)}</p>}
+              <li key={d.id} className="py-3 flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  {editingId === d.id ? (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        maxLength={60}
+                        autoFocus
+                        value={editLabel}
+                        onChange={(e) => setEditLabel(e.target.value)}
+                        data-testid={`rename-input-${d.id}`}
+                        className="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleRenameSave(d.id)}
+                          disabled={isPending}
+                          data-testid={`rename-save-${d.id}`}
+                          className="rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingId(null); setRenameError(null); }}
+                          className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {renameError && <p role="alert" className="text-xs text-red-700">{renameError}</p>}
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium text-gray-900">{d.label ?? 'Unnamed till'}</p>
+                      <p className="text-xs text-gray-600" data-testid={`device-model-${d.id}`}>
+                        {describeDevice(d.userAgent)}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Registered {formatDate(d.registeredAt)} · Last active {formatDate(d.lastActivityAt)}
+                      </p>
+                      {d.revokedAt && <p className="text-xs text-red-700 mt-0.5">Revoked {formatDate(d.revokedAt)}</p>}
+                    </>
+                  )}
                 </div>
-                {!d.revokedAt && (
-                  <button
-                    type="button"
-                    onClick={() => handleRevoke(d.id)}
-                    disabled={isPending}
-                    data-testid={`revoke-${d.id}`}
-                    className="text-sm font-semibold text-red-700 hover:text-red-900 disabled:opacity-60"
-                  >
-                    Revoke
-                  </button>
+                {!d.revokedAt && editingId !== d.id && (
+                  <div className="flex flex-none items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => startRename(d)}
+                      disabled={isPending}
+                      data-testid={`rename-${d.id}`}
+                      className="text-sm font-semibold text-[#15A89E] hover:text-[#13294B] disabled:opacity-60"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRevoke(d.id)}
+                      disabled={isPending}
+                      data-testid={`revoke-${d.id}`}
+                      className="text-sm font-semibold text-red-700 hover:text-red-900 disabled:opacity-60"
+                    >
+                      Revoke
+                    </button>
+                  </div>
                 )}
               </li>
             ))}

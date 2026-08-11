@@ -51,6 +51,8 @@ vi.mock('@/lib/practice/tradingGate', () => ({
 type Row = Record<string, unknown>;
 const inserts: Array<{ table: string; row: Row }> = [];
 let state: Record<string, Row[]> = {};
+// Canned return for the redeem_till_registration_code RPC (set per-test).
+let redeemRpcResult: unknown = null;
 
 function matches(row: Row, filters: Array<[string, unknown]>): boolean {
   return filters.every(([c, v]) => row[c] === v);
@@ -92,6 +94,7 @@ function makeClient() {
     },
     rpc: async (name: string) => {
       if (name === 'next_invoice_number') return { data: 'INV-0001', error: null };
+      if (name === 'redeem_till_registration_code') return { data: redeemRpcResult, error: null };
       return { data: null, error: null };
     },
   };
@@ -107,6 +110,7 @@ vi.mock('@supabase/supabase-js', () => ({
 beforeEach(async () => {
   inserts.length = 0;
   gateResult = { ok: true };
+  redeemRpcResult = null;
   process.env.SA_ID_ENCRYPTION_KEY = randomBytes(32).toString('base64');
   process.env.TILL_AUTH_PEPPER    = 'test-pepper';
 
@@ -126,7 +130,46 @@ beforeEach(async () => {
   };
 });
 
-import { issueCounterSession } from './actions';
+import { issueCounterSession, redeemDeviceRegistrationCode } from './actions';
+
+// ─── redeemDeviceRegistrationCode — name + model captured at registration ──
+describe('redeemDeviceRegistrationCode', () => {
+  const S23_UA = 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
+
+  it('requires an 8-digit code', async () => {
+    const result = await redeemDeviceRegistrationCode('123', 'Front desk PC', S23_UA);
+    expect(result.error).toMatch(/8-digit/);
+    expect(result.deviceSecret).toBeUndefined();
+  });
+
+  it('requires a device name', async () => {
+    const result = await redeemDeviceRegistrationCode('12345678', '   ', S23_UA);
+    expect(result.error).toMatch(/name for this till/i);
+    expect(result.deviceSecret).toBeUndefined();
+  });
+
+  it('on a valid redeem, returns the secret and stamps label + user_agent on the new device', async () => {
+    // The real RPC inserts the row; here we seed it with the id the RPC
+    // returns so the follow-up label/user_agent UPDATE has a row to hit.
+    state.till_devices.push({ id: 'new-dev', practice_id: PRACTICE_ID, secret_hash: 'x', label: null, user_agent: null });
+    redeemRpcResult = [{ result: 'ok', device_id: 'new-dev', practice_id: PRACTICE_ID }];
+
+    const result = await redeemDeviceRegistrationCode('12345678', '  Front desk PC  ', S23_UA);
+    expect(result.error).toBeNull();
+    expect(typeof result.deviceSecret).toBe('string');
+
+    const row = state.till_devices.find((d) => d.id === 'new-dev')!;
+    expect(row.label).toBe('Front desk PC');   // trimmed
+    expect(row.user_agent).toBe(S23_UA);
+  });
+
+  it('surfaces an expired code without minting anything', async () => {
+    redeemRpcResult = [{ result: 'expired', device_id: null, practice_id: null }];
+    const result = await redeemDeviceRegistrationCode('12345678', 'Front desk PC', S23_UA);
+    expect(result.error).toMatch(/expired/i);
+    expect(result.deviceSecret).toBeUndefined();
+  });
+});
 
 function issueArgs(overrides: Partial<Parameters<typeof issueCounterSession>[0]> = {}) {
   return {

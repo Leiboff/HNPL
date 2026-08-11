@@ -54,11 +54,29 @@ export type RedeemCodeResult =
   | { error: string;  deviceSecret?: undefined }
   | { error: null;    deviceSecret: string };
 
-export async function redeemDeviceRegistrationCode(code: string): Promise<RedeemCodeResult> {
+// Friendly device name is REQUIRED at registration (the till identifies
+// itself); the raw user-agent is captured so a manager can see the model.
+const MAX_LABEL_LEN      = 60;
+const MAX_USER_AGENT_LEN = 512;
+
+export async function redeemDeviceRegistrationCode(
+  code:      string,
+  label:     string,
+  userAgent: string,
+): Promise<RedeemCodeResult> {
   const trimmed = code.trim();
   if (!/^\d{8}$/.test(trimmed)) {
     return { error: 'Enter the 8-digit code exactly as shown on the manager\'s screen.' };
   }
+
+  const cleanLabel = (label ?? '').trim();
+  if (!cleanLabel) {
+    return { error: 'Enter a name for this till (e.g. "Front desk PC").' };
+  }
+  if (cleanLabel.length > MAX_LABEL_LEN) {
+    return { error: `Device name must be ${MAX_LABEL_LEN} characters or fewer.` };
+  }
+  const cleanUserAgent = (userAgent ?? '').trim().slice(0, MAX_USER_AGENT_LEN) || null;
 
   const codeHash    = hashTillSecret(trimmed);
   const deviceSecret = generateDeviceSecret();
@@ -78,6 +96,20 @@ export async function redeemDeviceRegistrationCode(code: string): Promise<Redeem
   if (result === 'already_used') return { error: 'That code has already been used.' };
   if (result === 'expired')      return { error: 'That code has expired. Ask your manager for a new one.' };
   if (result !== 'ok')           return { error: 'Could not register this till. Please try again.' };
+
+  // Stamp the name + captured model onto the freshly-minted row. Cosmetic
+  // metadata, not the credential — so a failure here must NOT strand a
+  // successfully-registered till (the secret is what matters, and a
+  // manager can rename it later via relabelDevice). Best-effort: on error
+  // we still return the secret; the device is usable, just unnamed until
+  // relabelled.
+  const deviceId = row?.device_id as string | undefined;
+  if (deviceId) {
+    await client
+      .from('till_devices')
+      .update({ label: cleanLabel, user_agent: cleanUserAgent })
+      .eq('id', deviceId);
+  }
 
   return { error: null, deviceSecret };
 }

@@ -91,7 +91,7 @@ import { redeemDeviceRegistrationCode, checkDeviceStatus } from './actions';
 
 describe('redeemDeviceRegistrationCode — format validation', () => {
   it('rejects a code that is not exactly 8 digits, without calling the RPC', async () => {
-    const result = await redeemDeviceRegistrationCode('1234');
+    const result = await redeemDeviceRegistrationCode('1234', 'Front desk PC', 'test-ua');
     expect(result.error).toBeTruthy();
     expect(rpcCalls).toHaveLength(0);
   });
@@ -100,25 +100,25 @@ describe('redeemDeviceRegistrationCode — format validation', () => {
 describe('redeemDeviceRegistrationCode — error mapping', () => {
   it('maps invalid_code', async () => {
     rpcResult = { data: [{ result: 'invalid_code', device_id: null, practice_id: null }], error: null };
-    const result = await redeemDeviceRegistrationCode('12345678');
+    const result = await redeemDeviceRegistrationCode('12345678', 'Front desk PC', 'test-ua');
     expect(result.error).toMatch(/not valid/i);
   });
 
   it('maps already_used', async () => {
     rpcResult = { data: [{ result: 'already_used', device_id: null, practice_id: null }], error: null };
-    const result = await redeemDeviceRegistrationCode('12345678');
+    const result = await redeemDeviceRegistrationCode('12345678', 'Front desk PC', 'test-ua');
     expect(result.error).toMatch(/already been used/i);
   });
 
   it('maps expired', async () => {
     rpcResult = { data: [{ result: 'expired', device_id: null, practice_id: null }], error: null };
-    const result = await redeemDeviceRegistrationCode('12345678');
+    const result = await redeemDeviceRegistrationCode('12345678', 'Front desk PC', 'test-ua');
     expect(result.error).toMatch(/expired/i);
   });
 
   it('maps a transport-level RPC error to a generic message', async () => {
     rpcResult = { data: null, error: { message: 'connection reset' } };
-    const result = await redeemDeviceRegistrationCode('12345678');
+    const result = await redeemDeviceRegistrationCode('12345678', 'Front desk PC', 'test-ua');
     expect(result.error).toBeTruthy();
     expect(result.error).not.toMatch(/connection reset/); // no internal error leakage
   });
@@ -127,7 +127,7 @@ describe('redeemDeviceRegistrationCode — error mapping', () => {
 describe('redeemDeviceRegistrationCode — success', () => {
   it('calls the RPC with HASHED code + a freshly generated hashed secret, returns the plaintext secret once', async () => {
     rpcResult = { data: [{ result: 'ok', device_id: 'new-device', practice_id: PRACTICE_ID }], error: null };
-    const result = await redeemDeviceRegistrationCode('12345678');
+    const result = await redeemDeviceRegistrationCode('12345678', 'Front desk PC', 'test-ua');
     expect(result.error).toBeNull();
     expect(result.deviceSecret).toBeTruthy();
 
