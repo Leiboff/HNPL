@@ -155,6 +155,7 @@ export async function generateDeviceRegistrationCode(practiceId?: string): Promi
 export type DeviceRow = {
   id:              string;
   label:           string | null;
+  userAgent:       string | null;
   registeredAt:    string;
   revokedAt:       string | null;
   lastActivityAt:  string | null;
@@ -167,7 +168,7 @@ export async function listDevices(practiceId?: string): Promise<{ error: string 
 
   const { data, error } = await svc()
     .from('till_devices')
-    .select('id, label, registered_at, revoked_at, last_activity_at, unlocked_at')
+    .select('id, label, user_agent, registered_at, revoked_at, last_activity_at, unlocked_at')
     .eq('practice_id', guard.practiceId)
     .order('registered_at', { ascending: false });
   if (error) return { error: error.message };
@@ -177,12 +178,49 @@ export async function listDevices(practiceId?: string): Promise<{ error: string 
     devices: (data ?? []).map((d) => ({
       id:             d.id as string,
       label:          d.label as string | null,
+      userAgent:      d.user_agent as string | null,
       registeredAt:   d.registered_at as string,
       revokedAt:      d.revoked_at as string | null,
       lastActivityAt: d.last_activity_at as string | null,
       unlockedAt:     d.unlocked_at as string | null,
     })),
   };
+}
+
+// ─── relabelDevice ────────────────────────────────────────────────────────
+//
+// Rename a registered till. Same resolve-then-guard scoping as revokeDevice
+// (resolve the device's OWN practice via service-role first, then guard
+// against THAT practice) so a brand-admin can rename a device on a branch
+// they administer only via practice_group_members, and no manager can touch
+// another practice's device. Empty name is rejected — a till must stay
+// named once registered.
+
+const MAX_LABEL_LEN = 60;
+
+export async function relabelDevice(deviceId: string, label: string): Promise<{ error: string | null }> {
+  const cleanLabel = (label ?? '').trim();
+  if (!cleanLabel) return { error: 'Enter a name for this till.' };
+  if (cleanLabel.length > MAX_LABEL_LEN) {
+    return { error: `Device name must be ${MAX_LABEL_LEN} characters or fewer.` };
+  }
+
+  const { data: device } = await svc()
+    .from('till_devices')
+    .select('id, practice_id')
+    .eq('id', deviceId)
+    .maybeSingle();
+  if (!device) return { error: 'Device not found.' };
+
+  const guard = await guardTillManager(device.practice_id as string);
+  if (!guard.ok) return { error: guard.error };
+
+  const { error } = await svc()
+    .from('till_devices')
+    .update({ label: cleanLabel })
+    .eq('id', deviceId);
+  if (error) return { error: error.message };
+  return { error: null };
 }
 
 // ─── revokeDevice ───────────────────────────────────────────────────────

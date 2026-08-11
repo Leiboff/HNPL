@@ -13,28 +13,38 @@ const NOOP_DEVICES: DeviceRow[] = [];
 
 function renderView(overrides: {
   hasPin?: boolean;
+  initialDevices?: DeviceRow[];
   generateTillPinValue?: (practiceId?: string) => Promise<{ error: string | null; pin?: string }>;
   setTillPin?: (pin: string, practiceId?: string) => Promise<{ error: string | null }>;
+  relabelDevice?: (deviceId: string, label: string) => Promise<{ error: string | null }>;
 } = {}) {
   const generateDeviceRegistrationCode = vi.fn(async () => ({ error: null, code: '12345678', expiresAt: new Date().toISOString() }));
   const revokeDevice = vi.fn(async () => ({ error: null }));
   const setTillPin = overrides.setTillPin ?? vi.fn(async () => ({ error: null }));
   const generateTillPinValue = overrides.generateTillPinValue ?? vi.fn(async () => ({ error: null, pin: '482913' }));
+  const relabelDevice = overrides.relabelDevice ?? vi.fn(async () => ({ error: null }));
 
   render(
     <DeviceAdminView
       practiceId="practice-1"
-      initialDevices={NOOP_DEVICES}
+      initialDevices={overrides.initialDevices ?? NOOP_DEVICES}
       hasPin={overrides.hasPin ?? false}
       generateDeviceRegistrationCode={generateDeviceRegistrationCode}
       revokeDevice={revokeDevice}
       setTillPin={setTillPin}
       generateTillPinValue={generateTillPinValue}
+      relabelDevice={relabelDevice}
     />,
   );
 
-  return { generateDeviceRegistrationCode, revokeDevice, setTillPin, generateTillPinValue };
+  return { generateDeviceRegistrationCode, revokeDevice, setTillPin, generateTillPinValue, relabelDevice };
 }
+
+const S23_UA = 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
+const DEVICE: DeviceRow = {
+  id: 'device-1', label: 'Front desk PC', userAgent: S23_UA,
+  registeredAt: '2024-01-01T08:00:00Z', revokedAt: null, lastActivityAt: null, unlockedAt: null,
+};
 
 describe('DeviceAdminView — Set PIN vs Reset PIN label', () => {
   it('reads "Set PIN" when no PIN is configured yet (manual-entry path)', () => {
@@ -109,6 +119,41 @@ describe('DeviceAdminView — Generate a PIN', () => {
     expect(allLoggedText).not.toContain('482913');
     logSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+describe('DeviceAdminView — device name + model + rename', () => {
+  it('shows the device name and the model derived from its user-agent', () => {
+    renderView({ initialDevices: [DEVICE] });
+    expect(screen.getByText('Front desk PC')).toBeTruthy();
+    // The S23's UA (SM-S911B) is surfaced as a readable model.
+    expect(screen.getByTestId('device-model-device-1').textContent).toBe('Samsung SM-S911B (Android 13)');
+  });
+
+  it('renames a device through relabelDevice and reflects the new name', async () => {
+    const relabelDevice = vi.fn(async () => ({ error: null }));
+    renderView({ initialDevices: [DEVICE], relabelDevice });
+
+    fireEvent.click(screen.getByTestId('rename-device-1'));
+    const input = screen.getByTestId('rename-input-device-1') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Reception iPad' } });
+    fireEvent.click(screen.getByTestId('rename-save-device-1'));
+
+    await waitFor(() => expect(relabelDevice).toHaveBeenCalledWith('device-1', 'Reception iPad'));
+    await waitFor(() => expect(screen.getByText('Reception iPad')).toBeTruthy());
+  });
+
+  it('blocks saving an empty name and surfaces the server error', async () => {
+    const relabelDevice = vi.fn(async () => ({ error: 'boom' }));
+    renderView({ initialDevices: [DEVICE], relabelDevice });
+
+    fireEvent.click(screen.getByTestId('rename-device-1'));
+    fireEvent.change(screen.getByTestId('rename-input-device-1'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByTestId('rename-save-device-1'));
+
+    // Client-side guard fires first — server action never called on blank.
+    await waitFor(() => expect(screen.getByText(/enter a name/i)).toBeTruthy());
+    expect(relabelDevice).not.toHaveBeenCalled();
   });
 });
 

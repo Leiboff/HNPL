@@ -7,6 +7,7 @@ import {
   setTillPin,
   generateTillPinValue,
   listDevices,
+  relabelDevice,
 } from './actions';
 import DeviceAdminView from './DeviceAdminView';
 
@@ -128,6 +129,7 @@ export default async function DevicesPage({
           revokeDevice={revokeDevice}
           setTillPin={setTillPin}
           generateTillPinValue={generateTillPinValue}
+          relabelDevice={relabelDevice}
         />
       </main>
     </div>

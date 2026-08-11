@@ -100,9 +100,9 @@ beforeEach(() => {
       { user_id: 'ex-brand-admin', group_id: 'group-1', active: false },
     ],
     till_devices: [
-      { id: 'device-1', practice_id: 'practice-1', label: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
-      { id: 'device-other', practice_id: 'practice-2', label: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
-      { id: 'device-3', practice_id: 'practice-3', label: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
+      { id: 'device-1', practice_id: 'practice-1', label: 'Front desk PC', user_agent: 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36', registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
+      { id: 'device-other', practice_id: 'practice-2', label: null, user_agent: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
+      { id: 'device-3', practice_id: 'practice-3', label: null, user_agent: null, registered_at: '2024-01-01', revoked_at: null, last_activity_at: null, unlocked_at: null, pin_attempts: 0, pin_locked_until: null },
     ],
     practices: [
       { id: 'practice-1', till_pin_hash: null, group_id: 'group-solo-1' },
@@ -117,6 +117,7 @@ import {
   generateDeviceRegistrationCode,
   listDevices,
   revokeDevice,
+  relabelDevice,
   setTillPin,
   generateTillPinValue,
   hasTillPin,
@@ -140,6 +141,13 @@ describe('guardTillManager — non-manager rejected on every export', () => {
   it('revokeDevice rejects a biller', async () => {
     sessionUserId = 'biller-1';
     const result = await revokeDevice('device-1');
+    expect(result.error).toMatch(/permission/i);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('relabelDevice rejects a biller', async () => {
+    sessionUserId = 'biller-1';
+    const result = await relabelDevice('device-1', 'Reception iPad');
     expect(result.error).toMatch(/permission/i);
     expect(updates).toHaveLength(0);
   });
@@ -182,11 +190,14 @@ describe('generateDeviceRegistrationCode — manager success', () => {
 });
 
 describe('listDevices — manager success', () => {
-  it('returns only the manager\'s own practice\'s devices', async () => {
+  it('returns only the manager\'s own practice\'s devices, incl. label + user_agent', async () => {
     const result = await listDevices();
     expect(result.error).toBeNull();
     expect(result.devices).toHaveLength(1);
     expect(result.devices![0].id).toBe('device-1');
+    // Name + raw UA (→ model) flow through for the admin view to render.
+    expect(result.devices![0].label).toBe('Front desk PC');
+    expect(result.devices![0].userAgent).toContain('SM-S911B');
   });
 });
 
@@ -211,6 +222,42 @@ describe('revokeDevice — manager success + resolve-then-guard scoping', () => 
     const result = await revokeDevice('nonexistent-device');
     expect(result.error).toMatch(/not found/i);
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe('relabelDevice — manager success, scoping + validation', () => {
+  it('renames the manager\'s own device', async () => {
+    const result = await relabelDevice('device-1', '  Reception iPad  ');
+    expect(result.error).toBeNull();
+    // Trimmed before write.
+    expect(state.till_devices.find((d) => d.id === 'device-1')!.label).toBe('Reception iPad');
+  });
+
+  it('rejects an empty / whitespace name (a till must stay named)', async () => {
+    const result = await relabelDevice('device-1', '   ');
+    expect(result.error).toMatch(/enter a name/i);
+    expect(updates).toHaveLength(0);
+    // Original label untouched.
+    expect(state.till_devices.find((d) => d.id === 'device-1')!.label).toBe('Front desk PC');
+  });
+
+  it('refuses to rename a device belonging to a practice the caller has no authority over', async () => {
+    const result = await relabelDevice('device-other', 'Hijack');
+    expect(result.error).toMatch(/permission/i);
+    expect(state.till_devices.find((d) => d.id === 'device-other')!.label).toBeNull();
+  });
+
+  it('reports an unknown device id as not found', async () => {
+    const result = await relabelDevice('nonexistent-device', 'Whatever');
+    expect(result.error).toMatch(/not found/i);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('succeeds for a brand-admin renaming a device on their branch', async () => {
+    sessionUserId = 'brand-admin-1';
+    const result = await relabelDevice('device-3', 'Branch till');
+    expect(result.error).toBeNull();
+    expect(state.till_devices.find((d) => d.id === 'device-3')!.label).toBe('Branch till');
   });
 });
 
