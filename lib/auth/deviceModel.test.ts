@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeDevice } from './deviceModel';
+import { describeDevice, deviceCode } from './deviceModel';
 
 // Real User-Agent strings (trimmed) for the devices a ZA reception is
 // most likely to register.
@@ -47,5 +47,22 @@ describe('describeDevice', () => {
     expect(describeDevice('')).toBe('Unknown device');
     expect(describeDevice('   ')).toBe('Unknown device');
     expect(describeDevice('curl/8.4.0')).toBe('Unknown device');
+  });
+});
+
+describe('deviceCode', () => {
+  it('derives a 6-character uppercase hex code from the id, with no dashes', () => {
+    expect(deviceCode('a1b2c3d4-e5f6-4789-a012-3456789abcde')).toBe('9ABCDE');
+  });
+
+  it('is stable for the same id across repeated calls (not regenerated per render)', () => {
+    const id = '11111111-2222-3333-4444-555555555555';
+    expect(deviceCode(id)).toBe(deviceCode(id));
+  });
+
+  it('two different ids sharing a label AND a model still get different codes', () => {
+    const idA = '11111111-1111-1111-1111-111111111111';
+    const idB = '22222222-2222-2222-2222-222222222222';
+    expect(deviceCode(idA)).not.toBe(deviceCode(idB));
   });
 });

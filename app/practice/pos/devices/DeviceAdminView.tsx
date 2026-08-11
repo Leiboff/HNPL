@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import PinInput from '../PinInput';
-import { describeDevice } from '@/lib/auth/deviceModel';
+import { describeDevice, deviceCode } from '@/lib/auth/deviceModel';
 import type { GenerateCodeResult, DeviceRow } from './actions';
 
 // ─── DeviceAdminView ────────────────────────────────────────────────────
@@ -24,6 +24,19 @@ function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// OS-derived model + the device's own short code — shown together on both
+// the Active and Revoked tabs so two devices sharing a label AND a model
+// stay distinguishable (e.g. "Windows PC · #A1B2C3").
+function DeviceMeta({ d }: { d: DeviceRow }) {
+  return (
+    <p className="text-xs text-gray-600 flex items-center gap-1.5">
+      <span data-testid={`device-model-${d.id}`}>{describeDevice(d.userAgent)}</span>
+      <span aria-hidden>·</span>
+      <span className="font-mono text-gray-500" data-testid={`device-code-${d.id}`}>#{deviceCode(d.id)}</span>
+    </p>
+  );
+}
+
 type Props = {
   practiceId:     string;
   initialDevices: DeviceRow[];
@@ -40,6 +53,7 @@ export default function DeviceAdminView({
   generateDeviceRegistrationCode, revokeDevice, setTillPin, generateTillPinValue, relabelDevice,
 }: Props) {
   const [devices, setDevices] = useState(initialDevices);
+  const [tab, setTab] = useState<'active' | 'revoked'>('active');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -140,6 +154,9 @@ export default function DeviceAdminView({
     });
   }
 
+  const activeDevices  = devices.filter((d) => !d.revokedAt);
+  const revokedDevices = devices.filter((d) => d.revokedAt);
+
   return (
     <div className="space-y-8">
       {!pinConfigured && (
@@ -229,79 +246,126 @@ export default function DeviceAdminView({
       {/* ── Device list ────────────────────────────────────────────── */}
       <section className="rounded-2xl border border-gray-200 bg-white p-6 space-y-4">
         <h2 className="text-lg font-semibold text-gray-900">Registered devices</h2>
-        {devices.length === 0 ? (
-          <p className="text-sm text-gray-500">No devices registered yet.</p>
-        ) : (
-          <ul className="divide-y divide-gray-100">
-            {devices.map((d) => (
-              <li key={d.id} className="py-3 flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  {editingId === d.id ? (
-                    <div className="space-y-2">
-                      <input
-                        type="text"
-                        maxLength={60}
-                        autoFocus
-                        value={editLabel}
-                        onChange={(e) => setEditLabel(e.target.value)}
-                        data-testid={`rename-input-${d.id}`}
-                        className="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleRenameSave(d.id)}
-                          disabled={isPending}
-                          data-testid={`rename-save-${d.id}`}
-                          className="rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingId(null); setRenameError(null); }}
-                          className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700"
-                        >
-                          Cancel
-                        </button>
+
+        <div className="flex gap-4 border-b border-gray-200">
+          <button
+            type="button"
+            onClick={() => setTab('active')}
+            data-testid="tab-active"
+            aria-pressed={tab === 'active'}
+            className={`pb-2 text-sm font-semibold border-b-2 transition-colors ${
+              tab === 'active' ? 'border-[#13294B] text-[#13294B]' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Active ({activeDevices.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('revoked')}
+            data-testid="tab-revoked"
+            aria-pressed={tab === 'revoked'}
+            className={`pb-2 text-sm font-semibold border-b-2 transition-colors ${
+              tab === 'revoked' ? 'border-[#13294B] text-[#13294B]' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Revoked ({revokedDevices.length})
+          </button>
+        </div>
+
+        {tab === 'active' ? (
+          activeDevices.length === 0 ? (
+            <p className="text-sm text-gray-500">No devices registered yet.</p>
+          ) : (
+            <ul className="divide-y divide-gray-100" data-testid="active-device-list">
+              {activeDevices.map((d) => (
+                <li key={d.id} className="py-3 flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    {editingId === d.id ? (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          maxLength={60}
+                          autoFocus
+                          value={editLabel}
+                          onChange={(e) => setEditLabel(e.target.value)}
+                          data-testid={`rename-input-${d.id}`}
+                          className="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRenameSave(d.id)}
+                            disabled={isPending}
+                            data-testid={`rename-save-${d.id}`}
+                            className="rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingId(null); setRenameError(null); }}
+                            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        {renameError && <p role="alert" className="text-xs text-red-700">{renameError}</p>}
                       </div>
-                      {renameError && <p role="alert" className="text-xs text-red-700">{renameError}</p>}
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-sm font-medium text-gray-900">{d.label ?? 'Unnamed till'}</p>
-                      <p className="text-xs text-gray-600" data-testid={`device-model-${d.id}`}>
-                        {describeDevice(d.userAgent)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        Registered {formatDate(d.registeredAt)} · Last active {formatDate(d.lastActivityAt)}
-                      </p>
-                      {d.revokedAt && <p className="text-xs text-red-700 mt-0.5">Revoked {formatDate(d.revokedAt)}</p>}
-                    </>
-                  )}
-                </div>
-                {!d.revokedAt && editingId !== d.id && (
-                  <div className="flex flex-none items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => startRename(d)}
-                      disabled={isPending}
-                      data-testid={`rename-${d.id}`}
-                      className="text-sm font-semibold text-[#15A89E] hover:text-[#13294B] disabled:opacity-60"
-                    >
-                      Rename
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRevoke(d.id)}
-                      disabled={isPending}
-                      data-testid={`revoke-${d.id}`}
-                      className="text-sm font-semibold text-red-700 hover:text-red-900 disabled:opacity-60"
-                    >
-                      Revoke
-                    </button>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium text-gray-900">{d.label ?? 'Unnamed till'}</p>
+                        <DeviceMeta d={d} />
+                        <p className="text-xs text-gray-500">
+                          Registered {formatDate(d.registeredAt)} · Last active {formatDate(d.lastActivityAt)}
+                        </p>
+                      </>
+                    )}
                   </div>
-                )}
+                  {editingId !== d.id && (
+                    <div className="flex flex-none items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => startRename(d)}
+                        disabled={isPending}
+                        data-testid={`rename-${d.id}`}
+                        className="text-sm font-semibold text-[#15A89E] hover:text-[#13294B] disabled:opacity-60"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRevoke(d.id)}
+                        disabled={isPending}
+                        data-testid={`revoke-${d.id}`}
+                        className="text-sm font-semibold text-red-700 hover:text-red-900 disabled:opacity-60"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )
+        ) : revokedDevices.length === 0 ? (
+          <p className="text-sm text-gray-500">No revoked devices.</p>
+        ) : (
+          // Read-only audit view — no rename/revoke here, matching the
+          // archive-not-delete pattern already used for payment cards
+          // elsewhere in this codebase. There is no delete/permanent-
+          // remove action for till_devices anywhere (server or UI):
+          // revocation only ever sets revoked_at, never removes the row.
+          <ul className="divide-y divide-gray-100" data-testid="revoked-device-list">
+            {revokedDevices.map((d) => (
+              <li key={d.id} className="py-3">
+                <p className="text-sm font-medium text-gray-900">{d.label ?? 'Unnamed till'}</p>
+                <DeviceMeta d={d} />
+                <p className="text-xs text-gray-500">
+                  Registered {formatDate(d.registeredAt)} · Last active {formatDate(d.lastActivityAt)}
+                </p>
+                <p className="text-xs text-red-700 mt-0.5" data-testid={`revoked-info-${d.id}`}>
+                  Revoked {formatDate(d.revokedAt)}{d.revokedBy ? ` by ${d.revokedBy}` : ''}
+                </p>
               </li>
             ))}
           </ul>
