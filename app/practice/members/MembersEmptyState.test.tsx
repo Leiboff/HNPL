@@ -72,6 +72,61 @@ describe('Admin staff empty state', () => {
     expect(screen.getByTestId('add-member-form-stub')).toBeTruthy();
   });
 
+  // ─── Part 1: the two add-buttons must be visually distinguishable ──────
+  //
+  // Both entry points are deliberately kept — the header one is the
+  // persistent action, the empty-state one is the call-to-action for
+  // someone who just read "No admin staff added yet". They were reported as
+  // an accidental duplicate because they were visually IDENTICAL primary
+  // buttons stacked close together.
+  it('the header button stays primary and the empty-state one is lower-emphasis', () => {
+    renderView(
+      [member({ id: 'm1', user_id: 'me', role: 'provider', can_manage_practice: true })],
+      'me',
+    );
+    const header = screen.getByRole('button', { name: '+ Add team member' });
+    const empty  = screen.getByTestId('admin-staff-empty-add');
+
+    // Both present, and NOT the same element.
+    expect(header).not.toBe(empty);
+
+    // Primary = the brand gradient; secondary = bordered/white, no gradient.
+    expect(header.getAttribute('style') ?? '').toMatch(/linear-gradient/);
+    expect(empty.getAttribute('style') ?? '').not.toMatch(/linear-gradient/);
+    expect(empty.className).toMatch(/border/);
+    expect(empty.className).toMatch(/bg-white/);
+    expect(empty.className).not.toMatch(/text-white/);
+
+    // Reworded so it reads as part of the empty-state sentence rather than
+    // a second copy of the same primary action.
+    expect(empty.textContent).toBe('Add your first admin staff member');
+    expect(empty.textContent).not.toBe('+ Add team member');
+  });
+
+  it('both entry points perform the same action', () => {
+    renderView(
+      [member({ id: 'm1', user_id: 'me', role: 'provider', can_manage_practice: true })],
+      'me',
+    );
+    // Empty-state path.
+    fireEvent.click(screen.getByTestId('admin-staff-empty-add'));
+    expect(screen.getByTestId('add-member-form-stub')).toBeTruthy();
+  });
+
+  it('REGRESSION: with admin staff present only the header button exists — no orphaned empty-state button', () => {
+    renderView(
+      [
+        member({ id: 'm1', user_id: 'me', role: 'provider', can_manage_practice: true }),
+        member({ id: 'm2', user_id: 'u2', role: 'admin',
+                 profile: { first_name: 'Thabo', last_name: 'Nkosi', email: 'thabo@example.com' } }),
+      ],
+      'me',
+    );
+    expect(screen.getByRole('button', { name: '+ Add team member' })).toBeTruthy();
+    expect(screen.queryByTestId('admin-staff-empty-add')).toBeNull();
+    expect(screen.queryByText('Add your first admin staff member')).toBeNull();
+  });
+
   it('a non-manager viewer gets the explanation but no add action', () => {
     renderView(
       [member({ id: 'm1', user_id: 'me', role: 'provider' })],

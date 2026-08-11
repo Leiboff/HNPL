@@ -685,14 +685,19 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                     Admin staff can create bills and manage the practice without being a
                     treating provider.
                   </p>
+                  {/* Lower-emphasis on purpose. The header keeps the single
+                      primary "+ Add team member"; this one is the
+                      call-to-action for someone who just read "No admin
+                      staff added yet", so it reads as part of that sentence
+                      rather than a second identical primary button stacked
+                      right below the first. Same action either way. */}
                   {isManager && !showAdd && (
                     <button
                       onClick={() => { setShowAdd(true); closeEdit(); setConfirmingId(null); }}
                       data-testid="admin-staff-empty-add"
-                      className="mt-3 inline-flex rounded-lg px-4 py-2 text-sm font-semibold text-white transition-all hover:shadow-lg"
-                      style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+                      className="mt-3 inline-flex rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-[#13294B] transition-colors hover:bg-gray-100 hover:border-gray-400"
                     >
-                      + Add team member
+                      Add your first admin staff member
                     </button>
                   )}
                 </div>

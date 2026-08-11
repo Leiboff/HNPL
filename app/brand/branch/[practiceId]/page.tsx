@@ -74,6 +74,27 @@ export default async function BrandBranchEditPage({
     .maybeSingle();
   if (!membership) notFound();
 
+  // ── How many branches does this brand have? ───────────────────────────
+  //
+  // For a MULTI-branch brand this page's value is cross-branch comparison,
+  // so the performance rollup leads. For a SINGLE-branch practice the
+  // "brand" and the "branch" are the same entity, so that rollup just
+  // restates /practice's own dashboard — while the things the user actually
+  // came here for (practice details, banking) sit below it. Same route,
+  // audience-appropriate content.
+  //
+  // A null group_id can't be counted against, so treat it as single.
+  const groupId = practice.group_id as string | null;
+  let branchCount = 1;
+  if (groupId) {
+    const { count } = await s
+      .from('practices')
+      .select('id', { count: 'exact', head: true })
+      .eq('group_id', groupId);
+    branchCount = count ?? 1;
+  }
+  const isMultiBranch = branchCount > 1;
+
   // Plans on this branch (scoped, service-role).
   const { data: rawPlans } = await s
     .from('plans')
@@ -206,23 +227,36 @@ export default async function BrandBranchEditPage({
         </div>
       )}
 
-      {/* Section 1 — Performance (net-only revenue + trend + per-doctor breakdown) */}
-      <BranchPerformance
-        branchName={practice.name as string}
-        totalNet={branchSummary.totalNet}
-        activePlanCount={branchSummary.totalCount}
-        monthly={monthly}
-        doctorRows={doctorRows}
-      />
+      {/* Section 1 — Performance. MULTI-BRANCH ONLY: cross-branch
+          comparison is the whole point of this page for a brand, but for a
+          single-branch practice it duplicates /practice's dashboard and
+          pushes details/banking below the fold. */}
+      {isMultiBranch && (
+        <div data-testid="branch-performance-section">
+          <BranchPerformance
+            branchName={practice.name as string}
+            totalNet={branchSummary.totalNet}
+            activePlanCount={branchSummary.totalCount}
+            monthly={monthly}
+            doctorRows={doctorRows}
+          />
+        </div>
+      )}
 
-      {/* Section 2 — Team (admins + providers) */}
-      <TeamSection
-        practiceId={practiceId}
-        members={teamMembers}
-        actions={{ addTeamMember, updateTeamMember, deactivateTeamMember, reactivateTeamMember }}
-      />
+      {/* Section 2 — Team. MULTI-BRANCH keeps its original slot here
+          (Performance → Team → Details → Banking). Single-branch moves it
+          below details/banking instead — see the block at the bottom. */}
+      {isMultiBranch && (
+        <TeamSection
+          practiceId={practiceId}
+          members={teamMembers}
+          actions={{ addTeamMember, updateTeamMember, deactivateTeamMember, reactivateTeamMember }}
+        />
+      )}
 
-      {/* Section 3 — Practice details + banking (existing edit cards) */}
+      {/* Practice details + banking. Leads the page for a single-branch
+          practice (what they actually came for); stays below Performance
+          and Team for a brand. */}
       <BranchDetailsForm
         practiceId={practiceId}
         initial={{
@@ -253,6 +287,17 @@ export default async function BrandBranchEditPage({
           saveAction={updateBranchBanking}
         />
       </div>
+
+      {/* Team last for a SINGLE-branch practice — details/banking are why
+          they opened this page, and the roster is already fully manageable
+          from /practice/members. */}
+      {!isMultiBranch && (
+        <TeamSection
+          practiceId={practiceId}
+          members={teamMembers}
+          actions={{ addTeamMember, updateTeamMember, deactivateTeamMember, reactivateTeamMember }}
+        />
+      )}
     </div>
   );
 }

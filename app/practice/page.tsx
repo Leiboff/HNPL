@@ -3,6 +3,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
 import PracticeShell from './PracticeShell';
+import { resolvePracticeShellAuthority } from './practiceShellAuthority';
 import PracticeDashboardClient from './PracticeDashboardClient';
 import CreateBillButton from './CreateBillButton';
 import { PlanSummary } from './billHelpers';
@@ -127,29 +128,19 @@ export default async function PracticeDashboardPage({
   // standalone case. A branch-admin invited into someone else's
   // brand returns false, and the sidebar link is hidden — matching
   // the /brand/branch page's notFound() guard.
-  const { data: practiceGroupRow } = await supabase
-    .from('practices')
-    .select('group_id')
-    .eq('id', practiceId)
-    .maybeSingle();
-  let isBrandAdmin = false;
-  if (practiceGroupRow?.group_id) {
-    const { data: brandMembership } = await supabase
-      .from('practice_group_members')
-      .select('user_id')
-      .eq('group_id', practiceGroupRow.group_id)
-      .eq('user_id',  user.id)
-      .eq('active',   true)
-      .maybeSingle();
-    isBrandAdmin = !!brandMembership;
-  }
+  //
+  // Extracted to ./practiceShellAuthority so all four shell-rendering
+  // screens resolve it the same way instead of keeping four copies.
+  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
+    supabase, user.id, practiceId, picked.can_manage_practice,
+  );
 
   return (
     <PracticeShell
       practiceName={practiceName}
       practiceId={practiceId}
       isBrandAdmin={isBrandAdmin}
-      canManageTill={picked.can_manage_practice || isBrandAdmin}
+      canManageTill={canManageTill}
     >
       <main className="px-4 sm:px-6 py-6 sm:py-10 space-y-6 sm:space-y-8">
 

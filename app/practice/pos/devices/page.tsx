@@ -10,6 +10,8 @@ import {
   relabelDevice,
 } from './actions';
 import DeviceAdminView from './DeviceAdminView';
+import PracticeShell from '@/app/practice/PracticeShell';
+import { resolvePracticeShellAuthority } from '@/app/practice/practiceShellAuthority';
 
 // ─── /practice/pos/devices — manager-only till administration ─────────────
 //
@@ -96,23 +98,32 @@ export default async function DevicesPage({
     .maybeSingle();
   const practiceName = (practice?.name as string | undefined) ?? 'Practice';
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200">
-        <div className="mx-auto max-w-3xl px-6 py-4 flex items-center justify-between">
-          <div>
-            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-              <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-            </span>
-            <span className="ml-2 text-sm text-gray-400">— {practiceName} · Till devices</span>
-          </div>
-          <a href={`/practice?practiceId=${practiceId}`} className="text-sm text-[#15A89E] hover:text-[#13294B]">
-            ← Back to dashboard
-          </a>
-        </div>
-      </header>
+  // ── Nav-shell authority ───────────────────────────────────────────────
+  //
+  // Resolved with the SAME checks every other practice screen uses, not
+  // assumed from the fact that listDevices() already let us in. Reaching
+  // this page does imply manager-tier authority, but hardcoding
+  // canManageTill=true here would mean the sidebar stopped reflecting the
+  // real permission and would silently diverge if that guard ever changed.
+  const { data: myMembership } = await supabase
+    .from('practice_members')
+    .select('can_manage_practice')
+    .eq('user_id',     user.id)
+    .eq('practice_id', practiceId)
+    .eq('active',      true)
+    .maybeSingle();
+  const { isBrandAdmin, canManageTill } = await resolvePracticeShellAuthority(
+    supabase, user.id, practiceId, !!myMembership?.can_manage_practice,
+  );
 
-      <main className="mx-auto max-w-3xl px-6 py-12">
+  return (
+    <PracticeShell
+      practiceName={practiceName}
+      practiceId={practiceId}
+      isBrandAdmin={isBrandAdmin}
+      canManageTill={canManageTill}
+    >
+      <main className="px-4 sm:px-6 py-6 sm:py-10 max-w-3xl">
         <div className="mb-8">
           <h1 className="text-3xl font-semibold text-gray-900">Till devices</h1>
           <p className="mt-2 text-gray-500">
@@ -132,6 +143,6 @@ export default async function DevicesPage({
           relabelDevice={relabelDevice}
         />
       </main>
-    </div>
+    </PracticeShell>
   );
 }
