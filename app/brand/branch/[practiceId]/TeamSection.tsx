@@ -126,7 +126,6 @@ export default function TeamSection({ practiceId, members, actions }: Props) {
       {adding && (
         <AddMemberForm
           saIdRequired={false}
-          showPayoutFields={false}
           onSubmit={handleAddSubmit}
           onCancel={() => { setAdding(false); setFlashErr(null); }}
           submitLabel="Send invitation"

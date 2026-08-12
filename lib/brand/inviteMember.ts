@@ -31,7 +31,7 @@ import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
 //     invite metadata carries the encrypted form so /provider/setup
 //     can hydrate the profile. If NOT supplied, the invite still goes
 //     out and the provider enters it themselves at setup.
-//   • payoutDestination — defaults 'practice' when not supplied.
+//   • payout destination — NOT an input. Always 'practice'.
 //   • capability flags (canCreateBills, canManagePractice) — default
 //     to `false` when not supplied (brand-admin's flow doesn't hand
 //     these out; practice-admin's form still passes them explicitly).
@@ -40,6 +40,9 @@ import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
 //   • Existing profile + existing membership row on THIS practice →
 //     returns an error message differentiating active vs disabled.
 
+// No payoutDestination / personal banking inputs: every payout goes to the
+// practice's own bank account (see the insert below). Callers that used to
+// pass them — the practice-admin add-member form — no longer collect them.
 export type InviteMemberInput = {
   practiceId:              string;
   memberRole:              'provider' | 'manager';
@@ -51,12 +54,6 @@ export type InviteMemberInput = {
   canManagePractice?:      boolean;
   specialty?:              string | null;
   hpcsaNumber?:            string | null;
-  payoutDestination?:      'practice' | 'provider';
-  personalBankName?:       string | null;
-  personalAccountHolder?:  string | null;
-  personalAccountNumber?:  string | null;
-  personalBranchCode?:     string | null;
-  personalAccountType?:    string | null;
 };
 
 export type InviteMemberResult = {
@@ -184,16 +181,14 @@ export async function inviteMemberIntoPractice(input: InviteMemberInput): Promis
       sa_id_number:        encryptedSaId,
       specialty:           isProvider ? (input.specialty?.trim() || null) : null,
       hpcsa_number:        isProvider ? (trimmedHpcsa || null) : null,
-      payout_destination:  isProvider ? (input.payoutDestination ?? 'practice') : 'practice',
+      // Always 'practice'. The old per-provider choice (pay a doctor to
+      // their own snapshotted bank details) is removed: one practice = one
+      // bank account = one deposit, which is what makes a weekly payout
+      // batch reconcilable (migration 0090). Written explicitly rather than
+      // relying on the column DEFAULT so the intent is visible at the
+      // insert. The personal_bank_* columns are simply never populated.
+      payout_destination:  'practice',
     };
-
-    if (isProvider && input.payoutDestination === 'provider') {
-      memberRow.personal_bank_name      = input.personalBankName       || null;
-      memberRow.personal_account_holder = input.personalAccountHolder  || null;
-      memberRow.personal_account_number = input.personalAccountNumber  || null;
-      memberRow.personal_branch_code    = input.personalBranchCode     || null;
-      memberRow.personal_account_type   = input.personalAccountType    || null;
-    }
 
     const { data: inserted, error: memberErr } = await service
       .from('practice_members')

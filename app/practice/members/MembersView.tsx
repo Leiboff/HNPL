@@ -7,7 +7,7 @@ import {
   type MemberUpdates, type NewMemberInput,
 } from './actions';
 import SelfAsProviderCard from './SelfAsProviderCard';
-import AddMemberForm, { SPECIALTIES, BANKS } from './AddMemberForm';
+import AddMemberForm, { SPECIALTIES } from './AddMemberForm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,17 +31,15 @@ export type MemberRow = {
   profile:                 MemberProfile | MemberProfile[] | null;
 };
 
+// No payout/banking fields: payouts always go to the practice account, so
+// this form cannot change where money lands. MemberRow above still CARRIES
+// those columns (they're selected by the page and read by nothing else here)
+// because the database keeps them for historical payout rows.
 type EditDraft = {
-  can_create_bills:        boolean;
-  can_manage_practice:     boolean;
-  specialty:               string;
-  hpcsa_number:            string;
-  payout_destination:      'practice' | 'provider';
-  personal_bank_name:      string;
-  personal_account_holder: string;
-  personal_account_number: string;
-  personal_branch_code:    string;
-  personal_account_type:   string;
+  can_create_bills:    boolean;
+  can_manage_practice: boolean;
+  specialty:           string;
+  hpcsa_number:        string;
 };
 
 type Props = {
@@ -51,9 +49,10 @@ type Props = {
   practiceName:  string;
 };
 
-// SPECIALTIES + BANKS live in AddMemberForm (shared with the brand
-// surface). Re-exported here as imports so the edit-mode dropdowns
-// below use the same lists.
+// SPECIALTIES lives in AddMemberForm (shared with the brand surface), so
+// the edit-mode dropdown below uses the same list. BANKS was only ever
+// needed for the per-provider personal-banking fields, which are gone —
+// practice banking is edited on /practice/details.
 
 // ─── Primitive UI helpers ─────────────────────────────────────────────────────
 
@@ -201,14 +200,8 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     setEditDraft({
       can_create_bills:        m.can_create_bills,
       can_manage_practice:     m.can_manage_practice,
-      specialty:               m.specialty               ?? '',
-      hpcsa_number:            m.hpcsa_number            ?? '',
-      payout_destination:      m.payout_destination      ?? 'practice',
-      personal_bank_name:      m.personal_bank_name      ?? '',
-      personal_account_holder: m.personal_account_holder ?? '',
-      personal_account_number: m.personal_account_number ?? '',
-      personal_branch_code:    m.personal_branch_code    ?? '',
-      personal_account_type:   m.personal_account_type   ?? '',
+      specialty:    m.specialty    ?? '',
+      hpcsa_number: m.hpcsa_number ?? '',
     });
     setEditError(null);
     setConfirmingId(null);
@@ -235,22 +228,14 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     };
 
     if (m.role === 'provider') {
-      updates.specialty          = editDraft.specialty     || null;
-      updates.hpcsa_number       = editDraft.hpcsa_number  || null;
-      updates.payout_destination = editDraft.payout_destination;
-      if (editDraft.payout_destination === 'provider') {
-        updates.personal_bank_name      = editDraft.personal_bank_name      || null;
-        updates.personal_account_holder = editDraft.personal_account_holder || null;
-        updates.personal_account_number = editDraft.personal_account_number || null;
-        updates.personal_branch_code    = editDraft.personal_branch_code    || null;
-        updates.personal_account_type   = editDraft.personal_account_type   || null;
-      } else {
-        updates.personal_bank_name      = null;
-        updates.personal_account_holder = null;
-        updates.personal_account_number = null;
-        updates.personal_branch_code    = null;
-        updates.personal_account_type   = null;
-      }
+      updates.specialty    = editDraft.specialty    || null;
+      updates.hpcsa_number = editDraft.hpcsa_number || null;
+      // payout_destination and the five personal_bank_* fields are
+      // deliberately NOT sent. Payouts always go to the practice account,
+      // so this form has no business writing either — see the note beside
+      // the destination copy below. Existing column values are left
+      // untouched rather than nulled: a historical payouts row snapshotted
+      // them, and clearing the source would make that row harder to audit.
     }
 
     const result = await updateMember(m.id, updates);
@@ -263,14 +248,10 @@ export default function MembersView({ members: initialMembers, currentUserId, is
         ...row,
         can_create_bills:        updates.can_create_bills    ?? row.can_create_bills,
         can_manage_practice:     updates.can_manage_practice ?? row.can_manage_practice,
-        specialty:               'specialty'               in updates ? updates.specialty               ?? null : row.specialty,
-        hpcsa_number:            'hpcsa_number'            in updates ? updates.hpcsa_number            ?? null : row.hpcsa_number,
-        payout_destination:      'payout_destination'      in updates ? updates.payout_destination      ?? null : row.payout_destination,
-        personal_bank_name:      'personal_bank_name'      in updates ? updates.personal_bank_name      ?? null : row.personal_bank_name,
-        personal_account_holder: 'personal_account_holder' in updates ? updates.personal_account_holder ?? null : row.personal_account_holder,
-        personal_account_number: 'personal_account_number' in updates ? updates.personal_account_number ?? null : row.personal_account_number,
-        personal_branch_code:    'personal_branch_code'    in updates ? updates.personal_branch_code    ?? null : row.personal_branch_code,
-        personal_account_type:   'personal_account_type'   in updates ? updates.personal_account_type   ?? null : row.personal_account_type,
+        specialty:    'specialty'    in updates ? updates.specialty    ?? null : row.specialty,
+        hpcsa_number: 'hpcsa_number' in updates ? updates.hpcsa_number ?? null : row.hpcsa_number,
+        // payout_destination / personal_bank_* are never in `updates` any
+        // more, so the row's existing values carry through untouched.
       } : row));
       closeEdit();
       flash('Changes saved.');
@@ -322,7 +303,6 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     const isConfirming   = confirmingId === m.id;
     const isLastManager  = m.can_manage_practice && countManagers(members, m.id) === 0;
     const canDisable     = isManager && !opts.isMe && !isLastManager;
-    const payout         = m.payout_destination ?? 'practice';
 
     return (
       <div key={m.id} className="space-y-3">
@@ -405,11 +385,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               {m.can_manage_practice && <CapBadge label="Admin access" active={true} />}
             </div>
             {m.role === 'provider' && (
-              <span className="text-xs text-gray-400">
-                Payout: {payout === 'provider'
-                  ? `Personal account${m.personal_bank_name ? ` · ${m.personal_bank_name}` : ''}`
-                  : 'Practice account'}
-              </span>
+              <span className="text-xs text-gray-400">Payout: Practice account</span>
             )}
           </div>
 
@@ -508,59 +484,24 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               />
             </FormField>
 
+            {/* Payout destination is no longer a per-member choice.
+                Every plan pays into the PRACTICE's bank account: one
+                practice = one bank account = one deposit, which is what
+                lets a practice reconcile a weekly batch against their
+                statement (migration 0090). The toggle and the personal
+                banking fields that sat here are gone — the columns
+                remain in the database so historical payouts stay
+                reconcilable, but nothing writes them. */}
             <div className="pt-1">
               <SectionLabel>Payout destination</SectionLabel>
-              <div className="flex gap-3">
-                {(['practice', 'provider'] as const).map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => patchDraft({ payout_destination: opt })}
-                    className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors ${
-                      editDraft.payout_destination === opt
-                        ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
-                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                    }`}
-                  >
-                    {opt === 'practice' ? 'Practice account' : "Provider's own account"}
-                  </button>
-                ))}
-              </div>
+              <p className="text-sm text-gray-600" data-testid="member-payout-destination-note">
+                Paid into the practice&apos;s bank account, with the rest of the
+                practice&apos;s weekly payout.
+              </p>
+              <p className="mt-1 text-xs text-gray-400">
+                Banking is set once for the whole practice under Practice details.
+              </p>
             </div>
-
-            {editDraft.payout_destination === 'provider' && (
-              <div className="space-y-3 pt-1">
-                <SectionLabel>Personal banking details</SectionLabel>
-                <FormField label="Bank">
-                  <select
-                    value={editDraft.personal_bank_name}
-                    onChange={e => patchDraft({ personal_bank_name: e.target.value })}
-                    className={SELECT_CLS}
-                  >
-                    <option value="">Select bank</option>
-                    {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </FormField>
-                <FormField label="Account holder">
-                  <input type="text" value={editDraft.personal_account_holder} onChange={e => patchDraft({ personal_account_holder: e.target.value })} className={INPUT_CLS} />
-                </FormField>
-                <FormField label="Account number">
-                  <input type="text" value={editDraft.personal_account_number} onChange={e => patchDraft({ personal_account_number: e.target.value })} className={INPUT_CLS} />
-                </FormField>
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField label="Branch code">
-                    <input type="text" value={editDraft.personal_branch_code} onChange={e => patchDraft({ personal_branch_code: e.target.value })} className={INPUT_CLS} />
-                  </FormField>
-                  <FormField label="Account type">
-                    <select value={editDraft.personal_account_type} onChange={e => patchDraft({ personal_account_type: e.target.value })} className={SELECT_CLS}>
-                      <option value="">Select</option>
-                      <option value="current">Current</option>
-                      <option value="savings">Savings</option>
-                    </select>
-                  </FormField>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -642,7 +583,6 @@ export default function MembersView({ members: initialMembers, currentUserId, is
       {showAdd && (
         <AddMemberForm
           saIdRequired={true}
-          showPayoutFields={true}
           onSubmit={handleAddMember}
           onCancel={() => setShowAdd(false)}
         />

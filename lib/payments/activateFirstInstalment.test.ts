@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { activateFirstInstalment } from './activateFirstInstalment';
 
 // ─── activateFirstInstalment — shared terminal activation ───────────
@@ -234,8 +236,24 @@ describe('activateFirstInstalment — payout insert race (Audit A)', () => {
   });
 });
 
-describe('activateFirstInstalment — provider payout snapshot', () => {
-  it('snapshots provider bank details when practice_member elected provider destination', async () => {
+// ─── CONTRACT CHANGE: the provider payout destination is REMOVED ────────
+//
+// This block previously asserted the opposite: that a practice_members row
+// electing payout_destination='provider' redirected the payout to the
+// doctor's personal account, with their bank details snapshotted onto the
+// payout row.
+//
+// That option is gone — one practice = one bank account = one deposit, which
+// is what makes a weekly payout batch reconcilable against a bank statement
+// (migration 0090). A provider-destined row inside a practice's batch would
+// silently mean two transfers for one batch total.
+//
+// The tests are INVERTED rather than deleted, so the branch cannot quietly
+// come back. The membership fixture still says 'provider' and still carries
+// the old columns, because that is the exact input that used to trigger the
+// redirect — the point is that it no longer does anything.
+describe('activateFirstInstalment — payouts ALWAYS go to the practice', () => {
+  it('IGNORES a legacy provider destination on the membership row', async () => {
     const svc = makeSvc({
       payments: [{ id: 'pay1', status: 'processing' }],
       plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
@@ -258,11 +276,48 @@ describe('activateFirstInstalment — provider payout snapshot', () => {
       now: '2026-07-30T12:00:00.000Z',
     });
     expect(result).toEqual({ ok: true });
+
     const payout = svc.state.payouts[0];
-    expect(payout.payout_destination).toBe('provider');
-    expect(payout.provider_id).toBe('prov1');
-    expect(payout.snapshot_bank_name).toBe('FNB');
-    expect(payout.snapshot_account_number).toBe('1234567890');
+    expect(payout.payout_destination).toBe('practice');
+
+    // No bank details are copied onto the payout row any more.
+    expect(payout.snapshot_bank_name).toBeUndefined();
+    expect(payout.snapshot_account_holder).toBeUndefined();
+    expect(payout.snapshot_account_number).toBeUndefined();
+    expect(payout.snapshot_branch_code).toBeUndefined();
+    expect(payout.snapshot_account_type).toBeUndefined();
+  });
+
+  it('still records provider_id — attribution is not the same thing as destination', async () => {
+    // The treating doctor is still stamped on the payout: the practice
+    // dashboard, the brand by-doctor rollup and /provider all read it. What
+    // changed is that it no longer influences WHERE the money goes.
+    const svc = makeSvc({
+      payments: [{ id: 'pay1', status: 'processing' }],
+      plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
+      practices:[{ id: 'prac1', fee_percent: 6 }],
+      payouts:  [],
+    });
+    await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_id: 'prov1', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    expect(svc.state.payouts[0].provider_id).toBe('prov1');
+    expect(svc.state.payouts[0].payout_destination).toBe('practice');
+  });
+
+  it('no longer reads the membership row for banking at all', async () => {
+    // The old code fetched practice_members to inspect payout_destination.
+    // Removing that read is what makes this structural rather than a
+    // condition someone could flip back on.
+    const src  = readFileSync(resolve(process.cwd(), 'lib/payments/activateFirstInstalment.ts'), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toMatch(/personal_bank_name/);
+    expect(code).not.toMatch(/snapshot_/);
+    expect(code).not.toMatch(/'provider'/);
+    // payout_destination is still written — as the literal 'practice'.
+    expect(code).toMatch(/payout_destination:\s*'practice'/);
   });
 });
 

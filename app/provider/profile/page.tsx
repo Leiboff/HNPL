@@ -49,7 +49,7 @@ export default async function ProviderProfilePage() {
 
   const { data: member } = await supabase
     .from('practice_members')
-    .select('specialty, hpcsa_number, payout_destination, personal_bank_name, personal_account_number')
+    .select('specialty, hpcsa_number')
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -57,10 +57,6 @@ export default async function ProviderProfilePage() {
 
   const plain = decryptIdForDisplay(profile.sa_id_number);
   const saIdMasked = plain ? maskId(plain) : '—';
-
-  const payoutLabel = member?.payout_destination === 'provider'
-    ? `Your personal account (•••• ${member.personal_account_number?.slice(-4) ?? '????'})`
-    : 'Practice account';
 
   return (
     <div className="space-y-8 max-w-lg">
@@ -79,11 +75,26 @@ export default async function ProviderProfilePage() {
         </div>
       </div>
 
+      {/* This card used to read "Your personal account (•••• 1234)" for a
+          doctor whose membership elected payout_destination='provider'. That
+          option is gone — every plan now pays into the practice's own bank
+          account so a practice can reconcile one weekly deposit against one
+          batch (migration 0090).
+
+          The card stays rather than disappearing: a doctor who previously saw
+          their own account here would otherwise be left wondering where the
+          setting went, and "where does my money go" is a reasonable question
+          to be able to answer on your own profile. It now states the single
+          rule plainly and says who to ask. */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4">Payout destination</h2>
-        <p className="text-sm text-gray-900">{payoutLabel}</p>
-        <p className="mt-2 text-xs text-gray-400">
-          To update your payout details, please contact your practice admin.
+        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4">How you get paid</h2>
+        <p className="text-sm text-gray-900" data-testid="provider-payout-destination">
+          Into your practice&apos;s bank account.
+        </p>
+        <p className="mt-2 text-xs text-gray-500">
+          BetterNow pays each practice once a week for the plans activated that week,
+          and the practice pays its practitioners. Your practice admin can confirm the
+          arrangement and the banking details on file.
         </p>
       </div>
 

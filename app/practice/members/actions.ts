@@ -9,17 +9,23 @@ import { inviteMemberIntoPractice } from '@/lib/brand/inviteMember';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
+// NOTE — no payout_destination, no personal_bank_* fields.
+//
+// Payouts always go to the PRACTICE's bank account: one practice = one bank
+// account = one deposit, which is what makes a weekly payout batch
+// reconcilable against a bank statement (migration 0090). These fields used
+// to be settable per membership, which also meant one doctor at two branches
+// could carry two different destinations with nothing noticing.
+//
+// The COLUMNS still exist on practice_members and are intentionally left
+// alone — historical payouts rows snapshotted them and must stay auditable.
+// Removing them from these input types is what makes the columns
+// unreachable-by-write from the app, without a destructive migration.
 export type MemberUpdates = {
   can_create_bills?:        boolean;
   can_manage_practice?:     boolean;
   specialty?:               string | null;
   hpcsa_number?:            string | null;
-  payout_destination?:      'practice' | 'provider';
-  personal_bank_name?:      string | null;
-  personal_account_holder?: string | null;
-  personal_account_number?: string | null;
-  personal_branch_code?:    string | null;
-  personal_account_type?:   string | null;
 };
 
 export type NewMemberInput = {
@@ -32,12 +38,6 @@ export type NewMemberInput = {
   canManagePractice:      boolean;
   specialty?:             string;
   hpcsaNumber?:           string;
-  payoutDestination:      'practice' | 'provider';
-  personalBankName?:      string;
-  personalAccountHolder?: string;
-  personalAccountNumber?: string;
-  personalBranchCode?:    string;
-  personalAccountType?:   string;
 };
 
 type ActionResult = { error: string | null };
@@ -225,12 +225,9 @@ export async function addMember(input: NewMemberInput): Promise<ActionResult> {
     canManagePractice:      input.canManagePractice,
     specialty:              input.specialty,
     hpcsaNumber:            input.hpcsaNumber,
-    payoutDestination:      input.payoutDestination,
-    personalBankName:       input.personalBankName,
-    personalAccountHolder:  input.personalAccountHolder,
-    personalAccountNumber:  input.personalAccountNumber,
-    personalBranchCode:     input.personalBranchCode,
-    personalAccountType:    input.personalAccountType,
+    // No payout destination or personal banking — see the note on
+    // NewMemberInput. inviteMemberIntoPractice defaults the column to
+    // 'practice' when it isn't supplied.
   });
 
   if (result.error) return { error: result.error };

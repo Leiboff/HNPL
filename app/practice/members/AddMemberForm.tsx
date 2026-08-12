@@ -28,6 +28,12 @@ export const SPECIALTIES = [
   'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
 ] as const;
 
+// Retained deliberately, though nothing in this file consumes it any more:
+// the per-provider personal-banking sub-form that used it is gone (payouts
+// always go to the practice account). Kept rather than deleted because it is
+// the only canonical SA bank list in the codebase and the practice banking
+// form on /practice/details is a free-text field that should arguably use it.
+// Deleting it is a separate decision from removing the provider destination.
 export const BANKS = [
   'ABSA', 'Capitec', 'FNB', 'Nedbank', 'Standard Bank',
   'African Bank', 'Investec', 'TymeBank', 'Discovery Bank', 'Other',
@@ -43,12 +49,6 @@ type AddDraft = {
   canManagePractice:      boolean;
   specialty:              string;
   hpcsaNumber:            string;
-  payoutDestination:      'practice' | 'provider';
-  personalBankName:       string;
-  personalAccountHolder:  string;
-  personalAccountNumber:  string;
-  personalBranchCode:     string;
-  personalAccountType:    string;
 };
 
 const BLANK: AddDraft = {
@@ -61,12 +61,6 @@ const BLANK: AddDraft = {
   canManagePractice:      false,
   specialty:              '',
   hpcsaNumber:            '',
-  payoutDestination:      'practice',
-  personalBankName:       '',
-  personalAccountHolder:  '',
-  personalAccountNumber:  '',
-  personalBranchCode:     '',
-  personalAccountType:    '',
 };
 
 const INPUT_CLS =
@@ -77,8 +71,6 @@ const SELECT_CLS = INPUT_CLS;
 type Props = {
   /** true → SA ID required client-side + input shown; false → hidden (deferred to /provider/setup) */
   saIdRequired:      boolean;
-  /** true → shows payout destination + personal banking sub-form (practice-admin path). */
-  showPayoutFields:  boolean;
   onSubmit:          (input: NewMemberInput) => Promise<{ error: string | null }>;
   onCancel:          () => void;
   submitLabel?:      string;
@@ -87,7 +79,6 @@ type Props = {
 
 export default function AddMemberForm({
   saIdRequired,
-  showPayoutFields,
   onSubmit,
   onCancel,
   submitLabel = 'Invite & add to practice',
@@ -122,12 +113,7 @@ export default function AddMemberForm({
       canManagePractice:      draft.canManagePractice,
       specialty:              draft.specialty              || undefined,
       hpcsaNumber:            draft.hpcsaNumber            || undefined,
-      payoutDestination:      draft.payoutDestination,
-      personalBankName:       draft.personalBankName       || undefined,
-      personalAccountHolder:  draft.personalAccountHolder  || undefined,
-      personalAccountNumber:  draft.personalAccountNumber  || undefined,
-      personalBranchCode:     draft.personalBranchCode     || undefined,
-      personalAccountType:    draft.personalAccountType    || undefined,
+      // No payoutDestination / personal banking: see the note further down.
     };
 
     const result = await onSubmit(input);
@@ -272,61 +258,13 @@ export default function AddMemberForm({
         </div>
       )}
 
-      {isProvider && showPayoutFields && (
-        <div className="space-y-3 pt-2 border-t border-gray-100">
-          <SectionLabel>Payout destination</SectionLabel>
-          <div className="flex gap-3">
-            {(['practice', 'provider'] as const).map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => patch({ payoutDestination: opt })}
-                className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors ${
-                  draft.payoutDestination === opt
-                    ? 'border-[#13294B] bg-[#13294B]/5 text-[#13294B]'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                }`}
-              >
-                {opt === 'practice' ? 'Practice account' : "Provider's own account"}
-              </button>
-            ))}
-          </div>
-
-          {draft.payoutDestination === 'provider' && (
-            <div className="space-y-3 pt-1">
-              <SectionLabel>Personal banking details</SectionLabel>
-              <FormField label="Bank">
-                <select
-                  value={draft.personalBankName}
-                  onChange={(e) => patch({ personalBankName: e.target.value })}
-                  className={SELECT_CLS}
-                >
-                  <option value="">Select bank</option>
-                  {BANKS.map((b) => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </FormField>
-              <FormField label="Account holder">
-                <input type="text" value={draft.personalAccountHolder} onChange={(e) => patch({ personalAccountHolder: e.target.value })} className={INPUT_CLS} />
-              </FormField>
-              <FormField label="Account number">
-                <input type="text" value={draft.personalAccountNumber} onChange={(e) => patch({ personalAccountNumber: e.target.value })} className={INPUT_CLS} />
-              </FormField>
-              <div className="grid grid-cols-2 gap-3">
-                <FormField label="Branch code">
-                  <input type="text" value={draft.personalBranchCode} onChange={(e) => patch({ personalBranchCode: e.target.value })} className={INPUT_CLS} />
-                </FormField>
-                <FormField label="Account type">
-                  <select value={draft.personalAccountType} onChange={(e) => patch({ personalAccountType: e.target.value })} className={SELECT_CLS}>
-                    <option value="">Select</option>
-                    <option value="current">Current</option>
-                    <option value="savings">Savings</option>
-                  </select>
-                </FormField>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* A payout-destination picker and a personal-banking sub-form used to
+          sit here, gated on a showPayoutFields prop. Both are gone: payouts
+          always go to the PRACTICE's bank account — one practice = one bank
+          account = one deposit, which is what makes a weekly payout batch
+          reconcilable against a bank statement (migration 0090). The prop
+          went with them rather than lingering as dead API surface. Practice
+          banking is edited on /practice/details. */}
 
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" role="alert">
