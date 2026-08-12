@@ -216,3 +216,184 @@ export async function inviteMemberIntoPractice(input: InviteMemberInput): Promis
     return { memberId: null, userId: null, error: msg };
   }
 }
+
+// ─── Giving a ROSTER practitioner a login, later ────────────────────────
+//
+// A practitioner can be listed on a practice with just name + specialty +
+// HPCSA and no auth account (migration 0091). This is the optional second
+// step: the manager decides, per practitioner, that this one should be able
+// to sign in and see their own bills.
+//
+// WHY THIS IS A SEPARATE FUNCTION AND NOT A FLAG ON THE ONE ABOVE
+// ──────────────────────────────────────────────────────────────
+// inviteMemberIntoPractice INSERTS a membership row. This one must UPDATE an
+// existing one. Threading that through as a branch would have meant editing
+// the function the admin-staff invite path depends on — a path explicitly out
+// of scope — so it is left byte-identical and the differing behaviour lives
+// here. What IS shared is everything that should be: svc(), isValidEmail,
+// validateSaId, encryptId, and the same inviteUserByEmail ceremony.
+//
+// WHY LINK RATHER THAN INSERT
+// ───────────────────────────
+// Inserting a second row would split one practitioner's identity in two: the
+// roster row keeps the specialty and HPCSA, the new row gets the login, and
+// the Team screen shows the same person twice. Worse, a bill already
+// attributed to the roster row belongs to neither. So the roster row IS the
+// practitioner and gains a user_id; nothing about it is duplicated or moved.
+//
+// The name then MOVES to profiles, because 0091's check constraint requires
+// exactly one home for it: a row with user_id set must have both local name
+// columns NULL. That is deliberate — a person with an account has one
+// canonical name, and a stale copy on the membership row is how "why does it
+// still say her maiden name" happens.
+
+export type InviteLoginInput = {
+  practiceId: string;
+  /** The EXISTING practice_members row to link. Must be login-less. */
+  memberId:   string;
+  email:      string;
+};
+
+export type InviteLoginResult = {
+  userId: string | null;
+  error:  string | null;
+};
+
+export async function inviteLoginForRosterMember(
+  input: InviteLoginInput,
+): Promise<InviteLoginResult> {
+  if (!isValidEmail(input.email)) return { userId: null, error: 'Enter a valid email address.' };
+
+  const service   = svc();
+  const emailNorm = input.email.trim().toLowerCase();
+
+  // ── The target must be a login-less row ON THIS PRACTICE ──────────────
+  //
+  // practice_id is asserted here rather than trusted from the caller's
+  // memberId: the guard authorised a practice, not a row, so without this a
+  // manager could pass any practice's member id and attach a login they
+  // control to someone else's roster.
+  const { data: member } = await service
+    .from('practice_members')
+    .select('id, practice_id, user_id, role, provider_first_name, provider_last_name, specialty, hpcsa_number')
+    .eq('id', input.memberId)
+    .eq('practice_id', input.practiceId)
+    .maybeSingle();
+
+  if (!member)                return { userId: null, error: 'Practitioner not found on this practice.' };
+  if (member.user_id)         return { userId: null, error: 'This practitioner already has a login.' };
+  if (member.role !== 'provider') {
+    return { userId: null, error: 'Only practitioners can be given a login this way.' };
+  }
+
+  const firstName = (member.provider_first_name as string | null)?.trim() || '';
+  const lastName  = (member.provider_last_name  as string | null)?.trim() || '';
+  if (!firstName || !lastName) {
+    // Unreachable while 0091's constraint holds; asserted rather than assumed
+    // because the invite metadata below cannot be built without a name.
+    return { userId: null, error: 'This roster entry has no name recorded — edit it before inviting.' };
+  }
+
+  // ── Duplicate detection, same posture as inviteMemberIntoPractice ─────
+  const { data: existingProfile } = await service
+    .from('profiles')
+    .select('id')
+    .eq('email', emailNorm)
+    .maybeSingle();
+
+  if (existingProfile) {
+    const { data: existingMember } = await service
+      .from('practice_members')
+      .select('id, active')
+      .eq('practice_id', input.practiceId)
+      .eq('user_id', existingProfile.id)
+      .maybeSingle();
+
+    if (existingMember) {
+      return {
+        userId: null,
+        error: `This email already belongs to ${existingMember.active ? 'an active' : 'a disabled'} member of this practice.`,
+      };
+    }
+
+    // A real person with an existing BetterNow account who is not yet on this
+    // practice. Link, don't invite: they already have a password, and
+    // inviteUserByEmail would fail on the duplicate address anyway. Refused
+    // rather than guessed — silently attaching an existing stranger's account
+    // to a practice roster is not something a typo should be able to do.
+    return {
+      userId: null,
+      error: 'That email already has a BetterNow account. Use a different address, or ask support to link the existing account.',
+    };
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
+
+  try {
+    const { data: inviteData, error: inviteErr } = await service.auth.admin.inviteUserByEmail(
+      emailNorm,
+      {
+        redirectTo: `${appUrl}/provider/setup`,
+        data: {
+          role:                 'practice_provider',
+          first_name:           firstName,
+          last_name:            lastName,
+          // No SA ID: a roster entry never had one to record. The provider
+          // supplies it themselves at /provider/setup, which is the same
+          // deferral the brand-admin invite path already relies on.
+          sa_id_number:         null,
+          hpcsa_number:         (member.hpcsa_number as string | null) ?? null,
+          must_change_password: true,
+        },
+      },
+    );
+
+    if (inviteErr || !inviteData?.user) {
+      return { userId: null, error: inviteErr?.message ?? 'Failed to send invitation.' };
+    }
+
+    const newUserId = inviteData.user.id;
+
+    // ── Link the EXISTING row ─────────────────────────────────────────────
+    //
+    // `.is('user_id', null)` is re-asserted at write time: the read above is
+    // a separate statement, so a concurrent invite could have linked this row
+    // in between. Losing that race must leave the first link intact rather
+    // than overwrite it with a second account.
+    const { data: linked, error: linkErr } = await service
+      .from('practice_members')
+      .update({
+        user_id:             newUserId,
+        // Name moves to profiles — 0091's constraint requires exactly one home.
+        provider_first_name: null,
+        provider_last_name:  null,
+      })
+      .eq('id', input.memberId)
+      .eq('practice_id', input.practiceId)
+      .is('user_id', null)
+      .select('id');
+
+    if (linkErr || (linked ?? []).length === 0) {
+      // The invite went out but the row is unlinked, so the practitioner
+      // would sign in with no membership. Logged loudly with everything
+      // needed to reconcile by hand, exactly as inviteMemberIntoPractice
+      // does for its own half-completed case.
+      console.error(
+        '[inviteLoginForRosterMember] INVITE SUCCEEDED but linking FAILED.',
+        'userId:', newUserId, 'email:', emailNorm,
+        'memberId:', input.memberId, 'practiceId:', input.practiceId,
+        'error:', linkErr?.message ?? 'row no longer login-less',
+      );
+      return {
+        userId: newUserId,
+        error: `Invitation sent but linking it to the roster entry failed: ${linkErr?.message ?? 'the entry already has a login'}`,
+      };
+    }
+
+    return { userId: newUserId, error: null };
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
+    return { userId: null, error: msg };
+  }
+}

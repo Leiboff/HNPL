@@ -315,20 +315,35 @@ describe('provider payout destination — the doctor-facing surface', () => {
     expect(code).not.toMatch(/payout_destination/);
   });
 
-  it("the doctor's dashboard names the RECIPIENT of the money it shows", () => {
-    // A third display site, beyond the two the brief listed. /provider showed
-    // "Total paid out" / "Pending payout" from payouts where provider_id = me
-    // — which now always land in the PRACTICE's account. The old labels read
-    // as money paid to the doctor.
+  it("the doctor's dashboard shows NO per-provider money figure at all", () => {
+    // A third display site, beyond the two the brief listed: /provider showed
+    // "Total paid out" / "Pending payout" summed from payouts where
+    // provider_id = me — money that always lands in the PRACTICE's account.
+    //
+    // This test used to pin the RELABELLED version of those cards ("Paid to
+    // your practice" / "Owed to your practice"). The provider access model
+    // then settled on a stronger rule: a provider's view is informational
+    // only, and carries no money figure keyed to them. Relabelling was not
+    // enough — a doctor reading a rand total under their own name reasonably
+    // concludes it is theirs, whatever the label says.
+    //
+    // So the assertion is now the stronger one, deliberately kept here rather
+    // than deleted: this file is where someone would look before re-adding a
+    // provider payout figure.
     const DASH = read('app/provider/page.tsx');
-    expect(DASH).toMatch(/Paid to your practice/);
-    expect(DASH).toMatch(/Owed to your practice/);
-    expect(DASH).not.toMatch(/'Total paid out'/);
-    expect(DASH).not.toMatch(/'Pending payout'/);
+    const code = codeOf(DASH);
+
+    // No payouts read, no aggregate, no figure — the old labels included.
+    expect(code).not.toMatch(/payouts/);
+    expect(code).not.toMatch(/net_amount/);
+    expect(code).not.toMatch(/'Total paid out'/);
+    expect(code).not.toMatch(/'Pending payout'/);
+    expect(code).not.toMatch(/Paid to your practice|Owed to your practice/);
+
+    // What remains: bill scoping to this provider, and copy explaining why
+    // there is no payout figure rather than leaving its absence unexplained.
+    expect(code).toMatch(/\.eq\('provider_id', user\.id\)/);
     expect(DASH).toMatch(/provider-payout-recipient-note/);
-    // Copy only — the figures still come from the same untouched query.
-    expect(DASH).toMatch(/\.eq\('provider_id', user\.id\)/);
-    expect(DASH).toMatch(/p\.status === 'paid' \? sum \+ Number\(p\.net_amount\)/);
   });
 });
 

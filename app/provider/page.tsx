@@ -1,8 +1,25 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 
+// ─── A provider's own view ───────────────────────────────────────────────
+//
+// INFORMATIONAL ONLY: the bills this provider raised, who they were for, and
+// where each one stands. Nothing else.
+//
+// Explicitly NOT here, and not by omission:
+//   • No money owed to or paid to this provider. Payouts go to the PRACTICE
+//     regardless of who treated the patient (the per-provider payout
+//     destination was removed with migration 0090), so a per-provider money
+//     figure would be describing something that does not exist. The
+//     `payouts` join, the two aggregate cards and the "Payout" column were
+//     all removed for that reason rather than relabelled again.
+//   • No banking, team, or practice settings — see ./layout.tsx, whose nav
+//     has only Dashboard and My profile.
+//
+// Bill AMOUNTS remain, because those are the provider's own clinical record:
+// what was billed for their patient. That is not a payout figure.
+
 type PatientRef = { first_name: string; last_name: string };
-type PayoutRef  = { net_amount: number; status: string };
 
 type ProviderPlan = {
   id:                 string;
@@ -12,7 +29,6 @@ type ProviderPlan = {
   invoice_number:     string | null;
   practice_reference: string | null;
   profiles:           PatientRef | PatientRef[] | null;
-  payouts:            PayoutRef  | PayoutRef[]  | null;
 };
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
@@ -31,11 +47,6 @@ function patientDisplay(p: PatientRef | PatientRef[] | null): string {
   const ref = Array.isArray(p) ? p[0] : p;
   if (!ref) return '—';
   return `${ref.first_name} ${ref.last_name.charAt(0)}.`;
-}
-
-function getPayout(p: PayoutRef | PayoutRef[] | null): PayoutRef | null {
-  if (!p) return null;
-  return Array.isArray(p) ? (p[0] ?? null) : p;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -65,21 +76,41 @@ export default async function ProviderDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
+  // ── Scoping ───────────────────────────────────────────────────────────
+  //
+  // Every read below is `.eq('provider_id', user.id)`, so this view is the
+  // signed-in provider's own bills by construction — another provider's bills
+  // at the same practice are not filtered out of a wider set, they are never
+  // selected. There is no practice-wide query on this page and no practiceId
+  // parameter to tamper with.
+  //
+  // The active-membership check is the second half of it. Scoping on
+  // provider_id alone would let a provider whose membership was DISABLED keep
+  // reading their historical bills indefinitely — the row stays attributed to
+  // them forever, so revoking access has to be a separate condition. Any
+  // active membership at any practice qualifies: the bills shown are theirs
+  // wherever they were raised, and this gate is about whether they still
+  // practise with us at all.
+  const { data: activeMembership } = await supabase
+    .from('practice_members')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('active', true)
+    .limit(1)
+    .maybeSingle();
+
+  if (!activeMembership) redirect('/login?reason=membership_inactive');
+
   const [
     { data: plans },
-    { data: payoutsData },
     { count: totalBilled },
   ] = await Promise.all([
     supabase
       .from('plans')
-      .select('id, total_amount, status, created_at, invoice_number, practice_reference, profiles!plans_patient_id_fkey(first_name, last_name), payouts(net_amount, status)')
+      .select('id, total_amount, status, created_at, invoice_number, practice_reference, profiles!plans_patient_id_fkey(first_name, last_name)')
       .eq('provider_id', user.id)
       .order('created_at', { ascending: false })
       .limit(50),
-    supabase
-      .from('payouts')
-      .select('net_amount, status')
-      .eq('provider_id', user.id),
     supabase
       .from('plans')
       .select('*', { count: 'exact', head: true })
@@ -88,13 +119,6 @@ export default async function ProviderDashboardPage() {
 
   const rows = (plans ?? []) as unknown as ProviderPlan[];
 
-  const totalPaidOut = (payoutsData ?? []).reduce(
-    (sum, p: any) => p.status === 'paid' ? sum + Number(p.net_amount) : sum, 0,
-  );
-  const pendingPayout = (payoutsData ?? []).reduce(
-    (sum, p: any) => p.status === 'pending' ? sum + Number(p.net_amount) : sum, 0,
-  );
-
   return (
     <div className="space-y-8">
       <div>
@@ -102,30 +126,22 @@ export default async function ProviderDashboardPage() {
         <p className="mt-1 text-sm text-gray-500">Plans assigned to you by your practice.</p>
       </div>
 
-      {/* Stats
-          These figures are payouts for the bills THIS doctor raised, and they
-          always land in the PRACTICE's bank account — the per-provider payout
-          destination was removed (migration 0090: one practice = one bank
-          account = one deposit). The old labels, "Total paid out" and
-          "Pending payout", read as money paid to the DOCTOR, which was only
-          ever true for a membership that had elected the provider
-          destination. Naming the recipient is copy-only — the queries and the
-          arithmetic above are untouched. */}
+      {/* One count, no money aggregates.
+          "Paid to your practice" and "Owed to your practice" used to sit here.
+          Both are gone: a per-provider payout figure describes something that
+          does not exist, because the practice is paid regardless of who
+          treated the patient. Relabelling them (which is what happened last
+          time) still left a doctor reading a money total keyed to their own
+          name and reasonably concluding it was theirs. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {[
-          { label: 'Total bills',            value: String(totalBilled ?? 0), cls: 'bg-white border-gray-200 text-gray-900' },
-          { label: 'Paid to your practice',  value: formatRand(totalPaidOut),  cls: 'bg-green-50 border-green-200 text-green-900' },
-          { label: 'Owed to your practice',  value: formatRand(pendingPayout), cls: 'bg-blue-50  border-blue-200  text-blue-900'  },
-        ].map(({ label, value, cls }) => (
-          <div key={label} className={`rounded-2xl border shadow-sm p-5 ${cls}`}>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</p>
-            <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
-          </div>
-        ))}
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm p-5">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total bills</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums text-gray-900">{totalBilled ?? 0}</p>
+        </div>
       </div>
       <p className="-mt-4 text-xs text-gray-500" data-testid="provider-payout-recipient-note">
-        BetterNow pays your practice once a week for the plans activated that week.
-        Your practice pays its practitioners.
+        BetterNow pays your practice directly for the plans you raise. Your practice
+        handles what it pays its practitioners, so no payout figures appear here.
       </p>
 
       {/* Plan list */}
@@ -141,36 +157,29 @@ export default async function ProviderDashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50 text-left">
-                  {['Reference', 'Patient', 'Amount', 'Status', 'Payout', 'Date'].map(h => (
+                  {/* No "Payout" column. Its per-row Paid/Pending value was a
+                      payout status keyed to this provider, which is exactly
+                      the money view a provider's surface must not carry. */}
+                  {['Reference', 'Patient', 'Amount', 'Status', 'Date'].map(h => (
                     <th key={h} className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {rows.map(plan => {
-                  const payout = getPayout(plan.payouts);
-                  return (
-                    <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="font-mono text-xs text-gray-700">{plan.invoice_number ?? '—'}</span>
-                        {plan.practice_reference && (
-                          <span className="block text-xs text-gray-400 mt-0.5">Ref: {plan.practice_reference}</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">{patientDisplay(plan.profiles)}</td>
-                      <td className="px-6 py-4 tabular-nums text-gray-700 whitespace-nowrap">{formatRand(Number(plan.total_amount))}</td>
-                      <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={plan.status} /></td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {payout ? (
-                          <span className={`text-xs font-medium capitalize ${payout.status === 'paid' ? 'text-green-700' : 'text-amber-700'}`}>
-                            {payout.status === 'paid' ? 'Paid' : 'Pending'}
-                          </span>
-                        ) : <span className="text-gray-400">—</span>}
-                      </td>
-                      <td className="px-6 py-4 text-gray-400 whitespace-nowrap text-xs">{formatDate(plan.created_at)}</td>
-                    </tr>
-                  );
-                })}
+                {rows.map(plan => (
+                  <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="font-mono text-xs text-gray-700">{plan.invoice_number ?? '—'}</span>
+                      {plan.practice_reference && (
+                        <span className="block text-xs text-gray-400 mt-0.5">Ref: {plan.practice_reference}</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">{patientDisplay(plan.profiles)}</td>
+                    <td className="px-6 py-4 tabular-nums text-gray-700 whitespace-nowrap">{formatRand(Number(plan.total_amount))}</td>
+                    <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={plan.status} /></td>
+                    <td className="px-6 py-4 text-gray-400 whitespace-nowrap text-xs">{formatDate(plan.created_at)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
