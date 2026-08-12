@@ -129,10 +129,22 @@ function Figure({
 
       {/* "from N plans" — a real control, not decoration. */}
       <div className="mt-3">
+        {/* plansHidden means the batch says it holds N plans and none came
+            back. It used to be a permission gap — payouts was readable only by
+            a member with can_manage_practice while payout_batches was readable
+            by any member, so an ordinary member saw a count above an empty
+            list. Migration 0092 aligned the two, so that is no longer the
+            reason and the copy no longer claims it is.
+            What remains is a genuine inconsistency: a batch whose plan_count
+            disagrees with its members. Rare, not the viewer's fault, and not
+            something they can act on — so the copy protects the one thing they
+            care about (the total is still good) and routes it to someone who
+            can fix it. */}
         {next.plansHidden ? (
           <p className="text-xs text-gray-500" data-testid="payout-plans-hidden">
-            From {next.planCount} plan{next.planCount === 1 ? '' : 's'}. Only practice admins
-            can see which plans make up a payout.
+            From {next.planCount} plan{next.planCount === 1 ? '' : 's'}, but the breakdown
+            isn&apos;t available. The total above is still what gets paid &mdash; contact
+            support and we&apos;ll reconcile it.
           </p>
         ) : (
           <button

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -142,8 +142,10 @@ describe('nothing owed — a clean empty state', () => {
   });
 
   it('does not assert that the practice is owed nothing — only that nothing is scheduled', () => {
-    // A staff-role member also lands here when RLS hides the payouts rows a
-    // projection needs, so the copy must not make a claim about the world.
+    // "No batch and no unbatched payouts" is not the same statement as "you
+    // are owed nothing", so the copy must not make a claim about the world.
+    // (Before 0092 an ordinary member also landed here because the payouts read
+    // was refused; that cause is gone, the reasoning is not.)
     render(<NextPayoutHero data={none()} dates={{ payoutDate: null, windowFirst: null, windowLast: null }} />);
     const text = screen.getByTestId('payout-empty').textContent ?? '';
     expect(text).toMatch(/Nothing scheduled yet/);
@@ -228,7 +230,7 @@ describe('the plan list', () => {
     expect(screen.getByTestId('payout-plan-list').textContent).toMatch(/Thabo M\./);
   });
 
-  it('when RLS hid the rows, it EXPLAINS rather than offering an empty list', () => {
+  it('when the breakdown is missing, it EXPLAINS rather than offering an empty list', () => {
     render(
       <NextPayoutHero
         data={committed({
@@ -243,9 +245,62 @@ describe('the plan list', () => {
     expect(screen.queryByTestId('payout-plans-toggle')).toBeNull();
     const note = screen.getByTestId('payout-plans-hidden').textContent ?? '';
     expect(note).toMatch(/From 3 plans/);
-    expect(note).toMatch(/practice admins/);
-    // The total is still shown — the batch figure is readable, just not its members.
+    expect(note).toMatch(/breakdown isn't available|breakdown isn’t available/);
+    // Protects the one thing the reader cares about…
+    expect(note).toMatch(/total above is still what gets paid/);
+    // …and routes it to someone who can act, since they cannot.
+    expect(note).toMatch(/contact support/i);
+    // The total is still shown — the batch figure is what will be paid.
     expect(screen.getByTestId('payout-amount').textContent).toBe('R900.00');
+  });
+
+  it('the copy does NOT blame permissions — 0092 made that explanation false', () => {
+    // Before 0092 payouts was manager-only while payout_batches was not, so
+    // this state really did mean "you are not a manager". Both are now
+    // is_practice_member, so the only remaining cause is an inconsistent batch.
+    // Misattributing a data problem to a permission one sends the reader to
+    // their practice admin, who can do nothing about it.
+    render(
+      <NextPayoutHero
+        data={committed({
+          next: {
+            kind: 'committed', batchId: 'b1', window: CLOSED, totalNet: 900, planCount: 3,
+            plans: [], plansHidden: true,
+          },
+        })}
+        dates={datesFor(CLOSED)}
+      />,
+    );
+    const note = screen.getByTestId('payout-plans-hidden').textContent ?? '';
+    expect(note).not.toMatch(/admin/i);
+    expect(note).not.toMatch(/permission/i);
+    expect(note).not.toMatch(/manager/i);
+    expect(note).not.toMatch(/only .* can see/i);
+  });
+
+  it('the OLD copy is gone from the entire codebase, not just this component', () => {
+    // A string that outlived its own truth is worth hunting repo-wide: it could
+    // equally have been copied into a test fixture, a doc, or another surface.
+    const offenders: string[] = [];
+    const skip = new Set(['node_modules', '.next', '.git', 'dist', 'coverage']);
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (skip.has(entry.name)) continue;
+        const full = resolve(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!/\.(ts|tsx|md|sql|json)$/.test(entry.name)) continue;
+        // This test names the old string in order to forbid it.
+        if (entry.name === 'NextPayoutHero.test.tsx') continue;
+        if (readFileSync(full, 'utf8').includes('Only practice admins')) {
+          offenders.push(full.replace(process.cwd(), '').replace(/\\/g, '/'));
+        }
+      }
+    };
+    walk(resolve(process.cwd(), 'app'));
+    walk(resolve(process.cwd(), 'lib'));
+    walk(resolve(process.cwd(), 'supabase'));
+
+    expect(offenders, `stale copy still present in: ${offenders.join(', ')}`).toEqual([]);
   });
 
   it('singular/plural is right for one plan', () => {
