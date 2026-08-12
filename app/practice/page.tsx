@@ -7,6 +7,9 @@ import { resolvePracticeShellAuthority } from './practiceShellAuthority';
 import { resolvePracticeViewer } from './practiceViewer';
 import PracticeDashboardClient from './PracticeDashboardClient';
 import CreateBillButton from './CreateBillButton';
+import NextPayoutHero from './NextPayoutHero';
+import { resolveNextPayout } from '@/lib/practice/nextPayout';
+import { payoutDateFor, windowDates } from '@/lib/payments/payoutSchedule';
 import { PlanSummary } from './billHelpers';
 
 type SearchParams = { reason?: string; practiceId?: string };
@@ -116,6 +119,27 @@ export default async function PracticeDashboardPage({
       if (m.specialty) specialtyMap[m.user_id] = m.specialty;
     }
   }
+
+  // ── Next payout ────────────────────────────────────────────────────────
+  //
+  // Reads through the SAME `reader` as every other practice-scoped query on
+  // this page, so it inherits the authority the viewer already resolved and
+  // widens nothing: on the member path RLS decides (payout_batches is open to
+  // any active member, payouts only to is_practice_manager — see nextPayout.ts
+  // for what that asymmetry means for what renders), and on the brand path it
+  // is the service-role client the resolver authorized for this one practice.
+  //
+  // Dates are resolved HERE, on the server, via lib/payments/payoutSchedule —
+  // never inside the component. The window boundaries are SAST midnights, and
+  // formatting one of those in the browser's timezone would name the wrong
+  // day. Passing pre-resolved YYYY-MM-DD strings makes that impossible.
+  const nextPayout = await resolveNextPayout(reader, practiceId);
+  const payoutWindow = nextPayout.next.kind === 'none' ? null : nextPayout.next.window;
+  const payoutDates = {
+    payoutDate:  payoutWindow ? payoutDateFor(payoutWindow)          : null,
+    windowFirst: payoutWindow ? windowDates(payoutWindow).firstDate  : null,
+    windowLast:  payoutWindow ? windowDates(payoutWindow).lastDate   : null,
+  };
 
   // ── Nav-shell authority ──────────────────────────────────────────
   //
@@ -230,6 +254,10 @@ export default async function PracticeDashboardPage({
             )}
           </div>
         )}
+
+        {/* Next payout — the money question, answered first. Additive: the
+            sections below are untouched. */}
+        <NextPayoutHero data={nextPayout} dates={payoutDates} />
 
         {/* Dashboard: global filters + chart + bills */}
         <PracticeDashboardClient
