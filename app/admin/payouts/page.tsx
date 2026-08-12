@@ -19,9 +19,10 @@ import { markPayoutPaid, markBatchPaid } from './actions';
 // Three sections, in the order an operator works:
 //   1. Weekly batches      — the settle surface. One row per practice per
 //                            week, with the exact window it covers.
-//   2. Not yet batched     — pending payouts activated since the last Friday
-//                            run. They join next Friday's batch. Individually
-//                            settleable, for legacy rows and one-offs.
+//   2. Not yet batched     — pending payouts activated since the last weekly
+//                            close. They join next Thursday's batch.
+//                            Individually settleable, for legacy rows and
+//                            one-offs.
 //   3. Settled payouts     — history, unchanged.
 //
 // Payouts that ARE in a batch deliberately have no per-row action here; the
@@ -143,8 +144,9 @@ export default async function AdminPayoutsPage() {
       <div>
         <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Payouts</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Money HNPL owes practices. Batched every Friday, covering plans activated
-          Thursday to Wednesday (SAST) — one batch is one bank deposit.
+          Money HNPL owes practices. Each batch covers plans activated Thursday to
+          Wednesday (SAST) and closes automatically early Thursday morning, ready to
+          pay on the Friday — one batch is one bank deposit.
           The transfer is made via banking outside the app; &ldquo;Mark paid&rdquo; is the bookkeeping flip.
         </p>
       </div>
@@ -264,7 +266,7 @@ export default async function AdminPayoutsPage() {
         <div className="px-4 sm:px-5 py-3 bg-gray-50 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-gray-900">Not yet batched</h2>
           <p className="mt-0.5 text-xs text-gray-500">
-            Activated since the last Friday run — these join the next batch. Settle
+            Activated since the last weekly close — these join the next batch. Settle
             individually only for legacy or one-off cases.
           </p>
         </div>

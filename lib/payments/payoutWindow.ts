@@ -4,8 +4,15 @@
 // with the runner that produced it:
 //
 //   A payout batch covers plans ACTIVATED from Thursday 00:00:00 SAST
-//   through Wednesday 23:59:59 SAST. The runner fires the following Friday
-//   morning.
+//   through Wednesday 23:59:59 SAST. The runner CLOSES it early the next
+//   Thursday morning; the practice is PAID on the Friday.
+//
+// Closing and paying are two different days on purpose. Closing needs nothing
+// but the passed cut-off, so it is automated as early as it can safely run
+// (Thursday 02:00 SAST — see app/api/cron/payout-batches/route.ts). Paying is
+// still a human running an EFT, and they now get a full extra day with the
+// final figure in hand. Nothing in this file depends on which of the two it
+// is being asked about: the WINDOW is the same interval either way.
 //
 // This is the reconcilability guarantee. A practice can only check a deposit
 // against their bank statement if the set of plans inside it is bounded by
@@ -100,13 +107,15 @@ export function sastMidnight(dateStr: string): Date {
  * windowEnd is the most recent Thursday 00:00:00 SAST at or before `runAt`;
  * windowStart is seven days earlier.
  *
- * For the intended Friday-morning run that yields:
+ * For the scheduled Thursday 02:00 SAST run that yields:
  *     window  = Thu 00:00 → Wed 23:59:59  (SAST)
- *     run     = the Friday after that Wednesday
- * so a Wednesday activation settles in two days and a Thursday one waits
- * eight. A manual re-run on the Saturday or Sunday resolves to the SAME
- * window, which is what makes re-running safe and boring. A manual run on a
- * Thursday afternoon settles the week that closed that morning.
+ *     closed  = two hours after that Wednesday ends
+ *     paid    = the Friday after that Wednesday
+ * so a Wednesday activation is paid in two days and a Thursday one waits
+ * eight. Any manual re-run from that Thursday through the following Wednesday
+ * resolves to the SAME window, which is what makes re-running safe and
+ * boring — the scheduled run, an operator re-run on the Friday, and a
+ * curious click on the Sunday all settle the identical week.
  *
  * "At or before", not "strictly before": at exactly Thursday 00:00 SAST the
  * interval [previous Thursday, now) has just closed and contains no future
@@ -136,7 +145,7 @@ export function payoutWindowForRun(runAt: Date): PayoutWindow {
  * An explicit window for a backfill run, from the SAST calendar date of its
  * EXCLUSIVE Thursday end (e.g. '2026-08-13').
  *
- * Exists because the normal window is strict: if a Friday run is missed,
+ * Exists because the normal window is strict: if a weekly run is missed,
  * that week's payouts are not silently swept into the next batch, because a
  * batch whose label says "Thu 6 – Wed 12" must contain exactly that. The
  * operator backfills the missed week instead, and the runner reports any

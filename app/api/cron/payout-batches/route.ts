@@ -5,10 +5,33 @@ import { runPayoutBatches } from '@/lib/payments/runPayoutBatches';
 
 // ─── Weekly payout batching cron ────────────────────────────────────────────
 //
-// Triggered by Vercel Cron (vercel.json) every FRIDAY at 04:00 UTC =
-// 06:00 SAST — early enough that a practice checking the dashboard on Friday
-// morning already sees the batch, late enough that Thursday's activations
-// have long settled.
+// Triggered by Vercel Cron (vercel.json) every THURSDAY at 00:00 UTC =
+// 02:00 SAST, two hours after the window closes at Thursday 00:00 SAST.
+//
+// WHY THURSDAY AND NOT FRIDAY
+// ───────────────────────────
+// Closing a batch depends on nothing: not on collections, not on the previous
+// batch having been settled, not on any human. Everything it needs already
+// exists in payouts the moment the Wednesday cut-off passes. Practices are
+// still PAID on Friday — but whoever runs the EFT needs a closed batch in
+// hand before that, and a Friday-morning close gave them the same morning.
+// Closing Thursday hands them a settled figure a full day early.
+//
+// WHY 02:00 SAST AND NOT MIDNIGHT
+// ───────────────────────────────
+// Two hours of buffer, because firing early is the one genuinely damaging
+// failure. Vercel cron delivery is best-effort, and a run that lands even a
+// minute BEFORE Thursday 00:00 SAST resolves to the PREVIOUS week's window
+// (payoutWindowForRun walks back to the most recent Thursday boundary) — it
+// would no-op on an already-batched week and leave the just-closed week
+// unbatched for another seven days, without even registering as
+// stranded_payouts. Two hours makes that unreachable.
+//
+// 00:00 UTC is also the same calendar DAY in both zones: SAST is UTC+2, so
+// any slot in the first two SAST hours of Thursday earlier than this would
+// have to be written as a WEDNESDAY cron string (`* * 3`) for a job that
+// closes a Thursday window — an invitation for someone to "fix" the day
+// field later and break it.
 //
 // It groups payouts rows into one batch per practice per week, covering
 // plans ACTIVATED Thursday 00:00:00 → Wednesday 23:59:59 SAST. See
@@ -16,16 +39,21 @@ import { runPayoutBatches } from '@/lib/payments/runPayoutBatches';
 // end-of-day Wednesday rather than aligned to the 11:00 UTC collection cron,
 // and migration 0090 for the DB-level idempotency guarantees.
 //
-// This job does NOT move money and does NOT create payouts rows. Settlement
-// stays a platform-admin action (markBatchPaid) with the EFT happening
-// outside the app; activateFirstInstalment stays the only creator of payouts.
+// This job does NOT move money and does NOT create payouts rows. Closing a
+// batch is fully automated; SUBMITTING it to the bank is deliberately not —
+// settlement stays a platform-admin action (markBatchPaid) taken after the
+// EFT has actually cleared, outside the app. The two steps are uncoupled on
+// purpose: a batch closes whether or not anyone has settled the last one, and
+// nothing here waits on a human. activateFirstInstalment likewise stays the
+// only creator of payouts.
+//
 // So unlike collect-instalments this endpoint fires no real-money charges —
 // but it decides what a practice is told they are owed and when, so it is
 // authenticated to exactly the same standard.
 //
 // Vercel sends cron requests as GET with an Authorization: Bearer
 // <CRON_SECRET> header. POST is also supported so an operator can trigger a
-// run manually, which is how a missed Friday gets backfilled:
+// run manually, which is how a missed week gets backfilled:
 //
 //   curl -X POST 'https://<host>/api/cron/payout-batches?weekEnding=2026-08-13' \
 //        -H "Authorization: Bearer $CRON_SECRET"

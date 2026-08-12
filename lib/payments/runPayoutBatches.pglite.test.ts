@@ -183,6 +183,8 @@ const FRI_14 = '2026-08-14';
 
 const sast = (dt: string) => new Date(`${dt}${SAST_OFFSET}`);
 const RUN_FRIDAY = sast(`${FRI_14}T06:00:00`);
+/** The actual scheduled instant: Thursday 00:00 UTC = 02:00 SAST (vercel.json). */
+const RUN_THURSDAY = sast(`${THU_13}T02:00:00`);
 
 let practiceA: string;
 let practiceB: string;
@@ -328,6 +330,113 @@ describe('window membership', () => {
     expect(backfill.payouts_claimed).toBe(1);
     const { rows } = await q<{ n: string }>(`select count(*)::int as n from payout_batches`);
     expect(Number(rows[0].n)).toBe(2);
+  });
+});
+
+// ─── The batch closes Thursday morning, and closing needs nobody ─────────
+//
+// The schedule moved from Friday 06:00 SAST to Thursday 02:00 SAST. Practices
+// are still PAID on Friday; what moved is when the figure is FINAL. These
+// tests pin the three things that decision rests on: the scheduled instant
+// settles the intended week, a closed batch is immediately actionable, and
+// closing is independent of anyone having settled the previous batch.
+
+describe('closing on Thursday morning', () => {
+  it('the scheduled Thursday 02:00 SAST run settles the SAME week the Friday run did', async () => {
+    // Regression in the strongest available form: identical window and
+    // identical membership at the new instant. If the boundary arithmetic had
+    // any Friday assumption in it, this is where it would show.
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T00:00:00`), net: 100 });
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast('2026-08-12T23:59:59'), net: 250 });
+
+    const summary = await runPayoutBatches(makeSqlClient(), { now: RUN_THURSDAY });
+
+    expect(summary.window_start).toBe(sastMidnight(THU_06).toISOString());
+    expect(summary.window_end).toBe(sastMidnight(THU_13).toISOString());
+    expect(summary.window_label).toBe(`${THU_06} to 2026-08-12`);
+    expect(summary.batches_created).toBe(1);
+    expect(summary.payouts_claimed).toBe(2);
+    expect(summary.total_net).toBe(350);
+    expect(summary.stranded_payouts).toBe(0);
+  });
+
+  it('two hours after the boundary is on the RIGHT side of it — 23:58 the night before is not', async () => {
+    // Why the schedule is 02:00 and not 00:00 SAST. A cron that fires early
+    // resolves to the PREVIOUS week's window: it claims nothing, creates no
+    // batch, and — the part that makes it dangerous — does not even register
+    // the just-closed week as stranded, because those rows are AFTER that
+    // window's start. The miss would be silent for seven days.
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T10:00:00`), net: 100 });
+
+    const early = await runPayoutBatches(makeSqlClient(), { now: sast('2026-08-12T23:58:00') });
+    expect(early.window_end).toBe(sastMidnight(THU_06).toISOString());   // a week too early
+    expect(early.payouts_claimed).toBe(0);
+    expect(early.batches_created).toBe(0);
+    expect(early.stranded_payouts).toBe(0);                             // invisible, hence the buffer
+
+    // The scheduled time gets it right.
+    const onTime = await runPayoutBatches(makeSqlClient(), { now: RUN_THURSDAY });
+    expect(onTime.window_end).toBe(sastMidnight(THU_13).toISOString());
+    expect(onTime.payouts_claimed).toBe(1);
+  });
+
+  it('a batch closed Thursday is IMMEDIATELY settleable — nothing gates it on a date', async () => {
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T10:00:00`), net: 100 });
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast('2026-08-11T10:00:00'), net: 200 });
+
+    await runPayoutBatches(makeSqlClient(), { now: RUN_THURSDAY });
+
+    // What /admin/payouts lists in "awaiting transfer": pending, unpaid, with
+    // its total already final. An operator sees this on the Thursday.
+    const { rows: batch } = await q<{ id: string; status: string; paid_at: string | null; total_net: string }>(
+      `select id, status, paid_at, total_net from payout_batches`);
+    expect(batch).toHaveLength(1);
+    expect(batch[0].status).toBe('pending');
+    expect(batch[0].paid_at).toBeNull();
+    expect(Number(batch[0].total_net)).toBe(300);
+
+    // markBatchPaid's exact SQL, in its exact order — members first, then the
+    // batch — run the same day the batch closed. No clause anywhere waits for
+    // Friday, and this is the assertion that would fail if one were added.
+    const paidAt = sast(`${THU_13}T09:00:00`).toISOString();
+    const flipped = await q(
+      `update payouts set status = 'paid', paid_at = $1
+        where batch_id = $2 and status = 'pending' returning id`,
+      [paidAt, batch[0].id],
+    );
+    expect(flipped.rows).toHaveLength(2);
+    const flippedBatch = await q(
+      `update payout_batches set status = 'paid', paid_at = $1
+        where id = $2 and status = 'pending' returning id`,
+      [paidAt, batch[0].id],
+    );
+    expect(flippedBatch.rows).toHaveLength(1);
+  });
+
+  it('next week CLOSES even if last week was never marked paid', async () => {
+    // The two steps are uncoupled on purpose. An admin who forgets to settle
+    // delays money; they must never be able to stop the batching that tells a
+    // practice what they are owed. Candidates come from payouts on
+    // `batch_id IS NULL`, and last week's rows already carry a batch_id —
+    // settled or not — so the previous batch is never even read.
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T10:00:00`), net: 100 });
+    const week1 = await runPayoutBatches(makeSqlClient(), { now: RUN_THURSDAY });
+    expect(week1.batches_created).toBe(1);
+
+    // Deliberately NOT marked paid.
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_13}T10:00:00`), net: 400 });
+    const week2 = await runPayoutBatches(makeSqlClient(), { now: sast('2026-08-20T02:00:00') });
+
+    expect(week2.batches_created).toBe(1);
+    expect(week2.payouts_claimed).toBe(1);
+    expect(week2.total_net).toBe(400);
+
+    const { rows } = await q<{ window_start: string; status: string; total_net: string }>(
+      `select window_start, status, total_net from payout_batches order by window_start`);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.status)).toEqual(['pending', 'pending']);
+    expect(Number(rows[0].total_net)).toBe(100);   // last week's figure untouched
+    expect(Number(rows[1].total_net)).toBe(400);
   });
 });
 

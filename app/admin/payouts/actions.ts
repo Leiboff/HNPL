@@ -15,7 +15,7 @@ import { createClient } from '@/lib/supabase/server';
 // practice cannot check against their statement.
 //
 // markPayoutPaid survives for exactly one case: a payout that is not in any
-// batch. Those are rows activated since the last Friday run (they will be
+// batch. Those are rows activated since the last weekly close (they will be
 // batched on the next one) and legacy rows from before batching existed. It
 // now REFUSES a batched row, so a payout inside a batch can only be settled
 // through its batch and the two can never disagree.

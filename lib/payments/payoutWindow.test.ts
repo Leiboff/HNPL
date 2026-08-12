@@ -165,6 +165,33 @@ describe('running exactly ON the boundary does not skip a week', () => {
     expect(w.windowEnd.toISOString()).toBe(sastMidnight(THU_13).toISOString());
   });
 
+  it('THE SCHEDULED INSTANT — Thursday 02:00 SAST — settles the week that just closed', () => {
+    // vercel.json: '0 0 * * 4' = Thursday 00:00 UTC = 02:00 SAST. Two hours
+    // after the boundary, so cron jitter cannot land the run on the wrong side
+    // of it. Pinned here as well as in the wiring test, because the schedule
+    // and this function have to agree and they live in different files.
+    const w = payoutWindowForRun(sast(`${THU_13}T02:00:00`));
+    expect(w.windowStart.toISOString()).toBe(sastMidnight(THU_06).toISOString());
+    expect(w.windowEnd.toISOString()).toBe(sastMidnight(THU_13).toISOString());
+    expect(describePayoutWindow(w)).toBe(`${THU_06} to ${WED_12}`);
+  });
+
+  it('and the SAME window as the Friday run it replaced — the change is timing only', () => {
+    const thursday = payoutWindowForRun(sast(`${THU_13}T02:00:00`));
+    const friday   = payoutWindowForRun(sast(`${FRI_14}T06:00:00`));
+    expect(thursday.windowStart.toISOString()).toBe(friday.windowStart.toISOString());
+    expect(thursday.windowEnd.toISOString()).toBe(friday.windowEnd.toISOString());
+  });
+
+  it('firing two minutes EARLY resolves the PREVIOUS week — why the run is not at midnight', () => {
+    // The hazard the 02:00 buffer exists to make unreachable. A run at
+    // Wednesday 23:58 SAST settles a week that is already batched, and the
+    // week that was about to close waits another seven days.
+    const early = payoutWindowForRun(sast(`${WED_12}T23:58:00`));
+    expect(early.windowEnd.toISOString()).toBe(sastMidnight(THU_06).toISOString());
+    expect(describePayoutWindow(early)).toBe('2026-07-30 to 2026-08-05');
+  });
+
   it('a Thursday-afternoon run settles the week that closed that morning', () => {
     const w = payoutWindowForRun(sast(`${THU_13}T14:00:00`));
     expect(describePayoutWindow(w)).toBe(`${THU_06} to ${WED_12}`);

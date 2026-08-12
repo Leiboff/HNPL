@@ -13,10 +13,14 @@
 -- flipped rows can't answer that.
 --
 -- So settlement becomes weekly and bounded:
---   • Every Friday, one batch per practice.
+--   • One batch per practice per week, closed automatically early Thursday
+--     morning SAST — as soon as the window has shut and nothing is left to
+--     wait for.
 --   • Covering plans ACTIVATED Thursday 00:00:00 → Wednesday 23:59:59 SAST.
---   • Settlement itself stays a human action — this table automates the
---     BATCHING and the WINDOW, not the bank transfer.
+--   • Paid on the Friday. Settlement itself stays a human action — this table
+--     automates the BATCHING and the WINDOW, not the bank transfer, and the
+--     closing of one week's batch never depends on a previous one having been
+--     marked paid.
 --
 -- The model is unchanged and deliberately so: payouts stays ONE ROW PER PLAN
 -- (payouts.plan_id UNIQUE, migration 0087), activateFirstInstalment stays its

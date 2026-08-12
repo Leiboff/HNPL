@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // ─── Payout runner wiring + the provider-destination removal ────────────
@@ -32,13 +32,70 @@ const PROVIDER   = read('app/provider/profile/page.tsx');
 const ADMIN_PRAC = read('app/admin/practices/[id]/page.tsx');
 const DIR_TEST   = read('app/patient/explore/practitioners-directory.test.ts');
 
-describe('the cron runs on Friday morning SAST', () => {
-  it('vercel.json schedules it Fridays at 04:00 UTC = 06:00 SAST', () => {
+describe('the cron closes the batch early Thursday morning SAST', () => {
+  // Closing is automated; SUBMITTING to the bank is not. Because closing
+  // depends on nothing — not collections, not the previous batch's
+  // settlement, not a human — it runs as soon as the window shuts, which
+  // hands whoever runs the Friday EFT a full extra day with the final figure.
+  it('vercel.json schedules it Thursdays at 00:00 UTC = 02:00 SAST', () => {
     const cfg = JSON.parse(VERCEL) as { crons: Array<{ path: string; schedule: string }> };
     const job = cfg.crons.find((c) => c.path === '/api/cron/payout-batches');
     expect(job).toBeTruthy();
-    // Vercel cron schedules are UTC. `5` is Friday.
-    expect(job!.schedule).toBe('0 4 * * 5');
+    // Vercel cron schedules are UTC. `4` is Thursday.
+    expect(job!.schedule).toBe('0 0 * * 4');
+  });
+
+  it('fires AFTER the Thursday 00:00 SAST boundary, never before it', () => {
+    // Firing early is the one genuinely damaging failure: a run even a minute
+    // before the boundary resolves to the PREVIOUS week's window, no-ops on an
+    // already-batched week, and leaves the week that just closed unbatched for
+    // another seven days. The schedule is derived here rather than asserted as
+    // a phrase, so a future edit to the cron string is caught by arithmetic.
+    const cfg = JSON.parse(VERCEL) as { crons: Array<{ path: string; schedule: string }> };
+    const job = cfg.crons.find((c) => c.path === '/api/cron/payout-batches')!;
+    const [minute, hourUtc, dom, month, dow] = job.schedule.split(' ');
+    expect(dom).toBe('*');
+    expect(month).toBe('*');
+
+    // SAST = UTC+2. Convert the UTC slot to SAST wall-clock minutes-past-
+    // Thursday-midnight; it must be positive (after the boundary) and small
+    // (still "early Thursday morning", not the afternoon).
+    const sastMinutes =
+      (Number(dow) - 4) * 24 * 60 + (Number(hourUtc) + 2) * 60 + Number(minute);
+    expect(sastMinutes).toBeGreaterThan(0);
+    expect(sastMinutes).toBeLessThanOrEqual(6 * 60);
+  });
+
+  it('the schedule and its SAST equivalent are documented on the route', () => {
+    expect(CRON).toMatch(/THURSDAY at 00:00 UTC =\s*(\/\/\s*)?02:00 SAST/);
+    // The reason for the buffer, so nobody "tightens" it to midnight later.
+    expect(CRON).toMatch(/firing early/i);
+  });
+
+  it('bank submission is documented as deliberately NOT automated here', () => {
+    // If this ever stops being true the comment must change with it — a route
+    // that quietly gained an EFT call would be a very expensive surprise.
+    expect(CRON).toMatch(/does NOT move money/);
+    expect(CRON).toMatch(/SUBMITTING it to the bank is deliberately not/);
+    expect(codeOf(CRON)).not.toMatch(/markBatchPaid|markPayoutPaid/);
+  });
+
+  it('NO cron route anywhere settles a payout or a batch', () => {
+    // The strong form of "bank submission is manual": scan every scheduled
+    // job, not just this one. Automating the EFT is deliberately future work,
+    // and the day someone starts it, this test is where the conversation
+    // should happen.
+    const cronDir = resolve(ROOT, 'app/api/cron');
+    const routes = readdirSync(cronDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => `app/api/cron/${e.name}/route.ts`);
+    expect(routes.length).toBeGreaterThanOrEqual(3);
+
+    for (const path of routes) {
+      const code = codeOf(read(path));
+      expect(code, `${path} must not settle payouts`).not.toMatch(/markBatchPaid|markPayoutPaid/);
+      expect(code, `${path} must not flip a payout to paid`).not.toMatch(/status:\s*'paid'/);
+    }
   });
 
   it('does not disturb the existing crons', () => {
@@ -46,6 +103,14 @@ describe('the cron runs on Friday morning SAST', () => {
     const byPath = new Map(cfg.crons.map((c) => [c.path, c.schedule]));
     expect(byPath.get('/api/cron/collect-instalments')).toBe('0 11 * * *');
     expect(byPath.get('/api/cron/crm-reply-poll')).toBe('0 6 * * *');
+  });
+
+  it('the runner formats dates through payoutWindow, never by slicing an ISO string', () => {
+    // toISOString().slice(0,10) gives the UTC calendar day, which is the
+    // PREVIOUS day for any SAST-midnight boundary — it labelled every window a
+    // day early at both ends. One module owns SAST date formatting.
+    expect(RUNNER).toMatch(/describePayoutWindow/);
+    expect(codeOf(RUNNER)).not.toMatch(/toISOString\(\)\.slice/);
   });
 
   it('the window rule is documented against the collection cron it must not align with', () => {

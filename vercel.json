@@ -11,7 +11,7 @@
     },
     {
       "path": "/api/cron/payout-batches",
-      "schedule": "0 4 * * 5"
+      "schedule": "0 0 * * 4"
     }
   ]
 }

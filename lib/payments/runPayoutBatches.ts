@@ -1,4 +1,9 @@
-import { payoutWindowForRun, payoutWindowEndingOn, type PayoutWindow } from './payoutWindow';
+import {
+  payoutWindowForRun,
+  payoutWindowEndingOn,
+  describePayoutWindow,
+  type PayoutWindow,
+} from './payoutWindow';
 
 // ─── Weekly payout batching ─────────────────────────────────────────────
 //
@@ -16,6 +21,11 @@ import { payoutWindowForRun, payoutWindowEndingOn, type PayoutWindow } from './p
 //     commission change must never retroactively move a batch.
 //   • It does not move money. Settlement stays a platform-admin action
 //     (markBatchPaid) with the EFT happening outside the app.
+//   • It does not read any OTHER batch. Closing this week's batch is
+//     independent of whether last week's was ever marked paid: candidates are
+//     selected from payouts on `batch_id IS NULL`, and an unsettled previous
+//     batch has already stamped its rows' batch_id. So an admin who never
+//     clicks "Mark batch paid" delays money, but never blocks batching.
 //
 // IDEMPOTENCY
 // ───────────
@@ -64,7 +74,14 @@ export type BatchResult = {
 export type PayoutRunSummary = {
   window_start:        string;
   window_end:          string;
-  /** Inclusive human form, e.g. '2026-08-06 to 2026-08-12'. */
+  /**
+   * Inclusive human form, e.g. '2026-08-06 to 2026-08-12'. Produced by
+   * describePayoutWindow, NOT by local date formatting: this file's first
+   * version sliced toISOString(), which reports the UTC calendar day and so
+   * labelled every window a day early at both ends (Thu 00:00 SAST is 22:00
+   * UTC the previous day). The label goes into cron_runs, where being a day
+   * out is exactly the kind of thing someone reconciles against later.
+   */
   window_label:        string;
   batches_created:     number;
   batches_reused:      number;
@@ -73,7 +90,7 @@ export type PayoutRunSummary = {
   practices:           BatchResult[];
   /**
    * Pending, unbatched payouts that ACTIVATED BEFORE this window — i.e. a
-   * previous Friday was missed. Reported rather than silently swept in,
+   * previous week's run was missed. Reported rather than silently swept in,
    * because a batch labelled "Thu 6 – Wed 12" must contain exactly that.
    * Backfill with ?weekEnding=YYYY-MM-DD. A non-zero count here is an alarm.
    */
@@ -128,7 +145,7 @@ export async function runPayoutBatches(
   if (candidateErr) {
     return {
       window_start: startIso, window_end: endIso,
-      window_label: describeWindow(window),
+      window_label: describePayoutWindow(window),
       batches_created: 0, batches_reused: 0, payouts_claimed: 0, total_net: 0,
       practices: [], stranded_payouts: 0, orphan_active_plans: 0,
       errors: [`candidate query failed: ${candidateErr.message}`],
@@ -162,7 +179,7 @@ export async function runPayoutBatches(
   return {
     window_start:        startIso,
     window_end:          endIso,
-    window_label:        describeWindow(window),
+    window_label:        describePayoutWindow(window),
     batches_created:     created,
     batches_reused:      reused,
     payouts_claimed:     results.reduce((s, r) => s + r.claimed, 0),
@@ -334,11 +351,6 @@ async function countOrphanActivePlans(
   }
   const covered = new Set((payoutRows ?? []).map((r: { plan_id: string }) => r.plan_id));
   return planIds.filter((id: string) => !covered.has(id)).length;
-}
-
-function describeWindow(w: PayoutWindow): string {
-  const lastDay = new Date(w.windowEnd.getTime() - 24 * 60 * 60 * 1000);
-  return `${w.windowStart.toISOString().slice(0, 10)} to ${lastDay.toISOString().slice(0, 10)}`;
 }
 
 /** Rands to 2dp. Sums of NUMERIC(10,2) can still pick up float dust in JS. */
