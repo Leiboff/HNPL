@@ -78,28 +78,32 @@ export default async function ProviderDashboardPage() {
 
   // ── Scoping ───────────────────────────────────────────────────────────
   //
-  // Every read below is `.eq('provider_id', user.id)`, so this view is the
-  // signed-in provider's own bills by construction — another provider's bills
+  // Since 0094 a plan is attributed to a practice_members row, not to an auth
+  // user, so "my bills" is now "bills attributed to one of MY ACTIVE
+  // memberships". That is resolved first and every read below is
+  // `.in('provider_member_id', myActiveMemberIds)` — another provider's bills
   // at the same practice are not filtered out of a wider set, they are never
   // selected. There is no practice-wide query on this page and no practiceId
   // parameter to tamper with.
   //
-  // The active-membership check is the second half of it. Scoping on
-  // provider_id alone would let a provider whose membership was DISABLED keep
-  // reading their historical bills indefinitely — the row stays attributed to
-  // them forever, so revoking access has to be a separate condition. Any
-  // active membership at any practice qualifies: the bills shown are theirs
-  // wherever they were raised, and this gate is about whether they still
-  // practise with us at all.
-  const { data: activeMembership } = await supabase
+  // Filtering the memberships on active = true is what revokes access: a plan
+  // stays attributed to the practitioner who raised it forever, so a
+  // deactivated membership must drop out of this list rather than keep
+  // resolving. Under the old provider_id form that had to be a separate gate
+  // (the id in the column carried no active flag); now it falls out of the
+  // same query, and migration 0094 enforces the same condition in RLS via
+  // is_own_active_membership() so the database agrees with the page.
+  //
+  // Multiple memberships are expected: a practitioner working at two practices
+  // has two rows, and the bills shown are theirs wherever they were raised.
+  const { data: myMemberships } = await supabase
     .from('practice_members')
     .select('id')
     .eq('user_id', user.id)
-    .eq('active', true)
-    .limit(1)
-    .maybeSingle();
+    .eq('active', true);
 
-  if (!activeMembership) redirect('/login?reason=membership_inactive');
+  const myActiveMemberIds = (myMemberships ?? []).map((m) => m.id as string);
+  if (myActiveMemberIds.length === 0) redirect('/login?reason=membership_inactive');
 
   const [
     { data: plans },
@@ -108,13 +112,13 @@ export default async function ProviderDashboardPage() {
     supabase
       .from('plans')
       .select('id, total_amount, status, created_at, invoice_number, practice_reference, profiles!plans_patient_id_fkey(first_name, last_name)')
-      .eq('provider_id', user.id)
+      .in('provider_member_id', myActiveMemberIds)
       .order('created_at', { ascending: false })
       .limit(50),
     supabase
       .from('plans')
       .select('*', { count: 'exact', head: true })
-      .eq('provider_id', user.id),
+      .in('provider_member_id', myActiveMemberIds),
   ]);
 
   const rows = (plans ?? []) as unknown as ProviderPlan[];

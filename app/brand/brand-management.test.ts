@@ -332,6 +332,7 @@ describe('createBill + practice pages honour ?practiceId= scope (Part B)', () =>
   const NEW_BILL_ACT  = read('app/practice/bills/new/actions.ts');
   const NEW_BILL_FORM = read('app/practice/bills/new/BillForm.tsx');
   const PRAC_PAGE     = read('app/practice/page.tsx');
+  const PRAC_VIEWER   = read('app/practice/practiceViewer.ts');
   const MEMBERS_PAGE  = read('app/practice/members/page.tsx');
 
   it('createBill accepts an optional practiceId in its input', () => {
@@ -377,12 +378,22 @@ describe('createBill + practice pages honour ?practiceId= scope (Part B)', () =>
     expect(NEW_BILL_FORM).toMatch(/practiceId,\s*[\s\S]*?\}\)/);
   });
 
-  it('/practice/page.tsx and /practice/members/page.tsx do NOT .single() on practice_members', () => {
+  it('the practice membership lookups do NOT .single() on practice_members', () => {
     // Both pages migrated to .order().limit(1) with the ?practiceId=
     // acting-context. Their .single() era was the multi-membership 406.
     // Strip comments before checking so a comment referencing the
     // historical `.single()` fix isn't mistaken for actual code.
-    for (const src of [PRAC_PAGE, MEMBERS_PAGE]) {
+    //
+    // /practice/page.tsx's own lookup now lives in ./practiceViewer — the page
+    // delegates membership resolution to it, and 0094 removed the page's last
+    // remaining direct practice_members query (the specialty map, which now
+    // rides on the plans embed). So the invariant is asserted where the query
+    // actually is, plus the delegation itself, so it cannot be dodged by
+    // re-adding an inline lookup to the page.
+    expect(PRAC_PAGE).toMatch(/resolvePracticeViewer/);
+    expect(PRAC_PAGE).not.toMatch(/from\('practice_members'\)/);
+
+    for (const src of [PRAC_VIEWER, MEMBERS_PAGE]) {
       const chainIdx = src.indexOf("from('practice_members')");
       expect(chainIdx).toBeGreaterThan(0);
       const chunk = src

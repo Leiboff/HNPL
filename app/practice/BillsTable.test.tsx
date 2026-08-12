@@ -26,7 +26,7 @@ import { billLifecycleChip, type BillLifecycleStatus } from '@/lib/bills/lifecyc
 // Tests that assert a duplicate on purpose say so.
 
 const FEE_PERCENT = 6;
-const SPECIALTY_MAP = { 'prov-1': 'Dentistry' };
+const SPECIALTY_MAP = { 'mem-1': 'Dentistry', 'mem-roster': 'Optometry' };
 
 function makePlan(over: Partial<PlanSummary> & { id: string }): PlanSummary {
   return {
@@ -35,9 +35,15 @@ function makePlan(over: Partial<PlanSummary> & { id: string }): PlanSummary {
     created_at: '2026-08-11T10:00:00.000Z',
     invoice_number: `INV-${over.id}`,
     practice_reference: `REF-${over.id}`,
-    provider_id: 'prov-1',
-    patient:  { first_name: 'Thabo',  last_name: 'Mokoena' },
-    provider: { first_name: 'Naledi', last_name: 'Dlamini' },
+    provider_member_id: 'mem-1',
+    patient: { first_name: 'Thabo', last_name: 'Mokoena' },
+    // A practitioner WITH a login: name lives on profiles.
+    provider_member: {
+      id: 'mem-1', user_id: 'u-1',
+      provider_first_name: null, provider_last_name: null,
+      specialty: 'Dentistry',
+      profiles: { first_name: 'Naledi', last_name: 'Dlamini' },
+    },
     payouts:  null,
     invitations: null,
     ...over,
@@ -275,11 +281,33 @@ describe('the disclosure surfaces the six moved fields correctly', () => {
     expect(desktop().getByTestId('bill-detail-payout:b-failed').textContent).toContain('Failed');
   });
 
+  it('a ROSTER-ONLY practitioner (no login) still shows their name', async () => {
+    // The whole point of 0094: this practitioner has no profiles row, so their
+    // name comes from the membership's own columns. Before the repoint they
+    // could not be attached to a bill at all; a blank here would mean the
+    // fallback silently didn't fire.
+    const user = userEvent.setup();
+    renderTable([makePlan({
+      id: 'b-roster', status: 'active', total_amount: 900,
+      provider_member_id: 'mem-roster',
+      provider_member: {
+        id: 'mem-roster', user_id: null,
+        provider_first_name: 'Zanele', provider_last_name: 'Mthembu',
+        specialty: 'Optometry', profiles: null,
+      },
+    })]);
+    await user.click(desktop().getByTestId('bill-toggle:b-roster'));
+    expect(desktop().getByTestId('bill-detail-provider:b-roster').textContent)
+      .toContain('Zanele Mthembu');
+    expect(desktop().getByTestId('bill-detail-specialty:b-roster').textContent)
+      .toContain('Optometry');
+  });
+
   it('a bill with no provider degrades to — rather than breaking', async () => {
     const user = userEvent.setup();
     const noProvider = makePlan({
       id: 'b-noprov', status: 'active', total_amount: 500,
-      provider_id: null, provider: null, practice_reference: null,
+      provider_member_id: null, provider_member: null, practice_reference: null,
     });
     renderTable([noProvider]);
     await user.click(desktop().getByTestId('bill-toggle:b-noprov'));

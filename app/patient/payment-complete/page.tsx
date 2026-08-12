@@ -195,7 +195,7 @@ async function activateFirstInstalmentFromStatus(
 
     const { data: plan } = await svc
       .from('plans')
-      .select('id, total_amount, practice_id, provider_id, patient_id, status')
+      .select('id, total_amount, practice_id, provider_member_id, patient_id, status')
       .eq('id', payment.plan_id)
       .maybeSingle();
     if (!plan) return;
@@ -244,7 +244,7 @@ async function activateFirstInstalmentFromStatus(
         id:           plan.id as string,
         total_amount: plan.total_amount,
         practice_id:  plan.practice_id,
-        provider_id:  (plan as { provider_id?: string | null }).provider_id ?? null,
+        provider_member_id: (plan as { provider_member_id?: string | null }).provider_member_id ?? null,
         patient_id:   payment.patient_id as string,
       },
     });

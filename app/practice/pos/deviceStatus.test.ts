@@ -81,8 +81,15 @@ beforeEach(async () => {
     }],
     practices: [{ id: PRACTICE_ID, name: PRACTICE_NAME }],
     practice_members: [{
-      user_id: 'provider-1', practice_id: PRACTICE_ID, active: true, role: 'provider',
+      id: 'mem-1', user_id: 'provider-1', practice_id: PRACTICE_ID, active: true, role: 'provider',
+      provider_first_name: null, provider_last_name: null, specialty: null,
       profiles: { first_name: 'Jane', last_name: 'Doe' },
+    }, {
+      // Roster-only: the till must offer them too, with the name resolved
+      // from the membership rather than a profile that does not exist.
+      id: 'mem-roster', user_id: null, practice_id: PRACTICE_ID, active: true, role: 'provider',
+      provider_first_name: 'Zanele', provider_last_name: 'Mthembu', specialty: 'Optometry',
+      profiles: null,
     }],
   };
 });
@@ -181,6 +188,10 @@ describe('checkDeviceStatus — unlocked returns practice-scoped data, sourced f
     if (result.state !== 'unlocked') throw new Error('unreachable');
     expect(result.practiceId).toBe(PRACTICE_ID);
     expect(result.practiceName).toBe(PRACTICE_NAME);
-    expect(result.providers).toEqual([{ userId: 'provider-1', firstName: 'Jane', lastName: 'Doe' }]);
+    // Membership-keyed since 0094, name pre-resolved, sorted by name.
+    expect(result.providers).toEqual([
+      { memberId: 'mem-1',      name: 'Jane Doe' },
+      { memberId: 'mem-roster', name: 'Zanele Mthembu' },
+    ]);
   });
 });

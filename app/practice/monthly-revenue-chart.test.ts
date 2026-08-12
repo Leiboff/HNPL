@@ -79,15 +79,15 @@ describe('Agreement — practice and brand views produce the same monthly number
 
   const plansForBrand: PlanForTrend[] = [
     // Current month (2026-07) — counted
-    { id: '1', practice_id: PRACTICE_ID, provider_id: 'd1', total_amount: 1000, status: 'active',              created_at: '2026-07-01T10:00:00Z' },
-    { id: '2', practice_id: PRACTICE_ID, provider_id: 'd2', total_amount:  500, status: 'completed',           created_at: '2026-07-02T10:00:00Z' },
+    { id: '1', practice_id: PRACTICE_ID, provider_member_id: 'd1', total_amount: 1000, status: 'active',              created_at: '2026-07-01T10:00:00Z' },
+    { id: '2', practice_id: PRACTICE_ID, provider_member_id: 'd2', total_amount:  500, status: 'completed',           created_at: '2026-07-02T10:00:00Z' },
     // Current month — EXCLUDED
-    { id: '3', practice_id: PRACTICE_ID, provider_id: 'd1', total_amount: 9999, status: 'pending_acceptance',  created_at: '2026-07-03T10:00:00Z' },
+    { id: '3', practice_id: PRACTICE_ID, provider_member_id: 'd1', total_amount: 9999, status: 'pending_acceptance',  created_at: '2026-07-03T10:00:00Z' },
     // Previous month (2026-06) — counted
-    { id: '4', practice_id: PRACTICE_ID, provider_id: 'd1', total_amount: 2000, status: 'active',              created_at: '2026-06-15T10:00:00Z' },
+    { id: '4', practice_id: PRACTICE_ID, provider_member_id: 'd1', total_amount: 2000, status: 'active',              created_at: '2026-06-15T10:00:00Z' },
     // Excluded — defaulted/cancelled/declined
-    { id: '5', practice_id: PRACTICE_ID, provider_id: 'd1', total_amount:  300, status: 'defaulted',           created_at: '2026-07-05T10:00:00Z' },
-    { id: '6', practice_id: PRACTICE_ID, provider_id: 'd1', total_amount:  100, status: 'cancelled',           created_at: '2026-06-20T10:00:00Z' },
+    { id: '5', practice_id: PRACTICE_ID, provider_member_id: 'd1', total_amount:  300, status: 'defaulted',           created_at: '2026-07-05T10:00:00Z' },
+    { id: '6', practice_id: PRACTICE_ID, provider_member_id: 'd1', total_amount:  100, status: 'cancelled',           created_at: '2026-06-20T10:00:00Z' },
   ];
 
   // Brand-side aggregation for this practice

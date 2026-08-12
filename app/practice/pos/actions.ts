@@ -18,6 +18,10 @@ import {
   PIN_MAX_ATTEMPTS,
   PIN_LOCKOUT_MS,
 } from '@/lib/auth/tillDevice';
+import {
+  providerMemberName,
+  type ProviderMemberRef,
+} from '@/lib/practice/providerIdentity';
 
 // ─── /practice/pos server actions — device-gated, no user session ─────
 //
@@ -181,7 +185,10 @@ export async function unlockTill(deviceSecret: string, pin: string): Promise<{ e
 // fetches or renders practice data until this call itself confirms
 // 'unlocked'; there is no separate path that could leak it earlier.
 
-export type ProviderOption = { userId: string; firstName: string; lastName: string };
+// Membership-keyed since 0094, matching the desktop bill form's option shape:
+// a roster-only practitioner has no auth user, and a plan is attributed to the
+// membership either way.
+export type ProviderOption = { memberId: string; name: string };
 
 export type DeviceStatus =
   | { state: 'no_device' }
@@ -204,22 +211,18 @@ export async function checkDeviceStatus(deviceSecret: string | null): Promise<De
     client.from('practices').select('name').eq('id', result.practiceId).maybeSingle(),
     client
       .from('practice_members')
-      .select('user_id, profiles(first_name, last_name)')
+      .select('id, user_id, provider_first_name, provider_last_name, specialty, profiles(first_name, last_name)')
       .eq('practice_id', result.practiceId)
       .eq('active', true)
       .eq('role', 'provider'),
   ]);
 
-  const providers: ProviderOption[] = (providerRows ?? []).map((m: { user_id: string; profiles: unknown }) => {
-    const profileRow = Array.isArray(m.profiles)
-      ? (m.profiles[0] as { first_name?: string; last_name?: string } | undefined)
-      : (m.profiles as { first_name?: string; last_name?: string } | null);
-    return {
-      userId:    m.user_id,
-      firstName: profileRow?.first_name ?? '',
-      lastName:  profileRow?.last_name  ?? '',
-    };
-  });
+  // Membership-keyed since 0094, and roster-only practitioners are included:
+  // the till must be able to raise a bill for the same people the desktop
+  // form can.
+  const providers: ProviderOption[] = ((providerRows ?? []) as unknown as ProviderMemberRef[])
+    .map((m) => ({ memberId: m.id, name: providerMemberName(m) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     state:        'unlocked',
@@ -250,7 +253,7 @@ export type IssueCounterSessionInput = {
   billAmount:   number;
   saIdNumber:   string;
   cellNumber?:  string;
-  providerId:   string;
+  providerMemberId: string;
 };
 
 export type IssueCounterSessionResult = {
@@ -263,7 +266,7 @@ export type IssueCounterSessionResult = {
 export async function issueCounterSession(
   data: IssueCounterSessionInput,
 ): Promise<IssueCounterSessionResult> {
-  const { billAmount, providerId, deviceSecret } = data;
+  const { billAmount, providerMemberId, deviceSecret } = data;
 
   const auth = await requireUnlockedDevice(deviceSecret);
   if (!auth.ok) return { error: auth.error };
@@ -274,7 +277,7 @@ export async function issueCounterSession(
       error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`,
     };
   }
-  if (!providerId) {
+  if (!providerMemberId) {
     return { error: 'A healthcare provider must be selected.' };
   }
 
@@ -298,11 +301,13 @@ export async function issueCounterSession(
   const gate = await checkTradingGate(client, practiceId);
   if (!gate.ok) return { error: gate.message };
 
+  // Membership-keyed since 0094 so a roster-only practitioner can be billed
+  // for at the till too. practice_id is still asserted alongside the id.
   const { data: providerMember } = await client
     .from('practice_members')
-    .select('user_id')
+    .select('id, user_id')
+    .eq('id', providerMemberId)
     .eq('practice_id', practiceId)
-    .eq('user_id', providerId)
     .eq('active', true)
     .eq('role', 'provider')
     .maybeSingle();
@@ -340,7 +345,7 @@ export async function issueCounterSession(
     application_id:     applicationId,
     patient_id:         null,
     practice_id:        practiceId,
-    provider_id:        providerId,
+    provider_member_id: providerMemberId,
     total_amount:       billAmount,
     status:             'pending_acceptance',
     invoice_number:     invoiceNumber,

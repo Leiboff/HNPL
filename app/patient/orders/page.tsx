@@ -26,8 +26,6 @@ export type PaymentRow = {
   kind: string;
 };
 
-export type ProviderRef = { first_name: string; last_name: string };
-
 export type PlanRow = {
   id: string;
   invoice_number: string | null;
@@ -36,13 +34,11 @@ export type PlanRow = {
   plan_type: number | null;
   status: string;
   created_at: string;
-  provider_id: string | null;
   practice_id: string;
   // Null until the first instalment CIT captures the card. A
   // pending_first_payment plan with this NULL is an abandoned first
   // charge — resumable (see OrdersView / the confirm page).
   peach_registration_id: string | null;
-  provider: ProviderRef | ProviderRef[] | null;
   practice: { name: string } | { name: string }[] | null;
   payments: PaymentRow[];
 };
@@ -60,8 +56,7 @@ export default async function OrdersPage() {
     .select(`
       id, invoice_number, practice_reference,
       total_amount, plan_type, status, created_at,
-      provider_id, practice_id, peach_registration_id,
-      provider:profiles!plans_provider_id_fkey(first_name, last_name),
+      practice_id, peach_registration_id,
       practice:practices(name),
       payments(id, instalment_number, amount, due_date, status, collected_at, dunning_fees_cents, next_attempt_date, kind)
     `)

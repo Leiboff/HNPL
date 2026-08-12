@@ -232,7 +232,7 @@ export default async function CheckoutCompletePage({
   // preconditions.
   const { data: planForActivation } = await svc
     .from('plans')
-    .select('id, total_amount, practice_id, provider_id')
+    .select('id, total_amount, practice_id, provider_member_id')
     .eq('id', planId)
     .maybeSingle();
 
@@ -243,7 +243,7 @@ export default async function CheckoutCompletePage({
         id:           planForActivation.id as string,
         total_amount: planForActivation.total_amount,
         practice_id:  planForActivation.practice_id,
-        provider_id:  (planForActivation as { provider_id?: string | null }).provider_id ?? null,
+        provider_member_id: (planForActivation as { provider_member_id?: string | null }).provider_member_id ?? null,
         patient_id:   patientId,
       },
     });

@@ -44,8 +44,12 @@ import { openPayoutWindow, paidRecentlySince } from '@/lib/payments/payoutSchedu
 // the plan breakdown work for everyone who can see the total.
 //
 // Both tables are additionally readable by is_brand_admin_of_practice
-// (0061 / 0090), and 0022 lets a provider read payouts rows where
-// provider_id = auth.uid().
+// (0061 / 0090), and 0022 lets a provider read PAYOUTS rows where
+// payouts.provider_id = auth.uid(). Note that is payouts' own column, not
+// plans' — plans.provider_id was deprecated by 0094, which repointed plan
+// attribution to plans.provider_member_id (a practice_members row) so that
+// practitioners without a login can be billed for. 0022's payouts policy was
+// deliberately left alone.
 //
 // This module still REPORTS what came back rather than predicting it. That is
 // not defensive habit, it is the lesson of 0035: re-stating a permission rule

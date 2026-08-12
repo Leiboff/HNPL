@@ -133,7 +133,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
     const result = await createBill({
       patientEmail:  'pat@example.com',
       billAmount:    1000,
-      providerId:    'provider-1',
+      providerMemberId:    'provider-1',
     });
 
     expect(result.error).toBe('mock-pending-approval');
@@ -153,7 +153,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
     const result = await createBill({
       patientEmail:  'pat@example.com',
       billAmount:    1000,
-      providerId:    'provider-1',
+      providerMemberId:    'provider-1',
     });
 
     expect(result.error).toBe('mock-no-providers');
@@ -167,7 +167,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
     const result = await createBill({
       patientEmail:  'pat@example.com',
       billAmount:    1000,
-      providerId:    'provider-1',
+      providerMemberId:    'provider-1',
     });
 
     expect(result.error).toBeNull();
@@ -182,7 +182,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
     const result = await createBill({
       patientEmail:  '',
       billAmount:    1000,
-      providerId:    'provider-1',
+      providerMemberId:    'provider-1',
     });
 
     expect(result.error).toBe('Patient email is required.');
@@ -212,7 +212,7 @@ describe('createBill — practiceId scope selector (group→practice acting cont
     const result = await createBill({
       patientEmail:  'pat@example.com',
       billAmount:    1000,
-      providerId:    'provider-1',
+      providerMemberId:    'provider-1',
       practiceId:    'practice-1',
     });
 
@@ -229,7 +229,7 @@ describe('createBill — practiceId scope selector (group→practice acting cont
     const _typeCheck: (data: {
       patientEmail:       string;
       billAmount:         number;
-      providerId:         string;
+      providerMemberId:         string;
       practiceReference?: string;
       practiceId?:        string;
     }) => Promise<unknown> = createBill;

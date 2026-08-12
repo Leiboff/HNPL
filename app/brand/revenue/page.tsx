@@ -1,6 +1,11 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import {
+  PROVIDER_MEMBER_SELECT,
+  providerMemberName,
+  type ProviderMemberRef,
+} from '@/lib/practice/providerIdentity';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import RevenueClient from './RevenueClient';
 
@@ -90,27 +95,33 @@ export default async function BrandRevenuePage({
   // — providers don't see collection state on this dashboard.
   const { data: rawPlans } = await s
     .from('plans')
-    .select('id, practice_id, provider_id, total_amount, status')
+    .select('id, practice_id, provider_member_id, total_amount, status')
     .in('practice_id', practiceIds)
     .limit(5000);
 
   const plans = (rawPlans ?? []) as RevenuePlan[];
 
   // ── 3. Providers — names for the doctor breakdown ─────────────────
-  // Get the distinct provider_ids touched by ANY plan (including
+  // Get the distinct MEMBERSHIP ids touched by ANY plan (including
   // not-active-for-revenue ones — the dropdown should still let the
   // brand-admin pick a doctor whose only plans are pending; they'll
   // just see zero revenue for that filter, which is informative).
-  const providerIds = [...new Set(plans.map((p) => p.provider_id).filter((id): id is string => !!id))];
+  //
+  // Resolved from practice_members rather than profiles since 0094: a
+  // roster-only practitioner has no profiles row, so a profiles lookup would
+  // drop them from the by-doctor breakdown entirely and quietly under-report
+  // the brand's own revenue. Their name comes from the membership's local
+  // columns instead — see providerIdentity.
+  const providerIds = [...new Set(plans.map((p) => p.provider_member_id).filter((id): id is string => !!id))];
   let providers: RevenueProvider[] = [];
   if (providerIds.length > 0) {
-    const { data: profilesData } = await s
-      .from('profiles')
-      .select('id, first_name, last_name')
+    const { data: memberData } = await s
+      .from('practice_members')
+      .select(PROVIDER_MEMBER_SELECT)
       .in('id', providerIds);
-    providers = (profilesData ?? []).map((p) => ({
-      id:       p.id as string,
-      fullName: `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || '—',
+    providers = ((memberData ?? []) as unknown as ProviderMemberRef[]).map((m) => ({
+      id:       m.id,
+      fullName: providerMemberName(m),
     }));
   }
 

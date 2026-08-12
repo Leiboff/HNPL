@@ -56,7 +56,7 @@ type Props = {
     billAmount:  number;
     saIdNumber:  string;
     cellNumber?: string;
-    providerId:  string;
+    providerMemberId: string;
   }) => Promise<IssueCounterSessionResult>;
   expireCounterSession: (token: string, opts?: { force?: boolean }) => Promise<{ error: string | null }>;
   getCounterSessionStage: (token: string) => Promise<{ error: string | null; stage?: CounterSessionStage }>;
@@ -72,7 +72,7 @@ export default function CounterSessionForm({
   const [billAmount, setBillAmount] = useState('');
   const [saIdNumber, setSaIdNumber] = useState('');
   const [cellNumber, setCellNumber] = useState('');
-  const [providerId, setProviderId] = useState(providers[0]?.userId ?? '');
+  const [providerId, setProviderId] = useState(providers[0]?.memberId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [issued, setIssued] = useState<Issued | null>(null);
@@ -118,7 +118,7 @@ export default function CounterSessionForm({
         billAmount: parsedAmount,
         saIdNumber: saId,
         cellNumber: cellNumber.trim() || undefined,
-        providerId,
+        providerMemberId: providerId,
       });
 
       // Clear the ID from this component's state regardless of outcome
@@ -316,7 +316,7 @@ export default function CounterSessionForm({
         >
           {providers.length === 0 && <option value="">No providers on this practice</option>}
           {providers.map((p) => (
-            <option key={p.userId} value={p.userId}>{p.firstName} {p.lastName}</option>
+            <option key={p.memberId} value={p.memberId}>{p.name}</option>
           ))}
         </select>
       </div>

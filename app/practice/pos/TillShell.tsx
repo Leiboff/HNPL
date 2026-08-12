@@ -38,7 +38,7 @@ type Props = {
     billAmount:   number;
     saIdNumber:   string;
     cellNumber?:  string;
-    providerId:   string;
+    providerMemberId: string;
   }) => Promise<IssueCounterSessionResult>;
   expireCounterSession: (deviceSecret: string, token: string, opts?: { force?: boolean }) => Promise<{ error: string | null }>;
   getCounterSessionStage: (deviceSecret: string, token: string) => Promise<{ error: string | null; stage?: CounterSessionStage }>;

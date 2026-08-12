@@ -27,7 +27,7 @@ type Props = {
     patientEmail:      string;
     billAmount:        number;
     practiceReference?: string;
-    providerId:        string;
+    providerMemberId:  string;
     practiceId:        string;
   }) => Promise<CreateBillResult>;
 };
@@ -199,7 +199,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
   const [patientEmail,     setPatientEmail]     = useState('');
   const [billAmountStr,    setBillAmountStr]    = useState('');
   const [practiceReference, setPracticeReference] = useState('');
-  const [providerId,       setProviderId]       = useState(providers.length === 1 ? providers[0].userId : '');
+  const [providerMemberId, setProviderMemberId] = useState(providers.length === 1 ? providers[0].memberId : '');
   const [loading,          setLoading]          = useState(false);
   const [error,            setError]            = useState<string | null>(null);
   const [summary,          setSummary]          = useState<CreateBillSummary | null>(null);
@@ -239,7 +239,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
       : !validAmount
         ? AMOUNT_RANGE_MESSAGE
         : null;
-    const nextProviderError = !providerId ? 'Select a healthcare provider.' : null;
+    const nextProviderError = !providerMemberId ? 'Select a healthcare provider.' : null;
 
     setEmailError(nextEmailError);
     setAmountError(nextAmountError);
@@ -268,7 +268,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
         patientEmail:     trimmedEmail,
         billAmount,
         practiceReference: practiceReference.trim() || undefined,
-        providerId,
+        providerMemberId,
         practiceId,
       });
 
@@ -306,7 +306,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
           setPatientEmail('');
           setBillAmountStr('');
           setPracticeReference('');
-          setProviderId(providers.length === 1 ? providers[0].userId : '');
+          setProviderMemberId(providers.length === 1 ? providers[0].memberId : '');
           setError(null);
           setAmountError(null);
           setEmailError(null);
@@ -342,16 +342,16 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
           <select
             id="providerId"
             required
-            value={providerId}
-            onChange={e => { setProviderId(e.target.value); setProviderError(null); }}
+            value={providerMemberId}
+            onChange={e => { setProviderMemberId(e.target.value); setProviderError(null); }}
             aria-invalid={!!providerError}
             aria-describedby={providerError ? 'providerId-error' : undefined}
             className={fieldClass(!!providerError)}
           >
             {providers.length !== 1 && <option value="">Select provider…</option>}
             {providers.map(p => (
-              <option key={p.userId} value={p.userId}>
-                {p.firstName} {p.lastName}
+              <option key={p.memberId} value={p.memberId}>
+                {p.name}
               </option>
             ))}
           </select>
@@ -469,7 +469,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
       )}
 
       {/* Disabled ONLY while a request is in flight. It used to also be
-          disabled on `!validAmount || !patientEmail.trim() || !providerId`,
+          disabled on `!validAmount || !patientEmail.trim() || !providerMemberId`,
           which is the other half of the reported silent failure: a click on
           invalid data dispatched no event at all, so nothing could explain
           why. Now every click either submits or renders the reasons above. */}

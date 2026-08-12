@@ -7,6 +7,11 @@ import GroupDashboard, {
   type BranchOption,
   type ProviderOption,
 } from './GroupDashboard';
+import {
+  PROVIDER_MEMBER_SELECT,
+  providerMemberName,
+  type ProviderMemberRef,
+} from '@/lib/practice/providerIdentity';
 
 // ─── Brand-admin dashboard ──────────────────────────────────────────────
 //
@@ -78,23 +83,25 @@ export default async function BrandDashboardPage() {
 
   const { data: rawPlans } = await s
     .from('plans')
-    .select('id, practice_id, provider_id, total_amount, status, created_at')
+    .select('id, practice_id, provider_member_id, total_amount, status, created_at')
     .in('practice_id', practiceIds)
     .limit(5000);
   const plans = (rawPlans ?? []) as PlanRow[];
 
-  // Provider dropdown — user_ids that appear on any of the group's
-  // active plans, with their display names.
-  const providerIds = Array.from(new Set(plans.map((p) => p.provider_id).filter((id): id is string => !!id)));
+  // Provider dropdown — MEMBERSHIP ids that appear on any of the group's
+  // plans, with their display names. Resolved from practice_members, not
+  // profiles: a roster-only practitioner has no profile and would otherwise
+  // vanish from the dropdown while their bills still counted in the totals.
+  const providerIds = Array.from(new Set(plans.map((p) => p.provider_member_id).filter((id): id is string => !!id)));
   let providers: ProviderOption[] = [];
   if (providerIds.length > 0) {
-    const { data: profilesData } = await s
-      .from('profiles')
-      .select('id, first_name, last_name')
+    const { data: memberData } = await s
+      .from('practice_members')
+      .select(PROVIDER_MEMBER_SELECT)
       .in('id', providerIds);
-    providers = (profilesData ?? []).map((p) => ({
-      id:       p.id as string,
-      fullName: `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || '—',
+    providers = ((memberData ?? []) as unknown as ProviderMemberRef[]).map((m) => ({
+      id:       m.id,
+      fullName: providerMemberName(m),
     }));
   }
 

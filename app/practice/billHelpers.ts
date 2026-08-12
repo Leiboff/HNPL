@@ -1,6 +1,10 @@
+import { providerMemberName, type ProviderMemberRef } from '@/lib/practice/providerIdentity';
+
 export type PatientRef  = { first_name: string; last_name: string };
-export type ProviderRef = { first_name: string; last_name: string };
 export type PayoutRef   = { net_amount: number; status: string };
+
+/** Re-exported so table/chart consumers don't each import from two modules. */
+export type { ProviderMemberRef };
 
 // Embedded invitation row joined into the plans query. Plans that were
 // created against an existing patient (Scenario A) have no invitation —
@@ -20,9 +24,11 @@ export type PlanSummary = {
   created_at: string;
   invoice_number: string | null;
   practice_reference: string | null;
-  provider_id: string | null;
-  patient:  PatientRef  | PatientRef[]  | null;
-  provider: ProviderRef | ProviderRef[] | null;
+  // The treating practitioner's MEMBERSHIP (0094), not their auth user — a
+  // roster-only practitioner has no auth user at all.
+  provider_member_id: string | null;
+  patient:  PatientRef | PatientRef[] | null;
+  provider_member: ProviderMemberRef | ProviderMemberRef[] | null;
   payouts:  PayoutRef   | PayoutRef[]   | null;
   invitations?: InvitationRef | InvitationRef[] | null;
 };
@@ -51,10 +57,14 @@ export function patientDisplay(plan: PlanSummary): string {
   return `${p.first_name} ${p.last_name.charAt(0).toUpperCase()}.`;
 }
 
+/**
+ * The treating practitioner's name, resolved through their membership. Works
+ * for both kinds of practitioner: the name is on profiles when they have a
+ * login and on the membership's own columns when they are roster-only.
+ */
 export function providerName(plan: PlanSummary): string {
-  const p = Array.isArray(plan.provider) ? plan.provider[0] : plan.provider;
-  if (!p) return '—';
-  return `${p.first_name} ${p.last_name}`;
+  const m = Array.isArray(plan.provider_member) ? plan.provider_member[0] : plan.provider_member;
+  return providerMemberName(m ?? null);
 }
 
 export function getPayout(plan: PlanSummary): PayoutRef | null {

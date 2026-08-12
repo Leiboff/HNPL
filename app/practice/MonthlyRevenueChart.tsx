@@ -40,7 +40,7 @@ export default function MonthlyRevenueChart({ plans, feePercent }: Props) {
     const adapted: PlanForTrend[] = plans.map((p) => ({
       id:           p.id,
       practice_id:  SELF,
-      provider_id:  p.provider_id,
+      provider_member_id: p.provider_member_id,
       total_amount: Number(p.total_amount),
       status:       p.status,
       created_at:   p.created_at,

@@ -104,7 +104,7 @@ export default function BillsBlock({
         plan.practice_reference ?? '',
         patientDisplay(plan),
         providerName(plan),
-        plan.provider_id ? (specialtyMap[plan.provider_id] ?? '') : '',
+        plan.provider_member_id ? (specialtyMap[plan.provider_member_id] ?? '') : '',
         Number(plan.total_amount).toFixed(2),
         fee.toFixed(2),
         net.toFixed(2),
@@ -141,7 +141,7 @@ export default function BillsBlock({
         <td>${plan.invoice_number ?? '—'}${plan.practice_reference ? `<br><small>${plan.practice_reference}</small>` : ''}</td>
         <td>${patientDisplay(plan)}</td>
         <td>${providerName(plan)}</td>
-        <td>${plan.provider_id ? (specialtyMap[plan.provider_id] ?? '—') : '—'}</td>
+        <td>${plan.provider_member_id ? (specialtyMap[plan.provider_member_id] ?? '—') : '—'}</td>
         <td>R${Number(plan.total_amount).toFixed(2)}</td>
         <td>-R${fee.toFixed(2)}</td>
         <td>R${net.toFixed(2)}</td>

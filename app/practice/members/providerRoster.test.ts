@@ -240,9 +240,15 @@ describe('a provider\'s scoped view — informational, never money', () => {
     const code  = codeOf(PROVIDER);
     const reads = code.match(/\.from\('plans'\)/g) ?? [];
     expect(reads.length).toBeGreaterThan(0);
-    // As many provider_id filters as plans reads: none is unscoped.
-    const scoped = code.match(/\.eq\('provider_id', user\.id\)/g) ?? [];
+    // As many membership-scoped filters as plans reads: none is unscoped.
+    // The filter shape changed with 0094 — attribution is by practice_members
+    // row now, so "mine" is resolved to the caller's own ACTIVE memberships
+    // first and every read is .in('provider_member_id', …) over that list.
+    const scoped = code.match(/\.in\('provider_member_id', myActiveMemberIds\)/g) ?? [];
     expect(scoped.length).toBe(reads.length);
+    // The old auth-user-keyed filter must not linger anywhere: it would now
+    // read a DEPRECATED column and silently return nothing.
+    expect(code).not.toMatch(/\.eq\('provider_id', user\.id\)/);
   });
 
   it('has NO practice-wide read and no practiceId parameter to tamper with', () => {
@@ -254,7 +260,12 @@ describe('a provider\'s scoped view — informational, never money', () => {
   it('requires an ACTIVE membership — a disabled provider loses access', () => {
     expect(PROVIDER).toMatch(/\.from\('practice_members'\)/);
     expect(PROVIDER).toMatch(/\.eq\('active', true\)/);
-    expect(PROVIDER).toMatch(/if \(!activeMembership\) redirect/);
+    expect(PROVIDER).toMatch(/myActiveMemberIds\.length === 0\) redirect/);
+    // ...and the id list the plan reads are scoped to is the active-filtered
+    // one, so revocation is structural rather than a separate gate that a
+    // later refactor could drop while leaving the reads in place.
+    expect(codeOf(PROVIDER)).toMatch(
+      /\.eq\('user_id', user\.id\)[\s\S]{0,40}?\.eq\('active', true\)/);
   });
 
   it('reads no payouts and shows no per-provider money figure', () => {

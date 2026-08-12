@@ -29,7 +29,7 @@ vi.mock('./BillWaitingPanel', () => ({
 // fired".
 
 const PROVIDERS: ProviderOption[] = [
-  { userId: 'prov-1', firstName: 'Ada', lastName: 'Mokoena' },
+  { memberId: 'mem-1', name: 'Ada Mokoena' },
 ];
 
 function setup(createBill?: (data: unknown) => Promise<CreateBillResult>) {
@@ -168,7 +168,7 @@ describe('valid input still submits (regression) and the preview is untouched', 
     expect(f.createBill.mock.calls[0][0]).toMatchObject({
       patientEmail: 'patient@example.com',
       billAmount:   1000,
-      providerId:   'prov-1',
+      providerMemberId: 'mem-1',
       practiceId:   'practice-1',
     });
   });

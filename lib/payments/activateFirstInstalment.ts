@@ -45,7 +45,8 @@ export type ActivateFirstInstalmentInput = {
     id:            string;
     total_amount:  unknown;
     practice_id:   unknown;
-    provider_id?:  string | null;
+    /** The treating practitioner's MEMBERSHIP row (0094). */
+    provider_member_id?: string | null;
     patient_id?:   string | null;
   };
   now?: string;
@@ -126,9 +127,12 @@ export async function activateFirstInstalment(
     payout_destination: 'practice',
   };
 
-  // provider_id is still recorded — it attributes the plan to the treating
-  // doctor, which the practice dashboard, the brand by-doctor rollup and
-  // /provider all read. It no longer influences WHERE the money goes.
+  // payouts.provider_id is still recorded where it can be, but it is NO LONGER
+  // the attribution of record: since 0094 that lives on
+  // plans.provider_member_id, which is what the practice dashboard, the brand
+  // by-doctor rollup and /provider all read. It never influenced WHERE the
+  // money goes, and now it does not carry the attribution either — see the
+  // block below the payout row for why it is still populated at all.
   //
   // ── payout_destination is always 'practice' ─────────────────────────
   //
@@ -152,8 +156,31 @@ export async function activateFirstInstalment(
   // historical payouts rows written under the old rule must remain
   // reconcilable, so nothing is dropped and 'provider' remains a legal
   // value for those rows. Nothing WRITES it any more.
-  if (plan.provider_id) {
-    payoutRow.provider_id = plan.provider_id;
+  // WHY THIS RESOLVES THROUGH THE MEMBERSHIP NOW
+  //
+  // 0094 moved plan attribution from plans.provider_id (an auth user) to
+  // plans.provider_member_id (a practice_members row), so that a roster-only
+  // practitioner with no login can be billed for.
+  //
+  // payouts.provider_id still REFERENCES profiles(id), and that is left
+  // exactly as it is — this migration deliberately does not touch the payouts
+  // schema, its policies, or the fee/net calculation. So the value written here
+  // is the membership's user_id when it has one, and NULL when it does not.
+  //
+  // A roster-only practitioner's payout therefore carries no provider_id. That
+  // is correct rather than lossy: the attribution of record now lives on the
+  // PLAN, which every attribution consumer (practice dashboard, brand
+  // by-doctor rollup, /provider) reads since 0094. payouts.provider_id is only
+  // still populated for the one policy that keys on it (provider_select_own_
+  // payouts, 0022), and a practitioner without a login cannot sign in to
+  // exercise it in the first place.
+  if (plan.provider_member_id) {
+    const { data: member } = await supabase
+      .from('practice_members')
+      .select('user_id')
+      .eq('id', plan.provider_member_id)
+      .maybeSingle();
+    if (member?.user_id) payoutRow.provider_id = member.user_id;
   }
 
   // upsert + ignoreDuplicates → INSERT ... ON CONFLICT (plan_id) DO
