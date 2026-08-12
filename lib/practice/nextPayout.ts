@@ -26,40 +26,42 @@ import { openPayoutWindow, paidRecentlySince } from '@/lib/payments/payoutSchedu
 // union rather than a nullable amount with a boolean flag — a caller cannot
 // accidentally render a projection as a commitment.
 //
-// RLS, AND ONE ASYMMETRY THAT SHAPES THIS
-// ───────────────────────────────────────
-// The two tables are NOT equally visible, which is why this module reports
-// what came back rather than assuming a read succeeded:
+// RLS — THE TWO TABLES NOW MATCH
+// ──────────────────────────────
+// Both are readable by ANY active member of the practice:
 //
-//   payout_batches  is_practice_member          — ANY active member (0090)
-//   payouts         is_practice_manager         — active member with
-//                                                 can_manage_practice = true
+//   payout_batches  is_practice_member  (0090)
+//   payouts         is_practice_member  (0092)
 //
-// The payouts policy is worth stating precisely, because the obvious answer
-// is out of date: 0002 created practice_admins_select_payouts keyed on
-// is_practice_admin (role = 'admin'), and 0035 REPLACED it with
-// is_practice_manager (0034 — can_manage_practice = true). The policy name
-// still says "admins". Both tables are additionally readable by
-// is_brand_admin_of_practice (0061 / 0090), and 0022 lets a provider see
-// payouts rows where provider_id = auth.uid() — so a non-manager who is also
-// the treating provider sees SOME rows, not none.
+// They did NOT always match, and the history is why this module is shaped the
+// way it is. payouts was manager-only — 0002 created
+// practice_admins_select_payouts on is_practice_admin (role = 'admin'), 0035
+// re-created it on is_practice_manager (can_manage_practice = true) under the
+// same misleading name — while payout_batches was open to every member. So an
+// ordinary member could read a batch's TOTAL but not the rows inside it, and
+// saw a plan count above an empty list. 0092 replaced that policy with
+// practice_members_select_payouts on is_practice_member, which is what makes
+// the plan breakdown work for everyone who can see the total.
 //
-// So a member without can_manage_practice can read a closed batch's total but
-// not (most of) the payouts rows inside it. This module neither papers over
-// that nor widens anything: it passes the caller's own client straight through.
-// `plansHidden` is set when a batch claims N plans but the payouts read
-// returned none — provably RLS rather than an empty batch — so the UI can say
-// so instead of rendering "3 plans" above an empty list.
+// Both tables are additionally readable by is_brand_admin_of_practice
+// (0061 / 0090), and 0022 lets a provider read payouts rows where
+// provider_id = auth.uid().
 //
-// Deliberately NOT done here: predicting the outcome from can_manage_practice,
-// which the dashboard already knows. Re-stating a permission rule in app code
-// is how it goes stale — 0035 is the proof. Reacting to the actual result
-// cannot drift from the database.
+// This module still REPORTS what came back rather than predicting it. That is
+// not defensive habit, it is the lesson of 0035: re-stating a permission rule
+// in app code is how the app's copy of it goes stale, and this file's own
+// comments were wrong about the policy within a day of it changing. Reacting
+// to the actual result cannot drift from the database.
 //
-// The consequence worth knowing: for such a member with no closed batch, the
-// 'projected' figure is unreadable and this returns 'none'. The empty-state
-// copy is therefore written as "nothing scheduled yet" and never as an
-// assertion that the practice is owed nothing.
+// So `plansHidden` — a batch claiming N plans while the payouts read returned
+// none — no longer means a permission gap. Post-0092 it means a genuine
+// inconsistency between plan_count and the batch's members, and the UI copy
+// says that instead of blaming permissions.
+//
+// The empty-state copy stays written as "nothing scheduled yet" rather than as
+// an assertion that the practice is owed nothing. Not because a read might have
+// been refused any more, but because "no batch and no unbatched payouts" is
+// genuinely not the same statement as "you are owed nothing".
 
 /**
  * Intentionally loose, for the reason lib/practice/tradingGate.ts documents
@@ -91,12 +93,17 @@ type Common = {
   window:    PayoutWindow;
   totalNet:  number;
   planCount: number;
-  /** The plans composing the figure. Empty when RLS hid them — see plansHidden. */
+  /** The plans composing the figure. See plansHidden for the empty-yet-counted case. */
   plans:     PayoutPlanLine[];
   /**
-   * True when planCount > 0 but no payouts rows came back: the caller can
-   * read the batch but not its members. Lets the UI explain the gap rather
-   * than render "3 plans" above an empty list.
+   * True when planCount > 0 but no payouts rows came back — a batch whose
+   * plan_count disagrees with its own members.
+   *
+   * Kept as a defensive fallback, not as a permission signal. Before 0092 this
+   * fired for an ordinary member, because payouts was manager-only while
+   * payout_batches was not; now both are is_practice_member, so the only way to
+   * reach it is real inconsistency. Retained because "N plans" above an empty
+   * list is worse than saying plainly that the breakdown is missing.
    */
   plansHidden: boolean;
 };
