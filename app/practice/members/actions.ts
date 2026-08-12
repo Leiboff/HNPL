@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { encryptId } from '@/lib/idEncryption';
 import { validateSaId } from '@/lib/validation';
 import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
-import { inviteMemberIntoPractice } from '@/lib/brand/inviteMember';
+import { inviteMemberIntoPractice, inviteLoginForRosterMember } from '@/lib/brand/inviteMember';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
@@ -320,5 +320,140 @@ export async function becomeProvider(input: BecomeProviderInput): Promise<Action
 
   revalidatePath('/practice/members');
   revalidatePath('/practice');
+  return { error: null };
+}
+
+
+// ─── Action 6: addProviderToRoster ───────────────────────────────────────────
+//
+// Add a practitioner to the roster with NO login and NO invite email: name,
+// specialty, HPCSA number. Most clinicians never sign in — the manager does
+// the billing — so requiring an auth account per clinician made "add the
+// third dentist" an email ceremony with a mailbox to chase.
+//
+// This is a SEPARATE action from addMember rather than a mode of it, and
+// deliberately so:
+//
+//   • addMember/inviteMemberIntoPractice is the admin-staff and
+//     invited-provider path. It is untouched by this work — same guard, same
+//     validation, same insert. A shared function with an `email?` branch
+//     would have put the two flows one typo apart, and the one that sends
+//     email to a stranger is the one you least want a typo in.
+//   • The inputs genuinely differ. No email, and no SA ID: SA ID exists for
+//     the identity ceremony a person completes at /provider/setup, and a
+//     roster entry has nobody to complete it. HPCSA is REQUIRED here (it is
+//     optional at invite, where /provider/setup can chase it) — with no
+//     login there is no later chance to collect it, and an unverifiable
+//     practitioner on a billing roster is worth refusing at the door.
+//
+// The row grants nothing. Every authority helper resolves through
+// `user_id = auth.uid()` (is_practice_member / is_practice_manager), so a
+// NULL user_id matches none of them. See migration 0091.
+
+export type RosterProviderInput = {
+  firstName:   string;
+  lastName:    string;
+  specialty:   string;
+  hpcsaNumber: string;
+};
+
+export async function addProviderToRoster(input: RosterProviderInput): Promise<ActionResult> {
+  const guard = await guardManager();
+  if (!guard.ok) return { error: guard.error };
+  const { practiceId } = guard;
+
+  const firstName = input.firstName?.trim() ?? '';
+  const lastName  = input.lastName?.trim()  ?? '';
+  const specialty = input.specialty?.trim() ?? '';
+  const hpcsa     = input.hpcsaNumber?.trim() ?? '';
+
+  if (!firstName) return { error: 'First name is required.' };
+  if (!lastName)  return { error: 'Last name is required.' };
+  if (!specialty) return { error: 'Specialty is required for practitioners.' };
+
+  // Required here, unlike at invite — see the note above.
+  const hpcsaCheck = checkHpcsa(hpcsa);
+  if (!hpcsaCheck.ok) return { error: HPCSA_ERROR_MESSAGE[hpcsaCheck.reason] };
+
+  const supabase = await createClient();
+
+  // Same-name duplicate guard. Not a constraint, because two clinicians can
+  // legitimately share a name and a UNIQUE would then be unfixable from the
+  // UI — but a silent duplicate on a billing roster is worth one round-trip
+  // to prevent, since the manager picking a provider on a bill would have no
+  // way to tell the two apart.
+  const { data: clash } = await supabase
+    .from('practice_members')
+    .select('id')
+    .eq('practice_id', practiceId)
+    .is('user_id', null)
+    .ilike('provider_first_name', firstName)
+    .ilike('provider_last_name',  lastName)
+    .maybeSingle();
+
+  if (clash) {
+    return { error: `${firstName} ${lastName} is already on this practice's roster.` };
+  }
+
+  const { error } = await supabase
+    .from('practice_members')
+    .insert({
+      practice_id:         practiceId,
+      // No login. The whole point — and what makes this row authorise nothing.
+      user_id:             null,
+      provider_first_name: firstName,
+      provider_last_name:  lastName,
+      role:                'provider',
+      active:              true,
+      specialty,
+      hpcsa_number:        hpcsa,
+      // No capabilities. A roster row could not exercise them anyway (they
+      // are read through user_id), but writing false is the honest record of
+      // intent rather than relying on a column default.
+      can_create_bills:    false,
+      can_manage_practice: false,
+      // Always the practice's account — one practice, one bank account, one
+      // deposit (migration 0090). Stated at the insert, as inviteMember does.
+      payout_destination:  'practice',
+    });
+
+  if (error) return { error: error.message };
+
+  revalidatePath('/practice/members');
+  // The trading gate counts active role='provider' rows, so adding the first
+  // practitioner can unblock billing — the dashboard's gate panel has to
+  // re-render for that to be visible.
+  revalidatePath('/practice');
+  return { error: null };
+}
+
+
+// ─── Action 7: inviteLoginForProvider ────────────────────────────────────────
+//
+// The optional second step: give a rostered practitioner a login later. The
+// manager decides, per practitioner, and nothing about the roster entry
+// forces or expects it.
+//
+// Delegates to lib/brand/inviteMember.ts inviteLoginForRosterMember, which
+// LINKS the existing row rather than inserting a second one — see its header
+// for why that matters (a second row would split one practitioner's identity
+// in two, and their historical bills would stay on neither).
+
+export async function inviteLoginForProvider(
+  memberId: string,
+  email:    string,
+): Promise<ActionResult> {
+  const guard = await guardManager();
+  if (!guard.ok) return { error: guard.error };
+
+  const result = await inviteLoginForRosterMember({
+    practiceId: guard.practiceId,
+    memberId,
+    email,
+  });
+
+  if (result.error) return { error: result.error };
+
+  revalidatePath('/practice/members');
   return { error: null };
 }

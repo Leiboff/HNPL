@@ -78,6 +78,7 @@ export default async function MembersPage({
     .from('practice_members')
     .select(`
       id, user_id, role, active,
+      provider_first_name, provider_last_name,
       can_create_bills, can_manage_practice,
       specialty, hpcsa_number, payout_destination,
       personal_bank_name, personal_account_holder,

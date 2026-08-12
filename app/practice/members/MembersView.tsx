@@ -4,10 +4,13 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   updateMember, disableMember, enableMember, addMember,
+  addProviderToRoster, inviteLoginForProvider,
   type MemberUpdates, type NewMemberInput,
 } from './actions';
 import SelfAsProviderCard from './SelfAsProviderCard';
 import AddMemberForm, { SPECIALTIES } from './AddMemberForm';
+import AddProviderForm, { type AddProviderDraft } from './AddProviderForm';
+import InviteLoginForm from './InviteLoginForm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,7 +18,16 @@ type MemberProfile = { first_name: string; last_name: string; email: string };
 
 export type MemberRow = {
   id:                      string;
-  user_id:                 string;
+  /**
+   * NULL for a ROSTER practitioner — listed with name + specialty + HPCSA and
+   * no auth account (migration 0091). Such a row authorises nothing: every
+   * permission helper resolves through `user_id = auth.uid()`, which NULL
+   * never matches.
+   */
+  user_id:                 string | null;
+  /** Set only when user_id IS NULL — see 0091's identifiable constraint. */
+  provider_first_name:     string | null;
+  provider_last_name:      string | null;
   role:                    'admin' | 'provider';
   active:                  boolean;
   can_create_bills:        boolean;
@@ -122,14 +134,39 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
 
 // ─── Helper functions ─────────────────────────────────────────────────────────
 
+/**
+ * A member's name and email, from whichever of the two homes applies.
+ *
+ * With a login, both live on profiles. On a ROSTER row (user_id IS NULL) the
+ * name lives on the membership itself and there is no email, because there is
+ * no account — reported as NO_LOGIN_EMAIL rather than a blank, so the roster
+ * state reads as deliberate instead of as missing data. 0091's constraint
+ * guarantees exactly one of the two homes is populated, so this cannot show a
+ * stale copy of a name.
+ */
+export const NO_LOGIN_EMAIL = 'No login';
+
 function getProfile(m: MemberRow): MemberProfile {
   const p = Array.isArray(m.profile) ? m.profile[0] : m.profile;
-  return p ?? { first_name: 'Unknown', last_name: 'User', email: '—' };
+  if (p) return p;
+  if (m.provider_first_name || m.provider_last_name) {
+    return {
+      first_name: m.provider_first_name ?? '',
+      last_name:  m.provider_last_name  ?? '',
+      email:      NO_LOGIN_EMAIL,
+    };
+  }
+  return { first_name: 'Unknown', last_name: 'User', email: '—' };
 }
 
 function displayName(m: MemberRow): string {
   const p = getProfile(m);
-  return `${p.first_name} ${p.last_name}`;
+  return `${p.first_name} ${p.last_name}`.trim();
+}
+
+/** A practitioner on the roster with no auth account — invitable, later. */
+export function isRosterOnly(m: MemberRow): boolean {
+  return !m.user_id;
 }
 
 function countManagers(members: MemberRow[], excludeId?: string): number {
@@ -164,6 +201,9 @@ export default function MembersView({ members: initialMembers, currentUserId, is
   const [editLoading,  setEditLoading]  = useState(false);
 
   const [showAdd,      setShowAdd]      = useState(false);
+  const [showAddProvider, setShowAddProvider] = useState(false);
+  /** Which roster row's "give them a login" form is open. */
+  const [invitingId,   setInvitingId]   = useState<string | null>(null);
 
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [actionLoading,setActionLoading]= useState(false);
@@ -295,6 +335,31 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     return result;
   }
 
+  // ── Add a practitioner to the roster — no email, no invite ────────────────
+  //
+  // A separate action and a separate form from the invite path above; see
+  // ./AddProviderForm for why the two are not one component with a branch.
+  async function handleAddProvider(draft: AddProviderDraft): Promise<{ error: string | null }> {
+    const result = await addProviderToRoster(draft);
+    if (!result.error) {
+      setShowAddProvider(false);
+      flash(`${draft.firstName.trim()} ${draft.lastName.trim()} added to your team.`);
+      router.refresh();
+    }
+    return result;
+  }
+
+  // ── Give a rostered practitioner a login ──────────────────────────────────
+  async function handleInviteLogin(m: MemberRow, email: string): Promise<{ error: string | null }> {
+    const result = await inviteLoginForProvider(m.id, email);
+    if (!result.error) {
+      setInvitingId(null);
+      flash(`Invitation sent to ${email.trim()}. ${displayName(m)} can sign in once they set a password.`);
+      router.refresh();
+    }
+    return result;
+  }
+
   // ── Card sub-render ────────────────────────────────────────────────────────
   function renderCard(m: MemberRow, opts: { isMe?: boolean } = {}) {
     const profile        = getProfile(m);
@@ -303,6 +368,8 @@ export default function MembersView({ members: initialMembers, currentUserId, is
     const isConfirming   = confirmingId === m.id;
     const isLastManager  = m.can_manage_practice && countManagers(members, m.id) === 0;
     const canDisable     = isManager && !opts.isMe && !isLastManager;
+    const rosterOnly     = isRosterOnly(m);
+    const isInviting     = invitingId === m.id;
 
     return (
       <div key={m.id} className="space-y-3">
@@ -320,6 +387,16 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                     You
                   </span>
                 )}
+                {/* A roster practitioner with no account. Stated positively —
+                    this is a complete, intended state, not a pending invite. */}
+                {rosterOnly && (
+                  <span
+                    data-testid="member-no-login-chip"
+                    className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 bg-gray-100 rounded-full px-2 py-0.5"
+                  >
+                    No login
+                  </span>
+                )}
               </div>
               <p className="text-sm text-gray-500 mt-0.5 truncate">{profile.email}</p>
             </div>
@@ -331,6 +408,16 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                   className="text-xs font-medium text-[#15A89E] hover:text-[#13294B] transition-colors px-2 py-1 rounded-lg hover:bg-[#15A89E]/10"
                 >
                   {isEditing ? 'Cancel' : 'Edit'}
+                </button>
+              )}
+              {/* Optional, explicit, and only where it applies. */}
+              {isManager && rosterOnly && m.active && !isEditing && (
+                <button
+                  onClick={() => setInvitingId(isInviting ? null : m.id)}
+                  data-testid="invite-login-toggle"
+                  className="text-xs font-medium text-[#15A89E] hover:text-[#13294B] transition-colors px-2 py-1 rounded-lg hover:bg-[#15A89E]/10"
+                >
+                  {isInviting ? 'Cancel invite' : 'Give login'}
                 </button>
               )}
               {canDisable && !isEditing && (
@@ -371,6 +458,16 @@ export default function MembersView({ members: initialMembers, currentUserId, is
             >
               {LAST_MANAGER_EXPLAINER}
             </p>
+          )}
+
+          {/* Give this practitioner a login — inline, on their own row, so
+              there is no ambiguity about who is being invited. */}
+          {isInviting && rosterOnly && (
+            <InviteLoginForm
+              memberName={name}
+              onSubmit={(email) => handleInviteLogin(m, email)}
+              onCancel={() => setInvitingId(null)}
+            />
           )}
 
           {/* Details */}
@@ -543,15 +640,31 @@ export default function MembersView({ members: initialMembers, currentUserId, is
             {isManager ? 'Manage who has access to your practice.' : 'View your practice team.'}
           </p>
         </div>
-        {isManager && !showAdd && (
-          <button
-            onClick={() => { setShowAdd(true); closeEdit(); setConfirmingId(null); }}
-            className="shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-          >
-            + Add team member
-          </button>
-        )}
+        {/* Two distinct actions, because they do genuinely different things.
+            Adding a practitioner is the common one and needs no email, so it
+            leads; inviting someone to a dashboard login is the deliberate
+            second choice. Collapsing them into one button with a hidden mode
+            switch is what made "add the third dentist" an email ceremony. */}
+        <div className="shrink-0 flex flex-wrap gap-2">
+          {isManager && !showAddProvider && (
+            <button
+              onClick={() => { setShowAddProvider(true); setShowAdd(false); closeEdit(); setConfirmingId(null); }}
+              data-testid="add-provider-toggle"
+              className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            >
+              + Add practitioner
+            </button>
+          )}
+          {isManager && !showAdd && (
+            <button
+              onClick={() => { setShowAdd(true); setShowAddProvider(false); closeEdit(); setConfirmingId(null); }}
+              className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-semibold text-[#13294B] transition-colors hover:bg-gray-50 hover:border-gray-400"
+            >
+              + Invite team member
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Self-elect-as-provider banner — only when the viewer is the admin
@@ -586,6 +699,17 @@ export default function MembersView({ members: initialMembers, currentUserId, is
           onSubmit={handleAddMember}
           onCancel={() => setShowAdd(false)}
         />
+      )}
+
+      {/* Roster form — separate component and separate action from the invite
+          above; see ./AddProviderForm for why the two are not one. */}
+      {showAddProvider && (
+        <div className="mb-5">
+          <AddProviderForm
+            onSubmit={handleAddProvider}
+            onCancel={() => setShowAddProvider(false)}
+          />
+        </div>
       )}
 
       {/* ── Section: Providers ── */}

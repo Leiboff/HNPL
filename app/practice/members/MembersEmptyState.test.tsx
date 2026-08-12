@@ -79,28 +79,38 @@ describe('Admin staff empty state', () => {
   // someone who just read "No admin staff added yet". They were reported as
   // an accidental duplicate because they were visually IDENTICAL primary
   // buttons stacked close together.
-  it('the header button stays primary and the empty-state one is lower-emphasis', () => {
+  // The header now carries TWO actions, because adding a practitioner and
+  // inviting someone to a dashboard login are genuinely different things: a
+  // practitioner needs no email and gets no login, so "+ Add practitioner" is
+  // the primary and everyday action, and "+ Invite team member" — the flow
+  // this file is about — is the deliberate secondary one. The label moved from
+  // "+ Add team member" for exactly that reason: with two actions present,
+  // "team member" alone no longer said which.
+  it('the primary header action stays primary and the empty-state one is lower-emphasis', () => {
     renderView(
       [member({ id: 'm1', user_id: 'me', role: 'provider', can_manage_practice: true })],
       'me',
     );
-    const header = screen.getByRole('button', { name: '+ Add team member' });
-    const empty  = screen.getByTestId('admin-staff-empty-add');
+    const primary = screen.getByTestId('add-provider-toggle');
+    const invite  = screen.getByRole('button', { name: '+ Invite team member' });
+    const empty   = screen.getByTestId('admin-staff-empty-add');
 
-    // Both present, and NOT the same element.
-    expect(header).not.toBe(empty);
+    // Three distinct elements.
+    expect(primary).not.toBe(invite);
+    expect(invite).not.toBe(empty);
 
-    // Primary = the brand gradient; secondary = bordered/white, no gradient.
-    expect(header.getAttribute('style') ?? '').toMatch(/linear-gradient/);
+    // Primary = the brand gradient; the other two are bordered/white.
+    expect(primary.getAttribute('style') ?? '').toMatch(/linear-gradient/);
     expect(empty.getAttribute('style') ?? '').not.toMatch(/linear-gradient/);
     expect(empty.className).toMatch(/border/);
     expect(empty.className).toMatch(/bg-white/);
     expect(empty.className).not.toMatch(/text-white/);
 
     // Reworded so it reads as part of the empty-state sentence rather than
-    // a second copy of the same primary action.
+    // a second copy of the header action. This is the original point of this
+    // test and it still holds: the two are never the same words.
     expect(empty.textContent).toBe('Add your first admin staff member');
-    expect(empty.textContent).not.toBe('+ Add team member');
+    expect(empty.textContent).not.toBe(invite.textContent);
   });
 
   it('both entry points perform the same action', () => {
@@ -122,7 +132,7 @@ describe('Admin staff empty state', () => {
       ],
       'me',
     );
-    expect(screen.getByRole('button', { name: '+ Add team member' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '+ Invite team member' })).toBeTruthy();
     expect(screen.queryByTestId('admin-staff-empty-add')).toBeNull();
     expect(screen.queryByText('Add your first admin staff member')).toBeNull();
   });
