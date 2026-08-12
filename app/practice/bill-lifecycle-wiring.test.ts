@@ -25,24 +25,63 @@ function read(p: string): string {
 }
 
 const BILLS_BLOCK      = read('app/practice/BillsBlock.tsx');
+const BILLS_TABLE      = read('app/practice/BillsTable.tsx');
 const WAITING_PANEL    = read('app/practice/bills/new/BillWaitingPanel.tsx');
 const PAGE_BILLS_QUERY = read('app/practice/page.tsx');
 
-describe('BillsBlock derives the label via the shared helper', () => {
-  it('imports deriveBillLifecycleStatus from the shared module', () => {
-    expect(BILLS_BLOCK).toMatch(
-      /from\s+['"]@\/lib\/bills\/lifecycle['"]/,
-    );
-    expect(BILLS_BLOCK).toMatch(/deriveBillLifecycleStatus/);
-    expect(BILLS_BLOCK).toMatch(/billLifecycleChip/);
+/** Comments stripped — these files DOCUMENT the labels and colours they must
+ *  not hard-code, so an absence assertion over the raw text would match prose
+ *  rather than code. */
+function codeOf(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+}
+
+describe('the bills surfaces derive the label via the shared helper', () => {
+  // The four-column collapse moved row rendering from BillsBlock into the
+  // shared BillsTable. BillsBlock still derives the lifecycle for its CSV and
+  // PDF exports, so BOTH files must go through the helper — the invariant did
+  // not move, it now applies in two places.
+  it.each([
+    ['BillsBlock', BILLS_BLOCK],
+    ['BillsTable', BILLS_TABLE],
+  ])('%s imports deriveBillLifecycleStatus from the shared module', (_name, src) => {
+    expect(src).toMatch(/from\s+['"]@\/lib\/bills\/lifecycle['"]/);
+    expect(src).toMatch(/deriveBillLifecycleStatus/);
+    expect(src).toMatch(/billLifecycleChip/);
   });
 
-  it('renders the lifecycle chip in both the mobile list and desktop table', () => {
-    // Count usages — at least one each. Helper calls > 1 because
-    // each row computes lifecycle individually.
+  it('BillsTable renders the status badge in both the mobile list and desktop table', () => {
+    const badges = BILLS_TABLE.match(/<StatusBadge\s+status=\{lifecycleOf\(plan\)\}\s*\/>/g) ?? [];
+    expect(badges.length).toBe(2);
+  });
+
+  it('BillsBlock still derives the lifecycle for both exports (CSV + PDF)', () => {
     const calls = BILLS_BLOCK.match(/deriveBillLifecycleStatus\(/g) ?? [];
     expect(calls.length).toBeGreaterThanOrEqual(2);
-    expect(BILLS_BLOCK).toMatch(/<LifecycleBadge\s+status=\{lifecycle\}\s*\/>/);
+  });
+
+  it('neither file hard-codes a lifecycle LABEL — the helper owns the vocabulary', () => {
+    // Stronger than the old assertion, which only checked that a badge element
+    // was present. This is the actual drift the helper exists to prevent: a
+    // surface printing its own "Paid" that then diverges from the panel's.
+    for (const src of [codeOf(BILLS_BLOCK), codeOf(BILLS_TABLE)]) {
+      for (const label of ['Sent', 'Viewed', 'Expired']) {
+        expect(src).not.toMatch(new RegExp(`['"\`]${label}['"\`]`));
+      }
+    }
+  });
+
+  it('BillsTable composes its own LAYOUT but takes status colour from the helper', () => {
+    const code = codeOf(BILLS_TABLE);
+    // The chip's colour classes arrive via cfg.cls rather than being written
+    // here, so dominance never forks the palette.
+    expect(code).toMatch(/billLifecycleChip\(status\)/);
+    expect(code).toMatch(/\$\{cfg\.cls\}/);
+    // Size / chip / ring / icon ARE this component's job.
+    expect(code).toMatch(/text-sm font-semibold/);
+    expect(code).toMatch(/<StatusIcon status=\{status\}\s*\/>/);
   });
 });
 

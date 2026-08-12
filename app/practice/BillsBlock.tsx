@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from 'react';
 import { calculateFee } from '@/lib/finance';
 import {
   PlanSummary,
-  formatRand,
   formatDate,
   patientDisplay,
   providerName,
@@ -14,8 +13,8 @@ import {
 import {
   deriveBillLifecycleStatus,
   billLifecycleChip,
-  type BillLifecycleStatus,
 } from '@/lib/bills/lifecycle';
+import BillsTable from './BillsTable';
 import CreateBillButton from './CreateBillButton';
 import type { TradingGateResult } from '@/lib/practice/tradingGate';
 
@@ -35,19 +34,6 @@ type Props = {
    */
   practiceId?: string;
 };
-
-function LifecycleBadge({ status }: { status: BillLifecycleStatus }) {
-  const cfg = billLifecycleChip(status);
-  return (
-    <span
-      title={cfg.hint}
-      aria-label={cfg.hint}
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cfg.cls}`}
-    >
-      {cfg.label}
-    </span>
-  );
-}
 
 function DotsIcon() {
   return (
@@ -247,103 +233,7 @@ export default function BillsBlock({
             <p className="mt-1 text-sm text-gray-400">Try adjusting the date range or provider.</p>
           </div>
         ) : (
-          <>
-            {/* ── Mobile cards (< md) ───────────────────────────── */}
-            <div className="md:hidden divide-y divide-gray-100">
-              {plans.map((plan) => {
-                const payout    = getPayout(plan);
-                const isPending = plan.status === 'pending_acceptance';
-                const inv       = getInvitation(plan);
-                const lifecycle = deriveBillLifecycleStatus({
-                  planStatus:           plan.status,
-                  invitationViewedAt:   inv?.viewed_at   ?? null,
-                  invitationAcceptedAt: inv?.accepted_at ?? null,
-                  invitationExpiresAt:  inv?.expires_at  ?? null,
-                });
-                return (
-                  <div key={plan.id} className="px-5 py-4 flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-900 truncate">{patientDisplay(plan)}</p>
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <LifecycleBadge status={lifecycle} />
-                        {!isPending && payout && (
-                          <span className={`text-xs font-medium ${payout.status === 'paid' ? 'text-green-700' : 'text-amber-700'}`}>
-                            {payout.status === 'paid' ? 'Paid out' : 'Payout pending'}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-semibold tabular-nums text-gray-900">{formatRand(Number(plan.total_amount))}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{formatDate(plan.created_at)}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* ── Desktop table (md+) ────────────────────────────── */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 text-left bg-gray-50">
-                    {['Reference','Patient','Provider','Specialty','Bill','Fee','Net payout','Status','Payout','Created'].map((h) => (
-                      <th key={h} className="px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {plans.map((plan) => {
-                    const payout    = getPayout(plan);
-                    const isPending = plan.status === 'pending_acceptance';
-                    const { fee, net } = calculateFee(Number(plan.total_amount), feePercent);
-                    const inv = getInvitation(plan);
-                    const lifecycle = deriveBillLifecycleStatus({
-                      planStatus:           plan.status,
-                      invitationViewedAt:   inv?.viewed_at   ?? null,
-                      invitationAcceptedAt: inv?.accepted_at ?? null,
-                      invitationExpiresAt:  inv?.expires_at  ?? null,
-                    });
-                    return (
-                      <tr key={plan.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="block font-mono text-xs text-gray-700">{plan.invoice_number ?? '—'}</span>
-                          {plan.practice_reference && (
-                            <span className="block text-xs text-gray-400 mt-0.5">Ref: {plan.practice_reference}</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">{patientDisplay(plan)}</td>
-                        <td className="px-6 py-4 text-gray-700 whitespace-nowrap">{providerName(plan)}</td>
-                        <td className="px-6 py-4 text-gray-500 whitespace-nowrap text-xs">
-                          {plan.provider_id ? (specialtyMap[plan.provider_id] ?? '—') : '—'}
-                        </td>
-                        <td className="px-6 py-4 text-gray-700 whitespace-nowrap tabular-nums">{formatRand(Number(plan.total_amount))}</td>
-                        <td className="px-6 py-4 whitespace-nowrap tabular-nums">
-                          <span className={isPending ? 'text-gray-400' : 'text-gray-700'}>−{formatRand(fee)}</span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap tabular-nums">
-                          <span className={`font-medium ${isPending ? 'text-gray-400' : 'text-gray-900'}`}>{formatRand(net)}</span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap"><LifecycleBadge status={lifecycle} /></td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {isPending ? (
-                            <span className="text-xs text-gray-400">Not yet accepted</span>
-                          ) : payout ? (
-                            <span className={`text-xs font-medium ${
-                              payout.status === 'paid'       ? 'text-green-700' :
-                              payout.status === 'processing' ? 'text-blue-700'  :
-                              payout.status === 'failed'     ? 'text-red-600'   : 'text-amber-700'
-                            }`}>{payout.status === 'paid' ? 'Paid' : 'Pending'}</span>
-                          ) : <span className="text-gray-400">—</span>}
-                        </td>
-                        <td className="px-6 py-4 text-gray-500 whitespace-nowrap">{formatDate(plan.created_at)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
+          <BillsTable plans={plans} feePercent={feePercent} specialtyMap={specialtyMap} />
         )}
       </div>
     </div>
