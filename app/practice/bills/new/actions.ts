@@ -39,7 +39,7 @@ export type CreateBillInput = {
   patientEmail:       string;
   billAmount:         number;
   practiceReference?: string;
-  providerId:         string;
+  providerMemberId:   string;
   /**
    * Which practice this bill is being issued for. REQUIRED when the
    * caller has more than one active practice_members row (any brand-
@@ -128,7 +128,7 @@ export type CreateBillResult = {
 // ─── createBill ──────────────────────────────────────────────────────────────
 
 export async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
-  const { patientEmail, billAmount, practiceReference, providerId } = data;
+  const { patientEmail, billAmount, practiceReference, providerMemberId } = data;
 
   if (!patientEmail || typeof patientEmail !== 'string') {
     return { error: 'Patient email is required.' };
@@ -138,7 +138,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
       error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`,
     };
   }
-  if (!providerId) {
+  if (!providerMemberId) {
     return { error: 'A healthcare provider must be selected.' };
   }
 
@@ -206,11 +206,21 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   if (!gate.ok) return { error: gate.message };
 
   // ── Provider belongs to this practice as a provider ────────────────────
+  //
+  // Keyed on the membership row id since 0094. practice_id is still asserted
+  // alongside it: the id alone would let a caller attribute a bill to another
+  // practice's practitioner, which the previous user_id form also guarded
+  // against and which matters more now that the id is client-supplied.
+  //
+  // user_id is selected but deliberately NOT required — a roster-only
+  // practitioner has none, and refusing them here is exactly the gap this
+  // change closes. It is read because patient_invitations.provider_id still
+  // references profiles(id) and can only carry a real auth user.
   const { data: providerMember } = await supabase
     .from('practice_members')
-    .select('user_id')
+    .select('id, user_id')
+    .eq('id', providerMemberId)
     .eq('practice_id', practiceId)
-    .eq('user_id', providerId)
     .eq('active', true)
     .eq('role', 'provider')
     .maybeSingle();
@@ -325,7 +335,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     application_id:     applicationId,
     patient_id:         patient?.id ?? null,
     practice_id:        practiceId,
-    provider_id:        providerId,
+    provider_member_id: providerMemberId,
     total_amount:       billAmount,
     status:             'pending_acceptance',
     invoice_number:     invoiceNumber,
@@ -387,7 +397,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     email:       normalizedEmail,
     plan_id:     planId,
     practice_id: practiceId,
-    provider_id: providerId,
+    provider_id: providerMember.user_id ?? null,
     token,
     expires_at:  expiresAt,
   });

@@ -272,7 +272,7 @@ describe('activateFirstInstalment — payouts ALWAYS go to the practice', () => 
     });
     const result = await activateFirstInstalment(svc, {
       paymentId: 'pay1',
-      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_id: 'prov1', patient_id: 'pat1' },
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_member_id: 'prov1', patient_id: 'pat1' },
       now: '2026-07-30T12:00:00.000Z',
     });
     expect(result).toEqual({ ok: true });
@@ -288,22 +288,45 @@ describe('activateFirstInstalment — payouts ALWAYS go to the practice', () => 
     expect(payout.snapshot_account_type).toBeUndefined();
   });
 
-  it('still records provider_id — attribution is not the same thing as destination', async () => {
+  it('still records provider_id — resolved through the membership (0094)', async () => {
     // The treating doctor is still stamped on the payout: the practice
-    // dashboard, the brand by-doctor rollup and /provider all read it. What
-    // changed is that it no longer influences WHERE the money goes.
+    // dashboard, the brand by-doctor rollup and /provider all read attribution.
+    // What changed is that it no longer influences WHERE the money goes, and
+    // that the plan now points at a MEMBERSHIP — so the auth user has to be
+    // resolved from it, because payouts.provider_id references profiles(id).
     const svc = makeSvc({
       payments: [{ id: 'pay1', status: 'processing' }],
       plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
       practices:[{ id: 'prac1', fee_percent: 6 }],
+      practice_members: [{ id: 'mem1', user_id: 'user1', role: 'provider', active: true }],
       payouts:  [],
     });
     await activateFirstInstalment(svc, {
       paymentId: 'pay1',
-      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_id: 'prov1', patient_id: 'pat1' },
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_member_id: 'mem1', patient_id: 'pat1' },
       now: '2026-07-30T12:00:00.000Z',
     });
-    expect(svc.state.payouts[0].provider_id).toBe('prov1');
+    expect(svc.state.payouts[0].provider_id).toBe('user1');
+    expect(svc.state.payouts[0].payout_destination).toBe('practice');
+  });
+
+  it('a ROSTER-ONLY practitioner leaves provider_id unset, not coerced', async () => {
+    // No auth user exists, and payouts.provider_id references profiles(id), so
+    // there is nothing legal to write. Writing the membership id instead would
+    // be a silent type confusion pointing at the wrong table.
+    const svc = makeSvc({
+      payments: [{ id: 'pay1', status: 'processing' }],
+      plans:    [{ id: 'plan1', status: 'pending_first_payment' }],
+      practices:[{ id: 'prac1', fee_percent: 6 }],
+      practice_members: [{ id: 'mem-roster', user_id: null, role: 'provider', active: true }],
+      payouts:  [],
+    });
+    await activateFirstInstalment(svc, {
+      paymentId: 'pay1',
+      plan: { id: 'plan1', total_amount: 1000, practice_id: 'prac1', provider_member_id: 'mem-roster', patient_id: 'pat1' },
+      now: '2026-07-30T12:00:00.000Z',
+    });
+    expect(svc.state.payouts[0].provider_id).toBeUndefined();
     expect(svc.state.payouts[0].payout_destination).toBe('practice');
   });
 

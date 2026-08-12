@@ -34,9 +34,9 @@ export default function PracticeDashboardClient({
   const providers = useMemo(() => {
     const map = new Map<string, string>();
     plans.forEach((p) => {
-      if (!p.provider_id) return;
+      if (!p.provider_member_id) return;
       const name = providerName(p);
-      if (name !== '—') map.set(p.provider_id, name);
+      if (name !== '—') map.set(p.provider_member_id, name);
     });
     return Array.from(map.entries())
       .map(([id, name]) => ({ id, name }))
@@ -48,7 +48,7 @@ export default function PracticeDashboardClient({
       const d = p.created_at.slice(0, 10);
       if (fromDate   && d < fromDate)             return false;
       if (toDate     && d > toDate)               return false;
-      if (providerId && p.provider_id !== providerId) return false;
+      if (providerId && p.provider_member_id !== providerId) return false;
       return true;
     });
   }, [plans, fromDate, toDate, providerId]);

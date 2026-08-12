@@ -19,7 +19,7 @@ function plan(over: Partial<RevenuePlan> = {}): RevenuePlan {
   return {
     id:           'plan-' + Math.random().toString(36).slice(2, 8),
     practice_id:  'pA',
-    provider_id:  'dr1',
+    provider_member_id:  'dr1',
     total_amount: 3000,
     status:       'active',
     ...over,
@@ -143,10 +143,10 @@ describe('computeRevenue — gross vs net using each practice\'s fee_percent', (
 
 describe('computeRevenue — filters', () => {
   const plans: RevenuePlan[] = [
-    plan({ id: 'p1', practice_id: 'pA', provider_id: 'dr1', total_amount: 1000 }),
-    plan({ id: 'p2', practice_id: 'pA', provider_id: 'dr2', total_amount: 2000 }),
-    plan({ id: 'p3', practice_id: 'pB', provider_id: 'dr1', total_amount: 4000 }),
-    plan({ id: 'p4', practice_id: 'pB', provider_id: 'dr2', total_amount: 8000 }),
+    plan({ id: 'p1', practice_id: 'pA', provider_member_id: 'dr1', total_amount: 1000 }),
+    plan({ id: 'p2', practice_id: 'pA', provider_member_id: 'dr2', total_amount: 2000 }),
+    plan({ id: 'p3', practice_id: 'pB', provider_member_id: 'dr1', total_amount: 4000 }),
+    plan({ id: 'p4', practice_id: 'pB', provider_member_id: 'dr2', total_amount: 8000 }),
   ];
 
   it('practiceId filter narrows to that branch only', () => {
@@ -169,10 +169,41 @@ describe('computeRevenue — filters', () => {
     expect(r.totalGross).toBe(8000);
   });
 
+  it('a ROSTER-ONLY practitioner appears in the by-doctor breakdown', () => {
+    // 0094: provider_member_id points at a practice_members row that may have
+    // no profiles row at all. The page resolves names from practice_members
+    // for exactly this reason — a profiles-only lookup would drop the row from
+    // byProvider while its gross still landed in the totals, i.e. the brand's
+    // own revenue would silently fail to add up by doctor.
+    const withRoster = [
+      ...plans,
+      plan({ id: 'p5', practice_id: 'pA', provider_member_id: 'mem-roster', total_amount: 3000 }),
+    ];
+    const providers = [...PROVIDERS, { id: 'mem-roster', fullName: 'Zanele Mthembu' }];
+    const r = computeRevenue(withRoster, PRACTICES, providers);
+
+    const roster = r.byProvider.find((x) => x.id === 'mem-roster');
+    expect(roster).toBeDefined();
+    expect(roster!.label).toBe('Zanele Mthembu');
+    expect(roster!.gross).toBe(3000);
+    // And the by-doctor slices still reconcile to the headline.
+    expect(r.byProvider.reduce((s, x) => s + x.gross, 0)).toBe(r.totalGross);
+  });
+
+  it('filters to a roster-only practitioner like any other', () => {
+    const withRoster = [
+      ...plans,
+      plan({ id: 'p5', practice_id: 'pA', provider_member_id: 'mem-roster', total_amount: 3000 }),
+    ];
+    const r = computeRevenue(withRoster, PRACTICES, PROVIDERS, { providerId: 'mem-roster' });
+    expect(r.totalCount).toBe(1);
+    expect(r.totalGross).toBe(3000);
+  });
+
   it('filter on a non-active-for-revenue plan still excludes it', () => {
     const withDeadInBranch = [
       ...plans,
-      plan({ id: 'p5', practice_id: 'pA', provider_id: 'dr1', total_amount: 999, status: 'defaulted' }),
+      plan({ id: 'p5', practice_id: 'pA', provider_member_id: 'dr1', total_amount: 999, status: 'defaulted' }),
     ];
     const r = computeRevenue(withDeadInBranch, PRACTICES, PROVIDERS, { practiceId: 'pA', providerId: 'dr1' });
     expect(r.totalCount).toBe(1);    // p1 only — p5 (defaulted) dropped
@@ -186,8 +217,8 @@ describe('computeRevenue — breakdown sorts by gross descending', () => {
   it('byPractice and byProvider are sorted descending by gross', () => {
     const r = computeRevenue(
       [
-        plan({ id: 'small', practice_id: 'pA', provider_id: 'dr1', total_amount: 1000 }),
-        plan({ id: 'big',   practice_id: 'pB', provider_id: 'dr2', total_amount: 9000 }),
+        plan({ id: 'small', practice_id: 'pA', provider_member_id: 'dr1', total_amount: 1000 }),
+        plan({ id: 'big',   practice_id: 'pB', provider_member_id: 'dr2', total_amount: 9000 }),
       ],
       PRACTICES, PROVIDERS,
     );
@@ -203,7 +234,7 @@ describe('computeRevenue — breakdown sorts by gross descending', () => {
     // gross/net correctly even though that plan can't be attributed.
     const r = computeRevenue(
       [
-        plan({ id: 'p1', practice_id: 'pA', provider_id: null, total_amount: 1000 }),
+        plan({ id: 'p1', practice_id: 'pA', provider_member_id: null, total_amount: 1000 }),
       ],
       PRACTICES, PROVIDERS,
     );

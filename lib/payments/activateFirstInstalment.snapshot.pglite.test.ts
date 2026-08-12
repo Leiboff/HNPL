@@ -47,10 +47,23 @@ const SCHEMA = `
     name text,
     fee_percent numeric(5,2) default 6
   );
+  -- 0091's roster columns matter here: the writer resolves the treating
+  -- practitioner's user_id through this row, and a roster-only practitioner
+  -- has none.
+  create table practice_members (
+    id uuid primary key default gen_random_uuid(),
+    practice_id uuid references practices(id),
+    user_id     uuid,
+    role        text,
+    active      boolean default true,
+    provider_first_name text,
+    provider_last_name  text
+  );
   create table plans (
     id uuid primary key default gen_random_uuid(),
     practice_id  uuid references practices(id),
     provider_id  uuid,
+    provider_member_id uuid references practice_members(id),
     status       text,
     total_amount numeric(10,2)
   );
@@ -178,22 +191,37 @@ function makeSqlClient() {
 
 let practiceId: string;
 
+/**
+ * A practitioner membership at the test practice. `withLogin: false` models a
+ * ROSTER-ONLY entry — no auth user at all, which is the case 0094 exists for
+ * and the case where payouts.provider_id has nothing to point at.
+ */
+async function seedProviderMember(withLogin: boolean) {
+  const userId = withLogin ? crypto.randomUUID() : null;
+  const { rows } = await q<{ id: string }>(
+    `insert into practice_members
+       (practice_id, user_id, role, active, provider_first_name, provider_last_name)
+     values ($1, $2, 'provider', true, $3, $4) returning id`,
+    [practiceId, userId, withLogin ? null : 'Zanele', withLogin ? null : 'Mthembu']);
+  return { memberId: rows[0].id, userId };
+}
+
 /** A plan sitting at pending_first_payment with its instalment-1 payment. */
-async function seedPendingPlan(opts: { providerId?: string | null; total?: number } = {}) {
+async function seedPendingPlan(opts: { providerMemberId?: string | null; total?: number } = {}) {
   const plan = await q<{ id: string }>(
-    `insert into plans (practice_id, provider_id, status, total_amount)
+    `insert into plans (practice_id, provider_member_id, status, total_amount)
      values ($1, $2, 'pending_first_payment', $3) returning id`,
-    [practiceId, opts.providerId ?? null, opts.total ?? 3000]);
+    [practiceId, opts.providerMemberId ?? null, opts.total ?? 3000]);
   const payment = await q<{ id: string }>(
     `insert into payments (plan_id, status) values ($1, 'pending') returning id`,
     [plan.rows[0].id]);
   return { planId: plan.rows[0].id, paymentId: payment.rows[0].id };
 }
 
-const activate = (planId: string, paymentId: string, providerId: string | null = null, total = 3000) =>
+const activate = (planId: string, paymentId: string, providerMemberId: string | null = null, total = 3000) =>
   activateFirstInstalment(makeSqlClient(), {
     paymentId,
-    plan: { id: planId, total_amount: total, practice_id: practiceId, provider_id: providerId },
+    plan: { id: planId, total_amount: total, practice_id: practiceId, provider_member_id: providerMemberId },
   });
 
 beforeAll(async () => {
@@ -202,7 +230,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec('truncate payouts, payments, plans, practices cascade');
+  await db.exec('truncate payouts, payments, plans, practice_members, practices cascade');
   practiceId = (await q<{ id: string }>(
     `insert into practices (name, fee_percent) values ('Test Practice', 10) returning id`)).rows[0].id;
 });
@@ -234,17 +262,18 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     // elected payout_destination='provider' got their bank details copied onto
     // the payout row. provider_id is still recorded (it attributes the plan);
     // what must not come back is the banking that travelled with it.
-    const providerId = crypto.randomUUID();
-    const { planId, paymentId } = await seedPendingPlan({ providerId });
+    const { memberId, userId } = await seedProviderMember(true);
+    const { planId, paymentId } = await seedPendingPlan({ providerMemberId: memberId });
 
-    await activate(planId, paymentId, providerId);
+    await activate(planId, paymentId, memberId);
 
     const { rows } = await q<Record<string, string | null>>(
       `select provider_id, payout_destination, ${SNAPSHOT_COLS.join(', ')}
          from payouts where plan_id = $1`, [planId]);
 
-    // Attribution kept…
-    expect(rows[0].provider_id).toBe(providerId);
+    // Attribution kept — resolved through the membership to its auth user,
+    // because payouts.provider_id still references profiles(id).
+    expect(rows[0].provider_id).toBe(userId);
     // …destination still the practice, and no banking snapshotted.
     expect(rows[0].payout_destination).toBe('practice');
     for (const col of SNAPSHOT_COLS) {
@@ -264,6 +293,35 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     for (const col of SNAPSHOT_COLS) expect(rows[0][col]).toBeNull();
   });
 
+  it('a ROSTER-ONLY practitioner: provider_id NULL, snapshots still NULL', async () => {
+    // 0094's consequence on this path. The practitioner has no auth user, and
+    // payouts.provider_id references profiles(id), so there is nothing legal to
+    // write there — it stays NULL rather than being coerced to the membership
+    // id, which would be a silent type-confusion pointing at the wrong table.
+    //
+    // Attribution is not lost: it lives on plans.provider_member_id, which is
+    // what every attribution consumer reads since 0094.
+    const { memberId } = await seedProviderMember(false);
+    const { planId, paymentId } = await seedPendingPlan({ providerMemberId: memberId });
+
+    const result = await activate(planId, paymentId, memberId);
+    expect(result).toEqual({ ok: true });
+
+    const { rows } = await q<Record<string, string | null>>(
+      `select provider_id, payout_destination, ${SNAPSHOT_COLS.join(', ')}
+         from payouts where plan_id = $1`, [planId]);
+    expect(rows[0].provider_id).toBeNull();
+    expect(rows[0].payout_destination).toBe('practice');
+    for (const col of SNAPSHOT_COLS) {
+      expect(rows[0][col], `${col} must be NULL for a roster practitioner`).toBeNull();
+    }
+
+    // The plan still knows who treated the patient.
+    const { rows: planRows } = await q<{ provider_member_id: string }>(
+      `select provider_member_id from plans where id = $1`, [planId]);
+    expect(planRows[0].provider_member_id).toBe(memberId);
+  });
+
   it('the writer never NAMES a snapshot column — belt as well as braces', () => {
     // The DB assertions above prove the OUTCOME. This proves the INTENT, and
     // catches a reintroduction that a future schema default might otherwise
@@ -276,12 +334,27 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     }
     // Nor the membership-side columns it used to read to populate them.
     expect(code).not.toMatch(/personal_bank_name|personal_account_number|personal_branch_code/);
-    // And it must not read the membership row to decide a destination at all.
-    expect(code).not.toMatch(/practice_members/);
+
+    // This used to be a blanket ban on the string `practice_members`, on the
+    // grounds that the writer must not read the membership row "to decide a
+    // destination at all". Since 0094 it DOES read that row — to resolve the
+    // treating practitioner's user_id for attribution, because plans now point
+    // at a membership and payouts.provider_id still points at a profile.
+    //
+    // The ban is therefore narrowed to what it was actually protecting, which
+    // makes it sharper rather than looser: the destination must be the hard
+    // literal 'practice', and the membership read must not pull any column
+    // that could reintroduce a destination decision.
+    expect(code).toMatch(/payout_destination:\s*'practice'/);
+    expect(code).not.toMatch(/payout_destination'|payout_destination"/);   // never SELECTed
+    const memberSelects = code.match(/from\('practice_members'\)[\s\S]{0,120}?\.select\('([^']*)'\)/g) ?? [];
+    expect(memberSelects).toHaveLength(1);
+    expect(memberSelects[0]).toMatch(/\.select\('user_id'\)/);
   });
 
   it('the payout row it builds has exactly the expected keys — no silent additions', async () => {
-    const { planId, paymentId } = await seedPendingPlan({ providerId: crypto.randomUUID() });
+    const { memberId } = await seedProviderMember(true);
+    const { planId, paymentId } = await seedPendingPlan({ providerMemberId: memberId });
     await activate(planId, paymentId, crypto.randomUUID());
 
     // Everything the writer did NOT set must still be at its column default,

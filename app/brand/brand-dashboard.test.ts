@@ -44,11 +44,11 @@ describe('Group hero = sum of branch revenues (ACTIVE_FOR_REVENUE only, net)', (
     { id: 'p2', name: 'Branch B', fee_percent: 15 },
   ];
   const plans: RevenuePlan[] = [
-    { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active' },
-    { id: '2', practice_id: 'p1', provider_id: 'd2', total_amount:  500, status: 'completed' },
-    { id: '3', practice_id: 'p1', provider_id: 'd1', total_amount:  700, status: 'pending_acceptance' },
-    { id: '4', practice_id: 'p2', provider_id: 'd3', total_amount: 2000, status: 'active' },
-    { id: '5', practice_id: 'p2', provider_id: 'd3', total_amount:  300, status: 'defaulted' },
+    { id: '1', practice_id: 'p1', provider_member_id: 'd1', total_amount: 1000, status: 'active' },
+    { id: '2', practice_id: 'p1', provider_member_id: 'd2', total_amount:  500, status: 'completed' },
+    { id: '3', practice_id: 'p1', provider_member_id: 'd1', total_amount:  700, status: 'pending_acceptance' },
+    { id: '4', practice_id: 'p2', provider_member_id: 'd3', total_amount: 2000, status: 'active' },
+    { id: '5', practice_id: 'p2', provider_member_id: 'd3', total_amount:  300, status: 'defaulted' },
   ];
   const summary = computeRevenue(plans, practices, [], {});
 
@@ -74,10 +74,10 @@ describe('Monthly trend: group series = sum of branch series (net)', () => {
   const feeByPractice = new Map<string, number>([['p1', 10], ['p2', 20]]);
 
   const plans: PlanForTrend[] = [
-    { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active',    created_at: '2026-06-05T10:00:00Z' },
-    { id: '2', practice_id: 'p2', provider_id: 'd2', total_amount:  500, status: 'completed', created_at: '2026-06-10T10:00:00Z' },
-    { id: '3', practice_id: 'p1', provider_id: 'd1', total_amount: 2000, status: 'active',    created_at: '2026-05-05T10:00:00Z' },
-    { id: '4', practice_id: 'p1', provider_id: 'd1', total_amount: 9999, status: 'pending_acceptance', created_at: '2026-06-05T10:00:00Z' },
+    { id: '1', practice_id: 'p1', provider_member_id: 'd1', total_amount: 1000, status: 'active',    created_at: '2026-06-05T10:00:00Z' },
+    { id: '2', practice_id: 'p2', provider_member_id: 'd2', total_amount:  500, status: 'completed', created_at: '2026-06-10T10:00:00Z' },
+    { id: '3', practice_id: 'p1', provider_member_id: 'd1', total_amount: 2000, status: 'active',    created_at: '2026-05-05T10:00:00Z' },
+    { id: '4', practice_id: 'p1', provider_member_id: 'd1', total_amount: 9999, status: 'pending_acceptance', created_at: '2026-06-05T10:00:00Z' },
   ];
 
   it('the last-12-months window is deterministic from a reference date', () => {
@@ -115,9 +115,9 @@ describe('Per-doctor breakdown sums to the branch total (net)', () => {
     { id: 'd2', fullName: 'Dr Two' },
   ];
   const plans: RevenuePlan[] = [
-    { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active'    },
-    { id: '2', practice_id: 'p1', provider_id: 'd1', total_amount:  500, status: 'completed' },
-    { id: '3', practice_id: 'p1', provider_id: 'd2', total_amount:  700, status: 'active'    },
+    { id: '1', practice_id: 'p1', provider_member_id: 'd1', total_amount: 1000, status: 'active'    },
+    { id: '2', practice_id: 'p1', provider_member_id: 'd1', total_amount:  500, status: 'completed' },
+    { id: '3', practice_id: 'p1', provider_member_id: 'd2', total_amount:  700, status: 'active'    },
   ];
   const summary = computeRevenue(plans, practices, providers, {});
 
@@ -234,10 +234,10 @@ describe('Filter application — filtered plans through computeRevenue + buildMo
   ];
   const feeByPractice = new Map([['p1', 10], ['p2', 20]]);
   const plans: Array<RevenuePlan & { created_at: string }> = [
-    { id: '1', practice_id: 'p1', provider_id: 'd1', total_amount: 1000, status: 'active',    created_at: '2026-07-01T10:00:00Z' },
-    { id: '2', practice_id: 'p1', provider_id: 'd2', total_amount:  500, status: 'active',    created_at: '2026-07-02T10:00:00Z' },
-    { id: '3', practice_id: 'p2', provider_id: 'd1', total_amount:  800, status: 'active',    created_at: '2026-06-01T10:00:00Z' },
-    { id: '4', practice_id: 'p1', provider_id: 'd1', total_amount:  200, status: 'active',    created_at: '2026-01-10T10:00:00Z' }, // 6+ months ago
+    { id: '1', practice_id: 'p1', provider_member_id: 'd1', total_amount: 1000, status: 'active',    created_at: '2026-07-01T10:00:00Z' },
+    { id: '2', practice_id: 'p1', provider_member_id: 'd2', total_amount:  500, status: 'active',    created_at: '2026-07-02T10:00:00Z' },
+    { id: '3', practice_id: 'p2', provider_member_id: 'd1', total_amount:  800, status: 'active',    created_at: '2026-06-01T10:00:00Z' },
+    { id: '4', practice_id: 'p1', provider_member_id: 'd1', total_amount:  200, status: 'active',    created_at: '2026-01-10T10:00:00Z' }, // 6+ months ago
   ];
 
   function cutoffFor(rangeMonths: 3 | 6 | 12) {
@@ -254,7 +254,7 @@ describe('Filter application — filtered plans through computeRevenue + buildMo
     const cutoff = cutoffFor(rangeMonths);
     return ps.filter((p) => {
       if (practiceId && p.practice_id !== practiceId) return false;
-      if (providerId && p.provider_id !== providerId) return false;
+      if (providerId && p.provider_member_id !== providerId) return false;
       if (cutoff && new Date(p.created_at) < cutoff) return false;
       return true;
     });

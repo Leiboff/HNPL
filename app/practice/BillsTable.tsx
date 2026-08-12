@@ -165,7 +165,7 @@ function DetailFields({
 }: { plan: PlanSummary; feePercent: number; specialtyMap: Record<string, string> }) {
   const { fee, net } = calculateFee(Number(plan.total_amount), feePercent);
   const payout = payoutDetail(plan);
-  const specialty = plan.provider_id ? (specialtyMap[plan.provider_id] ?? '—') : '—';
+  const specialty = plan.provider_member_id ? (specialtyMap[plan.provider_member_id] ?? '—') : '—';
 
   const fields: { label: string; value: React.ReactNode; testid: string }[] = [
     {

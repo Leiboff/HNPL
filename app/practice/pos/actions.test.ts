@@ -125,7 +125,7 @@ beforeEach(async () => {
       last_activity_at: new Date().toISOString(),
     }],
     practice_members: [
-      { user_id: 'provider-1', practice_id: PRACTICE_ID, active: true, role: 'provider' },
+      { id: 'mem-1', user_id: 'provider-1', practice_id: PRACTICE_ID, active: true, role: 'provider' },
     ],
   };
 });
@@ -176,7 +176,7 @@ function issueArgs(overrides: Partial<Parameters<typeof issueCounterSession>[0]>
     deviceSecret: DEVICE_SECRET,
     billAmount:   1000,
     saIdNumber:   VALID_SA_ID,
-    providerId:   'provider-1',
+    providerMemberId:   'mem-1',
     ...overrides,
   };
 }

@@ -46,7 +46,9 @@ import { calculateFee } from '@/lib/finance';
 export type RevenuePlan = {
   id:           string;
   practice_id:  string;
-  provider_id:  string | null;
+  // The treating practitioner's MEMBERSHIP id (0094). Roster-only
+  // practitioners have one of these and no profile, which is the point.
+  provider_member_id: string | null;
   total_amount: number;        // gross, in rands
   status:       string;
 };
@@ -68,7 +70,7 @@ export type RevenueFilter = {
 };
 
 export type RevenueRow = {
-  id:        string;            // practice_id or provider_id
+  id:        string;            // practice_id or provider_member_id
   label:     string;            // practice name or provider full name
   count:     number;            // number of active plans contributing
   gross:     number;            // sum of total_amount (rands)
@@ -129,7 +131,7 @@ export function computeRevenue(
   for (const plan of plans) {
     if (!isActiveForRevenue(plan.status)) continue;
     if (filter.practiceId && plan.practice_id !== filter.practiceId) continue;
-    if (filter.providerId && plan.provider_id !== filter.providerId) continue;
+    if (filter.providerId && plan.provider_member_id !== filter.providerId) continue;
 
     const feePct = feeByPractice.get(plan.practice_id) ?? 0;
     const { gross, net } = calculateFee(Number(plan.total_amount), feePct);
@@ -143,10 +145,10 @@ export function computeRevenue(
       b.count += 1; b.gross += gross; b.net += net;
       byPractice.set(plan.practice_id, b);
     }
-    if (plan.provider_id) {
-      const b = byProvider.get(plan.provider_id) ?? { count: 0, gross: 0, net: 0 };
+    if (plan.provider_member_id) {
+      const b = byProvider.get(plan.provider_member_id) ?? { count: 0, gross: 0, net: 0 };
       b.count += 1; b.gross += gross; b.net += net;
-      byProvider.set(plan.provider_id, b);
+      byProvider.set(plan.provider_member_id, b);
     }
   }
 

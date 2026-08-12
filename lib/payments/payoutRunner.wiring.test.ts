@@ -342,7 +342,22 @@ describe('provider payout destination — the doctor-facing surface', () => {
 
     // What remains: bill scoping to this provider, and copy explaining why
     // there is no payout figure rather than leaving its absence unexplained.
-    expect(code).toMatch(/\.eq\('provider_id', user\.id\)/);
+    //
+    // The scoping assertion moved with 0094: attribution is now by
+    // practice_members row, so the filter is .in('provider_member_id', …) over
+    // the caller's own ACTIVE memberships. Kept as an assertion rather than
+    // dropped, and tightened — every plans read on this page must be scoped,
+    // so the count is compared against the number of reads rather than merely
+    // requiring one to exist.
+    const plansReads   = code.match(/\.from\('plans'\)/g) ?? [];
+    const scopedFilters = code.match(/\.in\('provider_member_id', myActiveMemberIds\)/g) ?? [];
+    expect(plansReads.length).toBeGreaterThan(0);
+    expect(scopedFilters.length).toBe(plansReads.length);
+
+    // The membership list it scopes to must itself be active-filtered —
+    // otherwise a disabled practitioner keeps reading their historical bills.
+    expect(code).toMatch(/\.eq\('active', true\)/);
+    expect(code).not.toMatch(/\.eq\('provider_id', user\.id\)/);
     expect(DASH).toMatch(/provider-payout-recipient-note/);
   });
 });

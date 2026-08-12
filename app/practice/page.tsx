@@ -87,9 +87,12 @@ export default async function PracticeDashboardPage({
     .from('plans')
     .select(`
       id, total_amount, status, created_at, invoice_number, practice_reference,
-      provider_id,
+      provider_member_id,
       patient:profiles!plans_patient_id_fkey(first_name, last_name),
-      provider:profiles!plans_provider_id_fkey(first_name, last_name),
+      provider_member:practice_members!plans_provider_member_id_fkey(
+        id, user_id, provider_first_name, provider_last_name, specialty,
+        profiles(first_name, last_name)
+      ),
       payouts(net_amount, status),
       invitations:patient_invitations(viewed_at, accepted_at, expires_at)
     `)
@@ -107,17 +110,13 @@ export default async function PracticeDashboardPage({
   // the practice, not of the viewer.)
   const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
 
-  const providerIds = [...new Set(plans.map((p) => p.provider_id).filter((id): id is string => Boolean(id)))];
+  // Specialty now rides along on the provider_member embed above, so the extra
+  // practice_members round-trip this used to need is gone. Keyed on the
+  // MEMBERSHIP id, which is what plans carry since 0094.
   const specialtyMap: Record<string, string> = {};
-  if (providerIds.length > 0) {
-    const { data: memberRows } = await reader
-      .from('practice_members')
-      .select('user_id, specialty')
-      .eq('practice_id', practiceId)
-      .in('user_id', providerIds);
-    for (const m of (memberRows ?? []) as { user_id: string; specialty: string | null }[]) {
-      if (m.specialty) specialtyMap[m.user_id] = m.specialty;
-    }
+  for (const p of plans) {
+    const m = Array.isArray(p.provider_member) ? p.provider_member[0] : p.provider_member;
+    if (m?.id && m.specialty) specialtyMap[m.id] = m.specialty;
   }
 
   // ── Next payout ────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ vi.mock('qrcode', () => ({
   default: { toDataURL: vi.fn(async () => 'data:image/png;base64,fake') },
 }));
 
-const PROVIDERS = [{ userId: 'prov1', firstName: 'Jane', lastName: 'Doe' }];
+const PROVIDERS = [{ memberId: 'mem1', name: 'Jane Doe' }];
 
 function renderForm(overrides: {
   stageSequence?: CounterSessionStage[];

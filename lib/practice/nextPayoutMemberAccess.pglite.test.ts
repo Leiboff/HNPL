@@ -21,21 +21,44 @@ import { SAST_OFFSET, sastMidnight } from '@/lib/payments/payoutWindow';
 //   3. The joins the plan lines depend on, under their real policies. A plan
 //      line carries a patient label and an invoice number, which come from
 //      plans and profiles — so proving the payouts read succeeds is not enough
-//      on its own. Both turn out to be member-level already:
-//        plans    practice_members_select_plans           is_practice_member (0002)
-//        profiles practice_members_select_patient_profiles role='patient' AND an
-//                                                         active membership (0006)
+//      on its own:
+//        plans    practice_members_select_plans  is_practice_member (0002)
+//        profiles see the note below (0093)
 //      Their real policies are installed below rather than assumed.
 //
-// Migrations 0090 (payout_batches) and 0092 (the widening) are executed
-// VERBATIM. The pre-0092 payouts policy is installed first so the contrast
-// test can show the behaviour this migration changes.
+// RE-BASELINED ONTO 0093
+// ──────────────────────
+// This file used to install 0006's practice_members_select_patient_profiles
+// inline. That policy no longer exists in the repo and NEVER existed in
+// production — 0093 back-ported the two correctly-scoped policies production
+// actually had. Verifying patient-name resolution against a policy that exists
+// nowhere proved nothing about either environment, so 0093 is now executed
+// VERBATIM alongside 0090 and 0092.
+//
+// The fixture role changed with it, and that matters more than it looks.
+// 0093's practice-side policy uses is_practice_admin(), which is ROLE-based
+// (practice_members.role = 'admin'), NOT is_practice_manager /
+// can_manage_practice. This file previously seeded role = 'staff' — a value
+// the CHECK constraint permits but which NO code path in the app ever writes:
+// inviteMemberIntoPractice assigns role = isProvider ? 'provider' : 'admin'
+// (lib/brand/inviteMember.ts), so a reception-level member IS role = 'admin'
+// with can_manage_practice = false. Seeding 'staff' modelled a user that
+// cannot exist, and under 0093 it would have shown patient names failing to
+// resolve for a user the product does not have.
+//
+// Migrations 0090 (payout_batches), 0092 (payouts → member-level) and 0093
+// (patient profiles) are executed VERBATIM. The pre-0092 payouts policy and
+// 0006's profiles policy are installed first so the contrast tests can show
+// the behaviour those migrations change.
 
 const MIG_0090 = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0090_payout_batches.sql'), 'utf8',
 ).replace(/\r\n/g, '\n');
 const MIG_0092 = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0092_payouts_member_select.sql'), 'utf8',
+).replace(/\r\n/g, '\n');
+const MIG_0093 = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/0093_profiles_patient_select_reconcile.sql'), 'utf8',
 ).replace(/\r\n/g, '\n');
 
 const BASE = `
@@ -60,6 +83,9 @@ const BASE = `
     id uuid primary key default gen_random_uuid(),
     practice_id uuid references practices(id),
     patient_id  uuid references profiles(id),
+    -- 0093's provider-side policy predicates on this column, so it has to be
+    -- real here rather than absent.
+    provider_id uuid references profiles(id),
     status text, total_amount numeric(10,2), invoice_number text
   );
   create table payouts (
@@ -92,6 +118,13 @@ const BASE = `
       select exists (select 1 from practice_members
         where practice_id = p and user_id = auth.uid()
           and can_manage_practice = true and active = true) $$;
+  -- ROLE-based, not capability-based — 0093's practice-side patient-profile
+  -- policy resolves through this one (0002).
+  create or replace function is_practice_admin(p uuid) returns boolean
+    language sql stable security definer set search_path = public, auth as $$
+      select exists (select 1 from practice_members
+        where practice_id = p and user_id = auth.uid()
+          and role = 'admin' and active = true) $$;
   create or replace function is_platform_admin() returns boolean
     language sql stable as $$ select false $$;
   create or replace function is_brand_admin_of_practice(p uuid) returns boolean
@@ -232,19 +265,39 @@ const beCaller = async (id: string | null) => {
   if (id) await q('insert into _current_user (id) values ($1)', [id]);
 };
 
+/**
+ * A non-provider practice member. practice_members.role = 'admin' because
+ * that is what inviteMemberIntoPractice actually writes for every
+ * non-provider — 'staff' is permitted by the CHECK constraint but never
+ * produced. `canManage` is the separate can_manage_practice capability, which
+ * is what distinguishes a manager from reception.
+ */
 async function seedStaff(canManage: boolean, email: string) {
   const p = await q<{ id: string }>(
     `insert into profiles (role,first_name,last_name,email)
-     values ('practice_staff','Staff','Person',$1) returning id`, [email]);
+     values ('practice_admin','Staff','Person',$1) returning id`, [email]);
   await q(
     `insert into practice_members (practice_id,user_id,role,active,can_manage_practice)
-     values ($1,$2,'staff',true,$3)`, [practiceId, p.rows[0].id, canManage]);
+     values ($1,$2,'admin',true,$3)`, [practiceId, p.rows[0].id, canManage]);
+  return p.rows[0].id;
+}
+
+/** A practitioner: practice_members.role = 'provider', so NOT is_practice_admin. */
+async function seedProvider(email: string) {
+  const p = await q<{ id: string }>(
+    `insert into profiles (role,first_name,last_name,email)
+     values ('practice_provider','Doc','Provider',$1) returning id`, [email]);
+  await q(
+    `insert into practice_members (practice_id,user_id,role,active,can_manage_practice)
+     values ($1,$2,'provider',true,false)`, [practiceId, p.rows[0].id]);
   return p.rows[0].id;
 }
 
 async function seedPayout(opts: {
   activatedAt: Date; net: number; batchId?: string | null;
   patient?: [string, string]; invoice?: string;
+  /** Treating provider on the plan — drives 0093's provider-side policy. */
+  providerId?: string | null;
 }) {
   const [first, last] = opts.patient ?? ['Thabo', 'Mokoena'];
   const patient = await q<{ id: string }>(
@@ -252,9 +305,10 @@ async function seedPayout(opts: {
      values ('patient',$1,$2,$3) returning id`,
     [first, last, `${first}.${last}.${Math.abs(opts.net)}@x.test`.toLowerCase()]);
   const plan = await q<{ id: string }>(
-    `insert into plans (practice_id,patient_id,status,total_amount,invoice_number)
-     values ($1,$2,'active',$3,$4) returning id`,
-    [practiceId, patient.rows[0].id, opts.net * 2, opts.invoice ?? 'INV-1']);
+    `insert into plans (practice_id,patient_id,provider_id,status,total_amount,invoice_number)
+     values ($1,$2,$3,'active',$4,$5) returning id`,
+    [practiceId, patient.rows[0].id, opts.providerId ?? null,
+     opts.net * 2, opts.invoice ?? 'INV-1']);
   await q(
     `insert into payouts (practice_id,plan_id,gross_amount,fee_amount,net_amount,status,batch_id,created_at)
      values ($1,$2,$3,$4,$5,'pending',$6,$7)`,
@@ -322,7 +376,10 @@ describe('BEFORE 0092 — an ordinary member sees a count above nothing', () => 
 // ─── AFTER: the verification ────────────────────────────────────────────
 
 describe('AFTER 0092 — an ordinary member sees real plan lines', () => {
-  beforeEach(async () => { await db.exec(MIG_0092); });
+  // 0093 runs too: it replaces 0006's uncorrelated profiles policy with the
+  // two correlated ones production actually has, so patient-name resolution is
+  // measured against the real posture rather than a policy that exists nowhere.
+  beforeEach(async () => { await db.exec(MIG_0092); await db.exec(MIG_0093); });
 
   it('CLOSED BATCH: full plan lines, with patient labels and amounts', async () => {
     const batchId = await seedBatch(THU_13, 350, 2);
@@ -406,6 +463,66 @@ describe('AFTER 0092 — an ordinary member sees real plan lines', () => {
     expect(r.next.planCount).toBe(3);
     expect(r.next.plans).toEqual([]);
     expect(r.next.plansHidden).toBe(true);
+  });
+
+  // ── 0093: who resolves a patient NAME, and who gets '—' ───────────────
+  //
+  // The decided behaviour is that reception-level staff SHOULD see patient
+  // names — managers only grant dashboard access to people they trust. These
+  // tests pin exactly where the '—' fallback survives.
+
+  it('RECEPTION (role=admin, can_manage_practice=false) resolves patient names', async () => {
+    const batchId = await seedBatch(THU_13, 100, 1);
+    await seedPayout({ activatedAt: sast(`${THU_06}T10:00:00`), net: 100,
+      batchId, patient: ['Thabo', 'Mokoena'] });
+
+    await beCaller(memberId);
+    const r = await resolveFor();
+    if (r.next.kind !== 'committed') throw new Error('expected committed');
+    expect(r.next.plans.map((p) => p.patientLabel)).toEqual(['Thabo M.']);
+  });
+
+  it('a PROVIDER on the plan resolves the patient name', async () => {
+    const providerId = await seedProvider('doc-on-plan@x.test');
+    const batchId = await seedBatch(THU_13, 100, 1);
+    await seedPayout({ activatedAt: sast(`${THU_06}T10:00:00`), net: 100,
+      batchId, patient: ['Sarah', 'Naidoo'], providerId });
+
+    await beCaller(providerId);
+    const r = await resolveFor();
+    if (r.next.kind !== 'committed') throw new Error('expected committed');
+    expect(r.next.plans.map((p) => p.patientLabel)).toEqual(['Sarah N.']);
+  });
+
+  it("a PROVIDER not on the plan gets '—' — the only surviving fallback", async () => {
+    // role='provider' is not is_practice_admin, and this plan's provider_id is
+    // someone else, so neither of 0093's policies grants the profile read. The
+    // payout row itself is still readable (0092 is member-level), so the line
+    // appears with its amount and invoice — just without a name.
+    const onPlan  = await seedProvider('doc-a@x.test');
+    const notOnIt = await seedProvider('doc-b@x.test');
+    const batchId = await seedBatch(THU_13, 100, 1);
+    await seedPayout({ activatedAt: sast(`${THU_06}T10:00:00`), net: 100,
+      batchId, patient: ['Naledi', 'Khumalo'], invoice: 'INV-X', providerId: onPlan });
+
+    await beCaller(notOnIt);
+    const r = await resolveFor();
+    if (r.next.kind !== 'committed') throw new Error('expected committed');
+    expect(r.next.plans).toHaveLength(1);
+    expect(r.next.plans[0].patientLabel).toBe('—');
+    // The row is not hidden — only the name is withheld.
+    expect(r.next.plans[0].netAmount).toBe(100);
+    expect(r.next.plans[0].invoiceNumber).toBe('INV-X');
+    expect(r.next.plansHidden).toBe(false);
+  });
+
+  it('0093 actually removed 0006\'s uncorrelated policy', async () => {
+    const { rows } = await q<{ policyname: string }>(
+      `select policyname from pg_policies where tablename = 'profiles'`);
+    const names = rows.map((r) => r.policyname);
+    expect(names).not.toContain('practice_members_select_patient_profiles');
+    expect(names).toContain('practice_admins_select_patient_profiles');
+    expect(names).toContain('provider_select_own_patient_profiles');
   });
 
   it('a DEACTIVATED member sees nothing — widening did not weaken the gate', async () => {

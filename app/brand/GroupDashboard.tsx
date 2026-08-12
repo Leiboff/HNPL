@@ -97,7 +97,7 @@ export default function GroupDashboard({
   const filteredPlans = useMemo(() => {
     return plans.filter((p) => {
       if (clampedPracticeId && p.practice_id !== clampedPracticeId) return false;
-      if (clampedProviderId && p.provider_id !== clampedProviderId) return false;
+      if (clampedProviderId && p.provider_member_id !== clampedProviderId) return false;
       if (cutoff) {
         const d = new Date(p.created_at);
         if (d < cutoff) return false;

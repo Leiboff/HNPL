@@ -411,12 +411,14 @@ export async function payWithSavedCard(
   //     deterministic ref; no new rows, no plan-status change, no double
   //     charge). A plan that already has a peach_registration_id has
   //     captured its card and is NOT resumable here.
-  // provider_id is loaded up-front so activateFirstInstalment can
-  // route the payout to a provider payout destination when the
-  // practice_member elected that.
+  // provider_member_id is loaded up-front so activateFirstInstalment can
+  // resolve the treating practitioner for the payout row. It does NOT affect
+  // where the money goes — payout_destination has been the literal 'practice'
+  // since the payout runner landed, and the per-provider destination this
+  // comment used to describe was removed with it.
   const { data: plan } = await supabase
     .from('plans')
-    .select('id, total_amount, practice_id, application_id, provider_id, status, plan_type, peach_registration_id')
+    .select('id, total_amount, practice_id, application_id, provider_member_id, status, plan_type, peach_registration_id')
     .eq('id', planId)
     .eq('patient_id', user.id)
     .in('status', ['pending_acceptance', 'pending_first_payment'])
