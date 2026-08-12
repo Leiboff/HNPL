@@ -6,8 +6,15 @@ import crypto from 'node:crypto';
 // The single terminal write for a successful instalment-1 charge:
 //   1. payments row  → status='collected', collected_at=now
 //   2. plans row     → status='active'
-//   3. payouts row   → inserted (payout_destination = practice, or
-//                      provider when the practice_member elected that)
+//   3. payouts row   → inserted, ALWAYS payout_destination='practice'
+//                      (one practice = one bank account = one deposit;
+//                      see the note at the insert for why the old
+//                      provider-destination branch was removed)
+//
+// This is also the moment a plan ACTIVATES, which makes payouts.created_at
+// the activation timestamp the weekly payout runner batches on — see
+// lib/payments/runPayoutBatches.ts. Nothing else may create payouts rows;
+// payouts.plan_id is UNIQUE (0087) and this helper is its only creator.
 //
 // Called from TWO places, both idempotent by design:
 //
@@ -119,23 +126,34 @@ export async function activateFirstInstalment(
     payout_destination: 'practice',
   };
 
+  // provider_id is still recorded — it attributes the plan to the treating
+  // doctor, which the practice dashboard, the brand by-doctor rollup and
+  // /provider all read. It no longer influences WHERE the money goes.
+  //
+  // ── payout_destination is always 'practice' ─────────────────────────
+  //
+  // This used to branch: if the doctor's practice_members row elected
+  // payout_destination='provider', the payout was redirected to their
+  // personal account and their bank details were snapshotted onto the
+  // payout row. That option is removed — decided as part of the payout
+  // runner: ONE PRACTICE = ONE BANK ACCOUNT = ONE DEPOSIT.
+  //
+  // Two reasons it had to go, both structural rather than cosmetic:
+  //   • Weekly batching groups a practice's payouts into a single bank
+  //     deposit (migration 0090). A provider-destined row inside that
+  //     batch would silently mean two transfers for one batch total,
+  //     which is exactly the unreconcilable figure batching exists to
+  //     prevent.
+  //   • payout_destination and the five personal_bank_* columns live PER
+  //     MEMBERSHIP, so one doctor working at two branches could carry two
+  //     different destinations with nothing noticing.
+  //
+  // The columns and both CHECK constraints stay in place on purpose —
+  // historical payouts rows written under the old rule must remain
+  // reconcilable, so nothing is dropped and 'provider' remains a legal
+  // value for those rows. Nothing WRITES it any more.
   if (plan.provider_id) {
     payoutRow.provider_id = plan.provider_id;
-    const { data: member } = await supabase
-      .from('practice_members')
-      .select('payout_destination, personal_bank_name, personal_account_holder, personal_account_number, personal_branch_code, personal_account_type')
-      .eq('user_id', plan.provider_id)
-      .eq('practice_id', plan.practice_id as string)
-      .maybeSingle();
-
-    if (member?.payout_destination === 'provider') {
-      payoutRow.payout_destination      = 'provider';
-      payoutRow.snapshot_bank_name      = member.personal_bank_name      ?? null;
-      payoutRow.snapshot_account_holder = member.personal_account_holder ?? null;
-      payoutRow.snapshot_account_number = member.personal_account_number ?? null;
-      payoutRow.snapshot_branch_code    = member.personal_branch_code    ?? null;
-      payoutRow.snapshot_account_type   = member.personal_account_type   ?? null;
-    }
   }
 
   // upsert + ignoreDuplicates → INSERT ... ON CONFLICT (plan_id) DO

@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/crm-reply-poll",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/payout-batches",
+      "schedule": "0 0 * * 4"
     }
   ]
 }

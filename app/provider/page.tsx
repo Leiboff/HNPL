@@ -102,12 +102,20 @@ export default async function ProviderDashboardPage() {
         <p className="mt-1 text-sm text-gray-500">Plans assigned to you by your practice.</p>
       </div>
 
-      {/* Stats */}
+      {/* Stats
+          These figures are payouts for the bills THIS doctor raised, and they
+          always land in the PRACTICE's bank account — the per-provider payout
+          destination was removed (migration 0090: one practice = one bank
+          account = one deposit). The old labels, "Total paid out" and
+          "Pending payout", read as money paid to the DOCTOR, which was only
+          ever true for a membership that had elected the provider
+          destination. Naming the recipient is copy-only — the queries and the
+          arithmetic above are untouched. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: 'Total bills',          value: String(totalBilled ?? 0), cls: 'bg-white border-gray-200 text-gray-900' },
-          { label: 'Total paid out',       value: formatRand(totalPaidOut),  cls: 'bg-green-50 border-green-200 text-green-900' },
-          { label: 'Pending payout',       value: formatRand(pendingPayout), cls: 'bg-blue-50  border-blue-200  text-blue-900'  },
+          { label: 'Total bills',            value: String(totalBilled ?? 0), cls: 'bg-white border-gray-200 text-gray-900' },
+          { label: 'Paid to your practice',  value: formatRand(totalPaidOut),  cls: 'bg-green-50 border-green-200 text-green-900' },
+          { label: 'Owed to your practice',  value: formatRand(pendingPayout), cls: 'bg-blue-50  border-blue-200  text-blue-900'  },
         ].map(({ label, value, cls }) => (
           <div key={label} className={`rounded-2xl border shadow-sm p-5 ${cls}`}>
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</p>
@@ -115,6 +123,10 @@ export default async function ProviderDashboardPage() {
           </div>
         ))}
       </div>
+      <p className="-mt-4 text-xs text-gray-500" data-testid="provider-payout-recipient-note">
+        BetterNow pays your practice once a week for the plans activated that week.
+        Your practice pays its practitioners.
+      </p>
 
       {/* Plan list */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">

@@ -464,13 +464,21 @@ describe('Shared AddMemberForm — imported by BOTH practice and brand surfaces'
     expect(TEAM).toMatch(/<AddMemberForm/);
   });
 
-  it('AddMemberForm exports the SPECIALTIES + BANKS lists that both surfaces reuse', () => {
+  it('AddMemberForm exports the SPECIALTIES list that both surfaces reuse', () => {
     expect(ADD_FORM).toMatch(/export const SPECIALTIES/);
-    expect(ADD_FORM).toMatch(/export const BANKS/);
-    // The two surfaces MUST reference the exported lists, not
+    // The two surfaces MUST reference the exported list, not
     // hardcode their own copies.
     expect(MEMBERS_VIEW).toMatch(/from ['"]\.\/AddMemberForm['"]/);
     expect(TEAM).toMatch(/SPECIALTIES/);
+  });
+
+  it('BANKS is still exported, though nothing consumes it now', () => {
+    // It only ever fed the per-provider personal-banking sub-form, which was
+    // removed with the provider payout destination (migration 0090). Kept
+    // because it is the codebase's only canonical SA bank list and the
+    // practice banking form on /practice/details is free-text that should
+    // arguably use it. Deleting it is a separate decision.
+    expect(ADD_FORM).toMatch(/export const BANKS/);
   });
 
   it('practice-side passes saIdRequired=true; brand-side passes saIdRequired=false', () => {
@@ -478,9 +486,22 @@ describe('Shared AddMemberForm — imported by BOTH practice and brand surfaces'
     expect(TEAM).toMatch(/saIdRequired=\{false\}/);
   });
 
-  it('practice-side shows payout fields; brand-side hides them (deferred to /provider/setup)', () => {
-    expect(MEMBERS_VIEW).toMatch(/showPayoutFields=\{true\}/);
-    expect(TEAM).toMatch(/showPayoutFields=\{false\}/);
+  it('NEITHER surface offers payout fields — the prop is gone, not just false', () => {
+    // Was: practice-side showPayoutFields={true}, brand-side {false}. The
+    // per-provider payout destination is removed (one practice = one bank
+    // account = one deposit — migration 0090), so the prop went with it
+    // rather than lingering as dead API surface that could be switched on.
+    // Comments stripped first: these files legitimately record in prose what
+    // used to be here and why it went, which is worth keeping.
+    const stripComments = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+    for (const src of [ADD_FORM, MEMBERS_VIEW, TEAM]) {
+      expect(stripComments(src)).not.toMatch(/showPayoutFields/);
+    }
+    // And the sub-form it gated is gone from the shared component.
+    const addFormCode = stripComments(ADD_FORM);
+    expect(addFormCode).not.toMatch(/payoutDestination/);
+    expect(addFormCode).not.toMatch(/personalAccountNumber/);
   });
 
   it('AddMemberForm has role picker with the two expected options', () => {

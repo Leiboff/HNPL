@@ -35,8 +35,34 @@ const PAGE     = read('app/patient/explore/page.tsx');
 // column to any of those tables later → add it here, and the
 // "view excludes" assertion will fail until someone has thought
 // about it.
+//
+// ⚠️ THESE SIX PINS OUTLIVE THE FEATURE THAT CREATED THEM. DO NOT REMOVE.
+//
+//   payout_destination, personal_bank_name, personal_account_holder,
+//   personal_account_number, personal_branch_code, personal_account_type
+//
+// The per-provider payout destination — paying a doctor into their own bank
+// account instead of the practice's — was REMOVED when weekly payout batching
+// landed (migration 0090: one practice = one bank account = one deposit).
+// Nothing in the app writes these six columns any more.
+//
+// The COLUMNS THEMSELVES DELIBERATELY REMAIN in the database, holding real
+// banking data for practices that used the old option, because historical
+// payouts rows snapshotted from them must stay auditable. A dropped column
+// would have made those rows unexplainable.
+//
+// So the leak is still live even though the feature is not. A tidy-up PR that
+// deletes these entries because "we don't do provider payouts any more" would
+// silently stop guarding a patient-facing SECURITY DEFINER view against
+// exposing real bank account numbers. RLS is row-level, not column-level —
+// this list plus the view's SELECT allowlist is the only thing standing
+// between a patient's discovery query and those columns.
+//
+// The correct trigger for removing a pin here is the COLUMN being dropped,
+// never the feature being retired.
 const SENSITIVE_COLUMNS = [
-  // practice_members financial / internal
+  // practice_members financial / internal — see the warning above before
+  // removing any of the first six.
   'personal_bank_name',
   'personal_account_holder',
   'personal_account_number',

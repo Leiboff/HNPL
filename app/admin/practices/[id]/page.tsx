@@ -83,7 +83,10 @@ type MemberFull = {
   can_manage_practice:      boolean;
   specialty:                string | null;
   hpcsa_number:             string | null;
-  payout_destination:       string | null;
+  // payout_destination was selected here but never rendered, and the
+  // per-provider option is gone anyway (payouts always go to the practice
+  // account — migration 0090). A platform admin who needs the historical
+  // value can read it on the payouts row, which keeps its own snapshot.
   profile: { first_name: string; last_name: string; email: string } | null;
 };
 
@@ -175,7 +178,7 @@ export default async function PracticeDetailPage({
     .select(`
       id, user_id, role, active,
       can_create_bills, can_manage_practice,
-      specialty, hpcsa_number, payout_destination,
+      specialty, hpcsa_number,
       profile:profiles!practice_members_user_id_fkey(first_name, last_name, email)
     `)
     .eq('practice_id', id)
