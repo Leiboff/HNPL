@@ -1,14 +1,21 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { updateOwnGroup } from '@/app/brand/actions';
 import GroupEditForm from './GroupEditForm';
+import BrandShell from '../BrandShell';
 
-// ─── Brand-admin: edit own group ───────────────────────────────────────
+// ─── Brand-admin: edit own group — the Settings tab ────────────────────
 //
 // Edit the brand's display details — name and logo URL. Group-level
 // banking is platform-admin-only (see app/admin/groups/[id]/page.tsx)
 // and stays out of brand-admin reach to prevent payout redirects.
+//
+// It is the nav's Settings destination now, so it renders inside
+// ../BrandShell like the other tabs. The hand-written "← Back to my
+// practices" link is gone: the nav is the way in and the way out, and a
+// one-off back-link beside a nav that already offers Overview is two
+// answers to the same question. This is not a new surface — the nav
+// points at the page that was already here (see ../brandNavLinks).
 
 export const dynamic = 'force-dynamic';
 
@@ -40,21 +47,22 @@ export default async function BrandGroupSettingsPage() {
   if (!group) redirect('/brand');
 
   return (
-    <div className="mx-auto max-w-xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
-      <header>
-        <Link href="/brand" className="text-xs text-gray-500 hover:underline">← Back to my practices</Link>
-        <h1 className="text-2xl font-semibold mt-1" style={{ color: '#13294B' }}>Brand settings</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          The name and logo your patients see across your practices.
-        </p>
-      </header>
+    <BrandShell brandName={(group.name as string) ?? null} brandCount={1}>
+      <div className="max-w-xl space-y-6">
+        <header>
+          <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Brand settings</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            The name and logo your patients see across your practices.
+          </p>
+        </header>
 
-      <GroupEditForm
-        groupId={group.id as string}
-        initialName={(group.name as string) ?? ''}
-        initialLogoUrl={(group.logo_url as string | null) ?? null}
-        saveAction={updateOwnGroup}
-      />
-    </div>
+        <GroupEditForm
+          groupId={group.id as string}
+          initialName={(group.name as string) ?? ''}
+          initialLogoUrl={(group.logo_url as string | null) ?? null}
+          saveAction={updateOwnGroup}
+        />
+      </div>
+    </BrandShell>
   );
 }

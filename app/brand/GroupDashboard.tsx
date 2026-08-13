@@ -1,12 +1,41 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import Link from 'next/link';
 import BrandMonthlyChart from './BrandMonthlyChart';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
 
-// ─── Group dashboard (n>=2 brand experience) ─────────────────────────
+// ─── The Overview tab's REVENUE section (n>=2 brand experience) ───────
+//
+// WHAT THIS COMPONENT IS NOW
+// ──────────────────────────
+// It used to BE the whole brand surface: page header, quick actions,
+// revenue hero, filters, trend, by-doctor, and a per-practice
+// performance strip. The brand portal restructure split those apart:
+//
+//   page header + brand name      → ./BrandShell (with the nav)
+//   quick actions                 → ./BrandQuickActions
+//   practice performance strip    → RETIRED. Everything on it now has a
+//                                   better home, and it was the one piece
+//                                   that made Overview a second, richer
+//                                   copy of a practice dashboard:
+//                                     · name + next payout + plan count
+//                                       + doorway → ./BrandPayoutBlock,
+//                                       whose rows are the same practices
+//                                       carrying money instead of a
+//                                       filtered revenue figure
+//                                     · approval status + location
+//                                       → /brand/practices, the admin
+//                                       table built to be scanned
+//                                     · per-practice revenue net
+//                                       → /brand/revenue's "By practice",
+//                                       which already had it
+//                                     · the Till devices link
+//                                       → /brand/practices' till column
+//
+// What is left here is the revenue ANALYSIS, and it keeps every figure
+// it had: the group net, the three filters, the 12-month trend, and the
+// ranked by-doctor list.
 //
 // Net-only. The whole brand surface renders the practice's own take
 // after BetterNow's commission. Gross is a book-keeping detail on the
@@ -28,12 +57,6 @@ function formatRand(v: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
-export type BrandInfo = {
-  id:      string;
-  name:    string;
-  logoUrl: string | null;
-};
-
 export type BranchOption = {
   id:       string;
   name:     string;
@@ -50,7 +73,6 @@ export type ProviderOption = {
 };
 
 export type GroupDashboardProps = {
-  brands:    BrandInfo[];
   branches:  BranchOption[];
   providers: ProviderOption[];
   /** Raw plans for the whole group; the client computes filtered
@@ -62,7 +84,6 @@ export type GroupDashboardProps = {
 type RangeMonths = 3 | 6 | 12;
 
 export default function GroupDashboard({
-  brands,
   branches,
   providers,
   plans,
@@ -133,24 +154,6 @@ export default function GroupDashboard({
     [filteredPlans, feeByPractice],
   );
 
-  // Strip follows the same filters. Each branch card recomputes from
-  // filteredPlans — a branch with zero matching plans shows R0 but
-  // stays in the strip (so a "no revenue" branch remains visible,
-  // which is useful data).
-  const perBranchNet = useMemo(() => {
-    const m = new Map<string, { net: number; count: number }>();
-    for (const row of summary.byPractice) m.set(row.id, { net: row.net, count: row.count });
-    return m;
-  }, [summary]);
-
-  const sortedBranches = useMemo(() => {
-    return [...branches].sort((a, b) => {
-      const av = perBranchNet.get(a.id)?.net ?? 0;
-      const bv = perBranchNet.get(b.id)?.net ?? 0;
-      return bv - av;
-    });
-  }, [branches, perBranchNet]);
-
   // ── By doctor ────────────────────────────────────────────────────────
   //
   // This ranked list used to live ONLY on /brand/branch/[practiceId]
@@ -163,46 +166,24 @@ export default function GroupDashboard({
   // It belongs here, where the rest of the rollup now lives, and it costs
   // nothing to compute: computeRevenue has always returned byProvider,
   // and it was simply unused on this screen. Following the same filter
-  // state as the hero, trend and strip means the per-BRANCH view the
-  // branch page used to give is reproduced by setting the Practice
-  // filter — with cross-branch ranking available as well, which the
-  // branch page could not do.
+  // state as the hero and trend means the per-BRANCH view the branch page
+  // used to give is reproduced by setting the Practice filter — with
+  // cross-branch ranking available as well, which the branch page could
+  // not do.
   const sortedDoctors = useMemo(
     () => [...summary.byProvider].sort((a, b) => b.net - a.net),
     [summary],
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>My practices</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Revenue across every practice you run. Per-doctor performance is below; tap a practice
-            to open its own dashboard.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <header>
+        <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Revenue</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Revenue across every practice you run. Per-doctor performance is below; tap a practice
+          in the payouts list above to open its own dashboard.
+        </p>
       </header>
-
-      {/* Quick actions (top) */}
-      <section aria-label="Quick actions" className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="group-quick-actions-top">
-        <Link
-          href="/brand/new-practice"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-          data-testid="group-add-practice"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Add</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>+ Add a practice</p>
-        </Link>
-        <Link
-          href="/brand/group"
-          className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
-          data-testid="group-settings"
-        >
-          <p className="text-xs uppercase tracking-widest text-gray-500">Brand</p>
-          <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Settings &amp; logo</p>
-        </Link>
-      </section>
 
       {/* Hero — net total */}
       <section
@@ -335,80 +316,6 @@ export default function GroupDashboard({
             ))}
           </ul>
         )}
-      </section>
-
-      {/* Practice performance strip */}
-      <section aria-labelledby="branches-heading" className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 id="branches-heading" className="text-sm font-semibold" style={{ color: '#13294B' }}>
-            Practice performance
-          </h2>
-          <span className="text-xs text-gray-500">
-            {branches.length} {branches.length === 1 ? 'practice' : 'practices'}
-          </span>
-        </div>
-
-        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="branch-strip">
-          {sortedBranches.map((b) => {
-            const bucket = perBranchNet.get(b.id) ?? { net: 0, count: 0 };
-            const brand = brands.find((g) => g.id === b.groupId);
-            return (
-              <li key={b.id} className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-gray-900 truncate">{b.name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {[b.suburb, b.city].filter(Boolean).join(', ') || '—'}
-                    </p>
-                    {brands.length > 1 && brand && (
-                      <p className="text-[11px] text-gray-400 mt-0.5">{brand.name}</p>
-                    )}
-                  </div>
-                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${
-                    b.status === 'approved'  ? 'bg-green-100 text-green-700' :
-                    b.status === 'pending'   ? 'bg-amber-100 text-amber-700' :
-                    b.status === 'suspended' ? 'bg-red-100 text-red-700' :
-                                               'bg-gray-100 text-gray-500'
-                  }`}>
-                    {b.status}
-                  </span>
-                </div>
-
-                <p className="mt-3 text-2xl font-semibold" style={{ color: '#13294B' }} data-testid={`branch-value-${b.id}`}>
-                  {formatRand(bucket.net)}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {bucket.count} active {bucket.count === 1 ? 'plan' : 'plans'} · net
-                </p>
-
-                {/* The branch page is the ONE way in for editing branch
-                    details/team/banking. Till devices is a second,
-                    parallel entry point — its own screen
-                    (/practice/pos/devices), not a section of the branch
-                    page — so it's a sibling link here rather than
-                    something reached via "Open branch →". */}
-                <div className="mt-3 flex flex-wrap gap-3 text-xs">
-                  <Link
-                    href={`/brand/branch/${b.id}`}
-                    className="font-semibold underline underline-offset-2"
-                    style={{ color: '#13294B' }}
-                    data-testid={`branch-drilldown-${b.id}`}
-                  >
-                    Open branch →
-                  </Link>
-                  <Link
-                    href={`/practice/pos/devices?practiceId=${b.id}`}
-                    className="font-semibold underline underline-offset-2"
-                    style={{ color: '#13294B' }}
-                    data-testid={`branch-till-devices-${b.id}`}
-                  >
-                    Till devices →
-                  </Link>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
       </section>
 
     </div>

@@ -1,29 +1,57 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import type { RevenuePlan } from '@/lib/brand/revenue';
+import { computeRevenue, type RevenuePlan } from '@/lib/brand/revenue';
 import GroupDashboard, {
-  type BrandInfo,
   type BranchOption,
   type ProviderOption,
 } from './GroupDashboard';
+import BrandShell from './BrandShell';
+import BrandQuickActions from './BrandQuickActions';
+import BrandPayoutBlock from './BrandPayoutBlock';
+import { resolveBrandPayouts } from '@/lib/brand/brandPayouts';
 import {
   PROVIDER_MEMBER_SELECT,
   providerMemberName,
   type ProviderMemberRef,
 } from '@/lib/practice/providerIdentity';
 
-// ─── Brand-admin dashboard ──────────────────────────────────────────────
+// ─── /brand — the Overview tab ──────────────────────────────────────────
 //
 // n=1 rule (unchanged):
 //   n = 0  → /practice/setup
 //   n = 1  → /practice
-//   n >= 2 → render the group dashboard.
+//   n >= 2 → render the brand portal.
 //
-// Server sends RAW plans (RevenuePlan + created_at) + practice + doctor
-// dropdowns. The client owns filter state and calls computeRevenue +
-// buildMonthlySeries on the filtered subset — no new aggregation
-// logic, no new views.
+// WHAT OVERVIEW ANSWERS
+//   "What money is coming, and which practice do I need to open?"
+// In that order, which is why the payout block is the first thing under
+// the nav and the revenue analysis sits below it. Analysis happens one
+// level down or on Reports; this page is a hero and a set of doorways.
+//
+// TWO KINDS OF NUMBER, KEPT APART
+//   The payout block is MONEY IN FLIGHT — server-resolved per practice
+//   and NOT subject to the revenue filters below it. A filtered payout
+//   figure would be an amount nobody is owed, so it is resolved here,
+//   above the client component that owns the filter state, and passed
+//   in already final.
+//
+//   The revenue section is ANALYSIS. Server sends RAW plans
+//   (RevenuePlan + created_at) + practice + doctor dropdowns; the client
+//   owns filter state and calls computeRevenue + buildMonthlySeries on
+//   the filtered subset — no new aggregation logic, no new views.
+//
+//   The ONE figure that crosses the line is each practice's active plan
+//   count on a payout row. It is computed HERE from the same
+//   computeRevenue the revenue section uses, UNFILTERED, so "active"
+//   cannot come to mean two different things on one page.
+//
+// The scoping reads below are deliberately left inline rather than moved
+// to lib/brand/brandViewer (which /brand/practices uses): this page's
+// membership-before-data ordering and its .in('group_id', groupIds) are
+// pinned directly by brand-dashboard.test.ts, and the payouts loader
+// needs the practice list either way. Folding this page into the shared
+// resolver is a follow-up, not part of adding a tab.
 
 export const dynamic = 'force-dynamic';
 
@@ -73,12 +101,11 @@ export default async function BrandDashboardPage() {
 
   const { data: rawBrands } = await s
     .from('practice_groups')
-    .select('id, name, logo_url')
+    .select('id, name')
     .in('id', groupIds);
-  const brands: BrandInfo[] = (rawBrands ?? []).map((g) => ({
-    id:      g.id as string,
-    name:    (g.name as string) ?? '—',
-    logoUrl: (g.logo_url as string | null) ?? null,
+  const brands = (rawBrands ?? []).map((g) => ({
+    id:   g.id as string,
+    name: (g.name as string) ?? '—',
   }));
 
   const { data: rawPlans } = await s
@@ -115,12 +142,36 @@ export default async function BrandDashboardPage() {
     feePct:  Number(b.fee_percent ?? 0),
   }));
 
+  // ── Next payouts, per practice ────────────────────────────────────────
+  //
+  // Service-role, scoped to the practice ids resolved from the caller's own
+  // group memberships above — the same authority pattern every read on this
+  // page already uses. resolveBrandPayouts makes no scoping decision of its
+  // own; it delegates to resolveNextPayout per practice, which applies
+  // .eq('practice_id', …) unconditionally.
+  const payouts = await resolveBrandPayouts(s, branches.map((b) => ({ id: b.id, name: b.name })));
+
+  // Active plan count per practice, UNFILTERED — computeRevenue's own
+  // definition of active, so the count on a payout row and the count in the
+  // revenue section below cannot drift apart.
+  const unfiltered = computeRevenue(
+    plans,
+    branches.map((b) => ({ id: b.id, name: b.name, fee_percent: b.feePct })),
+    providers,
+    {},
+  );
+  const activePlanCounts: Record<string, number> = {};
+  for (const row of unfiltered.byPractice) activePlanCounts[row.id] = row.count;
+
   return (
-    <GroupDashboard
-      brands={brands}
-      branches={branches}
-      providers={providers}
-      plans={plans}
-    />
+    <BrandShell brandName={brands[0]?.name ?? null} brandCount={brands.length}>
+      <BrandQuickActions />
+      <BrandPayoutBlock rollup={payouts} activePlanCounts={activePlanCounts} />
+      <GroupDashboard
+        branches={branches}
+        providers={providers}
+        plans={plans}
+      />
+    </BrandShell>
   );
 }
