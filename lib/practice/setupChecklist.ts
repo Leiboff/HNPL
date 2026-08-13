@@ -1,0 +1,354 @@
+// ─── Practice setup checklist — derived, never stored ─────────────────────
+//
+// A new practice meets tills, PINs, banking, team and details as a flat pile
+// of sidebar links: no order, no sense of progress, no way to know what is
+// still missing. This module answers one question — "what does this practice
+// still have to do?" — from LIVE state only.
+//
+// NO PERSISTED COMPLETION FLAG. Deliberately.
+// ───────────────────────────────────────────
+// The obvious implementation is a practices.onboarding_completed boolean set
+// when the last step is ticked. Every such flag is a second copy of a truth
+// that already exists, and the copy is wrong the moment the underlying thing
+// changes behind it: revoke the last till device, or have banking cleared by
+// an admin, and the flag still says "done" while the practice silently cannot
+// be paid. There is no reconciliation job that can fix that, because the flag
+// has no way to know it went stale. So the state is DERIVED on every render
+// from the same rows the rest of the product reads, and nothing is written.
+//
+// SAME SOURCES AS THE TRADING GATE
+// ────────────────────────────────
+// Two of the four items ARE trading-gate conditions, so they must not be
+// re-implemented — a checklist that disagrees with the gate is worse than no
+// checklist, because it tells a practice they are ready when billing will
+// still refuse them:
+//   • banking  → resolvePayoutBanking, the SAME resolver lib/practice/
+//     tradingGate.ts calls. NOT a direct read of practices.bank_*, which
+//     would report "no banking" for a branch that settles through its
+//     BRAND's central account — permanently nagging a practice to fix
+//     something that is already correct.
+//   • provider → the same practice_members predicate the gate uses
+//     (active = true AND role = 'provider'), which post-0091 counts
+//     login-less roster practitioners too.
+//
+// The gate's THIRD condition, practices.status = 'approved', is not a
+// checklist item: nobody at the practice can action it, and an item with no
+// action fails the "what do I do next" test the card exists to pass. It is
+// surfaced instead as `awaitingApproval` — a statement of where things stand,
+// with no tick box and no link. Without it the card could reach "all done"
+// while billing was still blocked, which is the exact lie the shared-source
+// rule above is meant to prevent.
+//
+// FAIL-CLOSED
+// ───────────
+// Every unreadable fact resolves to NOT done. A missed tick costs a practice
+// one redundant glance at a screen they have already filled in; a wrongly
+// ticked box means they sit waiting to be paid into an account they never
+// gave us.
+
+import { resolvePayoutBanking } from './banking';
+
+// Loose structural type — same reason and same shape as tradingGate.ts: the
+// caller passes either the SSR client or the service-role client, and naming
+// Supabase's generic builder here triggers "type instantiation is excessively
+// deep" under strict mode.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type SetupChecklistSupabase = any;
+
+/** Live facts the checklist is derived from. Nothing here is cached. */
+export type SetupChecklistFacts = {
+  /** practices.status — 'pending' | 'approved' | 'suspended' | 'inactive'. */
+  status:                string | null;
+  phone:                 string | null;
+  addressLine1:          string | null;
+  latitude:              number | null;
+  longitude:             number | null;
+  /** resolvePayoutBanking(...).source !== 'none' — own OR brand banking. */
+  bankingResolved:       boolean;
+  /** practice_members, active, role = 'provider' — roster rows included. */
+  activeProviderCount:   number;
+  /** till_devices with revoked_at IS NULL. Revoked devices do not count. */
+  activeTillDeviceCount: number;
+  /** practices.till_pin_hash IS NOT NULL. */
+  hasTillPin:            boolean;
+};
+
+/**
+ * What the VIEWER is allowed to do, so the card never links someone to a
+ * screen that will reject them. Each flag mirrors the authority the target
+ * screen actually enforces — see the per-item comments in ITEM_BUILDERS.
+ */
+export type SetupChecklistAuthority = {
+  /** /practice/details — notFound() for anyone who is not a brand-admin. */
+  canEditDetails: boolean;
+  /** The "+ Add practitioner" control on /practice/members is manager-only. */
+  canManageTeam:  boolean;
+  /** /practice/pos/devices — per-practice manager OR brand-admin. */
+  canManageTill:  boolean;
+};
+
+export type SetupChecklistItemKey = 'banking' | 'provider' | 'details' | 'till';
+
+export type SetupChecklistItem = {
+  key:   SetupChecklistItemKey;
+  /** WHAT to do, in the words a practice would use. */
+  title: string;
+  /** WHY it matters, for someone who has never used a payments product. */
+  why:   string;
+  done:  boolean;
+  /**
+   * The exact screen that completes this item, or null when the viewer has
+   * no authority there — a link that 404s is worse than no link.
+   */
+  href:        string | null;
+  actionLabel: string;
+  /**
+   * Extra plain-language detail, only when it tells the reader something the
+   * title cannot — e.g. WHICH half of the till is still missing.
+   */
+  hint: string | null;
+};
+
+export type SetupChecklist = {
+  items:     SetupChecklistItem[];
+  doneCount: number;
+  total:     number;
+  /** True → the card must not render at all. */
+  complete:  boolean;
+  /**
+   * practices.status = 'pending'. Not an item (see the header): there is no
+   * screen a practice can visit to approve itself.
+   */
+  awaitingApproval: boolean;
+};
+
+// ─── Copy ─────────────────────────────────────────────────────────────────
+//
+// Every line is written for someone with no training and no manual. Two
+// rules, both learned from the wording this card replaces:
+//   • say the BENEFIT, not the feature — "so we can pay you", not "required
+//     for payout processing". A practice owner does not know what a payout
+//     run is and should not have to.
+//   • never name a database column, a screen, or a role in the reason. The
+//     reason has to survive being read aloud to someone standing at a front
+//     desk.
+
+const COPY: Record<SetupChecklistItemKey, { title: string; why: string; action: string }> = {
+  banking: {
+    title:  'Bank account',
+    why:    'So we can pay you. This is the account your patients’ payments land in.',
+    action: 'Add bank details',
+  },
+  provider: {
+    title:  'The doctor or practitioner',
+    why:    'Every bill has to say who treated the patient. Add them once and they’re on the list.',
+    action: 'Add a practitioner',
+  },
+  details: {
+    title:  'Address and phone number',
+    why:    'So patients can find you, and so you come up when someone searches for a practice near them.',
+    action: 'Add your address',
+  },
+  till: {
+    title:  'The front desk till',
+    why:    'So whoever is on reception can take a payment without borrowing your login.',
+    action: 'Set up the till',
+  },
+};
+
+/** Only shown while status = 'pending'. Sets an expectation, asks for nothing. */
+export const AWAITING_APPROVAL_NOTE =
+  'We’re checking over your practice — this usually takes one working day. You can finish the steps below in the meantime.';
+
+/** Shown in place of the action link when the viewer cannot do it themselves. */
+export const ASK_A_MANAGER_NOTE = 'Ask whoever manages your practice to do this one.';
+
+// ─── Derivation ───────────────────────────────────────────────────────────
+
+/**
+ * Practice details count as done when we have the three things the rest of
+ * the product actually consumes: a phone number, a street address, and map
+ * coordinates.
+ *
+ * Coordinates are in the list because they are the one part that silently
+ * goes missing. Signup geocodes the address and writes latitude/longitude
+ * best-effort — on a geocode failure it nulls them and carries on, so the
+ * practice looks complete while being un-findable: lib/practitioner/
+ * grouping.ts gives a coordinate-less practice distanceKm = null, which
+ * sorts it BELOW every practice that has coordinates, in a list patients
+ * scan by distance. Nothing else in the product ever tells them.
+ */
+function detailsDone(f: SetupChecklistFacts): boolean {
+  return (
+    !!f.phone?.trim() &&
+    !!f.addressLine1?.trim() &&
+    f.latitude  != null &&
+    f.longitude != null
+  );
+}
+
+/**
+ * The till is ONE item, not two, even though a device and a PIN are two
+ * separate pieces of setup on two separate controls.
+ *
+ * Two reasons. Neither half is worth anything alone — a registered till with
+ * no PIN cannot be unlocked, and a PIN with no till has nothing to unlock —
+ * so "device done, PIN outstanding" describes no state a practice can use.
+ * And both are completed on the SAME screen (/practice/pos/devices), so two
+ * rows would carry the identical link, which reads as a duplicate row rather
+ * than two tasks. The half that is still missing is named in the hint, so
+ * nothing is hidden by collapsing them.
+ */
+function tillDone(f: SetupChecklistFacts): boolean {
+  return f.activeTillDeviceCount > 0 && f.hasTillPin;
+}
+
+function tillHint(f: SetupChecklistFacts): string | null {
+  if (tillDone(f)) return null;
+  if (f.activeTillDeviceCount > 0 && !f.hasTillPin) {
+    return 'The till computer is registered. It just needs a PIN before anyone can use it.';
+  }
+  if (f.hasTillPin && f.activeTillDeviceCount === 0) {
+    return 'The PIN is set. Now register the computer at your front desk.';
+  }
+  return null;
+}
+
+function detailsHint(f: SetupChecklistFacts): string | null {
+  if (detailsDone(f)) return null;
+  // The specific, easily-missed case: address text is there but we could not
+  // place it on a map. "Add your address" would read as already done.
+  if (f.addressLine1?.trim() && (f.latitude == null || f.longitude == null)) {
+    return 'We couldn’t find your address on the map. Open it and pick your address from the list of suggestions.';
+  }
+  return null;
+}
+
+/**
+ * Build the checklist from live facts + the viewer's authority.
+ *
+ * Pure: same inputs, same output, no clock and no I/O. The freshness of the
+ * answer is entirely a property of the facts handed in — see
+ * loadSetupChecklistFacts.
+ */
+export function buildSetupChecklist(
+  facts:     SetupChecklistFacts,
+  authority: SetupChecklistAuthority,
+): SetupChecklist {
+  // Ordered by what it costs the practice to leave undone: the two
+  // trading-gate conditions block billing outright, so they lead. Being hard
+  // to find costs them patients, and no till costs them a workaround. A
+  // practice reading top-to-bottom fixes the expensive things first.
+  const items: SetupChecklistItem[] = [
+    {
+      key:   'banking',
+      ...pick('banking'),
+      done:  facts.bankingResolved,
+      // Banking lives on /practice/details behind the #banking anchor, and
+      // both of that page's save actions are guarded on brand-admin — the
+      // same authority the page itself enforces before rendering anything.
+      href:  authority.canEditDetails ? '/practice/details#banking' : null,
+      hint:  null,
+    },
+    {
+      key:   'provider',
+      ...pick('provider'),
+      done:  facts.activeProviderCount > 0,
+      // /practice/members is readable by any member, but the control that
+      // adds a practitioner is manager-only, so a non-manager sent here
+      // would find nothing to click.
+      href:  authority.canManageTeam ? '/practice/members' : null,
+      hint:  null,
+    },
+    {
+      key:   'details',
+      ...pick('details'),
+      done:  detailsDone(facts),
+      href:  authority.canEditDetails ? '/practice/details' : null,
+      hint:  detailsHint(facts),
+    },
+    {
+      key:   'till',
+      ...pick('till'),
+      done:  tillDone(facts),
+      href:  authority.canManageTill ? '/practice/pos/devices' : null,
+      hint:  tillHint(facts),
+    },
+  ];
+
+  const doneCount = items.filter((i) => i.done).length;
+
+  return {
+    items,
+    doneCount,
+    total:            items.length,
+    complete:         doneCount === items.length,
+    awaitingApproval: facts.status === 'pending',
+  };
+}
+
+function pick(key: SetupChecklistItemKey): { title: string; why: string; actionLabel: string } {
+  const c = COPY[key];
+  return { title: c.title, why: c.why, actionLabel: c.action };
+}
+
+// ─── Loading the facts ────────────────────────────────────────────────────
+
+/**
+ * Read every fact the checklist needs, live.
+ *
+ * Called with the SERVICE-ROLE client for the same reason checkTradingGate is:
+ * whether a practice is set up is a property of the PRACTICE, not of whoever
+ * is looking at it. Reading it through the viewer's own client would make the
+ * card's contents depend on that viewer's RLS reach — a brand-admin with no
+ * practice_members row reads no till_devices at all, and the card would
+ * cheerfully report "no till registered" for a practice that has three.
+ *
+ * `resolveBanking` is injectable for the same reason tradingGate.ts exposes
+ * it: it lets the unit tests state banking as a fact instead of reproducing
+ * the resolver's two-table query shape.
+ */
+export async function loadSetupChecklistFacts(
+  supabase:   SetupChecklistSupabase,
+  practiceId: string,
+  opts?: { resolveBanking?: typeof resolvePayoutBanking },
+): Promise<SetupChecklistFacts> {
+  const { data: practice } = await supabase
+    .from('practices')
+    .select('status, phone, address_line1, latitude, longitude, till_pin_hash')
+    .eq('id', practiceId)
+    .maybeSingle();
+
+  const { data: providers } = await supabase
+    .from('practice_members')
+    .select('id')
+    .eq('practice_id', practiceId)
+    .eq('active', true)
+    .eq('role', 'provider')
+    .limit(1);
+
+  // Revoked devices are kept forever (0088 revokes, never deletes), so this
+  // MUST filter on revoked_at — counting rows would tick the item for a
+  // practice whose only till was revoked months ago.
+  const { data: devices } = await supabase
+    .from('till_devices')
+    .select('id')
+    .eq('practice_id', practiceId)
+    .is('revoked_at', null)
+    .limit(1);
+
+  const resolveBanking = opts?.resolveBanking ?? resolvePayoutBanking;
+  const banking = await resolveBanking(supabase, practiceId);
+
+  return {
+    status:       (practice?.status       as string | null) ?? null,
+    phone:        (practice?.phone        as string | null) ?? null,
+    addressLine1: (practice?.address_line1 as string | null) ?? null,
+    latitude:     practice?.latitude  != null ? Number(practice.latitude)  : null,
+    longitude:    practice?.longitude != null ? Number(practice.longitude) : null,
+    bankingResolved:       banking.source !== 'none',
+    activeProviderCount:   providers?.length ?? 0,
+    activeTillDeviceCount: devices?.length   ?? 0,
+    hasTillPin:            !!practice?.till_pin_hash,
+  };
+}
