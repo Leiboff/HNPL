@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Tests — 0065 rebuild: profile salary day, phone folding,
 //                          home dashboard, passkey prompt ──────────────
@@ -168,9 +169,7 @@ describe('Part 3 — home dashboard', () => {
     // from the caller's prop). Comment narratives can mention "R0
     // available" as an anti-pattern — strip comments before
     // pattern-matching so the check anchors to code only.
-    const codeOnly = BALANCE_CARD
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(BALANCE_CARD);
     expect(codeOnly).not.toMatch(/R\s*0(?:\.0+)?\s+available/);
     expect(codeOnly).not.toMatch(/R\s*1000\s+available/);
   });
@@ -298,9 +297,7 @@ describe('Part 3 — home dashboard', () => {
   it('dashboard no longer imports or renders the old passkey card', () => {
     // Header-comment narrative may reference the retired name;
     // pattern-match against CODE only.
-    const codeOnly = HOME
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(HOME);
     expect(codeOnly).not.toMatch(/PasskeySetupCard/);
     expect(existsSync(resolve(ROOT, 'app/patient/PasskeySetupCard.tsx'))).toBe(false);
   });
@@ -459,9 +456,7 @@ describe('Logout is on Account (not the header)', () => {
   it('patient header does NOT render a Log out label anymore', () => {
     // Code-only match — the header comments may still describe the
     // relocation.
-    const codeOnly = LAYOUT
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(LAYOUT);
     expect(codeOnly).not.toMatch(/LogoutButton/);
   });
 });

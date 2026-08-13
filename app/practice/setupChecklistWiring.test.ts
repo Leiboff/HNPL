@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Setup checklist — wiring pins ────────────────────────────────────────
 //
@@ -29,14 +30,12 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
-// LINE comments first, then block comments. The order is load-bearing: these
-// files discuss route globs like `app/practice/pos/devices/**` inside `//`
-// prose, and a `/*` in there reads as the start of a block comment — so
-// stripping blocks first deletes everything up to the next `*/` and every
-// absence assertion below passes on a source that is mostly missing.
-const codeOf = (src: string) =>
-  src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
-     .replace(/\/\*[\s\S]*?\*\//g, '');
+// Shared helper — see lib/testing/stripComments.ts. Hand-rolling the two
+// regexes gets the ORDER wrong whichever way round you put them: these files
+// discuss route globs like `app/practice/pos/devices/**` inside `//` prose, and
+// a `/*` in there opens a block comment that swallows the file, while stripping
+// lines first eats the `*/` of any block whose last line carries a `//` note.
+const codeOf = (src: string) => stripComments(src);
 
 const DASH_SRC  = read('app/practice/page.tsx');
 const DASH      = codeOf(DASH_SRC);

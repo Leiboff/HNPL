@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Roster providers + the invite-later path ───────────────────────────
 //
@@ -14,9 +15,7 @@ const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
 /** Comments legitimately DISCUSS what was removed; code must not contain it. */
-const codeOf = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
-     .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+const codeOf = (src: string) => stripComments(src, { jsxBraces: true });
 
 const ACTIONS   = read('app/practice/members/actions.ts');
 const INVITE    = read('lib/brand/inviteMember.ts');

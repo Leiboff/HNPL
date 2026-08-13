@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Source-text regressions — brand-first inversion (Phase 2 / 0062) ───
 //
@@ -153,9 +154,7 @@ describe('Brand-first signup — auto-create brand silently', () => {
     for (const word of ['brand', 'group']) {
       // Allow the word to appear inside `// comments` only — strip
       // them before checking.
-      const stripped = PAGE
-        .replace(/\/\/.*$/gm, '')
-        .replace(/\/\*[\s\S]*?\*\//g, '');
+      const stripped = stripComments(PAGE);
       const re = new RegExp(`>[^<]*\\b${word}\\b[^<]*<`, 'i');
       expect(stripped).not.toMatch(re);
     }

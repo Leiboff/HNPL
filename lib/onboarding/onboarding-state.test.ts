@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 import {
   computeOnboarding,
   isOnboarded,
@@ -553,7 +554,7 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
     // page. This makes /onboarding/verify-email reachable pre-session
     // for fresh email signups (Supabase returns no session until
     // verifyOtp succeeds).
-    const codeOnly = ONB_LAYOUT.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(ONB_LAYOUT);
     expect(codeOnly).not.toMatch(/requireConfirmedUser\(/);
   });
 
@@ -701,7 +702,7 @@ describe('/onboarding/verify-email — reachable pre-session via ?email= param',
     // signups). A regression that re-adds requireConfirmedUser as an
     // actual CALL in the layout would break the email OTP landing —
     // strip comments before checking so the prose here doesn't count.
-    const codeOnly = ONB_LAY.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(ONB_LAY);
     expect(codeOnly).not.toMatch(/requireConfirmedUser\(/);
   });
 

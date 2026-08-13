@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── /practice/bills — the index route ────────────────────────────────────
 //
@@ -17,13 +18,8 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
-// LINE comments first, then block comments — see the note in
-// app/practice/settings/practiceSettings.test.ts. A `/**` inside `//` prose
-// reads as the start of a block comment, so stripping blocks first deletes
-// everything up to the next `*/`.
-const codeOf = (src: string) =>
-  src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
-     .replace(/\/\*[\s\S]*?\*\//g, '');
+// Shared helper — see lib/testing/stripComments.ts.
+const codeOf = (src: string) => stripComments(src);
 
 const PAGE     = codeOf(read('app/practice/bills/page.tsx'));
 const BROWSER  = codeOf(read('app/practice/bills/BillsBrowser.tsx'));

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── The nav shell on EVERY authenticated practice screen ─────────────
 //
@@ -91,16 +92,11 @@ describe('every authenticated practice screen renders the shared nav shell', () 
     // in prose (that's how the gates document themselves). What must not
     // exist is a hand-built link — i.e. a nav label as a quoted string in
     // actual code, or an href to a nav destination.
-    // LINE comments first, then block comments. The order is load-bearing:
-    // these files discuss route globs like `/practice/*` and
-    // `app/practice/pos/devices/**` inside `//` prose, and a `/*` in there
-    // reads as the start of a block comment — so stripping blocks first
-    // deletes everything up to the next `*/` (in a .tsx file, the first
-    // `{/* … */}` in the JSX) and makes the absence assertions below pass on
-    // a source that is mostly missing.
-    const stripComments = (s: string) =>
-      s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-
+    // Shared helper (lib/testing/stripComments.ts). Hand-rolling it here is
+    // what let these assertions run against a mostly-deleted source: the files
+    // discuss route globs like `/practice/*` and `app/practice/pos/devices/**`
+    // inside `//` prose, which a two-pass strip mis-reads whichever order it
+    // runs in.
     for (const path of SHELL_SCREENS) {
       const code = stripComments(read(path));
       expect(code, path).not.toMatch(/['"`]← All practices['"`]/);

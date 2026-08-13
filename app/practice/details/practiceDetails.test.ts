@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── The two legacy settings routes are REDIRECTS, not 404s ───────────────
 //
@@ -34,14 +35,10 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
-// LINE comments first, then block comments — see the note in
-// app/practice/settings/practiceSettings.test.ts. A `/**` inside `//` prose
-// (these files discuss paths like `app/practice/pos/devices/**`) reads as the
-// start of a block comment, so stripping blocks first deletes everything up to
-// the next `*/` and makes absence assertions pass for the wrong reason.
-const codeOf = (src: string) =>
-  src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
-     .replace(/\/\*[\s\S]*?\*\//g, '');
+// Shared helper — see lib/testing/stripComments.ts. These sources discuss
+// paths like `app/practice/pos/devices/**` inside `//` prose, which a
+// hand-rolled strip mis-reads as a comment opener.
+const codeOf = (src: string) => stripComments(src);
 
 const DETAILS = codeOf(read('app/practice/details/page.tsx'));
 const DEVICES = codeOf(read('app/practice/pos/devices/page.tsx'));

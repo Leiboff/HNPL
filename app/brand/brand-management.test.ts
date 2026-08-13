@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Source-text regressions — brand-admin management surface ──────────
 //
@@ -385,10 +386,12 @@ describe('createBill + practice pages honour ?practiceId= scope (Part B)', () =>
     // trip the regex.
     const bodyStart = NEW_BILL_PAGE.indexOf('practice_members');
     expect(bodyStart).toBeGreaterThan(0);
-    const bodyChunk = NEW_BILL_PAGE
-      .slice(bodyStart, bodyStart + 800)
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    // preserveUrls, matching what the hand-rolled `(^|[^:])` guard here did:
+    // a `//` after a colon is a URL, not a comment.
+    const bodyChunk = stripComments(
+      NEW_BILL_PAGE.slice(bodyStart, bodyStart + 800),
+      { preserveUrls: true },
+    );
     expect(bodyChunk).not.toMatch(/\.single\(/);
   });
 
@@ -416,10 +419,10 @@ describe('createBill + practice pages honour ?practiceId= scope (Part B)', () =>
     for (const src of [PRAC_VIEWER, MEMBERS_PAGE]) {
       const chainIdx = src.indexOf("from('practice_members')");
       expect(chainIdx).toBeGreaterThan(0);
-      const chunk = src
-        .slice(chainIdx, chainIdx + 800)
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+      const chunk = stripComments(
+        src.slice(chainIdx, chainIdx + 800),
+        { preserveUrls: true },
+      );
       expect(chunk).not.toMatch(/\.single\(\)/);
     }
   });
