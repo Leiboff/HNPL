@@ -18,6 +18,51 @@ import BillsTable from './BillsTable';
 import CreateBillButton from './CreateBillButton';
 import type { TradingGateResult } from '@/lib/practice/tradingGate';
 
+// ─── "Recent bills" — the dashboard's glance at the list ──────────────────
+//
+// The card is named "Recent bills" and now behaves like it: it renders the
+// most recent RECENT_BILLS_LIMIT rows and points at /practice/bills for the
+// rest. It used to render every row the dashboard had fetched — up to 500 —
+// which made a card titled "Recent" the longest thing on the page and left
+// the reader scrolling past a full ledger to reach the bottom of a dashboard.
+//
+// WHAT IS TRUNCATED, AND WHAT IS DELIBERATELY NOT
+// ───────────────────────────────────────────────
+// ONLY the rows handed to <BillsTable>. `plans` stays the whole (filtered)
+// set everywhere else in this file, and that asymmetry is the point:
+//
+//   • the CSV and PDF exports map `plans` — the FULL set. A display that
+//     truncates and then exports what it displays loses data silently, which
+//     is the worst kind: the file looks complete. So the two exports are
+//     untouched, and when the list IS truncated the menu says out loud how
+//     many rows the export carries.
+//   • the count line describes the set it names, and names which set that is,
+//     so it can never read "40" over a list of 8 with no explanation.
+//   • the empty states still key off the unfiltered/filtered totals, not off
+//     what fits on screen.
+//
+// The single slice at the <BillsTable> call site is what makes that safe:
+// there is one array in this component, and truncation exists only in the
+// expression that renders rows. Handing BillsBlock a pre-sliced array from
+// the parent instead would have put the export one careless prop away from
+// silently shrinking — see PracticeDashboardClient, which passes the full
+// filtered set on purpose.
+
+/**
+ * How many rows the dashboard card shows.
+ *
+ * Eight, chosen to fit a normal laptop without scrolling: a row is text-sm at
+ * py-4 (~57px), over a ~65px card header and a ~41px table head, so eight
+ * rows land at ~560px — inside the ~640px of usable height a 1366×768 screen
+ * has once browser chrome is gone. That matters more than it sounds: the
+ * reader needs to SEE the card end, because a list that runs off the fold
+ * looks like it continues and the "See all" affordance goes unnoticed.
+ *
+ * It is also about a busy day's billing, so "recent" reads as a period rather
+ * than an arbitrary sample.
+ */
+export const RECENT_BILLS_LIMIT = 8;
+
 type Props = {
   plans:        PlanSummary[];   // already filtered by parent
   totalCount:   number;          // total before filtering
@@ -73,6 +118,16 @@ export default function BillsBlock({
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // The ONLY truncation in this component. Everything else — both exports,
+  // the count line, the empty states — reads `plans`, the full filtered set.
+  const truncated = plans.length > RECENT_BILLS_LIMIT;
+  const visible   = truncated ? plans.slice(0, RECENT_BILLS_LIMIT) : plans;
+
+  // Same href for both "See all" links, resolved once so they cannot drift.
+  // The practice scope rides along so a brand-admin viewing one branch stays
+  // on that branch.
+  const seeAllHref = practiceId ? `/practice/bills?practiceId=${encodeURIComponent(practiceId)}` : '/practice/bills';
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -185,9 +240,22 @@ export default function BillsBlock({
       <div className="px-4 sm:px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold text-gray-900">Recent bills</h2>
-          {hasFilters && (
-            <p className="text-xs text-gray-400 mt-0.5">
-              {plans.length} of {totalCount} bill{totalCount !== 1 ? 's' : ''}
+          {/* The count says which set it is counting, always. Truncation is
+              stated rather than implied — "Showing the 8 most recent of 42"
+              cannot be misread the way a bare "42" over eight rows can.
+
+              When filters are on, the number this compares against is the
+              MATCHING count, not the practice's whole ledger: the filter bar
+              directly above already says "40 of 500 bills" (and the chart
+              beside it renders all 40), so repeating 500 here would be the
+              third appearance of the same number and the least useful one.
+              What this line is for is the gap between what matched and what
+              is on screen. */}
+          {(hasFilters || truncated) && (
+            <p className="text-xs text-gray-400 mt-0.5" data-testid="bills-card-count">
+              {truncated
+                ? `Showing the ${RECENT_BILLS_LIMIT} most recent of ${plans.length}${hasFilters ? ' matching' : ''} bill${plans.length !== 1 ? 's' : ''}`
+                : `${plans.length} of ${totalCount} bill${totalCount !== 1 ? 's' : ''}`}
             </p>
           )}
         </div>
@@ -197,10 +265,9 @@ export default function BillsBlock({
             {/* The way through to the Bills tab, which is where the whole
                 list plus search and a status filter live. This card is a
                 glance under a chart; that page is where you go to find one
-                bill. The scope rides along so a brand-admin viewing a branch
-                stays on that branch. */}
+                bill. Now also the escape hatch from the truncation. */}
             <a
-              href={practiceId ? `/practice/bills?practiceId=${encodeURIComponent(practiceId)}` : '/practice/bills'}
+              href={seeAllHref}
               data-testid="bills-see-all"
               className="text-sm font-medium text-gray-500 hover:text-[#13294B] transition-colors"
             >
@@ -218,6 +285,19 @@ export default function BillsBlock({
               </button>
               {menuOpen && (
                 <div className="absolute right-0 top-full mt-1.5 bg-white rounded-xl border border-gray-200 shadow-lg py-1 z-20 min-w-[160px]">
+                  {/* Said out loud only when the two sets differ. The export
+                      has always carried every row, and now that the list does
+                      not, someone who exports after seeing eight rows needs to
+                      know the file has more — otherwise the surprise runs the
+                      other way and they assume it was truncated too. */}
+                  {truncated && (
+                    <p
+                      data-testid="bills-export-scope"
+                      className="px-4 pt-1 pb-2 text-[11px] leading-snug text-gray-400 border-b border-gray-100 mb-1"
+                    >
+                      Exports all {plans.length} {hasFilters ? 'matching ' : ''}bills, not just the {RECENT_BILLS_LIMIT} shown.
+                    </p>
+                  )}
                   <button onClick={handleExportCSV} className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2.5 transition-colors">
                     <span className="text-gray-400"><DownloadIcon /></span> Export CSV
                   </button>
@@ -245,7 +325,25 @@ export default function BillsBlock({
             <p className="mt-1 text-sm text-gray-400">Try adjusting the date range or provider.</p>
           </div>
         ) : (
-          <BillsTable plans={plans} feePercent={feePercent} specialtyMap={specialtyMap} />
+          <>
+            {/* `visible`, and nowhere else in this file. */}
+            <BillsTable plans={visible} feePercent={feePercent} specialtyMap={specialtyMap} />
+            {/* A second way through, at the bottom of the rows — which is
+                where the reader is standing when they run out of list and
+                want more. The header link is 560px above them by then. Same
+                href, resolved once above. */}
+            {truncated && (
+              <div className="px-4 sm:px-6 py-3 border-t border-gray-100 bg-gray-50/60 text-center">
+                <a
+                  href={seeAllHref}
+                  data-testid="bills-see-all-footer"
+                  className="text-sm font-medium text-gray-500 hover:text-[#13294B] transition-colors"
+                >
+                  See all {plans.length} bills →
+                </a>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

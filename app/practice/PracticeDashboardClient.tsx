@@ -110,7 +110,12 @@ export default function PracticeDashboardClient({
       {/* ── Chart ──────────────────────────────────────────────────── */}
       <MonthlyRevenueChart plans={filteredPlans} feePercent={feePercent} />
 
-      {/* ── Bills table ────────────────────────────────────────────── */}
+      {/* ── Bills table ──────────────────────────────────────────────
+          The FULL filtered set, deliberately. The card shows only the most
+          recent few (RECENT_BILLS_LIMIT in ./BillsBlock) but its CSV/PDF
+          exports carry every matching row, and its count line names both
+          numbers — so it needs the whole set, and truncating here instead
+          would silently shrink the exports. Do not .slice() this prop. */}
       <BillsBlock
         plans={filteredPlans}
         totalCount={plans.length}
