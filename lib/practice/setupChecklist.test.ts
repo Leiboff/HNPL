@@ -8,10 +8,13 @@ import {
 
 // ─── Tests — setup checklist derivation ───────────────────────────────────
 //
-// Three things are worth proving here and they are not the same thing:
+// Four things are worth proving here and they are not the same thing:
 //   1. the ARITHMETIC — which items tick, and the count that goes with them
-//   2. the DISAPPEARING ACT — complete means complete, not "collapsed"
-//   3. that state is DERIVED — every item flips from the facts alone, with
+//   2. the DISAPPEARING ACT — complete means complete, not "collapsed", and
+//      nothing OPTIONAL is allowed to keep the card open
+//   3. that the till is a SUGGESTION — offered, never counted, and withdrawn
+//      the moment it is acted on
+//   4. that state is DERIVED — every item flips from the facts alone, with
 //      nothing stored, which is checked here at the unit level and again
 //      against real Postgres in ./setupChecklist.pglite.test.ts
 //
@@ -20,7 +23,6 @@ import {
 // link at all.
 
 const NOTHING: SetupChecklistFacts = {
-  status:                'pending',
   phone:                 null,
   addressLine1:          null,
   latitude:              null,
@@ -31,17 +33,20 @@ const NOTHING: SetupChecklistFacts = {
   hasTillPin:            false,
 };
 
-/** Everything done, and approved — the state in which the card must vanish. */
-const EVERYTHING: SetupChecklistFacts = {
-  status:                'approved',
+/**
+ * The three REQUIRED things done — the state in which the card must vanish.
+ * Note the till is deliberately absent: the whole point of this revision is
+ * that the card is finished without one.
+ */
+const REQUIRED_DONE: SetupChecklistFacts = {
   phone:                 '011 555 0100',
   addressLine1:          '12 Rivonia Road, Sandton',
   latitude:              -26.1076,
   longitude:             28.0567,
   bankingResolved:       true,
   activeProviderCount:   1,
-  activeTillDeviceCount: 1,
-  hasTillPin:            true,
+  activeTillDeviceCount: 0,
+  hasTillPin:            false,
 };
 
 const FULL_RIGHTS: SetupChecklistAuthority = {
@@ -66,8 +71,8 @@ const item = (c: ReturnType<typeof build>, key: string) =>
 describe('a brand-new practice with nothing set up', () => {
   const c = build();
 
-  it('shows all four items outstanding, and 0 of 4', () => {
-    expect(c.total).toBe(4);
+  it('shows all three required items outstanding, and 0 of 3', () => {
+    expect(c.total).toBe(3);
     expect(c.doneCount).toBe(0);
     expect(c.items.every((i) => !i.done)).toBe(true);
   });
@@ -79,14 +84,13 @@ describe('a brand-new practice with nothing set up', () => {
   it('lists banking and the practitioner FIRST — the two that block billing', () => {
     // Order is a product decision, not an accident: the trading-gate
     // conditions cost the practice the ability to trade at all, so they lead.
-    expect(c.items.map((i) => i.key)).toEqual(['banking', 'provider', 'details', 'till']);
+    expect(c.items.map((i) => i.key)).toEqual(['banking', 'provider', 'details']);
   });
 
   it('points each item at the exact screen that completes it', () => {
     expect(item(c, 'banking').href).toBe('/practice/details#banking');
     expect(item(c, 'provider').href).toBe('/practice/members');
     expect(item(c, 'details').href).toBe('/practice/details');
-    expect(item(c, 'till').href).toBe('/practice/pos/devices');
   });
 
   it('gives every item a plain-language reason, not a restatement of its name', () => {
@@ -98,19 +102,19 @@ describe('a brand-new practice with nothing set up', () => {
     }
   });
 
-  it('surfaces "we are still checking you over" without making it a tick box', () => {
-    // status='pending' is a real trading-gate condition, but no screen at the
-    // practice can action it — so it must be stated, and must not be one of
-    // the four things they are being asked to do.
-    expect(c.awaitingApproval).toBe(true);
+  it('says nothing about approval — the trading-gate panel owns that', () => {
+    // Approval is a real gate condition, but nobody at the practice can action
+    // it and the panel on the same page states it unconditionally. Repeating it
+    // here in different words would read as a second, separate problem.
+    expect(Object.keys(c)).not.toContain('awaitingApproval');
     expect(c.items.map((i) => i.key)).not.toContain('approval');
-    expect(c.total).toBe(4);
+    expect(c.total).toBe(3);
   });
 });
 
 // ─── Partially complete ───────────────────────────────────────────────────
 
-describe('partially complete — details + banking done, no till, no provider', () => {
+describe('partially complete — details + banking done, no provider', () => {
   const c = build({
     bankingResolved: true,
     phone:           '021 555 0199',
@@ -123,65 +127,118 @@ describe('partially complete — details + banking done, no till, no provider', 
     expect(item(c, 'banking').done).toBe(true);
     expect(item(c, 'details').done).toBe(true);
     expect(item(c, 'provider').done).toBe(false);
-    expect(item(c, 'till').done).toBe(false);
   });
 
-  it('counts 2 of 4', () => {
+  it('counts 2 of 3', () => {
     expect(c.doneCount).toBe(2);
-    expect(c.total).toBe(4);
+    expect(c.total).toBe(3);
     expect(c.complete).toBe(false);
   });
 
-  it('still offers the two remaining actions', () => {
+  it('still offers the remaining action', () => {
     expect(item(c, 'provider').href).toBe('/practice/members');
-    expect(item(c, 'till').href).toBe('/practice/pos/devices');
   });
 });
 
-// ─── Fully complete ───────────────────────────────────────────────────────
+// ─── Fully complete — with and without a till ─────────────────────────────
 
-describe('fully complete', () => {
-  it('reports complete with every item ticked', () => {
-    const c = buildSetupChecklist(EVERYTHING, FULL_RIGHTS);
-    expect(c.doneCount).toBe(4);
+describe('the required items decide completeness, and nothing else does', () => {
+  it('is complete on the three required items alone, with NO till set up', () => {
+    // The point of this revision. A practice that bills from one laptop has
+    // finished; an item they can never complete would keep the card up forever
+    // and break the one promise it makes.
+    const c = buildSetupChecklist(REQUIRED_DONE, FULL_RIGHTS);
+    expect(c.doneCount).toBe(3);
+    expect(c.total).toBe(3);
     expect(c.complete).toBe(true);
     expect(c.items.every((i) => i.done)).toBe(true);
   });
 
-  it('is complete even while approval is still pending — the practice has nothing left to do', () => {
-    // Approval is not theirs to action. Holding the card open for it would
-    // leave a checklist of four ticks on the dashboard indefinitely, which is
-    // the clutter the card exists to avoid. The trading-gate panel is what
-    // explains the wait.
-    const c = buildSetupChecklist({ ...EVERYTHING, status: 'pending' }, FULL_RIGHTS);
-    expect(c.complete).toBe(true);
-    expect(c.awaitingApproval).toBe(true);
+  it('is complete with a till too — the till changes the count either way', () => {
+    const withTill = buildSetupChecklist(
+      { ...REQUIRED_DONE, activeTillDeviceCount: 1, hasTillPin: true },
+      FULL_RIGHTS,
+    );
+    expect(withTill.doneCount).toBe(3);
+    expect(withTill.total).toBe(3);
+    expect(withTill.complete).toBe(true);
+  });
+
+  it('offers no suggestion once complete — nothing optional keeps the card open', () => {
+    // Enforced in the derivation as well as the renderer, so the returned value
+    // cannot describe a state the product does not have.
+    expect(buildSetupChecklist(REQUIRED_DONE, FULL_RIGHTS).suggestion).toBeNull();
+  });
+
+  it('the till is not one of the items at all', () => {
+    expect(build().items.map((i) => i.key)).not.toContain('till');
   });
 });
 
-// ─── The till: one item, two halves ───────────────────────────────────────
+// ─── The till as a suggestion ─────────────────────────────────────────────
 
-describe('the till is one item covering two pieces of setup', () => {
-  it('needs BOTH a device and a PIN — neither half alone is usable', () => {
-    expect(item(build({ activeTillDeviceCount: 1, hasTillPin: false }), 'till').done).toBe(false);
-    expect(item(build({ activeTillDeviceCount: 0, hasTillPin: true  }), 'till').done).toBe(false);
-    expect(item(build({ activeTillDeviceCount: 1, hasTillPin: true  }), 'till').done).toBe(true);
+describe('the till is a suggestion, not a requirement', () => {
+  it('is offered while the required items are outstanding', () => {
+    const s = build().suggestion!;
+    expect(s).not.toBeNull();
+    expect(s.key).toBe('till');
+    expect(s.href).toBe('/practice/pos/devices');
   });
 
-  it('names the missing half so collapsing them hides nothing', () => {
-    const needsPin = item(build({ activeTillDeviceCount: 1, hasTillPin: false }), 'till');
-    expect(needsPin.hint).toMatch(/needs a PIN/i);
-
-    const needsDevice = item(build({ activeTillDeviceCount: 0, hasTillPin: true }), 'till');
-    expect(needsDevice.hint).toMatch(/register the computer/i);
+  it('is not counted — offering it changes neither doneCount nor total', () => {
+    const c = build();
+    expect(c.suggestion).not.toBeNull();
+    expect(c.doneCount).toBe(0);
+    expect(c.total).toBe(3);
   });
 
-  it('says nothing extra when neither half is done — the title already covers it', () => {
-    expect(item(build(), 'till').hint).toBeNull();
+  it('has no done state to be stuck in', () => {
+    // The structural reason it can never look "outstanding forever": there is
+    // no field for it. A suggestion is offered or withheld, never un-ticked.
+    expect(Object.keys(build().suggestion!)).not.toContain('done');
   });
 
-  it('drops the hint once the item is done', () => {
-    expect(item(build({ activeTillDeviceCount: 1, hasTillPin: true }), 'till').hint).toBeNull();
+  it('says plainly that it is optional', () => {
+    expect(build().suggestion!.eyebrow).toMatch(/optional/i);
+  });
+
+  it('encourages on BOTH counts — getting on with it, and not sharing a login', () => {
+    const why = build().suggestion!.why;
+    // Ease of use: reception is not waiting on the manager.
+    expect(why).toMatch(/without waiting for you/i);
+    // Security, said without the word: a PIN of their own instead of a login.
+    expect(why).toMatch(/PIN/);
+    expect(why).toMatch(/login never has to be shared/i);
+    // And it is not the old required-item wording.
+    expect(why).not.toMatch(/borrowing your login/i);
+  });
+
+  it('is withdrawn entirely once the till is genuinely set up — no nag', () => {
+    expect(build({ activeTillDeviceCount: 1, hasTillPin: true }).suggestion).toBeNull();
+  });
+
+  it('needs BOTH halves before it stops — neither alone is usable', () => {
+    // A registered till with no PIN cannot be unlocked; a PIN with no till has
+    // nothing to unlock. Either half alone still leaves something to suggest.
+    expect(build({ activeTillDeviceCount: 1, hasTillPin: false }).suggestion).not.toBeNull();
+    expect(build({ activeTillDeviceCount: 0, hasTillPin: true  }).suggestion).not.toBeNull();
+  });
+
+  it('names the missing half when one is already in place', () => {
+    expect(build({ activeTillDeviceCount: 1, hasTillPin: false }).suggestion!.hint)
+      .toMatch(/needs a PIN/i);
+    expect(build({ activeTillDeviceCount: 0, hasTillPin: true }).suggestion!.hint)
+      .toMatch(/register the computer/i);
+  });
+
+  it('says nothing extra when neither half is done — the title covers it', () => {
+    expect(build().suggestion!.hint).toBeNull();
+  });
+
+  it('is withheld from a viewer who could not act on it', () => {
+    // Required items fall back to naming who to ask, because those have to get
+    // done by somebody. "Ask someone else to do this optional thing" is noise.
+    expect(build({}, { ...FULL_RIGHTS, canManageTill: false }).suggestion).toBeNull();
   });
 });
 
@@ -264,17 +321,11 @@ describe('action links respect what the viewer is allowed to do', () => {
     expect(item(c, 'details').href).toBeNull();
     // The others are unaffected.
     expect(item(c, 'provider').href).toBe('/practice/members');
-    expect(item(c, 'till').href).toBe('/practice/pos/devices');
   });
 
   it('withholds the practitioner link from a non-manager', () => {
     const c = build({}, { ...FULL_RIGHTS, canManageTeam: false });
     expect(item(c, 'provider').href).toBeNull();
-  });
-
-  it('withholds the till link from someone who cannot manage the till', () => {
-    const c = build({}, { ...FULL_RIGHTS, canManageTill: false });
-    expect(item(c, 'till').href).toBeNull();
   });
 
   it('never changes an item’s DONE state based on who is looking', () => {
@@ -283,8 +334,8 @@ describe('action links respect what the viewer is allowed to do', () => {
     const noRights: SetupChecklistAuthority = {
       canEditDetails: false, canManageTeam: false, canManageTill: false,
     };
-    const withRights    = buildSetupChecklist(EVERYTHING, FULL_RIGHTS);
-    const withoutRights = buildSetupChecklist(EVERYTHING, noRights);
+    const withRights    = buildSetupChecklist(REQUIRED_DONE, FULL_RIGHTS);
+    const withoutRights = buildSetupChecklist(REQUIRED_DONE, noRights);
     expect(withoutRights.doneCount).toBe(withRights.doneCount);
     expect(withoutRights.complete).toBe(withRights.complete);
   });
@@ -303,20 +354,28 @@ describe('every item is derived from live facts alone', () => {
     const afterProvider = build({ bankingResolved: true, activeProviderCount: 1 });
     expect(afterProvider.doneCount).toBe(2);
 
-    const afterPin = build({
+    const afterAddress = build({
       bankingResolved: true, activeProviderCount: 1,
-      activeTillDeviceCount: 1, hasTillPin: true,
+      phone: '011 555 0100', addressLine1: '12 Rivonia Road',
+      latitude: -26.1, longitude: 28.05,
     });
-    expect(afterPin.doneCount).toBe(3);
+    expect(afterAddress.doneCount).toBe(3);
+    expect(afterAddress.complete).toBe(true);
   });
 
   it('un-ticks an item when the fact goes away again', () => {
-    // The direction a flag can never handle: a till whose only device was
-    // revoked is not set up any more, and the card has to say so.
-    const set   = build({ activeTillDeviceCount: 1, hasTillPin: true });
-    const gone  = build({ activeTillDeviceCount: 0, hasTillPin: true });
-    expect(item(set,  'till').done).toBe(true);
-    expect(item(gone, 'till').done).toBe(false);
+    // The direction a flag can never handle.
+    const set  = build({ activeProviderCount: 1 });
+    const gone = build({ activeProviderCount: 0 });
+    expect(item(set,  'provider').done).toBe(true);
+    expect(item(gone, 'provider').done).toBe(false);
+  });
+
+  it('brings the till suggestion BACK when the last device is revoked', () => {
+    // Same property on the optional side: the nudge is derived, so it returns
+    // when the thing it was nudging about goes away.
+    expect(build({ activeTillDeviceCount: 1, hasTillPin: true }).suggestion).toBeNull();
+    expect(build({ activeTillDeviceCount: 0, hasTillPin: true }).suggestion).not.toBeNull();
   });
 
   it('is a pure function of its inputs', () => {
@@ -333,16 +392,16 @@ describe('every item is derived from live facts alone', () => {
 // SCOPED and FILTERED, because an unfiltered one ticks an item using another
 // practice's data or a revoked device.
 
-type Recorded = { table: string; filters: Record<string, unknown>; isNull: string[] };
+type Recorded = { table: string; cols: string; filters: Record<string, unknown>; isNull: string[] };
 
 function stubClient(rows: Record<string, unknown[]>, practiceRow: Record<string, unknown> | null) {
   const calls: Recorded[] = [];
   const client = {
     from(table: string) {
-      const rec: Recorded = { table, filters: {}, isNull: [] };
+      const rec: Recorded = { table, cols: '', filters: {}, isNull: [] };
       calls.push(rec);
       const builder = {
-        select: () => builder,
+        select: (cols: string) => { rec.cols = cols; return builder; },
         eq: (col: string, val: unknown) => { rec.filters[col] = val; return builder; },
         is: (col: string, val: unknown) => {
           if (val === null) rec.isNull.push(col);
@@ -362,7 +421,7 @@ describe('loadSetupChecklistFacts', () => {
     const { client, calls } = stubClient(
       { practice_members: [{ id: 'm1' }], till_devices: [{ id: 'd1' }] },
       {
-        status: 'approved', phone: '011 555 0100',
+        phone: '011 555 0100',
         address_line1: '12 Rivonia Road', latitude: -26.1, longitude: 28.05,
         till_pin_hash: 'hashed',
       },
@@ -392,8 +451,20 @@ describe('loadSetupChecklistFacts', () => {
     expect(f.bankingResolved).toBe(true);
   });
 
+  it('does not read practices.status — approval is not this card’s question', () => {
+    // Selecting it would be the first step towards a second opinion about
+    // whether a practice is approved. The trading gate is the only one.
+    const { client, calls } = stubClient({}, {});
+    return loadSetupChecklistFacts(client, 'prac-1', {
+      resolveBanking: async () => ({ source: 'none' }),
+    }).then(() => {
+      const practices = calls.find((c) => c.table === 'practices')!;
+      expect(practices.cols).not.toMatch(/\bstatus\b/);
+    });
+  });
+
   it('resolves banking through the injected resolver and honours source:none', async () => {
-    const { client } = stubClient({}, { status: 'pending' });
+    const { client } = stubClient({}, {});
     const f = await loadSetupChecklistFacts(client, 'prac-1', {
       resolveBanking: async () => ({ source: 'none' }),
     });
@@ -401,7 +472,7 @@ describe('loadSetupChecklistFacts', () => {
   });
 
   it('counts brand-resolved banking as present', async () => {
-    const { client } = stubClient({}, { status: 'approved' });
+    const { client } = stubClient({}, {});
     const f = await loadSetupChecklistFacts(client, 'prac-1', {
       resolveBanking: async () => ({
         source: 'group', groupId: 'g1',

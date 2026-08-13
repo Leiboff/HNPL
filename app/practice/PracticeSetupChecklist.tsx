@@ -1,5 +1,9 @@
-import type { SetupChecklist, SetupChecklistItem } from '@/lib/practice/setupChecklist';
-import { AWAITING_APPROVAL_NOTE, ASK_A_MANAGER_NOTE } from '@/lib/practice/setupChecklist';
+import type {
+  SetupChecklist,
+  SetupChecklistItem,
+  SetupChecklistSuggestion,
+} from '@/lib/practice/setupChecklist';
+import { ASK_A_MANAGER_NOTE } from '@/lib/practice/setupChecklist';
 
 // ─── "Finish setting up" — the practice onboarding checklist ───────────────
 //
@@ -18,10 +22,18 @@ import { AWAITING_APPROVAL_NOTE, ASK_A_MANAGER_NOTE } from '@/lib/practice/setup
 //
 // ONE emphasised action, always.
 // ──────────────────────────────
-// Only the FIRST outstanding item gets the filled button; later ones get a
-// quiet link. Four equally-loud buttons is the flat pile of sidebar links
-// again, just in a nicer box — the whole point is that there is exactly one
-// obvious next thing.
+// Only the FIRST outstanding REQUIRED item gets the filled button; later ones
+// get a quiet link, and the optional suggestion never gets one. A row of
+// equally-loud buttons is the flat pile of sidebar links again, just in a
+// nicer box — the whole point is that there is exactly one obvious next thing.
+//
+// REQUIRED vs OPTIONAL is a visible distinction, not a subtle one.
+// ───────────────────────────────────────────────────────────────
+// The required items are a list with tick marks and a count. The till nudge
+// sits below them in its own tinted strip, with no tick mark, no circle, and
+// no share of the count — because a thing that can never be ticked must not be
+// drawn as a thing waiting to be ticked. It reads as "while you're here",
+// which is what it is, and it leaves with the card.
 //
 // The order is FIXED (see buildSetupChecklist) and never re-sorts as items
 // are completed. A list that rearranges itself under someone who is working
@@ -46,7 +58,7 @@ export default function PracticeSetupChecklist({
   // must be impossible to render a completed checklist by mistake.
   if (checklist.complete) return null;
 
-  const { items, doneCount, total, awaitingApproval } = checklist;
+  const { items, doneCount, total, suggestion } = checklist;
   const firstTodoKey = items.find((i) => !i.done)?.key ?? null;
   const pct = Math.round((doneCount / total) * 100);
 
@@ -92,14 +104,11 @@ export default function PracticeSetupChecklist({
           />
         </div>
 
-        {awaitingApproval && (
-          <p
-            data-testid="setup-awaiting-approval"
-            className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900"
-          >
-            {AWAITING_APPROVAL_NOTE}
-          </p>
-        )}
+        {/* Nothing here about approval. The trading-gate panel on this same
+            page states it unconditionally whenever the gate is closed, and two
+            amber boxes saying "we're reviewing you" in two different sets of
+            words read as two different problems. The panel owns approval; this
+            card owns what the practice can actually do about it. */}
 
         <ul className="mt-4 divide-y divide-gray-100">
           {items.map((item) => (
@@ -112,7 +121,76 @@ export default function PracticeSetupChecklist({
           ))}
         </ul>
       </div>
+
+      {suggestion && <Suggestion suggestion={suggestion} practiceId={practiceId} />}
     </section>
+  );
+}
+
+/**
+ * The optional till nudge.
+ *
+ * Deliberately OUTSIDE the padded body and outside the <ul>: it is not one of
+ * the things being counted, and the strongest way to say so is to stop drawing
+ * it in the same shape. No tick circle, no filled button, its own tinted
+ * footer, and an explicit "Optional" label — three independent signals, so it
+ * still reads as optional to someone who cannot see the tint.
+ *
+ * It renders only when the checklist is on the page at all, which means it
+ * leaves when the required items are finished. That is the cost of the rule
+ * that the card must be finishable: nothing optional gets to keep it open. The
+ * sidebar link to the till remains the way in afterwards.
+ */
+function Suggestion({
+  suggestion,
+  practiceId,
+}: {
+  suggestion: SetupChecklistSuggestion;
+  practiceId: string;
+}) {
+  return (
+    <div
+      data-testid={`setup-suggestion:${suggestion.key}`}
+      className="border-t border-gray-100 bg-gray-50/80 px-5 py-4 sm:px-6"
+    >
+      <p
+        data-testid={`setup-suggestion-eyebrow:${suggestion.key}`}
+        className="text-[11px] font-semibold uppercase tracking-wide text-gray-400"
+      >
+        {suggestion.eyebrow}
+      </p>
+      <div className="mt-1 flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold" style={{ color: NAVY }}>
+            {suggestion.title}
+          </p>
+          <p
+            data-testid={`setup-suggestion-why:${suggestion.key}`}
+            className="mt-0.5 text-sm text-gray-600"
+          >
+            {suggestion.why}
+          </p>
+          {suggestion.hint && (
+            <p
+              data-testid={`setup-suggestion-hint:${suggestion.key}`}
+              className="mt-1 text-sm text-gray-500"
+            >
+              {suggestion.hint}
+            </p>
+          )}
+        </div>
+        {/* A quiet link, never the filled button — that one belongs to the
+            single next REQUIRED thing and must not have to compete. */}
+        <a
+          href={`${suggestion.href}?practiceId=${practiceId}`}
+          data-testid={`setup-suggestion-action:${suggestion.key}`}
+          className="shrink-0 text-xs font-semibold underline underline-offset-2"
+          style={{ color: NAVY }}
+        >
+          {suggestion.actionLabel}
+        </a>
+      </div>
+    </div>
   );
 }
 

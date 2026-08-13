@@ -20,8 +20,9 @@ import { loadSetupChecklistFacts, buildSetupChecklist } from './setupChecklist';
 // you about, and which are the difference between a correct tick and a lie:
 //   • the provider count is scoped to THIS practice (a sibling branch's
 //     practitioner must not tick this branch's item)
-//   • a REVOKED till device does not count (0088 revokes, never deletes, so
-//     an unfiltered count stays ticked forever after the last till is pulled)
+//   • a REVOKED till device does not count (0088 revokes, never deletes, so an
+//     unfiltered count would treat a practice whose last till was pulled months
+//     ago as still having one, and silently drop the nudge)
 //
 // THE CLIENT SHIM
 // ───────────────
@@ -163,6 +164,10 @@ async function derive(id = practiceId) {
 const stateOf = (c: Awaited<ReturnType<typeof derive>>['checklist'], key: string) =>
   c.items.find((i) => i.key === key)!.done;
 
+/** The till is a suggestion, not an item — "done" is "no longer suggested". */
+const tillSuggested = (c: Awaited<ReturnType<typeof derive>>['checklist']) =>
+  c.suggestion !== null;
+
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(STUB_SCHEMA);
@@ -201,22 +206,31 @@ beforeEach(async () => {
 // ─── The starting point ───────────────────────────────────────────────────
 
 describe('a freshly signed-up practice', () => {
-  it('has address and phone done, and the other three outstanding', async () => {
+  it('has address and phone done, and the other two outstanding', async () => {
     const { checklist } = await derive();
     expect(stateOf(checklist, 'details')).toBe(true);
     expect(stateOf(checklist, 'banking')).toBe(false);
     expect(stateOf(checklist, 'provider')).toBe(false);
-    expect(stateOf(checklist, 'till')).toBe(false);
     expect(checklist.doneCount).toBe(1);
+    expect(checklist.total).toBe(3);
     expect(checklist.complete).toBe(false);
   });
 
-  it('is reported as awaiting approval, straight from practices.status', async () => {
+  it('is offered the till, and the till is not one of the counted items', async () => {
     const { checklist } = await derive();
-    expect(checklist.awaitingApproval).toBe(true);
+    expect(tillSuggested(checklist)).toBe(true);
+    expect(checklist.items.map((i) => i.key)).toEqual(['banking', 'provider', 'details']);
+  });
 
+  it('says nothing about approval, and does not even read practices.status', async () => {
+    // The gate owns approval. Proved against real Postgres rather than a
+    // recorded call shape: flipping status changes nothing the card derives.
+    const before = await derive();
     await db.query(`update practices set status = 'approved' where id = $1`, [practiceId]);
-    expect((await derive()).checklist.awaitingApproval).toBe(false);
+    const after = await derive();
+    expect(after.checklist).toEqual(before.checklist);
+    expect(Object.keys(after.checklist)).not.toContain('awaitingApproval');
+    expect(Object.keys(after.facts)).not.toContain('status');
   });
 });
 
@@ -245,21 +259,34 @@ describe('items flip when the underlying data changes — nothing is written to 
     expect(stateOf((await derive()).checklist, 'provider')).toBe(true);
   });
 
-  it('setting the PIN alone does NOT tick the till — it needs a device too', async () => {
+  it('setting the PIN alone does NOT stop the till nudge — it needs a device too', async () => {
     await db.query(`update practices set till_pin_hash = 'hashed' where id = $1`, [practiceId]);
     const { facts, checklist } = await derive();
     expect(facts.hasTillPin).toBe(true);
     expect(facts.activeTillDeviceCount).toBe(0);
-    expect(stateOf(checklist, 'till')).toBe(false);
+    expect(tillSuggested(checklist)).toBe(true);
+    expect(checklist.suggestion!.hint).toMatch(/register the computer/i);
   });
 
-  it('registering a device AND setting the PIN ticks the till', async () => {
+  it('registering a device AND setting the PIN withdraws the nudge', async () => {
     await db.query(`update practices set till_pin_hash = 'hashed' where id = $1`, [practiceId]);
     await db.query(
       `insert into till_devices (practice_id, label) values ($1, 'Front desk PC')`,
       [practiceId],
     );
-    expect(stateOf((await derive()).checklist, 'till')).toBe(true);
+    expect(tillSuggested((await derive()).checklist)).toBe(false);
+  });
+
+  it('the till never moves the count, in either direction', async () => {
+    const before = (await derive()).checklist.doneCount;
+    await db.query(`update practices set till_pin_hash = 'hashed' where id = $1`, [practiceId]);
+    await db.query(
+      `insert into till_devices (practice_id, label) values ($1, 'Front desk PC')`,
+      [practiceId],
+    );
+    const after = (await derive()).checklist;
+    expect(after.doneCount).toBe(before);
+    expect(after.total).toBe(3);
   });
 
   it('filling in banking ticks banking, through the real resolver', async () => {
@@ -305,24 +332,30 @@ describe('items flip when the underlying data changes — nothing is written to 
       .toMatch(/couldn’t find your address on the map/i);
   });
 
-  it('reaches complete only when all four are genuinely true, then stays there', async () => {
+  it('reaches complete on the three REQUIRED items, with no till in the database', async () => {
+    // The behaviour this revision exists for, proved against real rows: a
+    // practice that bills from one laptop finishes. There is no till_devices
+    // row and no till_pin_hash here, and the card is done.
     await db.query(
-      `update practices set status = 'approved', bank_name = 'FNB',
-         bank_account_number = '62012345678', till_pin_hash = 'hashed' where id = $1`,
+      `update practices set bank_name = 'FNB', bank_account_number = '62012345678'
+       where id = $1`,
       [practiceId],
     );
     await db.query(
       `insert into practice_members (practice_id, role, active) values ($1, 'provider', true)`,
       [practiceId],
     );
-    await db.query(
-      `insert into till_devices (practice_id, label) values ($1, 'Front desk PC')`,
-      [practiceId],
+
+    const devices = await db.query<{ n: number }>(
+      `select count(*)::int as n from till_devices where practice_id = $1`, [practiceId],
     );
+    expect(devices.rows[0].n).toBe(0);
 
     const { checklist } = await derive();
-    expect(checklist.doneCount).toBe(4);
+    expect(checklist.doneCount).toBe(3);
     expect(checklist.complete).toBe(true);
+    // And nothing optional survives to keep the card on the page.
+    expect(checklist.suggestion).toBeNull();
   });
 });
 
@@ -357,29 +390,29 @@ describe('the reads are scoped and filtered', () => {
     expect(stateOf((await derive()).checklist, 'provider')).toBe(false);
   });
 
-  it('a REVOKED till device does not count, so revoking the last one un-ticks the till', async () => {
+  it('a REVOKED till device does not count, so revoking the last one brings the nudge back', async () => {
     await db.query(`update practices set till_pin_hash = 'hashed' where id = $1`, [practiceId]);
     await db.query(
       `insert into till_devices (practice_id, label) values ($1, 'Front desk PC')`,
       [practiceId],
     );
-    expect(stateOf((await derive()).checklist, 'till')).toBe(true);
+    expect(tillSuggested((await derive()).checklist)).toBe(false);
 
     // 0088 revokes rather than deletes — the row is still there afterwards.
     await db.query(`update till_devices set revoked_at = now() where practice_id = $1`, [practiceId]);
     const after = await db.query(`select count(*)::int as n from till_devices where practice_id = $1`, [practiceId]);
     expect((after.rows[0] as { n: number }).n).toBe(1);
 
-    expect(stateOf((await derive()).checklist, 'till')).toBe(false);
+    expect(tillSuggested((await derive()).checklist)).toBe(true);
   });
 
-  it('a sibling branch’s till device does not tick this branch', async () => {
+  it('a sibling branch’s till device leaves this branch still being nudged', async () => {
     await db.query(`update practices set till_pin_hash = 'hashed' where id = $1`, [practiceId]);
     await db.query(
       `insert into till_devices (practice_id, label) values ($1, 'Their PC')`,
       [otherPracticeId],
     );
-    expect(stateOf((await derive()).checklist, 'till')).toBe(false);
+    expect(tillSuggested((await derive()).checklist)).toBe(true);
   });
 });
 

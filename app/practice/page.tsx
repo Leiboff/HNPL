@@ -213,6 +213,29 @@ export default async function PracticeDashboardPage({
       )
     : null;
 
+  // ── Who says what, when both the panel and the card are in play ────────
+  //
+  // The trading-gate panel and the checklist independently arrived at the same
+  // job for two of the gate's three reasons: "add a provider" and "add
+  // banking" are a checklist row AND a panel paragraph, in different words,
+  // one above the other. Two differently-worded instructions for one task
+  // reads as two tasks — the exact confusion the checklist was built to end.
+  //
+  // So when the card is actually on the page, it owns those two. The panel
+  // keeps 'pending_approval', which the card does not cover at all and which
+  // nobody at the practice can action.
+  //
+  // This is conditional, not a narrowing of the panel, and that matters: a
+  // reception-level member gets no card (canSeeChecklist is false for them),
+  // and on that surface the panel is byte-for-byte what it always was. The
+  // suppression can only fire where a replacement is provably present —
+  // reason='no_providers' means zero active providers, which is exactly the
+  // condition that leaves the card's provider row outstanding, and the same
+  // holds for banking. A complete card cannot coexist with either reason.
+  const checklistShown = !!setupChecklist && !setupChecklist.complete;
+  const showGatePanel =
+    !gate.ok && (gate.reason === 'pending_approval' || !checklistShown);
+
   return (
     <PracticeShell
       practiceName={practiceName}
@@ -250,7 +273,14 @@ export default async function PracticeDashboardPage({
 
         {/* Bounce-back banner — only shown when /practice/bills/new
             redirected us here because the gate was closed. Disappears on
-            any subsequent navigation that doesn't carry ?reason=. */}
+            any subsequent navigation that doesn't carry ?reason=.
+
+            Its job is to explain the REDIRECT — "you asked for the bill form
+            and got sent back here" — which nothing else on the page does. So
+            it stays. What it stops doing is repeating the instruction: when the
+            checklist is up, the list below is the single place that says what
+            to fix, and this points at it instead of restating one item of it in
+            the gate's words. */}
         {cameFromGatedBillsPage && !gate.ok && (
           <div
             role="alert"
@@ -258,12 +288,19 @@ export default async function PracticeDashboardPage({
             className="rounded-xl border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900"
           >
             <p className="font-semibold">You can&apos;t create bills yet.</p>
-            <p className="mt-1">{gate.message}</p>
+            <p className="mt-1">
+              {checklistShown
+                ? 'Everything that’s still outstanding is in the list below.'
+                : gate.message}
+            </p>
           </div>
         )}
 
-        {/* Trading-gate panel — explains why the CTA is disabled when blocked. */}
-        {!gate.ok && (
+        {/* Trading-gate panel — explains why the CTA is disabled when blocked.
+            Suppressed for the two reasons the checklist already covers; see
+            showGatePanel above for why that is conditional rather than a
+            permanent narrowing. */}
+        {showGatePanel && (
           <div
             role="status"
             className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm"

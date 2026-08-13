@@ -17,6 +17,10 @@ import { resolve } from 'node:path';
 //      practice they are ready when billing will still refuse them.
 //   3. checkTradingGate is consumed READ-ONLY, and its own logic is untouched.
 //   4. PLACEMENT, and that nothing else on the dashboard was displaced.
+//   5. ONE INSTRUCTION PER TASK. The gate panel and this card both had things
+//      to say about missing providers and missing banking. The de-duplication
+//      is a source-level property of the dashboard — which branch renders
+//      when — so it is pinned here rather than in a render test.
 //
 // Every absence assertion runs against comment-STRIPPED source: these files
 // discuss the exact columns, flags and predicates they must not use, and a
@@ -121,8 +125,50 @@ describe('the checklist reads the same sources as the trading gate', () => {
     expect(LIB).toMatch(/\.is\('revoked_at', null\)/);
   });
 
-  it('reads status from practices rather than re-deriving approval', () => {
-    expect(LIB).toMatch(/status === 'pending'/);
+  it('does not read practices.status at all — approval is the gate’s alone', () => {
+    // The card says nothing about approval (the panel does, unconditionally),
+    // so it has no business forming an opinion about whether a practice is
+    // approved. Not selecting the column is what keeps that true.
+    expect(LIB).not.toMatch(/\bstatus\b/);
+    expect(LIB).not.toMatch(/awaitingApproval/);
+    expect(CARD).not.toMatch(/awaitingApproval|AWAITING_APPROVAL/);
+  });
+});
+
+// ─── The till is not a requirement ────────────────────────────────────────
+
+describe('the till cannot hold the card open', () => {
+  it('is not one of the required item keys', () => {
+    // A practice that bills from one laptop is correctly configured. An item
+    // they can never complete would make the card unfinishable, which breaks
+    // the only promise it makes.
+    expect(LIB).toMatch(/SetupChecklistItemKey =\s*'banking' \| 'provider' \| 'details'/);
+  });
+
+  it('completeness is decided by the required items alone', () => {
+    // Not "&& suggestion === null" or any variant that lets the optional half
+    // vote. The count and `complete` come off `items`, which the till is not in.
+    expect(LIB).toMatch(/const complete\s*=\s*doneCount === items\.length/);
+    expect(LIB).toMatch(/total:\s*items\.length/);
+  });
+
+  it('the suggestion is suppressed once the required items are done', () => {
+    expect(LIB).toMatch(/suggestion:\s*complete \? null :/);
+  });
+
+  it('the suggestion has no done state, so it cannot look outstanding forever', () => {
+    const type = LIB_SRC.match(/export type SetupChecklistSuggestion = \{[\s\S]*?\n\};/)?.[0] ?? '';
+    expect(type.length).toBeGreaterThan(50);
+    expect(type).not.toMatch(/\bdone\b/);
+  });
+
+  it('the card renders it outside the list of required items', () => {
+    // Structural, not just visual: a reader (or a screen reader) walking the
+    // list of things to do must not meet an optional one inside it.
+    const ulEnd      = CARD.indexOf('</ul>');
+    const suggestion = CARD.indexOf('{suggestion &&');
+    expect(ulEnd).toBeGreaterThan(-1);
+    expect(suggestion).toBeGreaterThan(ulEnd);
   });
 });
 
@@ -229,6 +275,80 @@ describe('the dashboard wires authority through without widening it', () => {
   });
 });
 
+// ─── One instruction per task ──────────────────────────────────────────────
+
+describe('the gate panel and the checklist do not both instruct', () => {
+  it('the panel is suppressed for the two reasons the checklist covers', () => {
+    // no_providers and no_banking were a panel paragraph AND a checklist row,
+    // in different words, stacked. Two wordings for one task read as two tasks.
+    expect(DASH).toMatch(
+      /const showGatePanel\s*=\s*\n?\s*!gate\.ok && \(gate\.reason === 'pending_approval' \|\| !checklistShown\)/,
+    );
+    expect(DASH).toMatch(/\{showGatePanel && \(/);
+  });
+
+  it('pending_approval survives regardless of the checklist', () => {
+    // The one gate reason the card says nothing about, and the one nobody at
+    // the practice can action. It must never be conditional on the card.
+    const cond = DASH.match(/const showGatePanel\s*=[\s\S]*?;/)?.[0] ?? '';
+    expect(cond).toMatch(/gate\.reason === 'pending_approval' \|\|/);
+    // Written as a disjunction, so no value of checklistShown can remove it.
+    expect(cond).not.toMatch(/pending_approval'\s*&&/);
+  });
+
+  it('suppression is conditional on the card actually being on the page', () => {
+    // Not a permanent narrowing of the panel. A reception-level member gets no
+    // card (canSeeChecklist is false), and a complete checklist renders nothing
+    // — on both of those surfaces the panel must be exactly what it was.
+    expect(DASH).toMatch(
+      /const checklistShown\s*=\s*!!setupChecklist && !setupChecklist\.complete/,
+    );
+  });
+
+  it('the panel still keeps its own actionable links for the unsuppressed cases', () => {
+    // Regression: the surfaces that DO fall through to the panel must not have
+    // lost the "Go to Team" / "Go to Banking" links with the de-duplication.
+    expect(DASH).toMatch(/gate\.reason === 'no_providers' && \(/);
+    expect(DASH).toMatch(/gate\.reason === 'no_banking' && \(/);
+    expect(DASH).toMatch(/Go to Team/);
+    expect(DASH).toMatch(/Go to Banking/);
+  });
+
+  it('the bounce-back banner explains the redirect without restating the fix', () => {
+    // It still renders — it is the only thing that says "you asked for the bill
+    // form and got sent back" — but when the card is up it points at the list
+    // instead of repeating one row of it in the gate's words.
+    expect(DASH).toMatch(/data-testid="trading-gate-bounce-banner"/);
+    expect(DASH).toMatch(/cameFromGatedBillsPage && !gate\.ok/);
+    expect(DASH).toMatch(/checklistShown\s*\n?\s*\?\s*'Everything that/);
+    expect(DASH).toMatch(/:\s*gate\.message/);
+  });
+
+  it('leaves every OTHER consumer of the gate alone', () => {
+    // The gate result has five other consumers. None of them renders the
+    // checklist, so none of them had a duplication to fix — and touching them
+    // is how a de-duplication breaks something nobody was looking at.
+    const BILLS_NEW = codeOf(read('app/practice/bills/new/page.tsx'));
+    const DETAILS   = codeOf(read('app/practice/details/page.tsx'));
+    const POS       = codeOf(read('app/practice/pos/actions.ts'));
+    const CTA       = codeOf(read('app/practice/CreateBillButton.tsx'));
+
+    // /practice/bills/new still bounces with the reason param.
+    expect(BILLS_NEW).toMatch(/redirect\(`\/practice\?reason=trading_gate/);
+    // /practice/details keeps its own co-located banking hint.
+    expect(DETAILS).toMatch(/gate\.reason === 'no_banking'/);
+    expect(DETAILS).toMatch(/branch-banking-hint/);
+    // The POS action still enforces the gate.
+    expect(POS).toMatch(/checkTradingGate/);
+    // Every "Create a bill" entry point still carries the gate's own message.
+    expect(CTA).toMatch(/title=\{gate\.message\}/);
+    // And none of them knows the checklist exists.
+    for (const src of [BILLS_NEW, DETAILS, POS, CTA]) {
+      expect(src).not.toMatch(/SetupChecklist|checklistShown/);
+    }
+  });
+});
+
 // ─── Copy — the gogo test ─────────────────────────────────────────────────
 
 describe('the copy explains why, in plain language', () => {
@@ -237,22 +357,34 @@ describe('the copy explains why, in plain language', () => {
     expect(LIB).toMatch(/So we can pay you/);
     expect(LIB).toMatch(/who treated the patient/);
     expect(LIB).toMatch(/patients can find you/);
-    expect(LIB).toMatch(/without borrowing your login/);
   });
 
   it('no user-facing string names a column, a table, or a role', () => {
-    // Extract the copy block and check it in isolation, so the surrounding
+    // Extract the copy blocks and check them in isolation, so the surrounding
     // implementation comments cannot mask a leak into the actual strings.
+    const JARGON = /practice_members|till_pin_hash|bank_account_number|provider_id|RLS|payout|can_manage_practice/i;
+
     const copy = LIB_SRC.match(/const COPY[\s\S]*?\n\};/)?.[0] ?? '';
     expect(copy.length).toBeGreaterThan(100);
-    expect(copy).not.toMatch(/practice_members|till_pin_hash|bank_account_number|provider_id|RLS|payout|can_manage_practice/i);
+    expect(copy).not.toMatch(JARGON);
+
+    const nudge = LIB_SRC.match(/export const TILL_SUGGESTION[\s\S]*?\n\} as const;/)?.[0] ?? '';
+    expect(nudge.length).toBeGreaterThan(100);
+    expect(nudge).not.toMatch(JARGON);
   });
 
-  it('the approval note sets an expectation and asks for nothing', () => {
-    expect(LIB).toMatch(/AWAITING_APPROVAL_NOTE/);
-    const note = LIB_SRC.match(/AWAITING_APPROVAL_NOTE\s*=\s*\n?\s*'([^']*)'/)?.[1] ?? '';
-    expect(note).toMatch(/one working day/i);
-    // It must not read as a task — nobody at the practice can action it.
-    expect(note).not.toMatch(/click|complete this|you must/i);
+  it('the till nudge says it is optional, and makes both halves of the case', () => {
+    const nudge = LIB_SRC.match(/export const TILL_SUGGESTION[\s\S]*?\n\} as const;/)?.[0] ?? '';
+    // Optional, said outright rather than implied by styling alone.
+    expect(nudge).toMatch(/Optional/);
+    // Ease of use — reception is not waiting on the manager.
+    expect(nudge).toMatch(/without waiting for you/i);
+    // Security, made concrete: a PIN of their own instead of a shared login.
+    expect(nudge).toMatch(/PIN/);
+    expect(nudge).toMatch(/login never has to be shared/i);
+    // Fresh wording, not the required-item line it replaced.
+    expect(nudge).not.toMatch(/borrowing your login/i);
+    // And it does not read as a demand.
+    expect(nudge).not.toMatch(/you must|required|before you can/i);
   });
 });
