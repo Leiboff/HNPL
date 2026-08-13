@@ -19,7 +19,9 @@
 --    3. payouts                (refs plans, practices, profiles)
 --    4. refunds                (refs profiles)
 --    5. patient_invitations    (refs plans, practices, profiles)
---    6. plans                  (refs applications, practices, profiles)
+--    6. plans                  (refs applications, practices, profiles,
+--                               practice_members via provider_member_id — which
+--                               is why plans must die before step 9)
 --    7. applications           (refs practices, profiles)
 --    8. payment_methods        (refs profiles)
 --    9. practice_members       (refs practices, profiles)
@@ -62,7 +64,16 @@ SELECT
   (SELECT count(*) FROM public.practice_members     WHERE user_id    = u.id) AS memberships,
   (SELECT count(*) FROM public.payment_methods      WHERE patient_id = u.id) AS payment_methods,
   (SELECT count(*) FROM public.applications         WHERE patient_id = u.id) AS applications,
-  (SELECT count(*) FROM public.plans                WHERE patient_id = u.id OR provider_id = u.id) AS plans,
+  -- plans reaches the practitioner through practice_members since 0094, which
+  -- repointed attribution off plans.provider_id (deprecated, dropped by a later
+  -- migration). Going via the membership is also STRICTLY WIDER than the old
+  -- predicate: it catches a plan attributed to a roster-only practitioner, who
+  -- has no auth user for provider_id to have pointed at in the first place.
+  (SELECT count(*) FROM public.plans p
+     WHERE p.patient_id = u.id
+        OR p.provider_member_id IN (
+             SELECT pm.id FROM public.practice_members pm WHERE pm.user_id = u.id
+           )) AS plans,
   (SELECT count(*) FROM public.payments             WHERE patient_id = u.id) AS payments,
   (SELECT count(*) FROM public.payouts              WHERE provider_id = u.id) AS payouts,
   (SELECT count(*) FROM public.refunds              WHERE patient_id = u.id) AS refunds,
@@ -124,10 +135,16 @@ BEGIN
   -- Target plans derived from target users / practices. Captured here so
   -- the payments / payouts / patient_invitations DELETEs below see the
   -- same plan ids even after plans gets deleted.
+  -- provider_member_id (0094), not the deprecated provider_id. Safe to resolve
+  -- through practice_members here: this snapshot is taken before step 9 deletes
+  -- those membership rows, which is the same reason the snapshot exists at all.
   CREATE TEMP TABLE _cleanup_plans ON COMMIT DROP AS
     SELECT id FROM public.plans
     WHERE patient_id  IN (SELECT id FROM _cleanup_users)
-       OR provider_id IN (SELECT id FROM _cleanup_users)
+       OR provider_member_id IN (
+            SELECT pm.id FROM public.practice_members pm
+            WHERE pm.user_id IN (SELECT id FROM _cleanup_users)
+          )
        OR practice_id IN (SELECT id FROM _cleanup_practices);
 
   -- 1. plan_events

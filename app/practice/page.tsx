@@ -8,6 +8,11 @@ import { resolvePracticeViewer } from './practiceViewer';
 import PracticeDashboardClient from './PracticeDashboardClient';
 import CreateBillButton from './CreateBillButton';
 import NextPayoutHero from './NextPayoutHero';
+import PracticeSetupChecklist from './PracticeSetupChecklist';
+import {
+  loadSetupChecklistFacts,
+  buildSetupChecklist,
+} from '@/lib/practice/setupChecklist';
 import { resolveNextPayout } from '@/lib/practice/nextPayout';
 import { payoutDateFor, windowDates } from '@/lib/payments/payoutSchedule';
 import { PlanSummary } from './billHelpers';
@@ -161,6 +166,76 @@ export default async function PracticeDashboardPage({
       supabase, user.id, practiceId, canManagePractice,
     );
 
+  // ── Setup checklist ────────────────────────────────────────────────────
+  //
+  // Derived live from the same rows the trading gate reads — there is no
+  // stored completion flag anywhere in this feature, by design (see
+  // lib/practice/setupChecklist.ts for why one would go stale silently).
+  //
+  // Service-role for the facts, matching checkTradingGate above: how far a
+  // practice has got with its setup is a property of the PRACTICE, and
+  // reading it through the viewer's client would make the answer depend on
+  // that viewer's RLS reach — a brand-admin with no practice_members row
+  // reads no till_devices, and the card would report "no till" for a
+  // practice that has one.
+  //
+  // Authority for the LINKS, though, is the viewer's own: each of the three
+  // target screens rejects callers who lack the matching right, so the flags
+  // resolved just above decide whether an item gets a link or is handed to
+  // whoever manages the practice. Both values are already in hand — this
+  // adds no authority query of its own.
+  //
+  // Each right stays attached to the screen that enforces it — NOT collapsed
+  // into one "is a manager" flag. canManagePractice is false on the brand
+  // path by design (see practiceViewer.ts), and flattening it together with
+  // isBrandAdmin is exactly what would let brand authority stand in for
+  // practice-member capability.
+  const checklistAuthority = {
+    canEditDetails: isBrandAdmin,
+    canManageTeam:  canManagePractice,
+    canManageTill,
+  };
+
+  // Shown only to someone who can action at least ONE item — which is the
+  // disjunction of those three rights, not a manager check. For a
+  // reception-level member the whole card would be four things they cannot
+  // do; the trading-gate panel already tells them why billing is blocked, in
+  // one line, which is the part that concerns them.
+  const canSeeChecklist =
+    checklistAuthority.canEditDetails ||
+    checklistAuthority.canManageTeam  ||
+    checklistAuthority.canManageTill;
+
+  const setupChecklist = canSeeChecklist
+    ? buildSetupChecklist(
+        await loadSetupChecklistFacts(svc, practiceId),
+        checklistAuthority,
+      )
+    : null;
+
+  // ── Who says what, when both the panel and the card are in play ────────
+  //
+  // The trading-gate panel and the checklist independently arrived at the same
+  // job for two of the gate's three reasons: "add a provider" and "add
+  // banking" are a checklist row AND a panel paragraph, in different words,
+  // one above the other. Two differently-worded instructions for one task
+  // reads as two tasks — the exact confusion the checklist was built to end.
+  //
+  // So when the card is actually on the page, it owns those two. The panel
+  // keeps 'pending_approval', which the card does not cover at all and which
+  // nobody at the practice can action.
+  //
+  // This is conditional, not a narrowing of the panel, and that matters: a
+  // reception-level member gets no card (canSeeChecklist is false for them),
+  // and on that surface the panel is byte-for-byte what it always was. The
+  // suppression can only fire where a replacement is provably present —
+  // reason='no_providers' means zero active providers, which is exactly the
+  // condition that leaves the card's provider row outstanding, and the same
+  // holds for banking. A complete card cannot coexist with either reason.
+  const checklistShown = !!setupChecklist && !setupChecklist.complete;
+  const showGatePanel =
+    !gate.ok && (gate.reason === 'pending_approval' || !checklistShown);
+
   return (
     <PracticeShell
       practiceName={practiceName}
@@ -198,7 +273,14 @@ export default async function PracticeDashboardPage({
 
         {/* Bounce-back banner — only shown when /practice/bills/new
             redirected us here because the gate was closed. Disappears on
-            any subsequent navigation that doesn't carry ?reason=. */}
+            any subsequent navigation that doesn't carry ?reason=.
+
+            Its job is to explain the REDIRECT — "you asked for the bill form
+            and got sent back here" — which nothing else on the page does. So
+            it stays. What it stops doing is repeating the instruction: when the
+            checklist is up, the list below is the single place that says what
+            to fix, and this points at it instead of restating one item of it in
+            the gate's words. */}
         {cameFromGatedBillsPage && !gate.ok && (
           <div
             role="alert"
@@ -206,12 +288,19 @@ export default async function PracticeDashboardPage({
             className="rounded-xl border border-amber-300 bg-amber-100 px-4 py-3 text-sm text-amber-900"
           >
             <p className="font-semibold">You can&apos;t create bills yet.</p>
-            <p className="mt-1">{gate.message}</p>
+            <p className="mt-1">
+              {checklistShown
+                ? 'Everything that’s still outstanding is in the list below.'
+                : gate.message}
+            </p>
           </div>
         )}
 
-        {/* Trading-gate panel — explains why the CTA is disabled when blocked. */}
-        {!gate.ok && (
+        {/* Trading-gate panel — explains why the CTA is disabled when blocked.
+            Suppressed for the two reasons the checklist already covers; see
+            showGatePanel above for why that is conditional rather than a
+            permanent narrowing. */}
+        {showGatePanel && (
           <div
             role="status"
             className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm"
@@ -252,6 +341,20 @@ export default async function PracticeDashboardPage({
               </a>
             )}
           </div>
+        )}
+
+        {/* Setup checklist — above the hero ONLY while it exists, and it
+            removes itself the moment the last item is ticked (it returns null
+            when complete, so there is no empty shell left behind).
+
+            Above, because a practice that still has setup outstanding has
+            nothing in the hero yet — no bills means no payout, so the hero is
+            showing its empty state and the actionable thing on the page is
+            this. Once setup is done the card vanishes and the hero is back at
+            the top of the page, where it belongs for every day after the
+            first. The hero itself is untouched. */}
+        {setupChecklist && (
+          <PracticeSetupChecklist checklist={setupChecklist} practiceId={practiceId} />
         )}
 
         {/* Next payout — the money question, answered first. Additive: the

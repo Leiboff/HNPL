@@ -21,6 +21,17 @@
 --      isn't permanently locked.
 --
 -- The expected RAISE NOTICEs at the end summarise the three scenarios.
+--
+-- ATTRIBUTION COLUMN (0094)
+-- ─────────────────────────
+-- The plans inserts below name plans.provider_member_id — a practice_members
+-- row — because that is what the application writes since 0094 repointed
+-- attribution off plans.provider_id (which referenced an auth user, so a
+-- roster-only practitioner could never be billed for). provider_id is retained
+-- in the schema as backfill evidence and is COMMENTed deprecated; a later
+-- migration drops it. A manual script still writing it would turn that drop
+-- into a breakage discovered at the worst moment, and would also be testing
+-- the RLS gate through a column no real caller uses any more.
 
 BEGIN;
 
@@ -38,6 +49,10 @@ DECLARE
   v_app_id_2      uuid := gen_random_uuid();
   v_app_id_3      uuid := gen_random_uuid();
   v_plan_id_3     uuid := gen_random_uuid();
+  -- practice_members ids, captured with RETURNING. plans point at a MEMBERSHIP
+  -- since 0094, not at an auth user, so these are what the inserts need.
+  v_admin_member_id    uuid;
+  v_provider_member_id uuid;
   v_failed        boolean;
   v_app_count     int;
   v_plan_count    int;
@@ -59,7 +74,8 @@ BEGIN
           'gate-test-practice@example.test', '+27820000000', '1 Test', 'Joburg', 'Gauteng', 'Sandton', '2196', 'General Practice');
 
   INSERT INTO practice_members (practice_id, user_id, role, active, can_create_bills, can_manage_practice, payout_destination)
-  VALUES (v_practice_id, v_admin_id, 'admin', true, true, true, 'practice');
+  VALUES (v_practice_id, v_admin_id, 'admin', true, true, true, 'practice')
+  RETURNING id INTO v_admin_member_id;
 
   -- ── Scenario 1: pending + no providers → INSERT must FAIL ────────────────
   PERFORM set_config('role', 'authenticated', true);
@@ -80,8 +96,13 @@ BEGIN
 
   v_failed := false;
   BEGIN
-    INSERT INTO plans (id, application_id, practice_id, provider_id, total_amount, status, invoice_number)
-    VALUES (gen_random_uuid(), v_app_id_1, v_practice_id, v_provider_id, 1000, 'pending_acceptance', 'INV-TEST-1');
+    -- Names the ADMIN's own membership: at this point it is the only
+    -- practice_members row that exists, so it is the only FK-valid value a
+    -- forged insert could carry. Which membership is named is irrelevant to
+    -- what this asserts — practice_can_trade() (0043) keys on practice_id
+    -- alone — and using a real row keeps the FK from being the reason it fails.
+    INSERT INTO plans (id, application_id, practice_id, provider_member_id, total_amount, status, invoice_number)
+    VALUES (gen_random_uuid(), v_app_id_1, v_practice_id, v_admin_member_id, 1000, 'pending_acceptance', 'INV-TEST-1');
   EXCEPTION WHEN insufficient_privilege OR check_violation OR others THEN
     v_failed := true;
   END;
@@ -116,7 +137,8 @@ BEGIN
   PERFORM set_config('role', 'postgres', true);
   PERFORM set_config('request.jwt.claims', '', true);
   INSERT INTO practice_members (practice_id, user_id, role, active, can_create_bills, can_manage_practice, payout_destination)
-  VALUES (v_practice_id, v_provider_id, 'provider', true, false, false, 'practice');
+  VALUES (v_practice_id, v_provider_id, 'provider', true, false, false, 'practice')
+  RETURNING id INTO v_provider_member_id;
 
   PERFORM set_config('role', 'authenticated', true);
   PERFORM set_config('request.jwt.claims',
@@ -125,8 +147,9 @@ BEGIN
   INSERT INTO applications (id, patient_id, practice_id, bill_amount, status)
   VALUES (v_app_id_3, NULL, v_practice_id, 1000, 'pending');
 
-  INSERT INTO plans (id, application_id, practice_id, provider_id, total_amount, status, invoice_number)
-  VALUES (v_plan_id_3, v_app_id_3, v_practice_id, v_provider_id, 1000, 'pending_acceptance', 'INV-TEST-3');
+  -- The practitioner's OWN membership — what createBill writes since 0094.
+  INSERT INTO plans (id, application_id, practice_id, provider_member_id, total_amount, status, invoice_number)
+  VALUES (v_plan_id_3, v_app_id_3, v_practice_id, v_provider_member_id, 1000, 'pending_acceptance', 'INV-TEST-3');
 
   RAISE NOTICE 'OK scenario 3 (approved, with provider): applications + plans insert succeeded';
 
