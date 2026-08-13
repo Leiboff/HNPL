@@ -4,20 +4,23 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { logoutAndRedirect } from '@/lib/auth/logout';
-import { getPracticeManagerLinks, getBrandExitLink } from './practiceManagerLinks';
+import { getPracticeNavLinks } from './practiceManagerLinks';
 
-// Base mobile links — Dashboard + Manage Practice. Deliberately this
-// component's OWN wording ("Manage Practice" vs. PracticeNav's "Team")
-// — that divergence predates this fix and was never the bug. The
-// CONDITIONAL links (Till devices, Practice details) come from
-// getPracticeManagerLinks (./practiceManagerLinks) instead of being
-// hand-repeated here — see PracticeNav.tsx's comment for why: that
-// hand-repetition is exactly what let "Till devices" reach desktop but
-// not mobile in the first place.
-const LINKS = [
-  { href: '/practice',         label: 'Dashboard'       },
-  { href: '/practice/members', label: 'Manage Practice' },
-];
+// This surface no longer keeps a link list of its own. It used to hold a
+// hand-written base list (Dashboard + Manage Practice) beside the shared
+// conditional links, and that half-and-half arrangement is what let
+// "Bills" have to be added in two places — the same shape as the original
+// bug, where "Till devices" reached desktop and not here.
+//
+// The ONE intentional difference survives as a parameter: this menu says
+// "Manage Practice" where the desktop sidebar says "Team". That wording
+// predates the fix and was never the bug, so it is preserved exactly.
+//
+// It also picks up a fix for free: the old hardcoded base hrefs carried
+// no ?practiceId=, so a brand-admin viewing one branch on mobile lost
+// their branch scope the moment they tapped Dashboard or Manage Practice.
+// One source cannot emit two different href sets.
+const TEAM_LABEL_MOBILE = 'Manage Practice';
 
 type Props = {
   practiceName:         string;
@@ -38,15 +41,10 @@ export default function PracticeHeader({
   const pathname          = usePathname();
   const menuRef           = useRef<HTMLDivElement>(null);
 
-  // Same shared source as the conditional links, and the same position
-  // (above the base list) as the desktop sidebar — see getBrandExitLink.
-  const exitLink = getBrandExitLink({ isBrandAdmin, brandPracticeCount });
-
-  const links = [
-    ...(exitLink ? [exitLink] : []),
-    ...LINKS,
-    ...getPracticeManagerLinks({ practiceId, canManageTill, isBrandAdmin }),
-  ];
+  const links = getPracticeNavLinks({
+    practiceId, canManageTill, isBrandAdmin, brandPracticeCount,
+    teamLabel: TEAM_LABEL_MOBILE,
+  });
 
   // Close on route change
   useEffect(() => { setOpen(false); }, [pathname]);
@@ -64,9 +62,13 @@ export default function PracticeHeader({
   // Logout uses the shared helper — see lib/auth/logout for why the
   // redirect must run unconditionally on flaky mobile networks.
 
+  // Same rule as the desktop sidebar: exact match for the two routes that
+  // are prefixes of others (/practice, and /practice/bills vs its own
+  // /new child), startsWith for the rest.
   function isActive(href: string) {
     const path = href.split('?')[0];
-    return path === '/practice' ? pathname === '/practice' : pathname.startsWith(path);
+    if (path === '/practice' || path === '/practice/bills') return pathname === path;
+    return pathname.startsWith(path);
   }
 
   return (

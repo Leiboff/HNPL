@@ -138,13 +138,19 @@ describe('a brand-admin opening a branch still gets a BRANCH-SCOPED bill CTA', (
     expect(DASHBOARD).toMatch(/<CreateBillButton\s+gate=\{gate\}\s+variant="primary"\s+practiceId=\{practiceId\}\s*\/>/);
   });
 
-  it('the banking hint + #banking anchor moved WITH the banking form to /practice/details', () => {
+  it('the banking hint + #banking anchor live WITH the banking form, now on /practice/settings', () => {
+    // Followed the form: banking is a SECTION of Settings since the nav
+    // restructure. /practice/details remains as a redirect that names no
+    // fragment of its own, so the dashboard CTA's #banking still lands on
+    // the anchor asserted here.
+    const SETTINGS = readSrc('app/practice/settings/page.tsx');
+    expect(SETTINGS).toMatch(/gate\.reason === 'no_banking'/);
+    expect(SETTINGS).toMatch(/branch-banking-hint/);
+    expect(SETTINGS).toMatch(/#banking/);
+    expect(SETTINGS).toMatch(/id="banking"/);
+    // And the legacy route still resolves, without swallowing the fragment.
     const DETAILS = readSrc('app/practice/details/page.tsx');
-    expect(DETAILS).toMatch(/gate\.reason === 'no_banking'/);
-    expect(DETAILS).toMatch(/branch-banking-hint/);
-    expect(DETAILS).toMatch(/#banking/);
-    // BranchBankingForm is wrapped in the anchor target on the same page.
-    expect(DETAILS).toMatch(/id="banking"/);
+    expect(DETAILS).toMatch(/redirect\(`\/practice\/settings\$\{suffix\}`\)/);
   });
 });
 

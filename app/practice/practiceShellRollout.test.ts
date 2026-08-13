@@ -9,9 +9,13 @@ import { resolve } from 'node:path';
 // "← Back to dashboard" header with no sidebar, so from Till devices you
 // could not reach Team or Practice details without going back first.
 //
-// /practice/details joined the set when practice settings moved off
-// /brand/branch/[practiceId] — being inside the /practice tree is
-// precisely why it needs no nav of its own.
+// The set changed with the nav restructure. /practice/details and
+// /practice/pos/devices are no longer shell screens — they are thin
+// redirects into /practice/settings, which now hosts their content as
+// sections. /practice/settings and /practice/bills took their place. The
+// two stubs are pinned as redirects in
+// app/practice/details/practiceDetails.test.ts, so their absence from the
+// list below is asserted somewhere rather than being a silent hole.
 //
 // Three things are pinned here:
 //   1. Which screens render the shell (source-level, because the shell is
@@ -32,10 +36,18 @@ function read(rel: string): string {
 // no user session at all.
 const SHELL_SCREENS = [
   'app/practice/page.tsx',
+  'app/practice/bills/page.tsx',
+  'app/practice/bills/new/page.tsx',
   'app/practice/members/page.tsx',
+  'app/practice/settings/page.tsx',
+] as const;
+
+// The two routes that used to be in the list above and are now redirects.
+// Kept named here so "why is /practice/details not a shell screen any more"
+// has an answer in this file rather than only in the other one.
+const REDIRECT_STUBS = [
   'app/practice/details/page.tsx',
   'app/practice/pos/devices/page.tsx',
-  'app/practice/bills/new/page.tsx',
 ] as const;
 
 describe('every authenticated practice screen renders the shared nav shell', () => {
@@ -71,28 +83,40 @@ describe('every authenticated practice screen renders the shared nav shell', () 
   });
 
   it('nobody hand-writes a second nav link list — the shared source stays the only one', () => {
-    // getPracticeManagerLinks + getBrandExitLink are the single source for
-    // the conditional links; the desktop/mobile parity guard depends on
-    // that staying true.
+    // getPracticeNavLinks is the single source for EVERY nav link now (base
+    // links included, since the restructure); the desktop/mobile parity
+    // guard depends on that staying true.
     //
-    // Comments are stripped first: these files legitimately DISCUSS the
-    // "Practice details" link in prose (that's how the brand-admin gate
-    // documents itself). What must not exist is a hand-built link — i.e.
-    // the label as a quoted string in actual code, or an href to a nav
-    // destination.
+    // Comments are stripped first: these files legitimately DISCUSS the nav
+    // in prose (that's how the gates document themselves). What must not
+    // exist is a hand-built link — i.e. a nav label as a quoted string in
+    // actual code, or an href to a nav destination.
+    // LINE comments first, then block comments. The order is load-bearing:
+    // these files discuss route globs like `/practice/*` and
+    // `app/practice/pos/devices/**` inside `//` prose, and a `/*` in there
+    // reads as the start of a block comment — so stripping blocks first
+    // deletes everything up to the next `*/` (in a .tsx file, the first
+    // `{/* … */}` in the JSX) and makes the absence assertions below pass on
+    // a source that is mostly missing.
     const stripComments = (s: string) =>
-      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 
     for (const path of SHELL_SCREENS) {
       const code = stripComments(read(path));
-      expect(code).not.toMatch(/['"`]Till devices['"`]/);
-      expect(code).not.toMatch(/['"`]← All practices['"`]/);
+      expect(code, path).not.toMatch(/['"`]← All practices['"`]/);
+      expect(code, path).not.toMatch(/['"`]Manage Practice['"`]/);
     }
-    // NOTE deliberately not asserted: the dashboard's own inline
-    // "See all my practices (N)" link to /brand. That predates the nav
-    // exit link, is worded and gated differently (membership count, not
-    // brand size), and is a page element rather than a nav entry — it is
-    // not the duplicated-link-list failure mode this test guards.
+    // NOTE deliberately not asserted:
+    //   • the dashboard's own inline "See all my practices (N)" link to
+    //     /brand. That predates the nav exit link, is worded and gated
+    //     differently (membership count, not brand size), and is a page
+    //     element rather than a nav entry.
+    //   • the Settings page's in-page jump list, and its "Till devices"
+    //     section heading. Those are anchors and a heading WITHIN one
+    //     screen, built from ./settings/settingsSections — not a second
+    //     copy of the sidebar.
+    //   • the recent-bills card's "See all →". A page element pointing at
+    //     one tab, not a nav list.
   });
 
   it('/practice/setup is deliberately shell-less (it runs only before a practice exists)', () => {
@@ -106,6 +130,19 @@ describe('every authenticated practice screen renders the shared nav shell', () 
   it('every shell screen keeps its existing auth gate (regression)', () => {
     for (const path of SHELL_SCREENS) {
       expect(read(path)).toMatch(/requireConfirmedUser/);
+    }
+  });
+
+  it('the two ex-shell routes are redirects, which is why they left the list', () => {
+    // Without this, dropping a screen from SHELL_SCREENS would be a way to
+    // silently exempt it from every assertion above.
+    for (const path of REDIRECT_STUBS) {
+      const src = read(path);
+      expect(src, path).toMatch(/redirect\(`\/practice\/settings/);
+      expect(src, path).not.toMatch(/<PracticeShell/);
+      // They still require a login — a redirect is not a reason to widen the
+      // anon-reachable set (see practice-routes-auth.test.ts).
+      expect(src, path).toMatch(/requireConfirmedUser/);
     }
   });
 

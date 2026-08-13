@@ -1,150 +1,57 @@
 import { redirect } from 'next/navigation';
-import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import {
-  generateDeviceRegistrationCode,
-  revokeDevice,
-  setTillPin,
-  generateTillPinValue,
-  listDevices,
-  relabelDevice,
-} from './actions';
-import DeviceAdminView from './DeviceAdminView';
-import PracticeShell from '@/app/practice/PracticeShell';
-import { resolvePracticeShellAuthority } from '@/app/practice/practiceShellAuthority';
 
-// ─── /practice/pos/devices — manager-only till administration ─────────────
+// ─── /practice/pos/devices → /practice/settings#till ─────────────────────
 //
-// Ordinary per-user Supabase login, unchanged — this is NOT the
-// device-gated model (that's /practice/pos itself). Reachable by either
-// a per-practice manager (can_manage_practice) OR a brand-admin of the
-// practice's group (practice_group_members) — see guardTillManager in
-// ./actions.ts for the authority check itself; this page no longer
-// re-implements a narrower practice_members-only gate of its own (it
-// used to, which is exactly what made the brand-admin path 404 even
-// with a link present — see the entry-point fix that added this
-// comment).
+// Till administration is a SECTION of /practice/settings now. This stays as
+// a redirect rather than being deleted because inbound links still point
+// here and none of them may 404:
 //
-// Authorization is decided ENTIRELY by listDevices()'s own guard below —
-// this page just resolves which practiceId to ask about and redirects
-// if that guard rejects. practiceName/hasPin are read via service-role
-// once authorized, since a brand-only caller has no practice_members row
-// for the authenticated client's RLS to key off.
-
-function svc() {
-  return createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
-  );
-}
+//   • the setup checklist's till suggestion (lib/practice/setupChecklist.ts)
+//   • the brand dashboard's per-branch "Till devices" link
+//     (app/brand/GroupDashboard.tsx), scoped by that branch's id
+//   • anything a practice has bookmarked
+//
+// Unlike the /practice/details stub, this one DOES name a fragment: nothing
+// links here with a fragment of its own, so there is none to preserve, and
+// landing on the section itself beats landing at the top of a page whose
+// first two sections a plain manager cannot even see.
+//
+// requireConfirmedUser stays. This route has always required a normal login
+// — it is the till ADMIN screen, not the device-credentialled kiosk
+// (/practice/pos) or its anon-reachable registration screen
+// (/practice/pos/register). app/practice/practice-routes-auth.test.ts pins
+// that boundary at exactly those two, and a redirect is not a reason to
+// widen it.
+//
+// The authorization decision has NOT moved to this file. It still belongs
+// to listDevices()'s own guardTillManager, which the Settings page calls
+// before rendering the section. This stub deliberately checks nothing
+// beyond "is there a logged-in user": a stub that re-implemented the
+// manager check would be a second, narrower gate, and a narrower duplicate
+// gate here is exactly what made the brand-admin path 404 on this route
+// once before.
+//
+// DeviceAdminView.tsx and actions.ts still live in this directory and are
+// imported from here by the Settings page — their test suites address them
+// at these paths.
 
 type SearchParams = { practiceId?: string };
 
-export default async function DevicesPage({
+export default async function DevicesRedirect({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
+  await requireConfirmedUser({ next: '/practice/pos/devices' });
 
-  const { user, supabase } = await requireConfirmedUser({ next: '/practice/pos/devices' });
+  // The scope must survive: the brand dashboard's link identifies WHICH
+  // branch's tills are being administered, and dropping it would land a
+  // brand-admin on their first membership instead.
+  const suffix = params.practiceId
+    ? `?practiceId=${encodeURIComponent(params.practiceId)}`
+    : '';
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single();
-
-  if (profile?.role !== 'practice_admin' && profile?.role !== 'practice_staff') {
-    if (profile?.role === 'patient')  redirect('/patient');
-    else if (profile?.role === 'admin') redirect('/admin');
-    else redirect('/login');
-  }
-
-  // Target practice: an explicit ?practiceId= (how both entry-point
-  // links — the single-practice sidebar and the brand branch strip —
-  // always reach this page) or, for a direct hit with none, the
-  // caller's own first can_manage_practice practice_members row —
-  // matching every other /practice/* page's fallback shape. A pure
-  // brand-admin with zero practice_members rows anywhere has no
-  // meaningful fallback here (there's no "first practice" to guess),
-  // so they must arrive via an explicit ?practiceId= link.
-  let practiceId = params.practiceId ?? null;
-  if (!practiceId) {
-    const { data: memberships } = await supabase
-      .from('practice_members')
-      .select('practice_id')
-      .eq('user_id', user.id)
-      .eq('active', true)
-      .eq('can_manage_practice', true)
-      .order('created_at', { ascending: true })
-      .limit(1);
-    if (!memberships || memberships.length === 0) redirect('/practice');
-    practiceId = memberships[0].practice_id as string;
-  }
-
-  // The real authorization decision — per-practice manager OR
-  // brand-admin of this practice's group. Anyone else is rejected here,
-  // before any practice-scoped data is fetched.
-  const devicesResult = await listDevices(practiceId);
-  if (devicesResult.error) redirect('/practice');
-
-  const s = svc();
-  const { data: practice } = await s
-    .from('practices')
-    .select('name, till_pin_hash')
-    .eq('id', practiceId)
-    .maybeSingle();
-  const practiceName = (practice?.name as string | undefined) ?? 'Practice';
-
-  // ── Nav-shell authority ───────────────────────────────────────────────
-  //
-  // Resolved with the SAME checks every other practice screen uses, not
-  // assumed from the fact that listDevices() already let us in. Reaching
-  // this page does imply manager-tier authority, but hardcoding
-  // canManageTill=true here would mean the sidebar stopped reflecting the
-  // real permission and would silently diverge if that guard ever changed.
-  const { data: myMembership } = await supabase
-    .from('practice_members')
-    .select('can_manage_practice')
-    .eq('user_id',     user.id)
-    .eq('practice_id', practiceId)
-    .eq('active',      true)
-    .maybeSingle();
-  const { isBrandAdmin, canManageTill, brandPracticeCount } =
-    await resolvePracticeShellAuthority(
-      supabase, user.id, practiceId, !!myMembership?.can_manage_practice,
-    );
-
-  return (
-    <PracticeShell
-      practiceName={practiceName}
-      practiceId={practiceId}
-      isBrandAdmin={isBrandAdmin}
-      canManageTill={canManageTill}
-      brandPracticeCount={brandPracticeCount}
-    >
-      <main className="px-4 sm:px-6 py-6 sm:py-10 max-w-3xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-semibold text-gray-900">Till devices</h1>
-          <p className="mt-2 text-gray-500">
-            Register a till PC to issue bills without a personal login, and manage the
-            practice&apos;s till PIN.
-          </p>
-        </div>
-
-        <DeviceAdminView
-          practiceId={practiceId}
-          initialDevices={devicesResult.devices ?? []}
-          hasPin={!!practice?.till_pin_hash}
-          generateDeviceRegistrationCode={generateDeviceRegistrationCode}
-          revokeDevice={revokeDevice}
-          setTillPin={setTillPin}
-          generateTillPinValue={generateTillPinValue}
-          relabelDevice={relabelDevice}
-        />
-      </main>
-    </PracticeShell>
-  );
+  redirect(`/practice/settings${suffix}#till`);
 }

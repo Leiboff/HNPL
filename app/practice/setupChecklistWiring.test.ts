@@ -29,9 +29,14 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
+// LINE comments first, then block comments. The order is load-bearing: these
+// files discuss route globs like `app/practice/pos/devices/**` inside `//`
+// prose, and a `/*` in there reads as the start of a block comment — so
+// stripping blocks first deletes everything up to the next `*/` and every
+// absence assertion below passes on a source that is mostly missing.
 const codeOf = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, '')
-     .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+  src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
+     .replace(/\/\*[\s\S]*?\*\//g, '');
 
 const DASH_SRC  = read('app/practice/page.tsx');
 const DASH      = codeOf(DASH_SRC);
@@ -329,21 +334,24 @@ describe('the gate panel and the checklist do not both instruct', () => {
     // checklist, so none of them had a duplication to fix — and touching them
     // is how a de-duplication breaks something nobody was looking at.
     const BILLS_NEW = codeOf(read('app/practice/bills/new/page.tsx'));
-    const DETAILS   = codeOf(read('app/practice/details/page.tsx'));
+    // The banking hint moved with the banking form when the nav restructure
+    // folded /practice/details into /practice/settings as a section. Same
+    // hint, same gate reason, same co-location with the form it points at.
+    const SETTINGS  = codeOf(read('app/practice/settings/page.tsx'));
     const POS       = codeOf(read('app/practice/pos/actions.ts'));
     const CTA       = codeOf(read('app/practice/CreateBillButton.tsx'));
 
     // /practice/bills/new still bounces with the reason param.
     expect(BILLS_NEW).toMatch(/redirect\(`\/practice\?reason=trading_gate/);
-    // /practice/details keeps its own co-located banking hint.
-    expect(DETAILS).toMatch(/gate\.reason === 'no_banking'/);
-    expect(DETAILS).toMatch(/branch-banking-hint/);
+    // /practice/settings keeps the co-located banking hint.
+    expect(SETTINGS).toMatch(/gate\.reason === 'no_banking'/);
+    expect(SETTINGS).toMatch(/branch-banking-hint/);
     // The POS action still enforces the gate.
     expect(POS).toMatch(/checkTradingGate/);
     // Every "Create a bill" entry point still carries the gate's own message.
     expect(CTA).toMatch(/title=\{gate\.message\}/);
     // And none of them knows the checklist exists.
-    for (const src of [BILLS_NEW, DETAILS, POS, CTA]) {
+    for (const src of [BILLS_NEW, SETTINGS, POS, CTA]) {
       expect(src).not.toMatch(/SetupChecklist|checklistShown/);
     }
   });
