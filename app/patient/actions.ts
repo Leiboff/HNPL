@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { isPatientFrozen } from '@/lib/patient/freeze';
+import { declineCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef, registrationRef } from '@/lib/payments/peach/refs';
@@ -806,6 +807,30 @@ export async function declinePlan(
     .eq('patient_id', user.id);
 
   if (planError) return { error: planError.message };
+
+  // ── Propagate to the POS counter session, if this bill had one ────────
+  // A till-issued bill carries a checkout_sessions row (migration 0085)
+  // whose stage is what the till's "Today at this till" strip reports.
+  // Without this the plan reads 'declined' while its session sits at
+  // created/scanned, so the front desk is told "Waiting on patient" about a
+  // bill the patient refused — and it never corrects itself, because
+  // expire_stale_checkout_session only acts while the plan is still
+  // pending (see lib/checkout/declineCheckoutSessions.ts).
+  //
+  // Deliberately not returned to the patient as an error. Their decline HAS
+  // happened and is not retryable — the read above is scoped to
+  // status='pending_acceptance', so a second attempt gets "already
+  // actioned". Failing the action here would report a failure for something
+  // that succeeded and leave them with no way forward. Logged instead, at
+  // the same severity as the completion route's own session-stage write.
+  const sessionPropagation = await declineCheckoutSessionsForPlan(planId);
+  if (sessionPropagation.error) {
+    console.error('DECLINE PLAN: checkout_sessions propagation failed', {
+      planId,
+      error: sessionPropagation.error,
+      note: 'plan IS declined; the till strip may still show this session as waiting',
+    });
+  }
 
   revalidatePath('/patient', 'layout');
   return { error: null };

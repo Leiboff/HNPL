@@ -84,7 +84,7 @@ describe('completed, in-progress and abandoned are visibly distinguishable', () 
     ]) });
     await screen.findByTestId('till-today-list');
     expect(screen.getByTestId('till-today-detail-e').textContent).toBe('Didn’t finish in time');
-    expect(screen.getByTestId('till-today-detail-d').textContent).toBe('Declined');
+    expect(screen.getByTestId('till-today-detail-d').textContent).toBe('Patient declined');
   });
 
   it('a paid or waiting row carries no stopped-detail line', async () => {
