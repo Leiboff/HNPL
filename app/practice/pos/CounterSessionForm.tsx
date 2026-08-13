@@ -43,6 +43,26 @@ import { formatRand } from '../billHelpers';
 const SESSION_TTL_S = 120;
 const STAGE_POLL_MS = 3000;
 
+/**
+ * A session that has reached an ending — nothing more will happen to it, so
+ * there is nothing left to poll for and nothing left to abandon.
+ *
+ * The complement of lib/checkout/declineCheckoutSessions.ts's
+ * OPEN_CHECKOUT_STAGES, listed here rather than imported because that module
+ * builds a service-role client and has no business in a client bundle.
+ * lib/checkout/paymentFailedStage.test.ts pins the two against each other and
+ * against the migration's CHECK, so a stage added to the database without
+ * being handled here fails the tests rather than quietly leaving the till
+ * polling a dead session forever.
+ */
+const TERMINAL_STAGES: ReadonlySet<string> = new Set([
+  'completed', 'declined', 'expired', 'payment_failed',
+]);
+
+function isTerminalStage(stage: CounterSessionStage | null): boolean {
+  return stage !== null && TERMINAL_STAGES.has(stage);
+}
+
 type Props = {
   providers: ProviderOption[];
   // deviceSecret is injected by TillShell's withDeviceRecovery wrapper —
@@ -140,7 +160,7 @@ export default function CounterSessionForm({
     // fire-and-forget — the reset below must never wait on this, and
     // the lazy fail-safe (called from every read site on this token)
     // still catches it even if this specific call fails outright.
-    if (issued && stage !== 'completed' && stage !== 'declined' && stage !== 'expired') {
+    if (issued && !isTerminalStage(stage)) {
       void expireCounterSession(issued.token, { force: true }).catch(() => {
         // Non-fatal — the server-side lazy fail-safe is the backstop.
       });
@@ -208,7 +228,7 @@ export default function CounterSessionForm({
   // reaches any terminal stage; no point polling further.
   useEffect(() => {
     if (!issued) return;
-    if (stage === 'completed' || stage === 'declined' || stage === 'expired') return;
+    if (isTerminalStage(stage)) return;
     let cancelled = false;
     const poll = async () => {
       const result = await getCounterSessionStage(issued.token);
@@ -219,7 +239,11 @@ export default function CounterSessionForm({
     return () => { cancelled = true; window.clearInterval(id); };
   }, [issued, stage, getCounterSessionStage]);
 
-  const expired = issued !== null && (secondsLeft <= 0 || stage === 'expired' || stage === 'declined');
+  // "This QR is dead" — the clock ran out, or the session reached an ending
+  // that isn't payment. 'completed' is excluded because it has its own panel.
+  const expired =
+    issued !== null &&
+    (secondsLeft <= 0 || (isTerminalStage(stage) && stage !== 'completed'));
 
   if (issued) {
     return (

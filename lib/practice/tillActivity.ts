@@ -68,8 +68,9 @@ import { payoutPatientLabel } from './nextPayout';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type TillActivitySupabase = any;
 
-/** The stage values 0085's CHECK constraint allows. */
-export type TillSessionStage = 'created' | 'scanned' | 'completed' | 'declined' | 'expired';
+/** The stage values the CHECK constraint allows (0085, extended by 0095). */
+export type TillSessionStage =
+  | 'created' | 'scanned' | 'completed' | 'declined' | 'expired' | 'payment_failed';
 
 /**
  * Three buckets, because three is what a receptionist can scan while somebody
@@ -77,15 +78,18 @@ export type TillSessionStage = 'created' | 'scanned' | 'completed' | 'declined' 
  *
  *   done     stage='completed' — the patient finished checkout on their phone.
  *   pending  created / scanned — the QR is out and nothing has resolved.
- *   stopped  declined / expired — no money, and this session will not produce
- *            any. Whether it timed out, the teller moved on, or the patient
- *            refused the bill outright is a distinction the ROW keeps (see
- *            `stage`) and the strip prints, but it is the same answer to "did
- *            it go through?", so it is one bucket.
+ *   stopped  declined / expired / payment_failed — no money, and this session
+ *            will not produce any. Whether it timed out, the teller moved on,
+ *            the patient refused the bill, or the card was rejected is a
+ *            distinction the ROW keeps (see `stage`) and the strip prints, but
+ *            it is the same answer to "did it go through?", so it is one
+ *            bucket.
  *
- * 'declined' became reachable when declinePlan started propagating to the
- * session (lib/checkout/declineCheckoutSessions.ts). Before that, every
- * stopped session was an 'expired' one.
+ * Both of the non-clock endings arrived after this file did:
+ * 'declined' when declinePlan started propagating to the session, and
+ * 'payment_failed' when the webhook's first-charge failure did (both via
+ * lib/checkout/declineCheckoutSessions.ts). Before those, every stopped
+ * session was an 'expired' one.
  */
 export type TillSessionOutcome = 'done' | 'pending' | 'stopped';
 
@@ -131,11 +135,12 @@ export type TillActivity = {
 export const TILL_ACTIVITY_LIMIT = 40;
 
 const STAGE_OUTCOME: Record<TillSessionStage, TillSessionOutcome> = {
-  completed: 'done',
-  created:   'pending',
-  scanned:   'pending',
-  declined:  'stopped',
-  expired:   'stopped',
+  completed:      'done',
+  created:        'pending',
+  scanned:        'pending',
+  declined:       'stopped',
+  expired:        'stopped',
+  payment_failed: 'stopped',
 };
 
 type PatientRef = { first_name: string | null; last_name: string | null };

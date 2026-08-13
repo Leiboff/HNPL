@@ -448,7 +448,8 @@ export async function expireCounterSession(
 // client-side countdown). Deliberately minimal (a single column, no
 // realtime subscription) — the full multi-session board is a separate,
 // later piece.
-export type CounterSessionStage = 'created' | 'scanned' | 'completed' | 'declined' | 'expired';
+export type CounterSessionStage =
+  | 'created' | 'scanned' | 'completed' | 'declined' | 'expired' | 'payment_failed';
 
 export async function getCounterSessionStage(
   deviceSecret: string,

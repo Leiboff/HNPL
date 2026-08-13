@@ -3,21 +3,37 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { declineCheckoutSessionsForPlan } from './declineCheckoutSessions';
+import { declineCheckoutSessionsForPlan, failCheckoutSessionsForPlan } from './declineCheckoutSessions';
 
-// ─── Real-database test: plan decline → session decline ───────────────────
+// ─── Real-database test: a plan's ending reaches its session ──────────────
 //
-// The properties this feature is judged on are all DATABASE properties — does
-// the UPDATE match the right rows, does it leave terminal rows alone, is a
-// second call a no-op, does 'declined' even satisfy the constraint. A fake
-// client can only ever confirm which builder methods were called, so the
-// helper is driven here against a real in-process Postgres (pglite) through a
-// minimal PostgREST shim, with the stage CHECK CONSTRAINT LIFTED VERBATIM OUT
-// OF MIGRATION 0085 — so if someone narrows that constraint, this fails
-// rather than passing against a friendlier hand-written copy.
+// Two endings, one predicate: the patient refusing the bill ('declined') and
+// the first charge being rejected ('payment_failed').
+//
+// The properties both are judged on are all DATABASE properties — does the
+// UPDATE match the right rows, does it leave terminal rows alone, is a second
+// call a no-op, does the stage even satisfy the constraint. A fake client can
+// only ever confirm which builder methods were called, so the helpers are
+// driven here against a real in-process Postgres (pglite) through a minimal
+// PostgREST shim, with MIGRATION 0085's CHECK LIFTED VERBATIM and MIGRATION
+// 0095 APPLIED ON TOP OF IT — so if someone narrows either, this fails rather
+// than passing against a friendlier hand-written copy.
 
 const MIG = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0085_checkout_sessions.sql'),
+  'utf8',
+).replace(/\r\n/g, '\n');
+
+/**
+ * Migration 0095, applied on top — it drops 0085's inline CHECK and re-adds it
+ * with 'payment_failed'. Run in full rather than paraphrased, so the DO block
+ * that locates the old constraint by what it constrains (instead of trusting
+ * Postgres's derived name) is itself under test: if it fails to find and drop
+ * the original, the ADD leaves BOTH constraints in place and every
+ * payment_failed write below is rejected.
+ */
+const MIG_0095 = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/0095_checkout_session_payment_failed_stage.sql'),
   'utf8',
 ).replace(/\r\n/g, '\n');
 
@@ -124,6 +140,7 @@ async function stageOf(token: string): Promise<string> {
 beforeEach(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
+  await db.exec(MIG_0095);
   client = shim(db);
 });
 
@@ -134,14 +151,14 @@ describe('declineCheckoutSessionsForPlan — the till-issued bill it exists for'
 
     const result = await declineCheckoutSessionsForPlan(planId, client);
 
-    expect(result).toEqual({ declined: 1, error: null });
+    expect(result).toEqual({ closed: 1, error: null });
     expect(await stageOf('tok-created')).toBe('declined');
   });
 
   it('moves a SCANNED session too — the patient got as far as their phone', async () => {
     const planId = await seedPlan();
     await seedSession(planId, 'tok-scanned', 'scanned');
-    expect(await declineCheckoutSessionsForPlan(planId, client)).toEqual({ declined: 1, error: null });
+    expect(await declineCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 1, error: null });
     expect(await stageOf('tok-scanned')).toBe('declined');
   });
 
@@ -160,7 +177,7 @@ describe('declineCheckoutSessionsForPlan — never rewrites a terminal stage', (
 
     const result = await declineCheckoutSessionsForPlan(planId, client);
 
-    expect(result).toEqual({ declined: 0, error: null });
+    expect(result).toEqual({ closed: 0, error: null });
     expect(await stageOf('tok-done')).toBe('completed');
   });
 
@@ -172,7 +189,7 @@ describe('declineCheckoutSessionsForPlan — never rewrites a terminal stage', (
     const planId = await seedPlan();
     await seedSession(planId, 'tok-expired', 'expired');
 
-    expect(await declineCheckoutSessionsForPlan(planId, client)).toEqual({ declined: 0, error: null });
+    expect(await declineCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 0, error: null });
     expect(await stageOf('tok-expired')).toBe('expired');
   });
 
@@ -183,8 +200,8 @@ describe('declineCheckoutSessionsForPlan — never rewrites a terminal stage', (
     const first  = await declineCheckoutSessionsForPlan(planId, client);
     const second = await declineCheckoutSessionsForPlan(planId, client);
 
-    expect(first.declined).toBe(1);
-    expect(second.declined).toBe(0);
+    expect(first.closed).toBe(1);
+    expect(second.closed).toBe(0);
     expect(second.error).toBeNull();
     expect(await stageOf('tok-twice')).toBe('declined');
   });
@@ -197,7 +214,7 @@ describe('declineCheckoutSessionsForPlan — the email-issued bill', () => {
     // reachable today only for invitation-issued plans — so "no rows" must
     // read as normal, never as a failure.
     const planId = await seedPlan();
-    expect(await declineCheckoutSessionsForPlan(planId, client)).toEqual({ declined: 0, error: null });
+    expect(await declineCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 0, error: null });
   });
 
   it('never touches another plan\'s session', async () => {
@@ -205,7 +222,7 @@ describe('declineCheckoutSessionsForPlan — the email-issued bill', () => {
     const someone = await seedPlan('pending_acceptance');
     await seedSession(someone, 'tok-theirs', 'created');
 
-    expect(await declineCheckoutSessionsForPlan(mine, client)).toEqual({ declined: 0, error: null });
+    expect(await declineCheckoutSessionsForPlan(mine, client)).toEqual({ closed: 0, error: null });
     expect(await stageOf('tok-theirs')).toBe('created');
   });
 });
@@ -224,10 +241,151 @@ describe('declineCheckoutSessionsForPlan — several sessions on one plan', () =
 
     const result = await declineCheckoutSessionsForPlan(planId, client);
 
-    expect(result).toEqual({ declined: 2, error: null });
+    expect(result).toEqual({ closed: 2, error: null });
     expect(await stageOf('m-created')).toBe('declined');
     expect(await stageOf('m-scanned')).toBe('declined');
     expect(await stageOf('m-completed')).toBe('completed');
     expect(await stageOf('m-expired')).toBe('expired');
+  });
+});
+
+// ─── The failed first charge (migration 0095) ─────────────────────────────
+//
+// Far more common than a patient disputing a bill: a card that doesn't go
+// through is ordinary. The webhook's payment.failure branch sets
+// plans.status='cancelled' and, before this, left the session at 'scanned'
+// permanently — so the strip advised "Waiting on patient" about a declined
+// card, which is the opposite of the action the front desk needed.
+
+describe('failCheckoutSessionsForPlan — the declined card', () => {
+  it('moves a still-open session to payment_failed', async () => {
+    const planId = await seedPlan('cancelled');
+    await seedSession(planId, 'pf-created', 'created');
+
+    const result = await failCheckoutSessionsForPlan(planId, client);
+
+    expect(result).toEqual({ closed: 1, error: null });
+    expect(await stageOf('pf-created')).toBe('payment_failed');
+  });
+
+  it('moves a SCANNED session, which is where a real card failure leaves it', async () => {
+    // The realistic row: the patient scanned the QR, reached the widget, and
+    // the charge was rejected. 'scanned' is the stage that was freezing.
+    const planId = await seedPlan('cancelled');
+    await seedSession(planId, 'pf-scanned', 'scanned');
+
+    expect(await failCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 1, error: null });
+    expect(await stageOf('pf-scanned')).toBe('payment_failed');
+  });
+
+  it('the constraint accepts payment_failed only because 0095 was applied', async () => {
+    // Guards the premise: 0085's own CHECK does NOT permit this value, so if
+    // 0095 stopped being applied (or its DO block stopped finding the old
+    // constraint), this insert fails and every test above becomes a lie.
+    expect(STAGE_CHECK).not.toContain('payment_failed');
+    const planId = await seedPlan('cancelled');
+    await expect(seedSession(planId, 'pf-direct', 'payment_failed')).resolves.toBeUndefined();
+    expect(await stageOf('pf-direct')).toBe('payment_failed');
+  });
+
+  it('a stage outside the constraint is still rejected — 0095 widened, not removed', async () => {
+    const planId = await seedPlan('cancelled');
+    await expect(seedSession(planId, 'pf-bogus', 'refunded')).rejects.toThrow();
+  });
+});
+
+describe('failCheckoutSessionsForPlan — never rewrites a terminal stage', () => {
+  it('leaves a COMPLETED session alone', async () => {
+    // The race that matters: the completion route's stage write and a late
+    // webhook. Money moved — the session says so and keeps saying so.
+    const planId = await seedPlan('active');
+    await seedSession(planId, 'pf-done', 'completed');
+
+    expect(await failCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 0, error: null });
+    expect(await stageOf('pf-done')).toBe('completed');
+  });
+
+  it('leaves an EXPIRED session alone', async () => {
+    // Reachable in production: the QR's two minutes can run out while the
+    // patient is still in the widget, and a token touch then expires the
+    // session before the webhook lands.
+    const planId = await seedPlan('cancelled');
+    await seedSession(planId, 'pf-expired', 'expired');
+
+    expect(await failCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 0, error: null });
+    expect(await stageOf('pf-expired')).toBe('expired');
+  });
+
+  it('leaves a DECLINED session alone — the patient\'s own refusal outranks a charge result', async () => {
+    const planId = await seedPlan('declined');
+    await seedSession(planId, 'pf-declined', 'declined');
+
+    expect(await failCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 0, error: null });
+    expect(await stageOf('pf-declined')).toBe('declined');
+  });
+
+  it('is idempotent — a redelivered webhook moves nothing the second time', async () => {
+    // Peach retries on non-200, and this route answers 200 to everything, but
+    // duplicate deliveries still happen. The second call must be silent.
+    const planId = await seedPlan('cancelled');
+    await seedSession(planId, 'pf-twice', 'scanned');
+
+    const first  = await failCheckoutSessionsForPlan(planId, client);
+    const second = await failCheckoutSessionsForPlan(planId, client);
+
+    expect(first.closed).toBe(1);
+    expect(second).toEqual({ closed: 0, error: null });
+    expect(await stageOf('pf-twice')).toBe('payment_failed');
+  });
+
+  it('is a clean no-op for an email-issued bill with no session', async () => {
+    const planId = await seedPlan('cancelled');
+    expect(await failCheckoutSessionsForPlan(planId, client)).toEqual({ closed: 0, error: null });
+  });
+
+  it('never touches another plan\'s session', async () => {
+    const mine    = await seedPlan('cancelled');
+    const someone = await seedPlan('pending_first_payment');
+    await seedSession(someone, 'pf-theirs', 'scanned');
+
+    expect(await failCheckoutSessionsForPlan(mine, client)).toEqual({ closed: 0, error: null });
+    expect(await stageOf('pf-theirs')).toBe('scanned');
+  });
+});
+
+describe('the two endings do not collide', () => {
+  it('a decline does not overwrite a payment failure, and vice versa', async () => {
+    // Both are terminal to this module, so whichever lands first is the
+    // record. That is the property that keeps the strip's advice stable —
+    // a row cannot flip between "try another card" and "do not retry".
+    const a = await seedPlan('cancelled');
+    await seedSession(a, 'x-failed', 'scanned');
+    await failCheckoutSessionsForPlan(a, client);
+    expect(await declineCheckoutSessionsForPlan(a, client)).toEqual({ closed: 0, error: null });
+    expect(await stageOf('x-failed')).toBe('payment_failed');
+
+    const b = await seedPlan('declined');
+    await seedSession(b, 'x-declined', 'scanned');
+    await declineCheckoutSessionsForPlan(b, client);
+    expect(await failCheckoutSessionsForPlan(b, client)).toEqual({ closed: 0, error: null });
+    expect(await stageOf('x-declined')).toBe('declined');
+  });
+
+  it('a successful RETRY can still carry a failed session to completed', async () => {
+    // The one deliberate exception, and the reason payment_failed is not a
+    // dead end: the failure card offers "try again with the same or a
+    // different card", and the completion route's own write is guarded only by
+    // .neq('stage', 'completed'). Reproduced here with that exact predicate.
+    const planId = await seedPlan('active');
+    await seedSession(planId, 'retry-me', 'scanned');
+    await failCheckoutSessionsForPlan(planId, client);
+    expect(await stageOf('retry-me')).toBe('payment_failed');
+
+    await db.query(
+      `update checkout_sessions set stage = 'completed'
+        where plan_id = $1 and stage <> 'completed'`,
+      [planId],
+    );
+    expect(await stageOf('retry-me')).toBe('completed');
   });
 });
