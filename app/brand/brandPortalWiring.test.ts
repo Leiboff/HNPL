@@ -235,12 +235,22 @@ describe('no new date or money formatting was introduced', () => {
     expect(code).toMatch(/formatWeekdayDayMonth \} from '@\/app\/patient\/_format'/);
   });
 
-  it('the two pre-existing local formatters were NOT copied into anything new', () => {
-    // GroupDashboard and RevenueClient each carry their own — pre-existing, out
-    // of scope, and reported rather than changed. What matters is that they did
-    // not spread.
+  it('the ONE remaining local formatter was not copied into anything new', () => {
+    // This pin used to name TWO pre-existing local formatters — GroupDashboard's
+    // and RevenueClient's. RevenueClient's is gone: it was the one that actually
+    // disagreed with the shared formatter (rounded cents, space separator), and
+    // the cross-screen comparisons in ./brandRevenueMoney.test.tsx now hold both
+    // brand screens to one string. See that file for the bug.
+    //
+    // GroupDashboard's survives and is asserted here on purpose. Its body is
+    // line-for-line the same as billHelpers' formatRand (only the parameter name
+    // differs) — a duplicate, not a divergence — so it renders correctly today,
+    // and replacing it is a separate cleanup rather than part of a formatting
+    // fix. That its OUTPUT still matches is not taken on trust: the cross-screen
+    // comparison in ./brandRevenueMoney.test.tsx renders both screens from one
+    // fixture and fails if they ever differ by a character.
     expect(read('app/brand/GroupDashboard.tsx')).toMatch(/function formatRand/);
-    expect(read('app/brand/revenue/RevenueClient.tsx')).toMatch(/function rand/);
+    expect(stripComments(read('app/brand/revenue/RevenueClient.tsx'))).not.toMatch(/function rand\b/);
     for (const path of NEW_FILES) {
       expect(stripComments(read(path)), path).not.toMatch(/replace\(\/\\B\(\?=/);
     }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
+import { formatRand } from '@/app/practice/billHelpers';
 import type { RevenueSummary } from '@/lib/brand/revenue';
 
 // ─── Revenue dashboard — client surface (net-only) ─────────────────────
@@ -12,6 +13,32 @@ import type { RevenueSummary } from '@/lib/brand/revenue';
 // What is intentionally NOT here: collection-progress (settled-so-far,
 // remaining instalments, processor charge state). The provider sees activated-
 // plan net-to-provider only; collection is BetterNow's float position.
+//
+// MONEY IS FORMATTED BY THE SHARED formatRand, NEVER LOCALLY
+// ─────────────────────────────────────────────────────────
+// This screen used to carry its own one-line helper:
+//
+//   v.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR',
+//                               maximumFractionDigits: 0 })
+//
+// which rendered R14,180.55 as "R 14 181" — and the brand Overview, using
+// the shared formatter, rendered the SAME figure as "R14,180.55". Three
+// separate divergences in one line: the cents were rounded away, the
+// thousands separator was a non-breaking space rather than a comma, and
+// there was a space after the R.
+//
+// That is not a styling difference. Both screens describe money a practice
+// reconciles against a bank deposit, so a reader comparing them cannot tell
+// a formatting choice from a shortfall — they see two different amounts for
+// one payment and have no way to know which is real. Rounding is the worst
+// of the three: it is silent, and it is wrong by up to 50c on every figure,
+// including the headline total.
+//
+// So there is no local money formatter here any more, and the source pins in
+// brandRevenueMoney.test.ts assert that none comes back. Intl currency
+// formatting in particular is banned on money surfaces: its output depends on
+// the ICU build the code happens to be running against, which is not a
+// property a reconcilable figure may have.
 
 type Props = {
   summary:            RevenueSummary;
@@ -20,10 +47,6 @@ type Props = {
   selectedPracticeId: string | null;
   selectedProviderId: string | null;
 };
-
-function rand(v: number): string {
-  return v.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 });
-}
 
 export default function RevenueClient({
   summary,
@@ -87,7 +110,7 @@ export default function RevenueClient({
           Net to provider (after commission)
         </p>
         <p className="mt-2 text-3xl font-semibold" style={{ color: '#13294B' }} data-testid="revenue-headline">
-          {rand(summary.totalNet)}
+          {formatRand(summary.totalNet)}
         </p>
         <p className="mt-1 text-xs text-gray-500">
           {summary.totalCount} active plan{summary.totalCount === 1 ? '' : 's'}. Net of BetterNow&apos;s commission.
@@ -146,7 +169,7 @@ function BreakdownTable({
                 </p>
               </div>
               <p className="text-sm font-semibold" style={{ color: '#13294B' }}>
-                {rand(r.net)}
+                {formatRand(r.net)}
               </p>
             </li>
           ))}

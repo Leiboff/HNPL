@@ -18,6 +18,25 @@ function niceMax(v: number): number {
   return Math.ceil(v / mag) * mag;
 }
 
+/**
+ * AXIS TICK LABELS — DELIBERATELY ABBREVIATED, and the one money-ish string on
+ * a brand surface that is allowed not to be exact.
+ *
+ * Stated explicitly because it is the exception to the rule the rest of the
+ * brand surface now follows: every figure a practice reconciles against a bank
+ * deposit goes through the shared formatRand (see
+ * ./revenue/RevenueClient's header for the bug that established that, where a
+ * local Intl formatter silently rounded away the cents on the headline total).
+ *
+ * A y-axis tick is not such a figure. It is a SCALE marker — "this gridline is
+ * about R40k" — and "R40,000.00" on four stacked ticks is both unreadable at
+ * this size and no more informative. Nobody reconciles a gridline: the
+ * reconcilable numbers for this data live in the hero above the chart and in
+ * Reports' by-practice breakdown, both exact.
+ *
+ * So this rounds on purpose. If a future change makes these labels the only
+ * place a figure appears, they stop being scale markers and must become exact.
+ */
 function shortAmt(v: number): string {
   if (v >= 1_000_000) return `R${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000)     return `R${(v / 1_000).toFixed(0)}k`;
