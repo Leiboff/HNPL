@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, relative } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── No manual script depends on plans.provider_id ────────────────────────
 //
@@ -54,12 +55,10 @@ function scriptFiles(dir: string, acc: string[] = []): string[] {
 
 // Comments discuss the deprecated column at length — including in this repo's
 // own migration headers — so they are stripped before anything is asserted.
-// Handles SQL `--` and JS `//` line comments and JS block comments.
-const codeOf = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, '')
-     .split('\n')
-     .map((l) => l.replace(/--.*$/, '').replace(/\/\/.*$/, ''))
-     .join('\n');
+// `sql: true` because most of these are .sql: a `-- …` comment naming a path
+// with `/*` in it would otherwise open a block comment and delete the
+// statement below it. See lib/testing/stripComments.ts.
+const codeOf = (src: string) => stripComments(src, { sql: true });
 
 const FILES = scriptFiles(SCRIPTS).map((p) => ({
   path: rel(p),

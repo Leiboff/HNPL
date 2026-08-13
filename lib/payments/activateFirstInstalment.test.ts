@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 import { activateFirstInstalment } from './activateFirstInstalment';
 
 // ─── activateFirstInstalment — shared terminal activation ───────────
@@ -335,7 +336,7 @@ describe('activateFirstInstalment — payouts ALWAYS go to the practice', () => 
     // Removing that read is what makes this structural rather than a
     // condition someone could flip back on.
     const src  = readFileSync(resolve(process.cwd(), 'lib/payments/activateFirstInstalment.ts'), 'utf8');
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = stripComments(src);
     expect(code).not.toMatch(/personal_bank_name/);
     expect(code).not.toMatch(/snapshot_/);
     expect(code).not.toMatch(/'provider'/);

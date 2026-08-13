@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import { buildMonthlySeries, lastTwelveMonthsFrom, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Brand surface — team management + filtered dashboard + net-only ───
 //
@@ -493,10 +494,8 @@ describe('Shared AddMemberForm — imported by BOTH practice and brand surfaces'
     // rather than lingering as dead API surface that could be switched on.
     // Comments stripped first: these files legitimately record in prose what
     // used to be here and why it went, which is worth keeping.
-    const stripComments = (s: string) =>
-      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
     for (const src of [ADD_FORM, MEMBERS_VIEW, TEAM]) {
-      expect(stripComments(src)).not.toMatch(/showPayoutFields/);
+      expect(stripComments(src, { jsxBraces: true })).not.toMatch(/showPayoutFields/);
     }
     // And the sub-form it gated is gone from the shared component.
     const addFormCode = stripComments(ADD_FORM);
@@ -607,7 +606,7 @@ describe('the branch page is now a pivot into the practice dashboard', () => {
     // Comments stripped first — the file explains the delegation in prose,
     // naming both notFound() and practice_group_members. What must not
     // exist is a real gate in the code.
-    const code = BRANCH_PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = stripComments(BRANCH_PAGE);
     expect(code).not.toMatch(/notFound\(/);
     expect(code).not.toMatch(/practice_group_members/);
 

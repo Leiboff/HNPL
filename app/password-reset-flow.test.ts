@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Tests — password-reset flow + auth-surface cross-links ────────────
 //
@@ -73,9 +74,7 @@ describe('/forgot-password — enumeration-safe request', () => {
     // No "user not found" / "no account" / "email does not exist"
     // string anywhere in the form; the success card is unconditional
     // once submit resolves (aside from the rate-limit friendly branch).
-    const codeOnly = FP_FORM
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(FP_FORM);
     expect(codeOnly.toLowerCase()).not.toContain('user not found');
     expect(codeOnly.toLowerCase()).not.toContain('no account');
     expect(codeOnly.toLowerCase()).not.toContain('email does not exist');

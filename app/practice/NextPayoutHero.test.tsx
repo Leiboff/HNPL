@@ -7,6 +7,7 @@ import NextPayoutHero from './NextPayoutHero';
 import { formatRand } from './billHelpers';
 import { payoutWindowEndingOn } from '@/lib/payments/payoutWindow';
 import { payoutDateFor, windowDates, openPayoutWindow } from '@/lib/payments/payoutSchedule';
+import { stripComments } from '@/lib/testing/stripComments';
 import type { NextPayoutResult, PayoutPlanLine } from '@/lib/practice/nextPayout';
 
 // ─── The hero a practice owner reads first ──────────────────────────────
@@ -360,7 +361,7 @@ describe('ADVERSARIAL — the component owns no date or money logic', () => {
   const SRC = readFileSync(resolve(process.cwd(), 'app/practice/NextPayoutHero.tsx'), 'utf8')
     .replace(/\r\n/g, '\n');
   /** Comments legitimately DISCUSS dates; code must not compute them. */
-  const code = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const code = stripComments(SRC);
 
   it('constructs no Date and reads no clock', () => {
     expect(code).not.toMatch(/new Date\b/);

@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { stripComments } from '@/lib/testing/stripComments';
 import { activateFirstInstalment } from './activateFirstInstalment';
 
 // ─── The snapshot_* columns must stay empty, forever ────────────────────
@@ -328,7 +329,7 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     // mask. Comments are stripped: this file's subject is discussed at length
     // in activateFirstInstalment's own comments, legitimately.
     const src = readFileSync(resolve(process.cwd(), 'lib/payments/activateFirstInstalment.ts'), 'utf8');
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    const code = stripComments(src);
     for (const col of SNAPSHOT_COLS) {
       expect(code, `activateFirstInstalment must not write ${col}`).not.toMatch(col);
     }

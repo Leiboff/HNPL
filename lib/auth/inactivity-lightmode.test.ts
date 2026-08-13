@@ -54,6 +54,12 @@ describe('globals.css — light-mode forced, no dark-mode media query', () => {
     // Explanatory prose in comments MAY reference the phrase; a real
     // @media rule is what we're forbidding. Strip comments before
     // checking so the prose doesn't create a false positive.
+    //
+    // Deliberately NOT lib/testing/stripComments: this is CSS, where `/* */`
+    // is the ONLY comment form and `//` is not a comment at all. Running the
+    // JS-aware helper over it would treat `url(//host/x)` and any bare
+    // `https://` as a line comment and delete the rest of the line. Block-only
+    // is not an oversight here — it is the correct stripper for the language.
     const codeOnly = GLOBALS_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
     expect(codeOnly).not.toMatch(/@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)/);
   });

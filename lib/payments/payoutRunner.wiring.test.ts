@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Payout runner wiring + the provider-destination removal ────────────
 //
@@ -14,8 +15,7 @@ const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
 /** Comments legitimately DISCUSS what was removed; code must not contain it. */
-const codeOf = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+const codeOf = (src: string) => stripComments(src);
 
 const CRON       = read('app/api/cron/payout-batches/route.ts');
 const COLLECT    = read('app/api/cron/collect-instalments/route.ts');

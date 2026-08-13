@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── A roster-only practitioner is BILLABLE end to end ────────────────────
 //
@@ -23,9 +24,7 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 /** Comments stripped: these files discuss the very filters they must not use. */
-const codeOf = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, '')
-     .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+const codeOf = (src: string) => stripComments(src);
 
 const PICKER   = read('app/practice/bills/new/page.tsx');
 const ACTIONS  = read('app/practice/bills/new/actions.ts');

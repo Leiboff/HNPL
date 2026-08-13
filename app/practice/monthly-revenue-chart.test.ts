@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Practice dashboard chart — aligned to the shared predicate ────────
 //
@@ -42,9 +43,7 @@ describe('Practice MonthlyRevenueChart — rendering-only adapter around shared 
   it('does NOT reference pending_acceptance at all — the shared filter owns that decision', () => {
     // Prose comments describe the fix at a high level; only the code
     // matters here. Strip comments then assert.
-    const codeOnly = CHART
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(CHART);
     expect(codeOnly).not.toMatch(/pending_acceptance/);
   });
 
@@ -52,9 +51,7 @@ describe('Practice MonthlyRevenueChart — rendering-only adapter around shared 
     // `p.status` as a plain field passthrough into the shared helper
     // is fine (the mapper's job); what we forbid is a comparison or
     // Set membership check — i.e. an in-component filter.
-    const codeOnly = CHART
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const codeOnly = stripComments(CHART);
     expect(codeOnly).not.toMatch(/\.status\s*===\s*['"]/);
     expect(codeOnly).not.toMatch(/status.*\.has\(/);
     expect(codeOnly).not.toMatch(/isActiveForRevenue\s*\(/);   // the helper calls it; the component must not

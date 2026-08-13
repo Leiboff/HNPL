@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── /practice/settings — three folded screens, three surviving gates ─────
 //
@@ -15,16 +16,12 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
-// LINE comments first, then block comments — the order matters and getting it
-// wrong silently deletes most of the file. These sources discuss paths like
-// `app/practice/pos/devices/**` inside `//` prose, and a `/**` in there reads
-// as the START of a block comment: stripping blocks first eats everything up
-// to the next `*/`, which in a .tsx file is the first `{/* … */}` in the JSX.
-// That made eight absence assertions below pass for the wrong reason and two
-// presence assertions fail on content that was plainly there.
-const codeOf = (src: string) =>
-  src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n')
-     .replace(/\/\*[\s\S]*?\*\//g, '');
+// Shared helper — see lib/testing/stripComments.ts. This page is the file that
+// exposed the bug: it discusses paths like `app/practice/pos/devices/**` inside
+// `//` prose, and a hand-rolled block-then-line strip read that `/**` as a
+// comment opener and deleted 3,443 of its 13,835 characters — which made eight
+// absence assertions below pass for the wrong reason.
+const codeOf = (src: string) => stripComments(src);
 
 const PAGE_SRC = read('app/practice/settings/page.tsx');
 const PAGE     = codeOf(PAGE_SRC);

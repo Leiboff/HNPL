@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Bill lifecycle chip wiring (source-text regression) ──────────────────
 //
@@ -31,12 +32,9 @@ const PAGE_BILLS_QUERY = read('app/practice/page.tsx');
 
 /** Comments stripped — these files DOCUMENT the labels and colours they must
  *  not hard-code, so an absence assertion over the raw text would match prose
- *  rather than code. */
-function codeOf(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
-}
+ *  rather than code. Shared helper: see lib/testing/stripComments.ts for why
+ *  hand-rolling the two regexes gets the order wrong. */
+const codeOf = (src: string) => stripComments(src);
 
 describe('the bills surfaces derive the label via the shared helper', () => {
   // The four-column collapse moved row rendering from BillsBlock into the
