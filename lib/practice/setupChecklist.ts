@@ -89,10 +89,31 @@ export type SetupChecklistFacts = {
   longitude:             number | null;
   /** resolvePayoutBanking(...).source !== 'none' — own OR brand banking. */
   bankingResolved:       boolean;
-  /** practice_members, active, role = 'provider' — roster rows included. */
-  activeProviderCount:   number;
-  /** till_devices with revoked_at IS NULL. Revoked devices do not count. */
-  activeTillDeviceCount: number;
+  /**
+   * At least one practice_members row, active, role = 'provider' — roster rows
+   * included.
+   *
+   * A BOOLEAN, not a count, and the name says so. It used to be
+   * `activeProviderCount: number`, which was a lie the loader could not tell the
+   * truth about: loadSetupChecklistFacts reads with .limit(1), because this
+   * checklist only ever asks "> 0", so the value was 0-or-1 however many
+   * practitioners a practice actually had.
+   *
+   * That lie nearly shipped. The brand Practices table read the field, believed
+   * the name, and would have rendered "1 on roster" for a practice with nine —
+   * a specific claim, and wrong. Presence is what is measured, so presence is
+   * what it is called.
+   *
+   * If a real count is ever needed, it needs its OWN field and its own
+   * un-limited read; dropping the .limit(1) here would change query cost on a
+   * path used by both this checklist and the brand table.
+   */
+  hasActiveProvider:     boolean;
+  /**
+   * At least one till_devices row with revoked_at IS NULL. Revoked devices do
+   * not count. Boolean for the same reason as hasActiveProvider above.
+   */
+  hasActiveTillDevice:   boolean;
   /** practices.till_pin_hash IS NOT NULL. */
   hasTillPin:            boolean;
 };
@@ -262,15 +283,15 @@ function detailsDone(f: SetupChecklistFacts): boolean {
  * suggestion turns into noise.
  */
 function tillDone(f: SetupChecklistFacts): boolean {
-  return f.activeTillDeviceCount > 0 && f.hasTillPin;
+  return f.hasActiveTillDevice && f.hasTillPin;
 }
 
 function tillHint(f: SetupChecklistFacts): string | null {
   if (tillDone(f)) return null;
-  if (f.activeTillDeviceCount > 0 && !f.hasTillPin) {
+  if (f.hasActiveTillDevice && !f.hasTillPin) {
     return 'The till computer is registered. It just needs a PIN before anyone can use it.';
   }
-  if (f.hasTillPin && f.activeTillDeviceCount === 0) {
+  if (f.hasTillPin && !f.hasActiveTillDevice) {
     return 'The PIN is set. Now register the computer at your front desk.';
   }
   return null;
@@ -315,7 +336,7 @@ export function buildSetupChecklist(
     {
       key:   'provider',
       ...pick('provider'),
-      done:  facts.activeProviderCount > 0,
+      done:  facts.hasActiveProvider,
       // /practice/members is readable by any member, but the control that
       // adds a practitioner is manager-only, so a non-manager sent here
       // would find nothing to click.
@@ -439,8 +460,8 @@ export async function loadSetupChecklistFacts(
     latitude:     practice?.latitude  != null ? Number(practice.latitude)  : null,
     longitude:    practice?.longitude != null ? Number(practice.longitude) : null,
     bankingResolved:       banking.source !== 'none',
-    activeProviderCount:   providers?.length ?? 0,
-    activeTillDeviceCount: devices?.length   ?? 0,
+    hasActiveProvider:   (providers?.length ?? 0) > 0,
+    hasActiveTillDevice: (devices?.length   ?? 0) > 0,
     hasTillPin:            !!practice?.till_pin_hash,
   };
 }

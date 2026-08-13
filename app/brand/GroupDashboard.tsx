@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import BrandMonthlyChart from './BrandMonthlyChart';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
+import { formatRand } from '@/app/practice/billHelpers';
 
 // ─── The Overview tab's REVENUE section (n>=2 brand experience) ───────
 //
@@ -51,11 +52,6 @@ import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenu
 // Filters combine (AND). The hero, trend chart, AND performance strip
 // all follow the same filter state — one consistent read across the
 // whole page.
-
-function formatRand(v: number): string {
-  const [integer, decimal] = v.toFixed(2).split('.');
-  return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
-}
 
 export type BranchOption = {
   id:       string;

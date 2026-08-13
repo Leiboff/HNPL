@@ -9,6 +9,7 @@ import {
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
 import type { IssueCounterSessionResult, CounterSessionStage, ProviderOption } from './actions';
+import { formatRand } from '../billHelpers';
 
 // ─── CounterSessionForm ──────────────────────────────────────────────
 //
@@ -41,11 +42,6 @@ import type { IssueCounterSessionResult, CounterSessionStage, ProviderOption } f
 
 const SESSION_TTL_S = 120;
 const STAGE_POLL_MS = 3000;
-
-function formatRand(n: number) {
-  const [integer, decimal] = n.toFixed(2).split('.');
-  return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
-}
 
 type Props = {
   providers: ProviderOption[];

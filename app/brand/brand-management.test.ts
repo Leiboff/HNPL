@@ -133,11 +133,16 @@ describe('Brand-admin actions — SA-range backstop on coord re-pick', () => {
 describe('Brand revenue page — uses service-role + scopes to caller\'s own group(s)', () => {
   const PAGE = read('app/brand/revenue/page.tsx');
 
-  it('reads practice_group_members for the caller before any data query', () => {
-    const idxMember  = PAGE.indexOf("from('practice_group_members')");
+  it('resolves the caller\'s own brand memberships before any data query', () => {
+    // RELOCATED: the inline four-line read became the shared
+    // resolveBrandGroupIds (lib/brand/brandViewer). Same invariant, same page,
+    // same ordering — authority first, data second — and still on the caller's
+    // own client rather than service-role.
+    const idxMember  = PAGE.indexOf('resolveBrandGroupIds(supabase, user.id)');
     const idxPlans   = PAGE.indexOf("from('plans')");
     expect(idxMember).toBeGreaterThan(0);
     expect(idxPlans).toBeGreaterThan(idxMember);
+    expect(PAGE).not.toMatch(/resolveBrandGroupIds\(s,/);
   });
 
   it('filters practices + plans on the caller\'s OWN group_ids — never a URL-supplied list', () => {

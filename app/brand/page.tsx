@@ -10,6 +10,7 @@ import BrandShell from './BrandShell';
 import BrandQuickActions from './BrandQuickActions';
 import BrandPayoutBlock from './BrandPayoutBlock';
 import { resolveBrandPayouts } from '@/lib/brand/brandPayouts';
+import { resolveBrandGroupIds } from '@/lib/brand/brandViewer';
 import {
   PROVIDER_MEMBER_SELECT,
   providerMemberName,
@@ -71,16 +72,12 @@ export default async function BrandDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: rawMemberships } = await supabase
-    .from('practice_group_members')
-    .select('group_id, active')
-    .eq('user_id', user.id)
-    .eq('active', true);
+  // Authority through the caller's OWN client — RLS decides, and a group_id can
+  // never arrive from a URL. Shared with every other brand screen via
+  // resolveBrandGroupIds; this page's own n-rule stays below, unchanged.
+  const groupIds = await resolveBrandGroupIds(supabase, user.id);
+  if (groupIds.length === 0) redirect('/practice');
 
-  const memberships = (rawMemberships ?? []) as Array<{ group_id: string }>;
-  if (memberships.length === 0) redirect('/practice');
-
-  const groupIds = memberships.map((m) => m.group_id);
   const s = svc();
 
   const { data: rawBranches } = await s

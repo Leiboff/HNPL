@@ -75,7 +75,7 @@ function makeClient(state: Record<string, Row[]>) {
       // .limit() is HONOURED, and that is load-bearing rather than pedantry.
       // loadSetupChecklistFacts reads practice_members and till_devices with
       // .limit(1), because the checklist only ever asks "> 0" — so its
-      // activeProviderCount / activeTillDeviceCount are 0-or-1 in production
+      // hasActiveProvider / hasActiveTillDevice are 0-or-1 in production
       // however many rows exist. A fake that ignored the limit would let this
       // module (and the table above it) present those as real counts and pass.
       const rows = () => {
@@ -314,8 +314,8 @@ describe('the till is reported as facts because the checklist treats it as optio
     expect(row.hasTillDevice).toBe(true);
     expect(row.hasProvider).toBe(true);
     // And nothing numeric leaked into the shape a component could print.
-    expect(row).not.toHaveProperty('activeTillDeviceCount');
-    expect(row).not.toHaveProperty('activeProviderCount');
+    expect(row).not.toHaveProperty('hasActiveTillDevice');
+    expect(row).not.toHaveProperty('hasActiveProvider');
   });
 });
 
@@ -392,7 +392,11 @@ describe('source pins — one derivation, not two', () => {
   it('does not re-implement the checklist\'s private tillDone predicate', () => {
     // It surfaces the two facts instead. A local AND of them would be the
     // parallel implementation this module exists to avoid.
-    expect(code).not.toMatch(/activeTillDeviceCount > 0 &&/);
+    // No local AND of the two till facts, and no numeric comparison of either —
+    // the facts are booleans now, so a `> 0` here would not even typecheck, but
+    // pinning it keeps the intent legible if the shape ever changes back.
+    expect(code).not.toMatch(/hasActiveTillDevice\s*&&\s*facts\.hasTillPin/);
+    expect(code).not.toMatch(/hasActiveTillDevice\s*>/);
     expect(code).not.toMatch(/tillDone/);
   });
 

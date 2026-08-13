@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { updateOwnGroup } from '@/app/brand/actions';
 import GroupEditForm from './GroupEditForm';
 import BrandShell from '../BrandShell';
+import { resolveBrandGroupIds } from '@/lib/brand/brandViewer';
 
 // ─── Brand-admin: edit own group — the Settings tab ────────────────────
 //
@@ -24,18 +25,16 @@ export default async function BrandGroupSettingsPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  const { data: rawMemberships } = await supabase
-    .from('practice_group_members')
-    .select('group_id')
-    .eq('user_id', user.id)
-    .eq('active', true);
-  const memberships = (rawMemberships ?? []) as Array<{ group_id: string }>;
-  if (memberships.length === 0) redirect('/practice');
+  // Shared scope read (the caller's own client, RLS-enforced). Like
+  // /brand/revenue, this screen does NOT apply the n=1 rule — a solo brand admin
+  // still needs to edit their brand's name and logo.
+  const groupIds = await resolveBrandGroupIds(supabase, user.id);
+  if (groupIds.length === 0) redirect('/practice');
 
   // For now, the form scopes to the FIRST brand the user admins. A
   // user with multiple brand_admin rows is a rare support case; if
   // it becomes common we'll add a brand picker.
-  const groupId = memberships[0].group_id;
+  const groupId = groupIds[0];
 
   // brand_admin_select_own_group (0061) lets the session client read
   // the group row directly.

@@ -274,11 +274,22 @@ describe('adversarial — no new date or money formatting', () => {
     expect(code).toMatch(/sastMidnight/);
   });
 
-  it('the till\'s own duplicate formatRand was NOT spread into anything new', () => {
-    // CounterSessionForm carries a local copy of billHelpers' formatRand. It is
-    // pre-existing, renders correctly, and is out of scope for this piece — what
-    // matters is that the new files import the shared one instead.
-    expect(read('app/practice/pos/CounterSessionForm.tsx')).toMatch(/function formatRand/);
+  it('the till carries NO local formatRand — CounterSessionForm\'s copy is gone too', () => {
+    // Inverted. When the strip was built, CounterSessionForm still had its own
+    // line-for-line copy of billHelpers' formatRand; this pin recorded that the
+    // strip had not reached for it. The copy has since been removed, along with
+    // four others on these surfaces, on the reasoning that a duplicate is a
+    // divergence that has not happened yet — see
+    // app/practice/moneyFormatterSingleSource.test.ts for the whole-tree rule
+    // and for the /brand/revenue divergence that prompted it.
+    for (const rel of [
+      'app/practice/pos/CounterSessionForm.tsx',
+      'app/practice/pos/TodayActivityStrip.tsx',
+    ]) {
+      const code = stripComments(read(rel));
+      expect(code, rel).not.toMatch(/function formatRand/);
+      expect(code, rel).toMatch(/formatRand \} from '.*billHelpers'/);
+    }
     for (const p of NEW_FILES) {
       expect(stripComments(read(p)), p).not.toMatch(/replace\(\/\\B\(\?=/);
     }

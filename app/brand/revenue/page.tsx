@@ -9,6 +9,7 @@ import {
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import RevenueClient from './RevenueClient';
 import BrandShell from '../BrandShell';
+import { resolveBrandGroupIds } from '@/lib/brand/brandViewer';
 
 // ─── Brand revenue dashboard — the Reports tab ──────────────────────────
 //
@@ -67,17 +68,13 @@ export default async function BrandRevenuePage({
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // What groups is this caller a brand_admin of?
-  const { data: rawMemberships } = await supabase
-    .from('practice_group_members')
-    .select('group_id, active')
-    .eq('user_id', user.id)
-    .eq('active', true);
+  // What groups is this caller a brand_admin of? Shared read (the caller's own
+  // client, RLS-enforced). This screen deliberately does NOT apply the
+  // n=1 rule that /brand and /brand/practices do — it renders for a solo brand
+  // admin too, which is why it uses the scope read rather than resolveBrandViewer.
+  const groupIds = await resolveBrandGroupIds(supabase, user.id);
+  if (groupIds.length === 0) redirect('/practice');
 
-  const memberships = (rawMemberships ?? []) as Array<{ group_id: string }>;
-  if (memberships.length === 0) redirect('/practice');
-
-  const groupIds = memberships.map((m) => m.group_id);
   const s = svc();
 
   // ── 0. Brand identity, for the shell header only ───────────────────

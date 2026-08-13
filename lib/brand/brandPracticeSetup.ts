@@ -60,19 +60,23 @@ import type { BrandPracticeRow } from './brandViewer';
 //   Nothing to diverge, and it reads better anyway — "registered, no PIN" is
 //   more useful to whoever has to fix it than a red cross.
 //
-// PRESENCE, NOT COUNTS — AND WHY THAT MATTERS HERE
-// ───────────────────────────────────────────────
+// PRESENCE, NOT COUNTS
+// ────────────────────
 // loadSetupChecklistFacts applies .limit(1) to both its practice_members and
-// till_devices reads, because the checklist only ever asks "> 0". So
-// SetupChecklistFacts.activeProviderCount and .activeTillDeviceCount are, in
-// production, 0 or 1 — presence flags wearing count names.
+// till_devices reads, because the checklist only ever asks "is there one?". Its
+// facts are therefore named for what they measure — hasActiveProvider and
+// hasActiveTillDevice — and this module passes them straight through.
 //
-// This module therefore exposes them as BOOLEANS. That is not fussiness: a
-// table column reading "1 on roster" for a practice with nine practitioners is
-// worse than one reading "on roster", because the first is a specific claim and
-// it is wrong. Re-querying for a true count is possible but it would be a second
-// read of rows this module has deliberately delegated, for a number no decision
-// on this screen depends on.
+// They were `activeProviderCount` / `activeTillDeviceCount` when this module was
+// written, and this table is the reason they are not any more: it read them,
+// believed the names, and would have rendered "1 on roster" for a practice with
+// nine — a specific claim, and wrong. The conversion that used to happen here
+// (`facts.activeProviderCount > 0`) is gone because there is nothing left to
+// convert.
+//
+// A real count would need its own field and its own un-limited read. Not worth
+// it for a number no decision on this screen depends on, and dropping the
+// .limit(1) would change query cost on a path both surfaces share.
 
 /** What the table shows for one practice. */
 export type BrandPracticeSetup = {
@@ -103,12 +107,9 @@ export type BrandPracticeSetup = {
   setupComplete: boolean;
 
   /**
-   * Facts the checklist gathers but does not turn into an item.
-   *
-   * Booleans, not counts — see the header. The underlying reads are
-   * .limit(1)-ed, so a "count" here could only ever be 0 or 1, and rendering
-   * that as a number would state something specific and false about a practice
-   * with nine practitioners.
+   * Facts the checklist gathers but does not turn into an item. Passed straight
+   * through from SetupChecklistFacts, which names them for presence too — see
+   * the header for why neither layer pretends to have a count.
    */
   hasProvider:   boolean;
   hasTillDevice: boolean;
@@ -192,8 +193,8 @@ export async function resolveBrandPracticeSetup(
         total:       checklist.total,
         setupComplete: checklist.complete,
 
-        hasProvider:   facts.activeProviderCount   > 0,
-        hasTillDevice: facts.activeTillDeviceCount > 0,
+        hasProvider:   facts.hasActiveProvider,
+        hasTillDevice: facts.hasActiveTillDevice,
         hasTillPin:    facts.hasTillPin,
 
         needsAttention: !checklist.complete || !approved,
