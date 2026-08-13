@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation';
 import { TILL_DEVICE_SECRET_KEY } from './tillStorage';
 import PinInput from './PinInput';
 import CounterSessionForm from './CounterSessionForm';
+import TodayActivityStrip from './TodayActivityStrip';
 import type {
   DeviceStatus,
   ProviderOption,
   IssueCounterSessionResult,
   CounterSessionStage,
+  TodaysCounterSessionsResult,
 } from './actions';
 
 // ─── TillShell ──────────────────────────────────────────────────────────
@@ -43,6 +45,7 @@ type Props = {
   expireCounterSession: (deviceSecret: string, token: string, opts?: { force?: boolean }) => Promise<{ error: string | null }>;
   getCounterSessionStage: (deviceSecret: string, token: string) => Promise<{ error: string | null; stage?: CounterSessionStage }>;
   acknowledgeCounterSession: (deviceSecret: string, token: string) => Promise<{ error: string | null }>;
+  getTodaysCounterSessions: (deviceSecret: string) => Promise<TodaysCounterSessionsResult>;
 };
 
 const DEVICE_AUTH_ERROR_MESSAGES = new Set([
@@ -54,6 +57,7 @@ const DEVICE_AUTH_ERROR_MESSAGES = new Set([
 export default function TillShell({
   checkDeviceStatus, unlockTill,
   issueCounterSession, expireCounterSession, getCounterSessionStage, acknowledgeCounterSession,
+  getTodaysCounterSessions,
 }: Props) {
   const router = useRouter();
   const [status, setStatus] = useState<DeviceStatus | null>(null);
@@ -204,6 +208,34 @@ export default function TillShell({
           expireCounterSession={withDeviceRecovery(expireCounterSession)}
           getCounterSessionStage={withDeviceRecovery(getCounterSessionStage)}
           acknowledgeCounterSession={withDeviceRecovery(acknowledgeCounterSession)}
+        />
+
+        {/* ── Today's activity ──────────────────────────────────────────────
+            A SIBLING of the form, never a child, and that placement is the
+            feature rather than a layout preference:
+
+              • it survives "Start next patient" BY CONSTRUCTION. That handler
+                clears CounterSessionForm's own state (issued / stage / QR) and
+                has no reach outside it, so there is no way for the reset to
+                take the strip with it.
+              • it stays on screen while a QR is up. The form swaps its whole
+                body for the QR panel; a strip inside it would disappear at
+                exactly the moment a teller is most likely to be asked about a
+                DIFFERENT patient — the one on the phone.
+
+            BELOW the form, not above it. Issuing a bill is the dominant action
+            on this screen and must stay at the top: a front-desk display is
+            often small, and pushing the amount and ID inputs down to make room
+            for a status list would cost the primary flow to serve the secondary
+            question. The strip is compact and reachable with a glance or one
+            scroll.
+
+            It receives the device secret through the same withDeviceRecovery
+            wrapper as everything else, so a till that has locked or been revoked
+            while the strip was on screen falls back to the PIN screen through
+            existing behaviour rather than new handling. */}
+        <TodayActivityStrip
+          getTodaysCounterSessions={withDeviceRecovery(getTodaysCounterSessions)}
         />
       </main>
     </div>

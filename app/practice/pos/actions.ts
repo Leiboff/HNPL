@@ -22,6 +22,10 @@ import {
   providerMemberName,
   type ProviderMemberRef,
 } from '@/lib/practice/providerIdentity';
+import {
+  resolveTodaysTillActivity,
+  type TillActivity,
+} from '@/lib/practice/tillActivity';
 
 // ─── /practice/pos server actions — device-gated, no user session ─────
 //
@@ -463,6 +467,50 @@ export async function getCounterSessionStage(
   if (error) return { error: error.message };
   if (!session) return { error: 'Session not found.' };
   return { error: null, stage: session.stage as CounterSessionStage };
+}
+
+// ─── getTodaysCounterSessions — the today's-activity strip's read ──────
+//
+// The till renders one session at a time and "Start next patient" throws
+// it away, so "did that bill go through?" — the question a front desk is
+// asked all day, in person and on the phone — had no answer anywhere on
+// this screen. This is that answer.
+//
+// AUTH: the SAME path as every other action in this file, deliberately
+// and with nothing added. requireUnlockedDevice proves a registered,
+// unlocked, unrevoked device and RESOLVES the practice id; the read is
+// then scoped to that resolved id. Three things follow, and each of them
+// is the point:
+//
+//   • practiceId is never a parameter. The till cannot ask for another
+//     practice's day, because it cannot name one — the only thing it
+//     sends is its own secret.
+//   • no new auth path exists. This introduces no RPC, no policy, and no
+//     token; it is the fourth caller of a guard that already had three.
+//   • nothing is read from the client. checkout_sessions' own RLS policy
+//     (practice_biller_select, 0085) is keyed on is_practice_biller and
+//     therefore on auth.uid(), which the till does not have — a
+//     client-side query would return zero rows even if one were written,
+//     and writing one would mean granting anon access to a table holding
+//     encrypted SA IDs. So the read lives here, server-side, behind the
+//     device credential.
+//
+// A locked or revoked till gets the SAME error strings requireUnlockedDevice
+// already returns, which TillShell's DEVICE_AUTH_ERROR_MESSAGES set
+// recognises — so the strip failing over to the PIN screen is existing
+// behaviour reused, not new handling.
+export type TodaysCounterSessionsResult =
+  | { error: string; activity?: undefined }
+  | { error: null;   activity: TillActivity };
+
+export async function getTodaysCounterSessions(
+  deviceSecret: string,
+): Promise<TodaysCounterSessionsResult> {
+  const auth = await requireUnlockedDevice(deviceSecret);
+  if (!auth.ok) return { error: auth.error };
+
+  const activity = await resolveTodaysTillActivity(svc(), auth.practiceId);
+  return { error: null, activity };
 }
 
 // ─── acknowledgeCounterSession — teller's own record-keeping step ──────

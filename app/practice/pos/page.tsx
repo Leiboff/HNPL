@@ -5,6 +5,7 @@ import {
   expireCounterSession,
   getCounterSessionStage,
   acknowledgeCounterSession,
+  getTodaysCounterSessions,
 } from './actions';
 import TillShell from './TillShell';
 
@@ -33,6 +34,7 @@ export default function PosPage() {
       expireCounterSession={expireCounterSession}
       getCounterSessionStage={getCounterSessionStage}
       acknowledgeCounterSession={acknowledgeCounterSession}
+      getTodaysCounterSessions={getTodaysCounterSessions}
     />
   );
 }
