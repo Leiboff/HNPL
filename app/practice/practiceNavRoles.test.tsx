@@ -5,7 +5,7 @@ import { resolvePracticeShellAuthority } from './practiceShellAuthority';
 
 // ─── Every sidebar item, for every kind of viewer ──────────────────────────
 //
-// The nav is Dashboard · Bills · Team · Settings, and Settings folds three
+// The nav is Dashboard · Bills · Payouts · Team · Settings, and Settings folds three
 // previously separate, differently-gated screens. So the question this file
 // answers is the one the fold created: does each item still appear only for
 // someone who can actually use it?
@@ -100,7 +100,7 @@ async function navFor(userId: string, canManagePractice: boolean): Promise<strin
 describe('a practice manager (can_manage_practice, not a brand-admin)', () => {
   it('gets Dashboard, Bills, Team and Settings', () => {
     return navFor('manager', true).then((labels) => {
-      expect(labels).toEqual(['Dashboard', 'Bills', 'Team', 'Settings']);
+      expect(labels).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team', 'Settings']);
     });
   });
 
@@ -124,7 +124,7 @@ describe('a reception-level admin WITHOUT can_manage_practice', () => {
     // item where they previously saw neither "Till devices" nor "Practice
     // details", and the page notFound()s them, so an item here would be a
     // link to a 404.
-    expect(await navFor('reception', false)).toEqual(['Dashboard', 'Bills', 'Team']);
+    expect(await navFor('reception', false)).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team']);
   });
 
   it('still gets Bills — finding a bill is not a manager privilege', async () => {
@@ -137,7 +137,7 @@ describe('a reception-level admin WITHOUT can_manage_practice', () => {
 describe('a brand admin with NO practice_members row on this practice', () => {
   it('gets the exit link plus every tab', async () => {
     expect(await navFor('brand-admin', false)).toEqual([
-      '← All practices', 'Dashboard', 'Bills', 'Team', 'Settings',
+      '← All practices', 'Dashboard', 'Bills', 'Payouts', 'Team', 'Settings',
     ]);
   });
 
@@ -156,7 +156,7 @@ describe('a brand admin with NO practice_members row on this practice', () => {
     // straight back to /practice.
     state.practices = [{ id: 'p1', group_id: 'g1' }];
     const labels = await navFor('brand-admin', false);
-    expect(labels).toEqual(['Dashboard', 'Bills', 'Team', 'Settings']);
+    expect(labels).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team', 'Settings']);
   });
 });
 
@@ -165,7 +165,7 @@ describe('a provider', () => {
     // role='provider' grants neither flag. Same nav as reception, which is
     // correct: the difference between them is what they may DO with bills,
     // not what configuration they may edit.
-    expect(await navFor('provider', false)).toEqual(['Dashboard', 'Bills', 'Team']);
+    expect(await navFor('provider', false)).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team']);
   });
 });
 
@@ -179,18 +179,24 @@ describe('across all four viewers', () => {
     ['provider',    false],
   ];
 
-  it('everyone who reaches the practice area gets Dashboard, Bills and Team', async () => {
+  it('everyone who reaches the practice area gets Dashboard, Bills, Payouts and Team', async () => {
     for (const [user, manage] of VIEWERS) {
       const labels = await navFor(user, manage);
-      for (const base of ['Dashboard', 'Bills', 'Team']) {
+      for (const base of ['Dashboard', 'Bills', 'Payouts', 'Team']) {
         expect(labels, `${user} should see ${base}`).toContain(base);
       }
     }
   });
 
-  it('nobody is offered Payouts while the route does not exist', async () => {
+  it('EVERYONE is offered Payouts, reception and a provider included', async () => {
+    // The inverse of the assertion this replaced. Not a courtesy link: 0090
+    // makes payout_batches readable by any active member and 0092 widened
+    // payouts to match — deliberately, so the plan breakdown behind a batch
+    // total is visible to whoever can see the total. Gating this on
+    // can_manage_practice would hide a page the database is happy to serve,
+    // and reception is often exactly who reconciles the bank account.
     for (const [user, manage] of VIEWERS) {
-      expect(await navFor(user, manage), user).not.toContain('Payouts');
+      expect(await navFor(user, manage), user).toContain('Payouts');
     }
   });
 
@@ -208,7 +214,7 @@ describe('across all four viewers', () => {
     state.practice_group_members = [
       { group_id: 'g1', user_id: 'ex-admin', active: false },
     ];
-    expect(await navFor('ex-admin', false)).toEqual(['Dashboard', 'Bills', 'Team']);
+    expect(await navFor('ex-admin', false)).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team']);
   });
 
   it('brand-admin of a DIFFERENT brand gets nothing here', async () => {
@@ -216,6 +222,6 @@ describe('across all four viewers', () => {
     state.practice_group_members = [
       { group_id: 'g2', user_id: 'other-brand', active: true },
     ];
-    expect(await navFor('other-brand', false)).toEqual(['Dashboard', 'Bills', 'Team']);
+    expect(await navFor('other-brand', false)).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team']);
   });
 });

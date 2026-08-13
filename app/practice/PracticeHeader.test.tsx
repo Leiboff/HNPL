@@ -55,11 +55,11 @@ describe('PracticeHeader mobile menu — Settings link visibility', () => {
 });
 
 describe('PracticeHeader mobile menu — the tabs', () => {
-  it('renders Dashboard · Bills · Manage Practice · Settings, in that order', () => {
+  it('renders Dashboard · Bills · Payouts · Manage Practice · Settings, in that order', () => {
     render(<PracticeHeader practiceName="Test Practice" practiceId="practice-1" canManageTill />);
     openMenu();
     expect(screen.getAllByRole('link').map((el) => el.textContent))
-      .toEqual(['Dashboard', 'Bills', 'Manage Practice', 'Settings']);
+      .toEqual(['Dashboard', 'Bills', 'Payouts', 'Manage Practice', 'Settings']);
   });
 
   it('keeps its own "Manage Practice" wording where desktop says "Team"', () => {
@@ -83,12 +83,16 @@ describe('PracticeHeader mobile menu — the tabs', () => {
     }
   });
 
-  it('offers no Payouts entry while the route does not exist', () => {
+  it('offers Payouts, scoped, now that the route exists', () => {
+    // The mobile half of the flip. Nothing was added to this component to make
+    // it pass — the entry arrived through getPracticeNavLinks, which is the
+    // whole point of the shared source.
     render(
       <PracticeHeader practiceName="Test Practice" practiceId="practice-1" canManageTill isBrandAdmin brandPracticeCount={3} />,
     );
     openMenu();
-    expect(screen.queryByRole('link', { name: 'Payouts' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Payouts' }).getAttribute('href'))
+      .toBe('/practice/payouts?practiceId=practice-1');
   });
 
   it('keeps Sign out below the links', () => {

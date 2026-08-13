@@ -16,10 +16,11 @@ import { SETTINGS_LABEL } from './settings/settingsSections';
 // actually consume it identically.
 
 describe('getPracticeBaseLinks — visible to everyone in the practice area', () => {
-  it('is Dashboard, Bills, Team — in that order', () => {
+  it('is Dashboard, Bills, Payouts, Team — in that order', () => {
     expect(getPracticeBaseLinks({ practiceId: 'p1', teamLabel: 'Team' })).toEqual([
       { href: '/practice?practiceId=p1',         label: 'Dashboard' },
       { href: '/practice/bills?practiceId=p1',   label: 'Bills'     },
+      { href: '/practice/payouts?practiceId=p1', label: 'Payouts'   },
       { href: '/practice/members?practiceId=p1', label: 'Team'      },
     ]);
   });
@@ -29,7 +30,7 @@ describe('getPracticeBaseLinks — visible to everyone in the practice area', ()
     // bug the shared source exists to fix. It is a parameter, not a second
     // hand-written list.
     const mobile = getPracticeBaseLinks({ practiceId: 'p1', teamLabel: 'Manage Practice' });
-    expect(mobile.map((l) => l.label)).toEqual(['Dashboard', 'Bills', 'Manage Practice']);
+    expect(mobile.map((l) => l.label)).toEqual(['Dashboard', 'Bills', 'Payouts', 'Manage Practice']);
     // Only the LABEL differs — the hrefs are identical to desktop's.
     expect(mobile.map((l) => l.href))
       .toEqual(getPracticeBaseLinks({ practiceId: 'p1', teamLabel: 'Team' }).map((l) => l.href));
@@ -48,6 +49,7 @@ describe('getPracticeBaseLinks — visible to everyone in the practice area', ()
     expect(getPracticeBaseLinks({ teamLabel: 'Team' })).toEqual([
       { href: '/practice',         label: 'Dashboard' },
       { href: '/practice/bills',   label: 'Bills'     },
+      { href: '/practice/payouts', label: 'Payouts'   },
       { href: '/practice/members', label: 'Team'      },
     ]);
   });
@@ -118,17 +120,17 @@ describe('getPracticeManagerLinks — Settings, and nothing else', () => {
 });
 
 describe('getPracticeNavLinks — the whole nav, in order', () => {
-  it('is Dashboard · Bills · Team · Settings for a manager', () => {
+  it('is Dashboard · Bills · Payouts · Team · Settings for a manager', () => {
     expect(
       getPracticeNavLinks({ practiceId: 'p1', canManageTill: true, teamLabel: 'Team' })
         .map((l) => l.label),
-    ).toEqual(['Dashboard', 'Bills', 'Team', SETTINGS_LABEL]);
+    ).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team', SETTINGS_LABEL]);
   });
 
   it('drops Settings for someone with no section behind it', () => {
     expect(
       getPracticeNavLinks({ practiceId: 'p1', teamLabel: 'Team' }).map((l) => l.label),
-    ).toEqual(['Dashboard', 'Bills', 'Team']);
+    ).toEqual(['Dashboard', 'Bills', 'Payouts', 'Team']);
   });
 
   it('puts the brand exit link ABOVE everything', () => {
@@ -138,20 +140,34 @@ describe('getPracticeNavLinks — the whole nav, in order', () => {
         practiceId: 'p1', isBrandAdmin: true, canManageTill: true,
         brandPracticeCount: 3, teamLabel: 'Team',
       }).map((l) => l.label),
-    ).toEqual([ALL_PRACTICES_LABEL, 'Dashboard', 'Bills', 'Team', SETTINGS_LABEL]);
+    ).toEqual([ALL_PRACTICES_LABEL, 'Dashboard', 'Bills', 'Payouts', 'Team', SETTINGS_LABEL]);
   });
 
-  it('does NOT include Payouts — there is no route behind it yet', () => {
-    // A nav entry pointing at nothing is worse than a missing one. This
-    // fails the day the route lands, which is when the entry should appear.
+  it('DOES include Payouts, for every viewer — the route now exists', () => {
+    // The inverse of the assertion this replaced, which existed to fail the
+    // day the route landed. Payouts is a BASE link on purpose: payout_batches
+    // (0090) and payouts (0092) are both is_practice_member, so gating the
+    // entry on can_manage_practice would hide a page RLS is happy to serve —
+    // and would re-create by hand the manager-only asymmetry 0092 removed.
     for (const ctx of [
       { practiceId: 'p1', teamLabel: 'Team' },
       { practiceId: 'p1', canManageTill: true, isBrandAdmin: true, brandPracticeCount: 3, teamLabel: 'Team' },
     ]) {
       const links = getPracticeNavLinks(ctx);
-      expect(links.map((l) => l.label)).not.toContain('Payouts');
-      for (const l of links) expect(l.href).not.toMatch(/\/practice\/payouts/);
+      expect(links.map((l) => l.label)).toContain('Payouts');
+      const payouts = links.find((l) => l.label === 'Payouts')!;
+      expect(payouts.href).toBe('/practice/payouts?practiceId=p1');
     }
+  });
+
+  it('places Payouts between Bills and Team', () => {
+    // Money reads left to right in the order it happens: raise a bill, get
+    // paid for it. Team and Settings are configuration and sit after both.
+    const labels = getPracticeNavLinks({
+      practiceId: 'p1', canManageTill: true, teamLabel: 'Team',
+    }).map((l) => l.label);
+    expect(labels.indexOf('Payouts')).toBe(labels.indexOf('Bills') + 1);
+    expect(labels.indexOf('Payouts')).toBeLessThan(labels.indexOf('Team'));
   });
 
   it('never emits a duplicate href', () => {

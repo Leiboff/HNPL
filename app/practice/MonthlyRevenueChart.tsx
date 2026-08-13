@@ -3,7 +3,6 @@
 import { useMemo } from 'react';
 import BrandMonthlyChart from '@/app/brand/BrandMonthlyChart';
 import { buildMonthlySeries, type PlanForTrend } from '@/lib/brand/monthlyRevenue';
-import type { PlanSummary } from './billHelpers';
 
 // ─── Practice dashboard — monthly revenue chart ───────────────────────
 //
@@ -29,8 +28,27 @@ import type { PlanSummary } from './billHelpers';
 
 const SELF = '__self__';
 
+/**
+ * The five fields this chart actually reads — not the full PlanSummary it used
+ * to demand.
+ *
+ * It moved from the dashboard (where a fat plans query was already in hand) to
+ * /practice/payouts, which has no other use for plans. Asking that page for
+ * patient names, provider embeds, payouts and invitations to draw a monthly
+ * trend would have made it copy the dashboard's projection for nothing — and
+ * made that projection a third thing to keep in step. PlanSummary still
+ * satisfies this shape structurally, so any caller that has one can pass it.
+ */
+export type PlanForMonthlyChart = {
+  id:                 string;
+  provider_member_id: string | null;
+  total_amount:       number | string;
+  status:             string;
+  created_at:         string;
+};
+
 type Props = {
-  plans:      PlanSummary[];
+  plans:      PlanForMonthlyChart[];
   feePercent: number;
 };
 

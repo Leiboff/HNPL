@@ -68,16 +68,16 @@ describe('PracticeNav — Settings link visibility', () => {
 // ─── The tab order ─────────────────────────────────────────────────────
 
 describe('PracticeNav — the tabs', () => {
-  it('renders Dashboard · Bills · Team · Settings, in that order', () => {
+  it('renders Dashboard · Bills · Payouts · Team · Settings, in that order', () => {
     render(<PracticeNav practiceId="practice-1" canManageTill isBrandAdmin />);
     expect(screen.getAllByRole('link').map((el) => el.textContent))
-      .toEqual(['Dashboard', 'Bills', 'Team', 'Settings']);
+      .toEqual(['Dashboard', 'Bills', 'Payouts', 'Team', 'Settings']);
   });
 
-  it('keeps Dashboard, Bills and Team for a viewer with no Settings', () => {
+  it('keeps Dashboard, Bills, Payouts and Team for a viewer with no Settings', () => {
     render(<PracticeNav practiceId="practice-1" />);
     expect(screen.getAllByRole('link').map((el) => el.textContent))
-      .toEqual(['Dashboard', 'Bills', 'Team']);
+      .toEqual(['Dashboard', 'Bills', 'Payouts', 'Team']);
   });
 
   it('scopes every tab to the practice', () => {
@@ -87,11 +87,13 @@ describe('PracticeNav — the tabs', () => {
     }
   });
 
-  it('offers no Payouts entry while the route does not exist', () => {
-    // A nav entry pointing at nothing is worse than a missing one. This fails
-    // the day /practice/payouts lands, which is when it should appear.
+  it('offers Payouts, scoped, now that the route exists', () => {
+    // The inverse of the assertion this replaced, which was written to fail on
+    // the day /practice/payouts landed. Payouts is a base link — both tables
+    // behind it are is_practice_member (0090/0092).
     render(<PracticeNav practiceId="practice-1" canManageTill isBrandAdmin brandPracticeCount={3} />);
-    expect(screen.queryByRole('link', { name: 'Payouts' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Payouts' }).getAttribute('href'))
+      .toBe('/practice/payouts?practiceId=practice-1');
   });
 });
 

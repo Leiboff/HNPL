@@ -310,8 +310,9 @@ describe('truncation stays in one place', () => {
   const read = (p: string) =>
     stripComments(readFileSync(resolve(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n'));
 
-  const BLOCK  = read('app/practice/BillsBlock.tsx');
-  const CLIENT = read('app/practice/PracticeDashboardClient.tsx');
+  const BLOCK   = read('app/practice/BillsBlock.tsx');
+  const CLIENT  = read('app/practice/PracticeDashboardClient.tsx');
+  const PAYOUTS = read('app/practice/payouts/page.tsx');
 
   it('the parent hands down the FULL filtered set', () => {
     // Slicing here instead would shrink the exports and the counts with the
@@ -320,8 +321,26 @@ describe('truncation stays in one place', () => {
     expect(CLIENT).not.toMatch(/filteredPlans\.slice/);
   });
 
-  it('the chart still gets every matching row', () => {
-    expect(CLIENT).toMatch(/<MonthlyRevenueChart plans=\{filteredPlans\}/);
+  // This used to read: "the chart still gets every matching row", asserting
+  // <MonthlyRevenueChart plans={filteredPlans}> on the dashboard. The chart has
+  // since MOVED to /practice/payouts, so that assertion could no longer be
+  // true — the subject was deliberately removed, not the invariant. The
+  // invariant was "a truncated display must not truncate what the chart
+  // aggregates", and it is re-asserted below at the chart's new home. Neither
+  // half is weaker: the dashboard side is now an absence check (a chart back
+  // here would be a second mount), and the payouts side forbids a slice on the
+  // rows it is fed.
+
+  it('the chart is no longer on the dashboard at all', () => {
+    expect(CLIENT).not.toMatch(/MonthlyRevenueChart/);
+  });
+
+  it('the chart gets every fetched row at its new home, unsliced', () => {
+    // A year-scale revenue trend drawn from a truncated array would understate
+    // months — the same failure the dashboard version was guarded against,
+    // one screen across.
+    expect(PAYOUTS).toMatch(/<MonthlyRevenueChart plans=\{chartPlans \?\? \[\]\}/);
+    expect(PAYOUTS).not.toMatch(/chartPlans\??\.?\s*\.slice/);
   });
 
   it('the card slices the plans array exactly once', () => {

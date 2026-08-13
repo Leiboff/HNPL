@@ -2,7 +2,6 @@
 
 import { useState, useMemo } from 'react';
 import DateRangePicker from './DateRangePicker';
-import MonthlyRevenueChart from './MonthlyRevenueChart';
 import BillsBlock from './BillsBlock';
 import { providerName } from './billHelpers';
 import type { PlanSummary } from './billHelpers';
@@ -107,8 +106,13 @@ export default function PracticeDashboardClient({
         )}
       </div>
 
-      {/* ── Chart ──────────────────────────────────────────────────── */}
-      <MonthlyRevenueChart plans={filteredPlans} feePercent={feePercent} />
+      {/* ── The revenue chart used to be here ─────────────────────────
+          Moved to /practice/payouts. A 12-month trend is not what the
+          screen a practice opens every morning is for, and it sat between
+          the payout hero and today's bills. It now lives under the
+          deposits it explains, on the money screen that is read monthly.
+          Mounted in exactly ONE place — app/practice/payouts/page.tsx —
+          and a test asserts it is not back here. */}
 
       {/* ── Bills table ──────────────────────────────────────────────
           The FULL filtered set, deliberately. The card shows only the most
