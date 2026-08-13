@@ -14,12 +14,20 @@ import { resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 function readSrc(p: string): string { return readFileSync(resolve(ROOT, p), 'utf8'); }
 
-// Every /practice/* page.tsx that must still require normal login.
+// Every /practice/* page.tsx that must still require normal login. The two
+// legacy settings routes (/practice/details, /practice/pos/devices) are on
+// this list even though they are now thin redirects into /practice/settings:
+// a redirect is not a reason to widen the anon-reachable set, and an
+// anonymous visitor following a bookmarked settings URL should still meet
+// the login page.
 const GATED_PAGES = [
   'app/practice/page.tsx',
-  'app/practice/members/page.tsx',
-  'app/practice/setup/page.tsx',
+  'app/practice/bills/page.tsx',
   'app/practice/bills/new/page.tsx',
+  'app/practice/members/page.tsx',
+  'app/practice/settings/page.tsx',
+  'app/practice/setup/page.tsx',
+  'app/practice/details/page.tsx',
   'app/practice/pos/devices/page.tsx',
 ];
 

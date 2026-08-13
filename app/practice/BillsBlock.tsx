@@ -194,6 +194,18 @@ export default function BillsBlock({
 
         {totalCount > 0 && (
           <div className="flex items-center gap-3">
+            {/* The way through to the Bills tab, which is where the whole
+                list plus search and a status filter live. This card is a
+                glance under a chart; that page is where you go to find one
+                bill. The scope rides along so a brand-admin viewing a branch
+                stays on that branch. */}
+            <a
+              href={practiceId ? `/practice/bills?practiceId=${encodeURIComponent(practiceId)}` : '/practice/bills'}
+              data-testid="bills-see-all"
+              className="text-sm font-medium text-gray-500 hover:text-[#13294B] transition-colors"
+            >
+              See all →
+            </a>
             <CreateBillButton gate={gate} variant="subtle" practiceId={practiceId} />
             <div ref={menuRef} className="relative">
               <button

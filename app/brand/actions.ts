@@ -291,10 +291,13 @@ export async function updateBranchDetails(input: UpdateBranchDetailsInput): Prom
   if (error) return { error: error.message };
 
   revalidatePath('/brand');
-  // The details form moved to /practice/details (BranchDetailsForm went
-  // with it, unchanged); /brand/branch/{id} is now just a redirect there
-  // is nothing to revalidate on. The action itself — guard, validation,
-  // column allowlist, UPDATE — is untouched.
+  // The details form renders on /practice/settings (BranchDetailsForm moved
+  // to /practice/details unchanged, and is now MOUNTED by the Settings page
+  // as its details section). /practice/details is still revalidated because
+  // it still exists — as the redirect that keeps every old inbound link and
+  // bookmark working. The action itself — guard, validation, column
+  // allowlist, UPDATE — is untouched.
+  revalidatePath('/practice/settings');
   revalidatePath('/practice/details');
   return { error: null };
 }
@@ -655,9 +658,12 @@ export async function updateBranchBanking(input: UpdateBranchBankingInput): Prom
   if (error) return { error: error.message };
 
   revalidatePath('/brand');
-  // Same as updateBranchDetails: BranchBankingForm now renders on
-  // /practice/details. Guard, validation and the column allowlist below
-  // are untouched — only the path being revalidated moved with the form.
+  // Same as updateBranchDetails: BranchBankingForm now renders as the
+  // banking SECTION of /practice/settings, and /practice/details remains as
+  // the redirect that keeps existing #banking links landing correctly.
+  // Guard, validation and the column allowlist below are untouched — only
+  // the paths being revalidated followed the form.
+  revalidatePath('/practice/settings');
   revalidatePath('/practice/details');
   return { error: null };
 }

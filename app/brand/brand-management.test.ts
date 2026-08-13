@@ -281,18 +281,31 @@ describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
     expect(SHELL).toMatch(/<PracticeNav\s+practiceId=/);
   });
 
-  it('PracticeNav renders a Practice-details link ONLY when isBrandAdmin && practiceId', () => {
-    // The conditional now lives in the shared getPracticeManagerLinks
-    // helper (practiceManagerLinks.ts) — PracticeNav (desktop) and
-    // PracticeHeader (mobile) both consume it instead of each
-    // re-implementing the conditional, which is what let "Till
-    // devices" reach one surface and not the other. Assert the
-    // conditional itself lives there, AND that PracticeNav actually
-    // wires into it rather than reimplementing its own copy.
+  it('brand-admin authority still gates the practice-details editing surface', () => {
+    // The nav restructure folded "Practice details" and "Till devices" into a
+    // single Settings tab, so there is no longer a top-level entry keyed on
+    // `isBrandAdmin && practiceId`. What that condition PROTECTED is
+    // unchanged and is what this now asserts: the details/banking content is
+    // reachable only through brand-admin authority.
+    //
+    // The condition lives in the shared source both nav surfaces consume
+    // (practiceManagerLinks → settings/settingsSections), so it cannot be
+    // re-implemented per surface — which is what let "Till devices" reach
+    // desktop and not mobile in the first place.
+    const SECTIONS = read('app/practice/settings/settingsSections.ts');
+    expect(SECTIONS).toMatch(/key: 'details'[\s\S]{0,120}visible: \(a\) => a\.isBrandAdmin/);
+    expect(SECTIONS).toMatch(/key: 'banking'[\s\S]{0,120}visible: \(a\) => a\.isBrandAdmin/);
+
     const MANAGER_LINKS = read('app/practice/practiceManagerLinks.ts');
-    expect(MANAGER_LINKS).toMatch(/isBrandAdmin\s*&&\s*practiceId/);
-    expect(MANAGER_LINKS).toMatch(/\/practice\/details\$\{scopeSuffix\}/);
-    expect(NAV).toMatch(/getPracticeManagerLinks/);
+    expect(MANAGER_LINKS).toMatch(/canSeeAnySettingsSection\(\{ isBrandAdmin, canManageTill \}\)/);
+    expect(MANAGER_LINKS).toMatch(/\/practice\/settings\$\{scopeOf\(practiceId\)\}/);
+    expect(NAV).toMatch(/getPracticeNavLinks/);
+
+    // And the page itself still refuses a non-brand-admin the two sections,
+    // rather than rendering them read-only.
+    const SETTINGS = read('app/practice/settings/page.tsx');
+    expect(SETTINGS).toMatch(/canSeeSettingsSection\('details',\s*authority\)/);
+    expect(SETTINGS).toMatch(/canSeeSettingsSection\('banking',\s*authority\)/);
   });
 
   it('Dashboard resolves isBrandAdmin from practice_group_members membership', () => {
@@ -314,9 +327,16 @@ describe('Practice-side sidebar and no-banking CTA — Part A UI', () => {
     expect(ctaBlock).not.toMatch(/href="\/practice\/setup"/);
     expect(ctaBlock).not.toMatch(/\/brand\/branch\//);
 
+    // The banking form is a SECTION of /practice/settings since the nav
+    // restructure, and /practice/details is the redirect that keeps this
+    // CTA's #banking fragment working — it names no fragment of its own, so
+    // the browser re-applies the caller's onto the Settings page's anchor.
+    const SETTINGS = read('app/practice/settings/page.tsx');
+    expect(SETTINGS).toMatch(/id="banking"/);
+    expect(SETTINGS).toMatch(/<BranchBankingForm/);
+
     const DETAILS = read('app/practice/details/page.tsx');
-    expect(DETAILS).toMatch(/id="banking"/);
-    expect(DETAILS).toMatch(/<BranchBankingForm/);
+    expect(DETAILS).toMatch(/redirect\(`\/practice\/settings\$\{suffix\}`\)/);
   });
 });
 

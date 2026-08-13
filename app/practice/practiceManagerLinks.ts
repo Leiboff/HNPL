@@ -1,25 +1,54 @@
-// ─── Shared manager-tier conditional nav links ─────────────────────────
+// ─── The single source for BOTH nav surfaces' links ────────────────────
 //
-// The bug this fixes: "Till devices" was added to PracticeNav (desktop
-// sidebar) but not to PracticeHeader's mobile hamburger menu — two
-// hand-maintained link lists that silently diverged. Dashboard and
-// Team/Manage Practice stay each surface's OWN base list (their labels
-// already differ by design — "Team" on desktop, "Manage Practice" on
-// mobile — and unifying that wasn't asked for). But the CONDITIONAL,
-// permission-gated links — the class of link that actually diverged —
-// are computed here ONCE and spliced onto both surfaces' base list, so
-// they cannot diverge again by construction, independent of the
-// render-level regression test in PracticeNav.test.tsx that also
-// compares the two surfaces' rendered output.
+// The bug this module was created for: "Till devices" was added to
+// PracticeNav (desktop sidebar) but not to PracticeHeader's mobile
+// hamburger menu — two hand-maintained link lists that silently
+// diverged. The permission-gated links moved here so they could not
+// diverge again by construction.
+//
+// WHAT CHANGED IN THE RESTRUCTURE
+// ──────────────────────────────
+// The nav is now Dashboard · Bills · Team · Settings, and the BASE links
+// moved in here too. They were the half still hand-written on each
+// surface, and adding "Bills" to two arrays would have been the original
+// bug all over again — the same class of link, the same two files.
+//
+// One deliberate difference survives, and it is now a PARAMETER rather
+// than a divergence: the Team entry reads "Team" on desktop and "Manage
+// Practice" on mobile. That wording predates all of this and was never
+// the bug, so it is preserved exactly — passed in as `teamLabel`.
+//
+// A second, real bug is fixed by the move: the mobile base links were
+// hardcoded '/practice' and '/practice/members' with NO ?practiceId=,
+// while desktop's carried it. A brand-admin viewing one branch on mobile
+// lost their branch scope the moment they tapped Dashboard or Manage
+// Practice. One source cannot produce two different href sets, so both
+// surfaces now scope identically.
+//
+// "Till devices" and "Practice details" are GONE as separate entries —
+// they are sections of Settings now (see ./settings/settingsSections).
+// Their routes still resolve: both are thin redirects into the matching
+// Settings section, so every existing inbound link keeps working.
+//
+// NOT here: Payouts. There is no /practice/payouts route yet, and a nav
+// entry pointing at nothing is worse than a missing one. It joins this
+// list in the same commit as the route.
+
+import {
+  canSeeAnySettingsSection,
+  SETTINGS_LABEL,
+} from './settings/settingsSections';
 
 export type ManagerLink = { href: string; label: string };
 
 export type ManagerLinkContext = {
   practiceId?:    string;
   /** can_manage_practice OR isBrandAdmin — the exact authority
-   *  app/practice/pos/devices/actions.ts's guardTillManager() checks. */
+   *  app/practice/pos/devices/actions.ts's guardTillManager() checks, and
+   *  what gates the Till devices SECTION of Settings. */
   canManageTill?: boolean;
-  /** Active practice_group_members row for the practice's brand. */
+  /** Active practice_group_members row for the practice's brand. Gates the
+   *  practice-details and banking SECTIONS of Settings. */
   isBrandAdmin?:  boolean;
   /**
    * Practices in this practice's brand (resolvePracticeShellAuthority).
@@ -28,33 +57,51 @@ export type ManagerLinkContext = {
   brandPracticeCount?: number;
 };
 
+/** `?practiceId=` or nothing — never `?practiceId=undefined`. */
+function scopeOf(practiceId?: string): string {
+  return practiceId ? `?practiceId=${encodeURIComponent(practiceId)}` : '';
+}
+
+// ─── Base links ────────────────────────────────────────────────────────
+//
+// Visible to everyone who can reach the practice area at all. Bills is
+// among them deliberately: the list is readable by any member (the same
+// plans the dashboard already shows them), and the CREATE path inside it
+// stays gated by the trading gate through the shared CreateBillButton.
+
+export type BaseLinkContext = {
+  practiceId?: string;
+  /** 'Team' on desktop, 'Manage Practice' on mobile — see the header. */
+  teamLabel:   string;
+};
+
+export function getPracticeBaseLinks({ practiceId, teamLabel }: BaseLinkContext): ManagerLink[] {
+  const scopeSuffix = scopeOf(practiceId);
+  return [
+    { href: `/practice${scopeSuffix}`,         label: 'Dashboard' },
+    { href: `/practice/bills${scopeSuffix}`,   label: 'Bills'     },
+    { href: `/practice/members${scopeSuffix}`, label: teamLabel   },
+  ];
+}
+
+// ─── Conditional links ─────────────────────────────────────────────────
+
 export function getPracticeManagerLinks({
   practiceId,
   canManageTill = false,
   isBrandAdmin  = false,
 }: ManagerLinkContext): ManagerLink[] {
-  const scopeSuffix = practiceId
-    ? `?practiceId=${encodeURIComponent(practiceId)}`
-    : '';
-
   const links: ManagerLink[] = [];
-  if (canManageTill) {
-    links.push({ href: `/practice/pos/devices${scopeSuffix}`, label: 'Till devices' });
+
+  // Settings — practice details, banking, and till devices, each keeping
+  // the authority its own screen enforced. The visibility condition is
+  // NOT hand-written here: it is the same helper the Settings page uses to
+  // decide whether it has anything to render, so a visible nav item and a
+  // page that will serve you can never disagree.
+  if (canSeeAnySettingsSection({ isBrandAdmin, canManageTill })) {
+    links.push({ href: `/practice/settings${scopeOf(practiceId)}`, label: SETTINGS_LABEL });
   }
-  // Practice settings — details + banking. Used to deep-link into
-  // /brand/branch/{practiceId}, which was doing double duty as a
-  // multi-branch performance view AND the de-facto settings page. That
-  // page now pivots into the practice dashboard, and the settings live
-  // at /practice/details, inside the shell this nav belongs to.
-  //
-  // Still isBrandAdmin-gated, unchanged: brand-admin of the practice's
-  // group is exactly the authority updateBranchDetails /
-  // updateBranchBanking enforce (guardBrandAdminOfPractice), and
-  // /practice/details notFound()s anyone else — so a visible link and a
-  // working destination continue to agree.
-  if (isBrandAdmin && practiceId) {
-    links.push({ href: `/practice/details${scopeSuffix}`, label: 'Practice details' });
-  }
+
   return links;
 }
 
@@ -63,16 +110,16 @@ export const ALL_PRACTICES_LABEL = '← All practices';
 
 // ─── Brand exit link ───────────────────────────────────────────────────
 //
-// A brand-admin who clicks into a branch now lands in that practice's
+// A brand-admin who clicks into a branch lands in that practice's
 // ordinary dashboard, wearing a brand-admin hat with nothing on screen
 // saying so. Without a persistent way back up they are stranded in one
 // practice. This is that way back, and it lives here — in the SAME
-// shared source as the conditional links — so neither nav surface
-// hand-writes it and the desktop/mobile parity guard covers it too.
+// shared source as everything else — so neither nav surface hand-writes
+// it and the desktop/mobile parity guard covers it too.
 //
 // It renders ABOVE each surface's base list (it's an exit upward, not a
-// peer of Dashboard/Team), which is why it's a separate function rather
-// than another entry in the array above.
+// peer of Dashboard/Bills/Team), which is why it's a separate function
+// rather than another entry in the arrays above.
 //
 // Gating is deliberately NOT isBrandAdmin alone: post-0062 every solo
 // owner is auto-brand-admin of their own silently-created 1-practice
@@ -89,4 +136,20 @@ export function getBrandExitLink({
 }: ManagerLinkContext): ManagerLink | null {
   if (!isBrandAdmin || brandPracticeCount < 2) return null;
   return { href: '/brand', label: ALL_PRACTICES_LABEL };
+}
+
+// ─── The whole nav, in order ───────────────────────────────────────────
+//
+// Both surfaces call ONLY this. Nothing is spliced by hand at either call
+// site any more, which is what makes the parity guard's job structural
+// rather than a matter of two files happening to agree today.
+export function getPracticeNavLinks(
+  ctx: ManagerLinkContext & { teamLabel: string },
+): ManagerLink[] {
+  const exitLink = getBrandExitLink(ctx);
+  return [
+    ...(exitLink ? [exitLink] : []),
+    ...getPracticeBaseLinks({ practiceId: ctx.practiceId, teamLabel: ctx.teamLabel }),
+    ...getPracticeManagerLinks(ctx),
+  ];
 }
