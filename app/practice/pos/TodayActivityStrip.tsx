@@ -87,14 +87,25 @@ const OUTCOME_CHIP: Record<TillSessionOutcome, { label: string; cls: string }> =
  * One bucket for colour, two words for the detail — because "did it go through?"
  * has the same answer either way, but "what happened?" does not.
  *
- * 'declined' is in 0085's CHECK constraint but nothing in the product writes it
- * today: abandonment (both the timeout and the teller's "Start next patient")
- * lands on 'expired' via expire_stale_checkout_session. Handled anyway, because a
- * stage the database permits must not render as a blank.
+ * Both are now reachable. 'expired' is abandonment (the timeout or the teller's
+ * "Start next patient") via expire_stale_checkout_session; 'declined' is the
+ * patient's own refusal, propagated from declinePlan by
+ * lib/checkout/declineCheckoutSessions.ts.
+ *
+ * "Patient declined" rather than the bare "Declined" this held while the stage
+ * was unreachable, for two reasons:
+ *
+ *   • At a till, an unqualified "Declined" reads as the CARD being declined —
+ *     that is what the word means on every card machine in the country. The
+ *     two need different responses from the front desk (try another card vs.
+ *     this patient says the bill isn't theirs), so they cannot share a word.
+ *   • It names who acted. Nothing here went wrong at the practice's end and
+ *     the copy should not leave room for reading it that way — it is a
+ *     statement of what the patient did, not a fault.
  */
 const STOPPED_DETAIL: Record<string, string> = {
   expired:  'Didn’t finish in time',
-  declined: 'Declined',
+  declined: 'Patient declined',
 };
 
 type Props = {

@@ -78,9 +78,14 @@ export type TillSessionStage = 'created' | 'scanned' | 'completed' | 'declined' 
  *   done     stage='completed' — the patient finished checkout on their phone.
  *   pending  created / scanned — the QR is out and nothing has resolved.
  *   stopped  declined / expired — no money, and this session will not produce
- *            any. Whether it timed out or the teller moved on is a distinction
- *            the ROW keeps (see `stage`) and the strip prints, but it is the
- *            same answer to "did it go through?", so it is one bucket.
+ *            any. Whether it timed out, the teller moved on, or the patient
+ *            refused the bill outright is a distinction the ROW keeps (see
+ *            `stage`) and the strip prints, but it is the same answer to "did
+ *            it go through?", so it is one bucket.
+ *
+ * 'declined' became reachable when declinePlan started propagating to the
+ * session (lib/checkout/declineCheckoutSessions.ts). Before that, every
+ * stopped session was an 'expired' one.
  */
 export type TillSessionOutcome = 'done' | 'pending' | 'stopped';
 
