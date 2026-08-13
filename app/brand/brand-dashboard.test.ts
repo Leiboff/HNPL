@@ -37,6 +37,24 @@ const ADD_FORM      = read('app/practice/members/AddMemberForm.tsx');
 const MONTHLY       = read('lib/brand/monthlyRevenue.ts');
 const REV_CLIENT    = read('app/brand/revenue/RevenueClient.tsx');
 
+// ─── Where the old group dashboard's pieces live now ──────────────────
+//
+// The brand portal restructure split GroupDashboard — which used to BE
+// the whole /brand screen — into the Overview tab's parts. Five pins in
+// this file used to read GROUP_DASH for things that moved; each one is
+// RELOCATED below rather than dropped, because the invariant it states
+// is still an invariant, just about a different file:
+//
+//   quick actions              → ./BrandQuickActions.tsx
+//   the "Open branch" doorway  → ./BrandPayoutBlock.tsx (payout rows)
+//   the Till devices link      → ./practices/PracticesTable.tsx
+//   the performance strip      → RETIRED; nothing on it was lost, see
+//                                GroupDashboard's own header for where
+//                                each column went
+const QUICK         = read('app/brand/BrandQuickActions.tsx');
+const PAYOUT_BLOCK  = read('app/brand/BrandPayoutBlock.tsx');
+const SETUP_TABLE   = read('app/brand/practices/PracticesTable.tsx');
+
 // ─── Unit: computeRevenue reconciles hero vs per-branch strip ─────────
 
 describe('Group hero = sum of branch revenues (ACTIVE_FOR_REVENUE only, net)', () => {
@@ -194,18 +212,52 @@ describe('GroupDashboard — chart filters (practice / doctor / range) drive her
     expect(GROUP_DASH).toMatch(/\.has\(providerFilter\)/);
   });
 
-  it('the hero total, chart, AND strip all consume the SAME filtered plans (single filter state)', () => {
-    // The dashboard passes filteredPlans to computeRevenue AND
+  it('the hero total, chart AND by-doctor list all consume the SAME filtered plans (single filter state)', () => {
+    // The revenue section passes filteredPlans to computeRevenue AND
     // buildMonthlySeries — one source of truth.
     expect(GROUP_DASH).toMatch(/filteredPlans/);
     expect(GROUP_DASH).toMatch(/computeRevenue\(filteredPlans/);
     expect(GROUP_DASH).toMatch(/buildMonthlySeries\(filteredPlans/);
-    // Strip reads from summary.byPractice via perBranchNet — same
-    // filtered summary.
-    expect(GROUP_DASH).toMatch(/perBranchNet/);
-    // The strip's bucket lookup uses the FILTERED summary, not raw
-    // per-branch data.
-    expect(GROUP_DASH).toMatch(/for \(const row of summary\.byPractice\) m\.set/);
+    // By-doctor reads `summary`, which IS computeRevenue over filteredPlans.
+    expect(GROUP_DASH).toMatch(/\[\.\.\.summary\.byProvider\]/);
+  });
+
+  it('the strip that used to be the third consumer is GONE, not merely unwired', () => {
+    // It was the one piece that made Overview a second, richer copy of a
+    // practice dashboard. Asserting its absence — rather than deleting the
+    // pin — is what stops it drifting back in: nothing on it was lost (see
+    // GroupDashboard's header for where each column went), so a
+    // reappearance would be a regression, not a feature.
+    expect(GROUP_DASH).not.toMatch(/branch-strip/);
+    expect(GROUP_DASH).not.toMatch(/perBranchNet/);
+    expect(GROUP_DASH).not.toMatch(/sortedBranches/);
+    expect(GROUP_DASH).not.toMatch(/Practice performance/);
+  });
+
+  it('the PAYOUT block is NOT wired to the filters — a filtered payout is money nobody is owed', () => {
+    // The sharpest thing this restructure has to get right. The revenue
+    // section narrows an analysis by practice / doctor / date range; the
+    // payout figures are what a bank will actually transfer. Passing them
+    // through the same filter state would produce an amount that reconciles
+    // against nothing.
+    //
+    // Structural, not stylistic: the payout block is a SERVER component
+    // rendered by page.tsx as a sibling of GroupDashboard, so the filter
+    // state (useState inside GroupDashboard) is not in scope for it at all.
+    // Comments stripped first. The file's own prose NAMES computeRevenue, in
+    // order to say that the plan count is taken from it unfiltered — the same
+    // distinction monthly-revenue-chart.test.ts draws for 'pending_acceptance'.
+    // What must not exist is a real dependency in the code.
+    const code = stripComments(PAYOUT_BLOCK);
+    expect(code).not.toMatch(/'use client'/);
+    expect(code).not.toMatch(/useState|useMemo/);
+    expect(code).not.toMatch(/filteredPlans|computeRevenue\(|buildMonthlySeries/);
+
+    // And the page renders it OUTSIDE GroupDashboard, above it.
+    const payoutMount = PAGE.indexOf('<BrandPayoutBlock');
+    const dashMount   = PAGE.indexOf('<GroupDashboard');
+    expect(payoutMount).toBeGreaterThan(0);
+    expect(dashMount).toBeGreaterThan(payoutMount);
   });
 
   it('range presets are 3 / 6 / 12 months only', () => {
@@ -514,17 +566,34 @@ describe('Shared AddMemberForm — imported by BOTH practice and brand surfaces'
 
 // ─── Single entry — no /practice?practiceId= link on brand surface ────
 
-describe('Single entry point — only "Open branch" links from the brand surface', () => {
-  it('GroupDashboard has NO /practice?practiceId= secondary link', () => {
-    expect(GROUP_DASH).not.toMatch(/href=\{`\/practice\?practiceId=/);
-    expect(GROUP_DASH).not.toMatch(/href="\/practice\?practiceId=/);
-    // The "Practice dashboard" wording is gone from the card.
-    expect(GROUP_DASH).not.toMatch(/Practice dashboard/);
+describe('Single entry point — the pivot is the only doorway from the brand surface', () => {
+  it('no brand surface writes a /practice?practiceId= doorway of its own', () => {
+    // Unchanged rule, now enforced across every surface that carries a
+    // per-practice link rather than only the retired strip. The pivot
+    // (/brand/branch/[id]) sets ?practiceId= itself; a second hand-written
+    // /practice URL is a second entry point to keep in step.
+    for (const [name, src] of [
+      ['GroupDashboard',  GROUP_DASH],
+      ['BrandPayoutBlock', PAYOUT_BLOCK],
+      ['PracticesTable',   SETUP_TABLE],
+    ] as const) {
+      expect(src, name).not.toMatch(/href=\{`\/practice\?practiceId=/);
+      expect(src, name).not.toMatch(/href="\/practice\?practiceId=/);
+      expect(src, name).not.toMatch(/Practice dashboard/);
+    }
   });
 
-  it('the drilldown link testid is still present (Open branch)', () => {
-    expect(GROUP_DASH).toMatch(/data-testid={`branch-drilldown-\${b\.id}`}/);
-    expect(GROUP_DASH).toMatch(/Open branch/);
+  it('the drilldown link is present on BOTH surfaces that list practices', () => {
+    // Relocated from the strip. The payout rows are Overview's doorways and
+    // the Practices table's name column is the other; both go through the
+    // pivot, and neither invents its own destination.
+    expect(PAYOUT_BLOCK).toMatch(/href=\{`\/brand\/branch\/\$\{row\.practiceId\}`\}/);
+    expect(SETUP_TABLE).toMatch(/href=\{`\/brand\/branch\/\$\{p\.practiceId\}`\}/);
+  });
+
+  it('GroupDashboard no longer links anywhere — it is a revenue section now', () => {
+    expect(GROUP_DASH).not.toMatch(/from 'next\/link'/);
+    expect(GROUP_DASH).not.toMatch(/<Link/);
   });
 });
 
@@ -542,11 +611,25 @@ describe('Single entry point — only "Open branch" links from the brand surface
 // check to test here; the scoping test already covers "no link for a
 // branch you don't oversee".
 
-describe('Till devices link — parameterised per branch, alongside Open branch', () => {
-  it('renders a till-devices link scoped to each branch id', () => {
-    expect(GROUP_DASH).toMatch(/data-testid={`branch-till-devices-\${b\.id}`}/);
-    expect(GROUP_DASH).toMatch(/href={`\/practice\/pos\/devices\?practiceId=\$\{b\.id\}`}/);
-    expect(GROUP_DASH).toMatch(/Till devices/);
+describe('Till devices link — parameterised per practice, now in the Practices table', () => {
+  it('renders a till-devices link scoped to each practice id', () => {
+    // RELOCATED, not weakened: the link moved off the retired strip and onto
+    // the Practices table's till column, which is where the till's STATE is
+    // now reported. Same href shape, same per-practice scoping, and the same
+    // "you only ever see practices you oversee" guarantee — the table is fed
+    // by resolveBrandViewer, whose .in('group_id', …) is built from the
+    // caller's own membership rows.
+    expect(SETUP_TABLE).toMatch(/data-testid=\{`brand-practice-till-link-\$\{p\.practiceId\}`\}/);
+    expect(SETUP_TABLE).toMatch(/href=\{`\/practice\/pos\/devices\?practiceId=\$\{p\.practiceId\}`\}/);
+  });
+
+  it('the till column reports STATE as well as offering the link', () => {
+    // The link on its own was the old strip's entire contribution. The point
+    // of moving it is that a brand admin can now see whether the till is set
+    // up before deciding to click.
+    expect(SETUP_TABLE).toMatch(/Front desk till/);
+    expect(SETUP_TABLE).toMatch(/Registered · PIN set/);
+    expect(SETUP_TABLE).toMatch(/Registered · no PIN/);
   });
 });
 
@@ -617,9 +700,12 @@ describe('the branch page is now a pivot into the practice dashboard', () => {
 
   it('the route still EXISTS so every inbound link resolves (no 404s)', () => {
     expect(existsSync(resolve(ROOT, 'app/brand/branch/[practiceId]/page.tsx'))).toBe(true);
-    // "Open branch →" on the brand index, and the revalidatePath calls in
-    // app/brand/actions.ts, both still point here.
-    expect(GROUP_DASH).toMatch(/href=\{`\/brand\/branch\/\$\{b\.id\}`\}/);
+    // Both of Overview's and the Practices table's doorways still point here,
+    // as do the revalidatePath calls in app/brand/actions.ts. The pin moved
+    // off GroupDashboard with the strip; the route's obligation is unchanged.
+    expect(PAYOUT_BLOCK).toMatch(/\/brand\/branch\//);
+    expect(SETUP_TABLE).toMatch(/\/brand\/branch\//);
+    expect(ACTIONS).toMatch(/\/brand\/branch\//);
   });
 
   it('the two unmounted components are still on disk, ready to re-home', () => {
@@ -665,7 +751,7 @@ describe('GroupDashboard renders the per-doctor breakdown the branch page used t
     expect(GROUP_DASH).toMatch(/No plans attributed to a doctor yet/);
   });
 
-  it('follows the SAME filter state as the hero, trend and strip', () => {
+  it('follows the SAME filter state as the hero and trend', () => {
     // It reads `summary`, which is computeRevenue over filteredPlans —
     // so setting the Practice filter reproduces exactly the per-branch
     // list the branch page gave, and leaving it clear ranks across
@@ -740,13 +826,37 @@ describe('BrandMonthlyChart is a rendering primitive', () => {
 
 // ─── Quick-actions layout ─────────────────────────────────────────────
 
-describe('GroupDashboard layout — quick actions ABOVE revenue hero', () => {
-  it('quick actions render BEFORE the hero total in DOM order', () => {
-    const quickTop = GROUP_DASH.indexOf('data-testid="group-quick-actions-top"');
-    const heroTotal = GROUP_DASH.indexOf('data-testid="group-hero-total"');
-    expect(quickTop).toBeGreaterThan(0);
-    expect(heroTotal).toBeGreaterThan(0);
-    expect(quickTop).toBeLessThan(heroTotal);
+describe('Overview layout — quick actions above the money, money above the analysis', () => {
+  // RELOCATED. The rule used to be "quick actions above the revenue hero" and
+  // read GroupDashboard, because GroupDashboard was the whole screen. The
+  // ordering is now a property of the page that composes three components, so
+  // the pin reads the page — and the rule got STRONGER, because there is a
+  // third thing in the order now and the payout hero has to be above the
+  // analysis, not merely below the actions.
+
+  it('the quick actions tiles survived the move intact', () => {
+    // Same testids, same hrefs, same wording — a relocation, not a redesign,
+    // and the two things they link to both predate this change.
+    expect(QUICK).toMatch(/data-testid="group-quick-actions-top"/);
+    expect(QUICK).toMatch(/data-testid="group-add-practice"/);
+    expect(QUICK).toMatch(/data-testid="group-settings"/);
+    expect(QUICK).toMatch(/href="\/brand\/new-practice"/);
+    expect(QUICK).toMatch(/href="\/brand\/group"/);
+    // And they are gone from where they used to live, so they cannot render twice.
+    expect(GROUP_DASH).not.toMatch(/group-quick-actions-top/);
+  });
+
+  it('page.tsx renders quick actions → payouts → revenue, in that order', () => {
+    const quick  = PAGE.indexOf('<BrandQuickActions');
+    const payout = PAGE.indexOf('<BrandPayoutBlock');
+    const dash   = PAGE.indexOf('<GroupDashboard');
+    expect(quick).toBeGreaterThan(0);
+    expect(payout).toBeGreaterThan(quick);
+    expect(dash).toBeGreaterThan(payout);
+  });
+
+  it('the revenue hero is still inside the revenue section, below all of it', () => {
+    expect(GROUP_DASH).toMatch(/data-testid="group-hero-total"/);
   });
 });
 

@@ -8,8 +8,27 @@ import {
 } from '@/lib/practice/providerIdentity';
 import { computeRevenue, type RevenuePlan, type RevenuePractice, type RevenueProvider } from '@/lib/brand/revenue';
 import RevenueClient from './RevenueClient';
+import BrandShell from '../BrandShell';
 
-// ─── Brand revenue dashboard ───────────────────────────────────────────
+// ─── Brand revenue dashboard — the Reports tab ──────────────────────────
+//
+// REACHABILITY, NOT REDESIGN
+//   This screen was fully built and linked from NOTHING. Not one href in
+//   the product pointed at it, so it may as well not have existed. The
+//   brand nav (../brandNavLinks) now carries it as "Reports", and the
+//   only change made to the page itself is that it renders inside
+//   ../BrandShell — because a tab you can reach but cannot navigate out
+//   of is not reachable in any useful sense.
+//
+//   The one addition the wrapper forced is the practice_groups read
+//   below, purely so the shell's header can name the brand the way it
+//   does on the other two tabs. What this page RENDERS is untouched:
+//   same guard, same queries, same filters, same RevenueClient, same
+//   empty state.
+//
+// The label is "Reports" rather than "Revenue" because Overview is now
+// where the money owed to you lives; this is the by-practice /
+// by-doctor breakdown you go to when you want to analyse it.
 //
 // Active-only revenue for the brand-admin's group, with a gross⇄net
 // toggle (commission = fee_percent, derivable as gross − net), filter
@@ -61,6 +80,17 @@ export default async function BrandRevenuePage({
   const groupIds = memberships.map((m) => m.group_id);
   const s = svc();
 
+  // ── 0. Brand identity, for the shell header only ───────────────────
+  // Scoped by the same group_ids the guard above proved. Display data;
+  // nothing on this page is gated on it.
+  const { data: rawBrands } = await s
+    .from('practice_groups')
+    .select('id, name')
+    .in('id', groupIds);
+  const brands = (rawBrands ?? []) as Array<{ id: string; name: string | null }>;
+  const brandName  = brands[0]?.name ?? null;
+  const brandCount = brands.length;
+
   // ── 1. Practices in this caller's group(s) ─────────────────────────
   // The brand_admin_select_branches RLS policy (0061) gates the
   // session-client view of these, but we use service-role here so
@@ -80,13 +110,13 @@ export default async function BrandRevenuePage({
   // state instead of running the plans query for nothing.
   if (practiceIds.length === 0) {
     return (
-      <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10">
-        <h1 className="text-2xl font-semibold mb-1" style={{ color: '#13294B' }}>Group revenue</h1>
+      <BrandShell brandName={brandName} brandCount={brandCount}>
+        <h2 className="text-lg font-semibold mb-1" style={{ color: '#13294B' }}>Group revenue</h2>
         <p className="text-sm text-gray-500 mb-6">Active-plan revenue across your group.</p>
         <div className="rounded-2xl border border-dashed border-gray-200 py-14 text-center">
           <p className="font-medium text-gray-500">No practices in your brand yet.</p>
         </div>
-      </div>
+      </BrandShell>
     );
   }
 
@@ -146,9 +176,9 @@ export default async function BrandRevenuePage({
   );
 
   return (
-    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
+    <BrandShell brandName={brandName} brandCount={brandCount}>
       <header>
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Group revenue</h1>
+        <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Group revenue</h2>
         <p className="text-sm text-gray-500 mt-1">
           Active-plan revenue across your group. Gross is the bill value; net is what you receive after BetterNow&apos;s commission.
           Collection of patient instalments is handled by BetterNow.
@@ -162,6 +192,6 @@ export default async function BrandRevenuePage({
         selectedPracticeId={filter.practiceId}
         selectedProviderId={filter.providerId}
       />
-    </div>
+    </BrandShell>
   );
 }

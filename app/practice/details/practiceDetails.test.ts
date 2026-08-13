@@ -120,9 +120,18 @@ describe('the inbound links still point somewhere that resolves', () => {
     expect(DASH).toMatch(/\/practice\/details\?practiceId=\$\{practiceId\}#banking/);
   });
 
-  it('the brand dashboard’s per-branch till link still resolves', () => {
+  it('the brand surface’s per-practice till link still resolves', () => {
+    // RELOCATED, not weakened. This link used to live on the brand dashboard's
+    // per-branch performance strip; the brand-portal restructure retired that
+    // strip and moved the link onto /brand/practices' till column, which is
+    // where the till's STATE is now reported. Same route, same per-practice
+    // scoping — so the obligation on the /practice/pos/devices stub is
+    // unchanged, which is the only thing this file cares about.
+    const TABLE = codeOf(read('app/brand/practices/PracticesTable.tsx'));
+    expect(TABLE).toMatch(/\/practice\/pos\/devices\?practiceId=\$\{p\.practiceId\}/);
+    // And it is gone from where it used to be, so there is only one of it.
     const GROUP = codeOf(read('app/brand/GroupDashboard.tsx'));
-    expect(GROUP).toMatch(/\/practice\/pos\/devices\?practiceId=\$\{b\.id\}/);
+    expect(GROUP).not.toMatch(/\/practice\/pos\/devices/);
   });
 
   it('the Settings page renders the anchors all of those depend on', () => {
