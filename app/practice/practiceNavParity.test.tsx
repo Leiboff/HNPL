@@ -128,6 +128,7 @@ describe('PracticeNav (desktop) and PracticeHeader (mobile) render an identical 
     const expected = [
       { href: '/practice?practiceId=practice-1',          label: 'Dashboard' },
       { href: '/practice/bills?practiceId=practice-1',    label: 'Bills'     },
+      { href: '/practice/payouts?practiceId=practice-1',  label: 'Payouts'   },
       { href: '/practice/members?practiceId=practice-1',  label: 'Team'      },
       { href: '/practice/settings?practiceId=practice-1', label: 'Settings'  },
     ];
@@ -157,11 +158,17 @@ describe('PracticeNav (desktop) and PracticeHeader (mobile) render an identical 
     }
   });
 
-  it('neither surface offers Payouts while the route does not exist', () => {
+  it('BOTH surfaces offer Payouts, identically — the newest tab through the shared source', () => {
+    // The inverse of the assertion this replaced. It is also the real test of
+    // the guard's purpose: Payouts is the first tab added since the base links
+    // moved into the shared source, and under the OLD arrangement it would
+    // have had to be written into two arrays — the original bug's exact shape.
+    // Nothing was touched in either component to make this pass.
     const combo: Combo = { practiceId: 'practice-1', canManageTill: true, isBrandAdmin: true, brandPracticeCount: 3 };
     for (const links of [desktopLinksFor(combo), mobileLinksFor(combo)]) {
-      expect(links.map((l) => l.label)).not.toContain('Payouts');
-      for (const l of links) expect(l.href).not.toMatch(/\/practice\/payouts/);
+      const payouts = links.filter((l) => l.label === 'Payouts');
+      expect(payouts).toHaveLength(1);
+      expect(payouts[0].href).toBe('/practice/payouts?practiceId=practice-1');
     }
   });
 });

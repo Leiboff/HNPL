@@ -3,6 +3,13 @@
 import { useState } from 'react';
 import { formatRand } from './billHelpers';
 import { formatWeekdayDayMonth, formatDayMonth } from '@/app/patient/_format';
+import {
+  PAYOUT_BUILDING_LABEL,
+  PAYOUT_ESTIMATE_BADGE,
+  PAYOUT_WINDOW_PREFIX,
+  PAYOUT_WEEK_CLOSES_FALLBACK,
+  payoutEstimateNote,
+} from './payoutCopy';
 import type { NextPayoutResult, PayoutPlanLine } from '@/lib/practice/nextPayout';
 
 // ─── "Next payout" hero ─────────────────────────────────────────────────
@@ -24,6 +31,12 @@ import type { NextPayoutResult, PayoutPlanLine } from '@/lib/practice/nextPayout
 // table and the bill form use. Weekday/day/month come from @/app/patient
 // /_format, the codebase's only weekday formatter; it is pure string maths on
 // YYYY-MM-DD, so it cannot drift by timezone.
+//
+// THE WORDS COME FROM ./payoutCopy. /practice/payouts describes the same three
+// certainties this hero does — an open week, a closed-but-unpaid batch, a paid
+// one — and two surfaces inventing their own vocabulary for the same money is
+// how a practice ends up unsure whether "Estimate" here and something else
+// there mean the same state. The strings moved out; what renders is unchanged.
 
 export type NextPayoutHeroProps = {
   data: NextPayoutResult;
@@ -82,14 +95,14 @@ function Figure({
       {/* The label carries the certainty, before the number is even read. */}
       <div className="flex items-center gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          {committed ? 'Next payout' : 'Building this week'}
+          {committed ? 'Next payout' : PAYOUT_BUILDING_LABEL}
         </p>
         {!committed && (
           <span
             data-testid="payout-estimate-badge"
             className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
           >
-            Estimate
+            {PAYOUT_ESTIMATE_BADGE}
           </span>
         )}
       </div>
@@ -114,7 +127,7 @@ function Figure({
       {/* What it covers, in plain language. */}
       {dates.windowFirst && dates.windowLast && (
         <p className="mt-1 text-xs text-gray-500" data-testid="payout-window">
-          Covers plans activated {formatWeekdayDayMonth(dates.windowFirst)}
+          {PAYOUT_WINDOW_PREFIX} {formatWeekdayDayMonth(dates.windowFirst)}
           {' – '}
           {formatWeekdayDayMonth(dates.windowLast)}
         </p>
@@ -122,8 +135,9 @@ function Figure({
 
       {!committed && (
         <p className="mt-2 text-xs text-amber-800" data-testid="payout-estimate-note">
-          This week is still open, so it isn&apos;t final — any plan a patient accepts before{' '}
-          {dates.windowLast ? formatDayMonth(dates.windowLast) : 'the week closes'} is added to it.
+          {payoutEstimateNote(
+            dates.windowLast ? formatDayMonth(dates.windowLast) : PAYOUT_WEEK_CLOSES_FALLBACK,
+          )}
         </p>
       )}
 

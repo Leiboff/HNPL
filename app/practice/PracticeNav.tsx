@@ -12,6 +12,7 @@ import { getPracticeNavLinks } from './practiceManagerLinks';
 //                         practices in the brand only)
 //   Dashboard         — /practice
 //   Bills             — /practice/bills
+//   Payouts           — /practice/payouts
 //   Team              — /practice/members
 //   Settings          — /practice/settings        (anyone with at least
 //                         one visible Settings section)
@@ -25,7 +26,8 @@ import { getPracticeNavLinks } from './practiceManagerLinks';
 // out here: a visible nav item and a page that will serve you must not
 // be able to disagree.
 //
-// Payouts is deliberately absent — there is no route behind it yet.
+// Payouts is a BASE link, not a gated one: both tables behind it are
+// readable by any active member (0090/0092). See practiceManagerLinks.
 //
 // EVERY link, base and conditional, comes from getPracticeNavLinks
 // (./practiceManagerLinks) — the SAME function PracticeHeader's mobile

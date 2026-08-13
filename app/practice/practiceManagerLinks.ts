@@ -30,9 +30,8 @@
 // Their routes still resolve: both are thin redirects into the matching
 // Settings section, so every existing inbound link keeps working.
 //
-// NOT here: Payouts. There is no /practice/payouts route yet, and a nav
-// entry pointing at nothing is worse than a missing one. It joins this
-// list in the same commit as the route.
+// Payouts joined in the same commit as its route, as promised — see the
+// base links below for why it is a BASE link and not a gated one.
 
 import {
   canSeeAnySettingsSection,
@@ -68,6 +67,16 @@ function scopeOf(practiceId?: string): string {
 // among them deliberately: the list is readable by any member (the same
 // plans the dashboard already shows them), and the CREATE path inside it
 // stays gated by the trading gate through the shared CreateBillButton.
+//
+// PAYOUTS IS A BASE LINK, not a gated one, and that follows the database
+// rather than a judgement call: payout_batches is is_practice_member
+// (0090) and payouts was widened from manager-only to is_practice_member
+// by 0092 — specifically so the plan breakdown behind a batch total is
+// visible to everyone who can see the total. Gating the nav entry on
+// can_manage_practice would re-introduce by hand the asymmetry that
+// migration removed, and would hide a page RLS is happy to serve. The
+// page itself is read-only; a practice cannot mark its own money paid
+// (0090 grants no practice-side write policy at all).
 
 export type BaseLinkContext = {
   practiceId?: string;
@@ -80,6 +89,7 @@ export function getPracticeBaseLinks({ practiceId, teamLabel }: BaseLinkContext)
   return [
     { href: `/practice${scopeSuffix}`,         label: 'Dashboard' },
     { href: `/practice/bills${scopeSuffix}`,   label: 'Bills'     },
+    { href: `/practice/payouts${scopeSuffix}`, label: 'Payouts'   },
     { href: `/practice/members${scopeSuffix}`, label: teamLabel   },
   ];
 }

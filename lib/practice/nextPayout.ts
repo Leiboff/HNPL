@@ -309,7 +309,7 @@ async function loadPlanLines(
       payoutId:      r.id,
       planId:        r.plan_id,
       netAmount:     round2(Number(r.net_amount)),
-      patientLabel:  patientLabel(patient),
+      patientLabel:  payoutPatientLabel(patient),
       invoiceNumber: plan?.invoice_number ?? null,
       activatedAt:   r.created_at,
     };
@@ -321,8 +321,13 @@ async function loadPlanLines(
  * table and the patient columns elsewhere in the practice portal use. A
  * practice legitimately knows who its own patients are, but a payout list is
  * a money surface, so it carries the minimum that still identifies a row.
+ *
+ * Exported for ./payoutHistory, which lists the same patients on the payouts
+ * tab. Shared rather than copied: this is the only rule for how much of a
+ * patient's name a money surface prints, and two copies of it is how one
+ * surface ends up printing a full surname.
  */
-function patientLabel(patient: { first_name: string | null; last_name: string | null } | null): string {
+export function payoutPatientLabel(patient: { first_name: string | null; last_name: string | null } | null): string {
   if (!patient?.first_name) return '—';
   const initial = patient.last_name?.charAt(0).toUpperCase();
   return initial ? `${patient.first_name} ${initial}.` : patient.first_name;
