@@ -11,6 +11,7 @@ import {
 } from '@/lib/config/billAmountLimits';
 import type { CreateBillResult, CreateBillSummary, ProviderOption } from './page';
 import BillWaitingPanel from './BillWaitingPanel';
+import { formatRand } from '../../billHelpers';
 
 type Props = {
   feePercent: number;
@@ -31,11 +32,6 @@ type Props = {
     practiceId:        string;
   }) => Promise<CreateBillResult>;
 };
-
-function formatRand(n: number) {
-  const [integer, decimal] = n.toFixed(2).split('.');
-  return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
-}
 
 function formatDate(iso: string): string {
   const d = new Date(iso);

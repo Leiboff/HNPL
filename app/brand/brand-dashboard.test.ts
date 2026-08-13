@@ -779,11 +779,19 @@ describe('GroupDashboard renders the per-doctor breakdown the branch page used t
 // ─── n=1 unchanged; brand data scoping ────────────────────────────────
 
 describe('/brand page — scoping + n=1 rule unchanged', () => {
-  it('reads practice_group_members for caller before any data query', () => {
-    const idxMember = PAGE.indexOf("from('practice_group_members')");
+  it('resolves the caller\'s own brand memberships before any data query', () => {
+    // RELOCATED, not weakened. This used to look for the literal
+    // from('practice_group_members') in this page; the four-line read is now the
+    // shared resolveBrandGroupIds (lib/brand/brandViewer), which every brand
+    // screen calls. The invariant is identical — authority first, data second —
+    // and it is still asserted on THIS page's ordering.
+    const idxMember = PAGE.indexOf('resolveBrandGroupIds(supabase, user.id)');
     const idxPlans  = PAGE.indexOf("from('plans')");
     expect(idxMember).toBeGreaterThan(0);
     expect(idxPlans).toBeGreaterThan(idxMember);
+    // And the read still goes through the caller's OWN client, not service-role
+    // — which is the half of the invariant that actually gates anything.
+    expect(PAGE).not.toMatch(/resolveBrandGroupIds\(s,/);
   });
 
   it('filters practices + plans on the caller\'s OWN group_ids — never URL-supplied', () => {

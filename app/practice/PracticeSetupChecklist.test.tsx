@@ -28,8 +28,8 @@ const NOTHING: SetupChecklistFacts = {
   latitude:              null,
   longitude:             null,
   bankingResolved:       false,
-  activeProviderCount:   0,
-  activeTillDeviceCount: 0,
+  hasActiveProvider:   false,
+  hasActiveTillDevice: false,
   hasTillPin:            false,
 };
 
@@ -40,8 +40,8 @@ const REQUIRED_DONE: SetupChecklistFacts = {
   latitude:              -26.1076,
   longitude:             28.0567,
   bankingResolved:       true,
-  activeProviderCount:   1,
-  activeTillDeviceCount: 0,
+  hasActiveProvider:   true,
+  hasActiveTillDevice: false,
   hasTillPin:            false,
 };
 
@@ -166,19 +166,19 @@ describe('the till suggestion', () => {
   });
 
   it('DISAPPEARS once a till is set up — no nag', () => {
-    renderCard({ activeTillDeviceCount: 1, hasTillPin: true });
+    renderCard({ hasActiveTillDevice: true, hasTillPin: true });
     expect(screen.getByTestId('practice-setup-checklist')).toBeTruthy();
     expect(screen.queryByTestId('setup-suggestion:till')).toBeNull();
   });
 
   it('names the missing half when only one is in place', () => {
-    renderCard({ activeTillDeviceCount: 1, hasTillPin: false });
+    renderCard({ hasActiveTillDevice: true, hasTillPin: false });
     expect(screen.getByTestId('setup-suggestion-hint:till').textContent)
       .toMatch(/needs a PIN/i);
   });
 
   it('names the other missing half too', () => {
-    renderCard({ activeTillDeviceCount: 0, hasTillPin: true });
+    renderCard({ hasActiveTillDevice: false, hasTillPin: true });
     expect(screen.getByTestId('setup-suggestion-hint:till').textContent)
       .toMatch(/register the computer/i);
   });
@@ -262,7 +262,7 @@ describe('the required items finished', () => {
     // out of the required set.
     expect(renderCard(REQUIRED_DONE).container.innerHTML).toBe('');
     expect(renderCard({
-      ...REQUIRED_DONE, activeTillDeviceCount: 1, hasTillPin: true,
+      ...REQUIRED_DONE, hasActiveTillDevice: true, hasTillPin: true,
     }).container.innerHTML).toBe('');
   });
 
@@ -278,9 +278,9 @@ describe('the required items finished', () => {
     // The flip side of the same decision: revoking a till brings the
     // SUGGESTION back (proved in the derivation tests) but must never bring the
     // finished card back onto the dashboard.
-    const withTill = { ...REQUIRED_DONE, activeTillDeviceCount: 1, hasTillPin: true };
+    const withTill = { ...REQUIRED_DONE, hasActiveTillDevice: true, hasTillPin: true };
     expect(renderCard(withTill).container.innerHTML).toBe('');
-    expect(renderCard({ ...withTill, activeTillDeviceCount: 0 }).container.innerHTML).toBe('');
+    expect(renderCard({ ...withTill, hasActiveTillDevice: false }).container.innerHTML).toBe('');
   });
 });
 

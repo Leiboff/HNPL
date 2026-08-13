@@ -1,10 +1,18 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 import {
   buildSetupChecklist,
   loadSetupChecklistFacts,
   type SetupChecklistFacts,
   type SetupChecklistAuthority,
 } from './setupChecklist';
+
+/** Own source, comments stripped — for the few pins that read it. */
+const CODE = stripComments(
+  readFileSync(resolve(process.cwd(), 'lib/practice/setupChecklist.ts'), 'utf8'),
+);
 
 // ─── Tests — setup checklist derivation ───────────────────────────────────
 //
@@ -28,8 +36,8 @@ const NOTHING: SetupChecklistFacts = {
   latitude:              null,
   longitude:             null,
   bankingResolved:       false,
-  activeProviderCount:   0,
-  activeTillDeviceCount: 0,
+  hasActiveProvider:   false,
+  hasActiveTillDevice: false,
   hasTillPin:            false,
 };
 
@@ -44,8 +52,8 @@ const REQUIRED_DONE: SetupChecklistFacts = {
   latitude:              -26.1076,
   longitude:             28.0567,
   bankingResolved:       true,
-  activeProviderCount:   1,
-  activeTillDeviceCount: 0,
+  hasActiveProvider:   true,
+  hasActiveTillDevice: false,
   hasTillPin:            false,
 };
 
@@ -156,7 +164,7 @@ describe('the required items decide completeness, and nothing else does', () => 
 
   it('is complete with a till too — the till changes the count either way', () => {
     const withTill = buildSetupChecklist(
-      { ...REQUIRED_DONE, activeTillDeviceCount: 1, hasTillPin: true },
+      { ...REQUIRED_DONE, hasActiveTillDevice: true, hasTillPin: true },
       FULL_RIGHTS,
     );
     expect(withTill.doneCount).toBe(3);
@@ -214,20 +222,20 @@ describe('the till is a suggestion, not a requirement', () => {
   });
 
   it('is withdrawn entirely once the till is genuinely set up — no nag', () => {
-    expect(build({ activeTillDeviceCount: 1, hasTillPin: true }).suggestion).toBeNull();
+    expect(build({ hasActiveTillDevice: true, hasTillPin: true }).suggestion).toBeNull();
   });
 
   it('needs BOTH halves before it stops — neither alone is usable', () => {
     // A registered till with no PIN cannot be unlocked; a PIN with no till has
     // nothing to unlock. Either half alone still leaves something to suggest.
-    expect(build({ activeTillDeviceCount: 1, hasTillPin: false }).suggestion).not.toBeNull();
-    expect(build({ activeTillDeviceCount: 0, hasTillPin: true  }).suggestion).not.toBeNull();
+    expect(build({ hasActiveTillDevice: true, hasTillPin: false }).suggestion).not.toBeNull();
+    expect(build({ hasActiveTillDevice: false, hasTillPin: true  }).suggestion).not.toBeNull();
   });
 
   it('names the missing half when one is already in place', () => {
-    expect(build({ activeTillDeviceCount: 1, hasTillPin: false }).suggestion!.hint)
+    expect(build({ hasActiveTillDevice: true, hasTillPin: false }).suggestion!.hint)
       .toMatch(/needs a PIN/i);
-    expect(build({ activeTillDeviceCount: 0, hasTillPin: true }).suggestion!.hint)
+    expect(build({ hasActiveTillDevice: false, hasTillPin: true }).suggestion!.hint)
       .toMatch(/register the computer/i);
   });
 
@@ -300,13 +308,32 @@ describe('banking', () => {
 
 describe('the practitioner item', () => {
   it('is satisfied by any active provider, which post-0091 includes roster-only rows', () => {
-    // The count is fed by the same practice_members predicate the trading
-    // gate uses (active + role='provider'), and that predicate has never
-    // required a login — so a practice whose only practitioner is a roster
-    // entry is correctly ticked here, exactly as the gate would tick it.
-    expect(item(build({ activeProviderCount: 1 }), 'provider').done).toBe(true);
-    expect(item(build({ activeProviderCount: 3 }), 'provider').done).toBe(true);
-    expect(item(build({ activeProviderCount: 0 }), 'provider').done).toBe(false);
+    // The fact is fed by the same practice_members predicate the trading gate
+    // uses (active + role='provider'), and that predicate has never required a
+    // login — so a practice whose only practitioner is a roster entry is
+    // correctly ticked here, exactly as the gate would tick it.
+    expect(item(build({ hasActiveProvider: true  }), 'provider').done).toBe(true);
+    expect(item(build({ hasActiveProvider: false }), 'provider').done).toBe(false);
+  });
+
+  it('reads the fact directly — no count comparison to get wrong', () => {
+    // This item used to be `facts.activeProviderCount > 0` against a field the
+    // loader could only ever set to 0 or 1 (it reads with .limit(1)). The name
+    // now matches what is measured, so the comparison is gone.
+    expect(CODE).toMatch(/done:\s+facts\.hasActiveProvider,/);
+    expect(CODE).not.toMatch(/hasActiveProvider\s*[><]/);
+  });
+
+  it('the facts the loader produces are named for what they MEASURE', () => {
+    // The whole point of the rename. Both reads are .limit(1)-ed, so a field
+    // called *Count could only ever hold 0 or 1 — and the brand Practices table
+    // read one of them, believed the name, and would have rendered "1 on roster"
+    // for a practice with nine.
+    expect(CODE).toMatch(/hasActiveProvider:\s+\(providers\?\.length \?\? 0\) > 0/);
+    expect(CODE).toMatch(/hasActiveTillDevice:\s+\(devices\?\.length\s+\?\? 0\) > 0/);
+    expect(CODE).not.toMatch(/activeProviderCount:|activeTillDeviceCount:/);
+    // And the .limit(1) that makes them presence-only is still there, on both.
+    expect((CODE.match(/\.limit\(1\)/g) ?? []).length).toBe(2);
   });
 });
 
@@ -351,11 +378,11 @@ describe('every item is derived from live facts alone', () => {
     const before = build({ bankingResolved: true });
     expect(before.doneCount).toBe(1);
 
-    const afterProvider = build({ bankingResolved: true, activeProviderCount: 1 });
+    const afterProvider = build({ bankingResolved: true, hasActiveProvider: true });
     expect(afterProvider.doneCount).toBe(2);
 
     const afterAddress = build({
-      bankingResolved: true, activeProviderCount: 1,
+      bankingResolved: true, hasActiveProvider: true,
       phone: '011 555 0100', addressLine1: '12 Rivonia Road',
       latitude: -26.1, longitude: 28.05,
     });
@@ -365,8 +392,8 @@ describe('every item is derived from live facts alone', () => {
 
   it('un-ticks an item when the fact goes away again', () => {
     // The direction a flag can never handle.
-    const set  = build({ activeProviderCount: 1 });
-    const gone = build({ activeProviderCount: 0 });
+    const set  = build({ hasActiveProvider: true });
+    const gone = build({ hasActiveProvider: false });
     expect(item(set,  'provider').done).toBe(true);
     expect(item(gone, 'provider').done).toBe(false);
   });
@@ -374,8 +401,8 @@ describe('every item is derived from live facts alone', () => {
   it('brings the till suggestion BACK when the last device is revoked', () => {
     // Same property on the optional side: the nudge is derived, so it returns
     // when the thing it was nudging about goes away.
-    expect(build({ activeTillDeviceCount: 1, hasTillPin: true }).suggestion).toBeNull();
-    expect(build({ activeTillDeviceCount: 0, hasTillPin: true }).suggestion).not.toBeNull();
+    expect(build({ hasActiveTillDevice: true, hasTillPin: true }).suggestion).toBeNull();
+    expect(build({ hasActiveTillDevice: false, hasTillPin: true }).suggestion).not.toBeNull();
   });
 
   it('is a pure function of its inputs', () => {
@@ -445,8 +472,8 @@ describe('loadSetupChecklistFacts', () => {
     // a practice whose only till was revoked would still be ticked.
     expect(devices.isNull).toContain('revoked_at');
 
-    expect(f.activeProviderCount).toBe(1);
-    expect(f.activeTillDeviceCount).toBe(1);
+    expect(f.hasActiveProvider).toBe(true);
+    expect(f.hasActiveTillDevice).toBe(true);
     expect(f.hasTillPin).toBe(true);
     expect(f.bankingResolved).toBe(true);
   });

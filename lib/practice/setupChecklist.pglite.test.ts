@@ -263,7 +263,7 @@ describe('items flip when the underlying data changes — nothing is written to 
     await db.query(`update practices set till_pin_hash = 'hashed' where id = $1`, [practiceId]);
     const { facts, checklist } = await derive();
     expect(facts.hasTillPin).toBe(true);
-    expect(facts.activeTillDeviceCount).toBe(0);
+    expect(facts.hasActiveTillDevice).toBe(false);
     expect(tillSuggested(checklist)).toBe(true);
     expect(checklist.suggestion!.hint).toMatch(/register the computer/i);
   });

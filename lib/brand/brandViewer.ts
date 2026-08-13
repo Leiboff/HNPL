@@ -75,21 +75,51 @@ export type BrandViewer =
  * @param supabase the caller's OWN client — authority is read through it
  * @param svc      service-role — data only, scoped to the groups just proven
  */
+/**
+ * THE SCOPE READ, on its own: which groups is this user an active brand admin of?
+ *
+ * Extracted because it was inlined on every brand screen — five copies of the
+ * same four lines, each followed by its own `length === 0 → redirect('/practice')`.
+ * They agreed on the predicate (`user_id` + `active = true`) and differed only in
+ * their SELECT list, which changed nothing about who was authorised.
+ *
+ * WHY THIS IS SEPARATE FROM resolveBrandViewer BELOW, AND NOT FOLDED INTO IT
+ * ─────────────────────────────────────────────────────────────────────────
+ * resolveBrandViewer bundles this read with the practices read AND the
+ * n=0/n=1/n>=2 rule. Two brand screens deliberately do NOT apply that rule:
+ * /brand/group (brand settings) and /brand/revenue render perfectly well for a
+ * solo brand admin, and routing them through resolveBrandViewer would REDIRECT
+ * those callers to /practice — a change in authorisation outcome, not a
+ * refactor. So the scope read is its own function, and each screen keeps its own
+ * downstream policy.
+ *
+ * ALWAYS the caller's OWN client. RLS is the boundary; a group_id can never
+ * arrive from a URL because this takes a user id and nothing else.
+ *
+ * De-duplicated, which the inline copies did not do — a doubled membership row
+ * would otherwise widen an `.in()` built from the result without changing what
+ * it matches. Belt-and-braces, not a fix for an observed bug.
+ */
+export async function resolveBrandGroupIds(
+  supabase: BrandViewerSupabase,
+  userId:   string,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from('practice_group_members')
+    .select('group_id, active')
+    .eq('user_id', userId)
+    .eq('active', true);
+
+  return [...new Set(((data ?? []) as Array<{ group_id: string }>).map((m) => m.group_id))];
+}
+
 export async function resolveBrandViewer(
   supabase: BrandViewerSupabase,
   svc:      BrandViewerSupabase,
   userId:   string,
 ): Promise<BrandViewer> {
   // ── Authority. The caller's own client, so RLS decides. ──────────────────
-  const { data: rawMemberships } = await supabase
-    .from('practice_group_members')
-    .select('group_id, active')
-    .eq('user_id', userId)
-    .eq('active', true);
-
-  const groupIds = [
-    ...new Set(((rawMemberships ?? []) as Array<{ group_id: string }>).map((m) => m.group_id)),
-  ];
+  const groupIds = await resolveBrandGroupIds(supabase, userId);
   if (groupIds.length === 0) return { kind: 'denied' };
 
   // ── Data. Scoped by the .in() built from those very rows. ────────────────

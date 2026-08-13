@@ -9,6 +9,7 @@ import {
   type BillLifecycleStatus,
 } from '@/lib/bills/lifecycle';
 import StepMedallion from '@/app/checkout/[token]/_components/StepMedallion';
+import { formatRand } from '../../billHelpers';
 
 // ─── BillWaitingPanel ────────────────────────────────────────────────────
 //
@@ -57,11 +58,6 @@ type Props = {
     invitationExpiresAt:  string | null;
   };
 };
-
-function formatRand(n: number): string {
-  const [integer, decimal] = n.toFixed(2).split('.');
-  return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
-}
 
 type LiveState = {
   planStatus:           string;

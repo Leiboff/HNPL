@@ -2,6 +2,7 @@
 
 import BrandMonthlyChart from '@/app/brand/BrandMonthlyChart';
 import type { MonthPoint } from '@/lib/brand/monthlyRevenue';
+import { formatRand } from '@/app/practice/billHelpers';
 
 // ─── Branch-detail: Performance section (net-only) ─────────────────────
 //
@@ -9,11 +10,6 @@ import type { MonthPoint } from '@/lib/brand/monthlyRevenue';
 // shows what the practice actually receives after commission. The
 // gross figure is derivable from computeRevenue but never rendered
 // on the brand surface (label says "net of commission" once).
-
-function formatRand(v: number): string {
-  const [integer, decimal] = v.toFixed(2).split('.');
-  return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
-}
 
 export type DoctorRevenueRow = {
   providerId: string;

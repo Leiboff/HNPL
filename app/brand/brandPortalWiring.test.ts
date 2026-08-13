@@ -59,13 +59,23 @@ describe('all four tabs render inside BrandShell', () => {
 // ─── Scoping ───────────────────────────────────────────────────────────────
 
 describe('every tab scopes to the caller\'s OWN brand memberships', () => {
-  it.each(TABS)('%s resolves membership before it reads anything else', (_label, path) => {
+  it.each(TABS)('%s resolves membership through a shared read, on its OWN client', (_label, path) => {
+    // No tab inlines the read any more. Two shapes remain, and the difference is
+    // deliberate rather than incidental:
+    //
+    //   resolveBrandViewer   — scope read + practices + the n=0/n=1/n>=2 rule.
+    //                          Overview and Practices, which redirect a solo
+    //                          brand admin to /practice.
+    //   resolveBrandGroupIds — the scope read ALONE. Reports and Settings, which
+    //                          render for a solo brand admin, so routing them
+    //                          through the viewer would change who gets served.
     const code = stripComments(read(path));
-    // Either inline (Overview / Reports / Settings, whose ordering is pinned
-    // elsewhere) or through the shared resolver (Practices).
-    const inline = code.indexOf("from('practice_group_members')");
-    const shared = code.indexOf('resolveBrandViewer');
-    expect(Math.max(inline, shared)).toBeGreaterThan(0);
+    expect(code, path).not.toMatch(/from\('practice_group_members'\)/);
+    const shared = Math.max(
+      code.indexOf('resolveBrandViewer(supabase'),
+      code.indexOf('resolveBrandGroupIds(supabase'),
+    );
+    expect(shared, `${path} does not call a shared scope read on its own client`).toBeGreaterThan(0);
   });
 
   it('Practices goes through resolveBrandViewer rather than a third inline copy', () => {
@@ -235,22 +245,29 @@ describe('no new date or money formatting was introduced', () => {
     expect(code).toMatch(/formatWeekdayDayMonth \} from '@\/app\/patient\/_format'/);
   });
 
-  it('the ONE remaining local formatter was not copied into anything new', () => {
-    // This pin used to name TWO pre-existing local formatters — GroupDashboard's
-    // and RevenueClient's. RevenueClient's is gone: it was the one that actually
-    // disagreed with the shared formatter (rounded cents, space separator), and
-    // the cross-screen comparisons in ./brandRevenueMoney.test.tsx now hold both
-    // brand screens to one string. See that file for the bug.
+  it('NO local formatter remains on the brand surface — they are all gone now', () => {
+    // This pin has been inverted twice, and the sequence is the point.
     //
-    // GroupDashboard's survives and is asserted here on purpose. Its body is
-    // line-for-line the same as billHelpers' formatRand (only the parameter name
-    // differs) — a duplicate, not a divergence — so it renders correctly today,
-    // and replacing it is a separate cleanup rather than part of a formatting
-    // fix. That its OUTPUT still matches is not taken on trust: the cross-screen
-    // comparison in ./brandRevenueMoney.test.tsx renders both screens from one
-    // fixture and fails if they ever differ by a character.
-    expect(read('app/brand/GroupDashboard.tsx')).toMatch(/function formatRand/);
-    expect(stripComments(read('app/brand/revenue/RevenueClient.tsx'))).not.toMatch(/function rand\b/);
+    // It first named TWO pre-existing local copies (GroupDashboard's and
+    // RevenueClient's) and asserted they existed but had not SPREAD. Then
+    // RevenueClient's turned out to be a real divergence — Intl with
+    // maximumFractionDigits: 0, rendering R14,180.55 as "R 14 181" — and was
+    // replaced. Now GroupDashboard's has gone the same way, along with
+    // BranchPerformance's, on the reasoning that a duplicate is a divergence
+    // that has not happened yet.
+    //
+    // The whole-tree version of this rule lives in
+    // app/practice/moneyFormatterSingleSource.test.ts; what is asserted here is
+    // just that the brand surface holds none.
+    for (const rel of [
+      'app/brand/GroupDashboard.tsx',
+      'app/brand/revenue/RevenueClient.tsx',
+      'app/brand/branch/[practiceId]/BranchPerformance.tsx',
+    ]) {
+      const code = stripComments(read(rel));
+      expect(code, rel).not.toMatch(/function formatRand/);
+      expect(code, rel).not.toMatch(/function rand\b/);
+    }
     for (const path of NEW_FILES) {
       expect(stripComments(read(path)), path).not.toMatch(/replace\(\/\\B\(\?=/);
     }

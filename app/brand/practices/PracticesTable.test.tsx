@@ -32,8 +32,8 @@ const FULL_FACTS: SetupChecklistFacts = {
   latitude: -26.14,
   longitude: 28.04,
   bankingResolved: true,
-  activeProviderCount: 3,
-  activeTillDeviceCount: 2,
+  hasActiveProvider: true,
+  hasActiveTillDevice: true,
   hasTillPin: true,
 };
 
@@ -62,8 +62,8 @@ function setupRow(
     doneCount: checklist.doneCount,
     total: checklist.total,
     setupComplete: checklist.complete,
-    hasProvider:   facts.activeProviderCount   > 0,
-    hasTillDevice: facts.activeTillDeviceCount > 0,
+    hasProvider:   facts.hasActiveProvider,
+    hasTillDevice: facts.hasActiveTillDevice,
     hasTillPin:    facts.hasTillPin,
     needsAttention: !checklist.complete || status !== 'approved',
     ...over,
@@ -132,12 +132,12 @@ describe('an incomplete practice is visually distinguishable from a complete one
 describe('what it says is missing is what the practice\'s own card says', () => {
   it('prints the checklist\'s OWN item titles, not a paraphrase', () => {
     const bare = setupRow('p-bare', {
-      bankingResolved: false, activeProviderCount: 0,
+      bankingResolved: false, hasActiveProvider: false,
       phone: null, addressLine1: null, latitude: null, longitude: null,
     });
     mount([bare]);
     const card = buildSetupChecklist(
-      { ...FULL_FACTS, bankingResolved: false, activeProviderCount: 0, phone: null, addressLine1: null, latitude: null, longitude: null },
+      { ...FULL_FACTS, bankingResolved: false, hasActiveProvider: false, phone: null, addressLine1: null, latitude: null, longitude: null },
       BRAND_TABLE_AUTHORITY,
     );
     const titles = card.items.filter((i) => !i.done).map((i) => i.title);
@@ -157,7 +157,7 @@ describe('what it says is missing is what the practice\'s own card says', () => 
   });
 
   it('the practitioner cell reports roster PRESENCE, from the checklist verdict', () => {
-    mount([GOOD, setupRow('p-none', { activeProviderCount: 0 })]);
+    mount([GOOD, setupRow('p-none', { hasActiveProvider: false })]);
     // "On roster", not a number: the underlying read is .limit(1)-ed, so a
     // count here could only ever be 1 — see lib/brand/brandPracticeSetup.
     expect(screen.getByTestId('brand-practice-providers-p-good').textContent).toBe('On roster');
@@ -203,7 +203,7 @@ describe('the till column reports facts rather than passing judgement', () => {
   it('names WHICH half is missing', () => {
     mount([
       setupRow('p-nopin',  { hasTillPin: false }),
-      setupRow('p-notill', { activeTillDeviceCount: 0 }),
+      setupRow('p-notill', { hasActiveTillDevice: false }),
     ]);
     expect(screen.getByTestId('brand-practice-till-p-nopin').textContent).toBe('Registered · no PIN');
     expect(screen.getByTestId('brand-practice-till-p-notill').textContent).toBe('PIN set · no till');
@@ -212,7 +212,7 @@ describe('the till column reports facts rather than passing judgement', () => {
   it('"Not set up" is NOT an alarm — a practice billing from one laptop is fine', () => {
     // The checklist demoted the till to optional for exactly this reason. A red
     // cross here would tell a correctly-configured practice it had done wrong.
-    const laptopOnly = setupRow('p-laptop', { activeTillDeviceCount: 0, hasTillPin: false });
+    const laptopOnly = setupRow('p-laptop', { hasActiveTillDevice: false, hasTillPin: false });
     mount([laptopOnly]);
     expect(screen.getByTestId('brand-practice-till-p-laptop').textContent).toBe('Not set up');
     expect(screen.getByTestId('brand-practice-setup-p-laptop').getAttribute('data-needs-attention')).toBe('false');
