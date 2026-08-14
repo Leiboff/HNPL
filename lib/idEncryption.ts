@@ -1,20 +1,29 @@
-import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac } from 'crypto';
 
 const KEY_ENV = 'SA_ID_ENCRYPTION_KEY';
+const LOOKUP_KEY_ENV = 'SA_ID_LOOKUP_HMAC_KEY';
 
-function getKey(): Buffer {
-  const raw = process.env[KEY_ENV];
+function readKey(envName: string): Buffer {
+  const raw = process.env[envName];
   if (!raw) {
-    throw new Error(`${KEY_ENV} environment variable is not set`);
+    throw new Error(`${envName} environment variable is not set`);
   }
   const key = Buffer.from(raw, 'base64');
   if (key.byteLength !== 32) {
     throw new Error(
-      `${KEY_ENV} must decode to exactly 32 bytes (got ${key.byteLength}). ` +
+      `${envName} must decode to exactly 32 bytes (got ${key.byteLength}). ` +
       'Generate with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"',
     );
   }
   return key;
+}
+
+function getKey(): Buffer {
+  return readKey(KEY_ENV);
+}
+
+function getLookupKey(): Buffer {
+  return readKey(LOOKUP_KEY_ENV);
 }
 
 /**
@@ -66,6 +75,30 @@ export function decryptId(stored: string): string {
   decipher.setAuthTag(authTag);
 
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+}
+
+/**
+ * Deterministic blind-index hash of a plaintext SA ID number, for exact-
+ * match lookup (`WHERE sa_id_lookup_hash = hashIdForLookup(id)`) and for
+ * the uniqueness constraint that cannot be expressed on sa_id_number
+ * itself. See supabase/migrations/0096_sa_id_lookup_hash.sql.
+ *
+ * HMAC-SHA256 keyed by SA_ID_LOOKUP_HMAC_KEY — a DIFFERENT secret than
+ * SA_ID_ENCRYPTION_KEY (used by encryptId/decryptId). Deterministic (same
+ * ID always produces the same hash) so it supports equality lookup, unlike
+ * encryptId's random-IV ciphertext. Not reversible without the key, and
+ * the key is what stops the ~10^13 SA ID space being brute-forced offline
+ * from a leaked hash column.
+ *
+ * Throws if SA_ID_LOOKUP_HMAC_KEY is missing or not 32 bytes when decoded.
+ * Fails CLOSED on purpose: a silently-skipped hash is a row that escapes
+ * the uniqueness constraint. This is the same operational requirement
+ * SA_ID_ENCRYPTION_KEY already imposes — encryptId throws without it, so
+ * no ID-capture path can run keyless today either.
+ */
+export function hashIdForLookup(plaintext: string): string {
+  const key = getLookupKey();
+  return createHmac('sha256', key).update(plaintext, 'utf8').digest('hex');
 }
 
 /**

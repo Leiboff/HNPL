@@ -6,7 +6,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef } from '@/lib/payments/peach/refs';
-import { encryptId } from '@/lib/idEncryption';
+import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
@@ -459,8 +459,17 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // fields here. For returning patients we always overwrite — they
   // may have corrected a typo.
   let encryptedSaId: string;
+  let saIdLookupHash: string;
   try {
-    encryptedSaId = encryptId(saIdPlain.trim());
+    const trimmedSaId = saIdPlain.trim();
+    encryptedSaId  = encryptId(trimmedSaId);
+    // Deterministic blind index (migration 0096) — the only value on this
+    // row that a duplicate SA ID can be recognised by, since the
+    // ciphertext above differs on every call. Written in the same try as
+    // encryptId because both are the same class of failure (a missing or
+    // malformed key) and both must fail CLOSED: a row that lands with a
+    // NULL hash is a row the uniqueness constraint cannot see.
+    saIdLookupHash = hashIdForLookup(trimmedSaId);
   } catch {
     return { ok: false, error: 'Encryption error — please contact support.' };
   }
@@ -473,6 +482,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     last_name:          lastName.trim(),
     phone:              normalizedPhone,
     sa_id_number:       encryptedSaId,
+    sa_id_lookup_hash:  saIdLookupHash,
     salary_day:         salaryDay,
     // Phone-verification fact lands together with everything else this
     // action writes. Idempotent on retry — upsert re-applies the same

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { randomBytes } from 'crypto';
-import { encryptId, decryptId, maskId, decryptIdForDisplay } from './idEncryption';
+import { encryptId, decryptId, maskId, decryptIdForDisplay, hashIdForLookup } from './idEncryption';
 
 // ---------------------------------------------------------------------------
 // Test key setup
@@ -15,11 +15,15 @@ import { encryptId, decryptId, maskId, decryptIdForDisplay } from './idEncryptio
 const ENV_VAR = 'SA_ID_ENCRYPTION_KEY';
 const TEST_KEY_B64 = randomBytes(32).toString('base64');
 
+const LOOKUP_ENV_VAR = 'SA_ID_LOOKUP_HMAC_KEY';
+const TEST_LOOKUP_KEY_B64 = randomBytes(32).toString('base64');
+
 // Realistic 13-digit South African ID number used throughout.
 const SA_ID = '9001015800086';
 
 beforeAll(() => {
   process.env[ENV_VAR] = TEST_KEY_B64;
+  process.env[LOOKUP_ENV_VAR] = TEST_LOOKUP_KEY_B64;
 });
 
 // ---------------------------------------------------------------------------
@@ -177,5 +181,139 @@ describe('decryptIdForDisplay', () => {
     const corrupted = [v, ivB64, tagB64, ct.toString('base64')].join(':');
     expect(() => decryptIdForDisplay(corrupted)).not.toThrow();
     expect(decryptIdForDisplay(corrupted)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hashIdForLookup — deterministic blind index (migration 0096)
+//
+// Restored from commit 61743e5 (reverted by 500fe3b). Everything below was
+// in that commit; the "uniqueness depends on this" block is new, because
+// the column now exists to carry a UNIQUE constraint rather than only to
+// serve a lookup.
+// ---------------------------------------------------------------------------
+
+describe('hashIdForLookup — determinism', () => {
+  it('produces the SAME hash for the same plaintext (unlike encryptId)', () => {
+    const first  = hashIdForLookup(SA_ID);
+    const second = hashIdForLookup(SA_ID);
+    expect(first).toBe(second);
+  });
+
+  it('produces different hashes for different plaintext', () => {
+    expect(hashIdForLookup(SA_ID)).not.toBe(hashIdForLookup('8501015800087'));
+  });
+
+  it('is a 64-char lowercase hex string (SHA-256 digest)', () => {
+    expect(hashIdForLookup(SA_ID)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('hashIdForLookup — what a UNIQUE constraint on it would actually mean', () => {
+  it('two independent encryptions of one ID collapse to ONE hash', () => {
+    // This is the whole reason the column exists. A UNIQUE constraint on
+    // sa_id_number cannot see these two as the same value; a UNIQUE
+    // constraint on the hash sees them as identical.
+    const cipherA = encryptId(SA_ID);
+    const cipherB = encryptId(SA_ID);
+    expect(cipherA).not.toBe(cipherB);
+
+    expect(hashIdForLookup(decryptId(cipherA))).toBe(hashIdForLookup(decryptId(cipherB)));
+  });
+
+  it('is stable across a fresh module load — same ID, same key, same hash', async () => {
+    // "Deterministic across restarts": nothing about the digest depends on
+    // process state, only on the key and the input. resetModules forces a
+    // genuinely new module instance rather than handing back the cached one.
+    const before = hashIdForLookup(SA_ID);
+    vi.resetModules();
+    const reloaded = await import('./idEncryption');
+    expect(reloaded.hashIdForLookup).not.toBe(hashIdForLookup);
+    expect(reloaded.hashIdForLookup(SA_ID)).toBe(before);
+  });
+
+  it('does NOT contain the ID, in any form a scan would find', () => {
+    // Not a proof of one-wayness (SHA-256's is) — a guard that the digest
+    // is a digest, not an encoding. A reversible "hash" would silently
+    // turn the column into a plaintext ID column.
+    const hash = hashIdForLookup(SA_ID);
+    expect(hash).not.toContain(SA_ID);
+    expect(hash).not.toContain(SA_ID.slice(-4));
+    expect(Buffer.from(hash, 'hex').toString('utf8')).not.toContain(SA_ID);
+    // Length is fixed regardless of input length — no information about
+    // the input survives in the shape of the output.
+    expect(hashIdForLookup('1').length).toBe(hashIdForLookup(SA_ID.repeat(4)).length);
+  });
+
+  it('a one-digit difference gives a completely unrelated hash', () => {
+    const a = hashIdForLookup('9001015800086');
+    const b = hashIdForLookup('9001015800087');
+    expect(a).not.toBe(b);
+    // Avalanche: the two digests should share almost nothing. Anything
+    // above a handful of matching hex chars would suggest a structural
+    // (reversible) transform rather than a digest.
+    const shared = [...a].filter((ch, i) => ch === b[i]).length;
+    expect(shared).toBeLessThan(20);
+  });
+});
+
+describe('hashIdForLookup — key separation from SA_ID_ENCRYPTION_KEY', () => {
+  it('uses a DIFFERENT key than encryptId — flipping the encryption key does not change the hash', () => {
+    const before = hashIdForLookup(SA_ID);
+    const savedEncKey = process.env[ENV_VAR];
+    process.env[ENV_VAR] = randomBytes(32).toString('base64');
+    const after = hashIdForLookup(SA_ID);
+    process.env[ENV_VAR] = savedEncKey;
+    expect(after).toBe(before);
+  });
+
+  it('flipping the lookup key DOES change the hash', () => {
+    const before = hashIdForLookup(SA_ID);
+    const saved = process.env[LOOKUP_ENV_VAR];
+    process.env[LOOKUP_ENV_VAR] = randomBytes(32).toString('base64');
+    const after = hashIdForLookup(SA_ID);
+    process.env[LOOKUP_ENV_VAR] = saved;
+    expect(after).not.toBe(before);
+  });
+
+  it('the two keys are never the same value by construction — the hash is keyed, not salted by the AES key', () => {
+    // Setting BOTH env vars to one value must still produce the HMAC of
+    // that value, i.e. hashIdForLookup reads LOOKUP_ENV_VAR and only it.
+    const saved = process.env[LOOKUP_ENV_VAR];
+    process.env[LOOKUP_ENV_VAR] = process.env[ENV_VAR];
+    const withEncKey = hashIdForLookup(SA_ID);
+    process.env[LOOKUP_ENV_VAR] = saved;
+    expect(withEncKey).not.toBe(hashIdForLookup(SA_ID));
+  });
+});
+
+describe('hashIdForLookup — key validation', () => {
+  afterEach(() => {
+    process.env[LOOKUP_ENV_VAR] = TEST_LOOKUP_KEY_B64;
+  });
+
+  it('throws a clear error naming the env var when the key is missing', () => {
+    delete process.env[LOOKUP_ENV_VAR];
+    expect(() => hashIdForLookup(SA_ID)).toThrow(LOOKUP_ENV_VAR);
+  });
+
+  it('throws mentioning "32 bytes" when the key is too short', () => {
+    process.env[LOOKUP_ENV_VAR] = Buffer.from('tooshort').toString('base64');
+    expect(() => hashIdForLookup(SA_ID)).toThrow(/32 bytes/);
+  });
+
+  it('fails CLOSED rather than returning an empty or fallback hash', () => {
+    // A silently-skipped hash is a row that escapes the uniqueness
+    // constraint, so "throw" is the load-bearing behaviour here.
+    delete process.env[LOOKUP_ENV_VAR];
+    expect(() => hashIdForLookup(SA_ID)).toThrow();
+  });
+
+  it('the error names the LOOKUP key, not the encryption key — the two are diagnosed apart', () => {
+    delete process.env[LOOKUP_ENV_VAR];
+    let message = '';
+    try { hashIdForLookup(SA_ID); } catch (err) { message = (err as Error).message; }
+    expect(message).toContain(LOOKUP_ENV_VAR);
+    expect(message).not.toBe(`${ENV_VAR} environment variable is not set`);
   });
 });
