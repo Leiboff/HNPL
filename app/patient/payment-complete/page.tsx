@@ -254,6 +254,31 @@ async function activateFirstInstalmentFromStatus(
         note: 'money moved at Peach; awaiting webhook reconcile',
       });
     }
+
+    // Advance the POS counter session to its terminal stage (idempotent).
+    // A no-op (0 rows) for a plan that never had one — which is most plans
+    // through this route.
+    //
+    // This route is the SAVED-CARD return, and it became reachable for a
+    // counter session when a returning patient started claiming their own
+    // till bill (lib/checkout/claimSessionPlan.ts): they pay from /confirm
+    // with a stored card and come back HERE, not to /checkout/[token]/complete
+    // where the equivalent write already lived. Without this line that
+    // session would sit at 'scanned' forever — the plan goes active, so
+    // expire_stale_checkout_session declines to touch it — and the till's
+    // activity strip would report "Waiting on patient" for a bill that was
+    // paid. Exactly the freeze that has now been fixed twice; not adding a
+    // third one.
+    //
+    // Same predicate as the anonymous completion route, deliberately: matched
+    // by plan_id, and `.neq` rather than the closing helper's open-stages-only
+    // guard, because a successful payment SHOULD overwrite a 'payment_failed'
+    // left by an earlier declined attempt.
+    await svc
+      .from('checkout_sessions')
+      .update({ stage: 'completed' })
+      .eq('plan_id', plan.id)
+      .neq('stage', 'completed');
   } catch (err) {
     console.error('[payment-complete] activation error (non-fatal; webhook backstop)', err instanceof Error ? err.message : err);
   }

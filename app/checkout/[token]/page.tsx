@@ -12,6 +12,7 @@ import {
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { decryptId, maskId } from '@/lib/idEncryption';
+import { claimUnboundSessionPlan } from '@/lib/checkout/claimSessionPlan';
 
 // The fresh-vs-resume decision reads the session cookie + plan state
 // per request — the RSC output for this URL is different for the
@@ -236,15 +237,46 @@ export default async function CheckoutPage({
   //     but never captured a card" = the resume case.
   const { data: planPatientRow } = await svcForLookup
     .from('plans')
-    .select('patient_id, status, peach_registration_id')
+    .select('patient_id, status, peach_registration_id, application_id')
     .eq('id', row.plan_id)
     .maybeSingle();
-  const planPatientId      = (planPatientRow?.patient_id            as string | null | undefined) ?? null;
+  let   planPatientId      = (planPatientRow?.patient_id            as string | null | undefined) ?? null;
   const planStatus         = (planPatientRow?.status                as string | null | undefined) ?? null;
   const planRegistrationId = (planPatientRow?.peach_registration_id as string | null | undefined) ?? null;
   const isUncapturedPlan   = planStatus === 'pending_first_payment' && !planRegistrationId;
 
   const { data: { user: sessionUser } } = await supabase.auth.getUser();
+
+  // ── Returning patient, counter-issued bill: claim it ────────────────────
+  //
+  // A till bill has no owner (see lib/checkout/claimSessionPlan.ts). Every
+  // ownership test below is `plan.patient_id === user.id`, which an unbound
+  // plan can never satisfy — so a signed-in returning patient scanning a QR
+  // used to fall straight through to the "invitation_not_yours" bounce below,
+  // which was not just unhelpful but WRONG: the bill is theirs.
+  //
+  // The claim is gated on the SA ID the practice captured at the till matching
+  // the one on their profile, so this recognises the billed patient rather
+  // than merely a logged-in one. On success the plan is bound and the branches
+  // below proceed exactly as they do for an email-issued bill — no new route,
+  // no second confirm surface. On failure nothing is written and the existing
+  // bounce still catches them.
+  if (sessionUser && resolved.kind === 'session' && planPatientId === null) {
+    const claim = await claimUnboundSessionPlan({
+      svc:                  svcForLookup,
+      planId:               row.plan_id,
+      applicationId:        (planPatientRow?.application_id as string | null | undefined) ?? null,
+      userId:               sessionUser.id,
+      sessionSaIdEncrypted: resolved.row.sa_id_number,
+    });
+    if (claim.claimed) {
+      planPatientId = sessionUser.id;
+    } else {
+      console.warn('[checkout] counter session not claimed by signed-in user', {
+        planId: row.plan_id, reason: claim.reason,
+      });
+    }
+  }
 
   if (sessionUser) {
     if (planPatientId === sessionUser.id) {

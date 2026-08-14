@@ -172,16 +172,22 @@ describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not
   });
 
   it('page still redirects a logged-in owner to /confirm when the plan is NOT uncaptured', () => {
-    // The redirect(confirmPath) still exists — just moved inside the
-    // else of the uncaptured branch. The old behaviour (owner +
-    // pending_acceptance / with-token → /confirm) is preserved.
-    const idx = PAGE.indexOf('isUncapturedPlan');
-    expect(idx).toBeGreaterThan(0);
-    // Widened window: the uncaptured branch now also fetches the full
-    // schedule + prior-attempt signal before the else-redirect, so
-    // redirect(confirmPath) sits further down.
-    const chunk = PAGE.slice(idx, idx + 4000);
-    expect(chunk).toMatch(/redirect\(confirmPath\)/);
+    // The redirect(confirmPath) still exists — just inside the else of the
+    // uncaptured branch. The old behaviour (owner + pending_acceptance /
+    // with-token → /confirm) is preserved.
+    //
+    // Anchored on the BRANCH rather than on a character window. This was
+    // `PAGE.slice(idx, idx + 4000)`, which had already been widened once and
+    // broke again when the counter-session claim was inserted above it — a
+    // fixed offset makes an unrelated edit look like a routing regression.
+    // What the test means is "the owner branch ends in that redirect", so
+    // that is what it now asserts.
+    const ownerBranch = PAGE.indexOf('if (planPatientId === sessionUser.id)');
+    const redirectIdx = PAGE.indexOf('redirect(confirmPath)');
+    const notYours    = PAGE.indexOf("redirect('/patient?reason=invitation_not_yours')");
+    expect(ownerBranch).toBeGreaterThan(0);
+    expect(redirectIdx).toBeGreaterThan(ownerBranch);
+    expect(notYours).toBeGreaterThan(redirectIdx);
   });
 
   it('non-owner path unchanged: never routed into the plan (belt-and-braces on the resume path)', () => {
