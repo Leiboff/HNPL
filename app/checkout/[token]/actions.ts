@@ -358,14 +358,30 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     // #6 race / email collision with an organic BetterNow account.
     // The plan was bound to a different (or null) patient on the
     // new-patient fork; this confirmed user owns a separate organic
-    // account. Send them to /login with a next= back to their bill's
-    // acceptance page so the standard patient-portal path takes over
-    // once they authenticate.
+    // account. Send them to /login — authenticating is the proof of
+    // ownership this flow cannot get from a typed email alone, and that
+    // rejection is deliberately NOT relaxed here.
+    //
+    // WHERE they land after logging in forks on the token kind, because the
+    // confirm page can only render a plan that already has an owner:
+    //
+    //   invitation — createBill stamped plans.patient_id at creation when an
+    //                account existed, so /confirm works and is the shorter hop.
+    //   session    — a till bill has NO owner yet, so /confirm would find
+    //                nothing and dump them on /patient/orders with the bill
+    //                nowhere in sight, at the counter, mid-transaction. Send
+    //                them back to the checkout page instead: now that they
+    //                have a session it claims the plan for them (SA ID
+    //                matched) and forwards to /confirm itself. One hop, and
+    //                the anonymous signup form is still never reached by
+    //                somebody who already has an account.
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
-    const next   = `/patient/orders/${plan.id}/confirm`;
+    const next   = resolved.kind === 'session'
+      ? `/checkout/${encodeURIComponent(token)}`
+      : `/patient/orders/${plan.id}/confirm`;
     return {
       ok:           false,
-      error:        'An account with this email already exists. Please log in to see this bill on your dashboard.',
+      error:        'An account with this email already exists. Please log in to continue with this bill.',
       requireLogin: true,
       loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
     };
