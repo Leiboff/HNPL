@@ -116,7 +116,7 @@ describe('the helper reports rather than throws', () => {
       }),
     };
     const result = await declineCheckoutSessionsForPlan('plan-1', failing);
-    expect(result).toEqual({ declined: 0, error: 'permission denied' });
+    expect(result).toEqual({ closed: 0, error: 'permission denied' });
   });
 
   it('reads null data as zero rows moved, not as a crash', async () => {
@@ -128,7 +128,7 @@ describe('the helper reports rather than throws', () => {
         select: async () => ({ data: null, error: null }),
       }),
     };
-    expect(await declineCheckoutSessionsForPlan('plan-1', nullish)).toEqual({ declined: 0, error: null });
+    expect(await declineCheckoutSessionsForPlan('plan-1', nullish)).toEqual({ closed: 0, error: null });
   });
 
   it('never returns the plan id or any session detail to its caller', async () => {
@@ -144,7 +144,7 @@ describe('the helper reports rather than throws', () => {
       }),
     };
     const result = await declineCheckoutSessionsForPlan('plan-1', one);
-    expect(Object.keys(result).sort()).toEqual(['declined', 'error']);
+    expect(Object.keys(result).sort()).toEqual(['closed', 'error']);
     expect(JSON.stringify(result)).not.toContain('sess-1');
   });
 
@@ -185,10 +185,13 @@ describe('the till names the newly-reachable stage without blaming the practice'
   });
 
   it('the wording states what the patient did, with no fault attached', () => {
+    // The rendered words only — the KEYS are stage names the database chose
+    // (one of them is literally 'payment_failed'), not copy anyone reads out.
     const detail = STRIP.slice(STRIP.indexOf('const STOPPED_DETAIL'));
     const block  = detail.slice(0, detail.indexOf('};') + 2);
+    const words  = [...block.matchAll(/:\s*'([^']+)'/g)].map((m) => m[1].toLowerCase());
     for (const blame of ['failed', 'error', 'rejected', 'invalid', 'wrong', 'refused']) {
-      expect(block.toLowerCase(), blame).not.toContain(blame);
+      for (const word of words) expect(word, blame).not.toContain(blame);
     }
   });
 
@@ -236,11 +239,13 @@ describe('the reachability of this path, stated honestly', () => {
       read('app/checkout/[token]/complete/page.tsx'),
       // The SQL fail-safe.
       rawRead('supabase/migrations/0085_checkout_sessions.sql'),
-      // This change.
+      // This module — now parameterised over the stage, since the webhook's
+      // payment_failed propagation shares the same predicate.
       read('lib/checkout/declineCheckoutSessions.ts'),
     ];
     expect(writers[0]).toMatch(/update\(\{ stage: 'completed' \}\)/);
     expect(writers[1]).toMatch(/SET stage\s+= 'expired'/);
-    expect(writers[2]).toMatch(/update\(\{ stage: 'declined' \}\)/);
+    expect(writers[2]).toMatch(/update\(\{ stage \}\)/);
+    expect(writers[2]).toMatch(/closeOpenSessionsForPlan\(planId, 'declined'/);
   });
 });

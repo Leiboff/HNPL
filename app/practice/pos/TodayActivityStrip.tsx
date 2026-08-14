@@ -87,25 +87,34 @@ const OUTCOME_CHIP: Record<TillSessionOutcome, { label: string; cls: string }> =
  * One bucket for colour, two words for the detail — because "did it go through?"
  * has the same answer either way, but "what happened?" does not.
  *
- * Both are now reachable. 'expired' is abandonment (the timeout or the teller's
- * "Start next patient") via expire_stale_checkout_session; 'declined' is the
- * patient's own refusal, propagated from declinePlan by
+ * All three are reachable. 'expired' is abandonment (the timeout or the
+ * teller's "Start next patient") via expire_stale_checkout_session;
+ * 'declined' is the patient's own refusal; 'payment_failed' is a rejected
+ * first charge. The last two are propagated by
  * lib/checkout/declineCheckoutSessions.ts.
  *
- * "Patient declined" rather than the bare "Declined" this held while the stage
- * was unreachable, for two reasons:
+ * These three exist as separate words because they need three DIFFERENT things
+ * from the person reading them:
  *
- *   • At a till, an unqualified "Declined" reads as the CARD being declined —
- *     that is what the word means on every card machine in the country. The
- *     two need different responses from the front desk (try another card vs.
- *     this patient says the bill isn't theirs), so they cannot share a word.
- *   • It names who acted. Nothing here went wrong at the practice's end and
- *     the copy should not leave room for reading it that way — it is a
- *     statement of what the patient did, not a fault.
+ *   expired         issue it again — nothing was refused, the QR just ran out.
+ *   payment_failed  try another card. This is the common one, and it is why
+ *                   "Card didn’t go through" says CARD: it names the thing to
+ *                   act on, and it puts the failure on the payment rather than
+ *                   on the patient or on the practice. It deliberately echoes
+ *                   the patient's own screen, which says "Payment didn't go
+ *                   through" — one event should not have two vocabularies
+ *                   across the counter from each other.
+ *   declined        do NOT retry. "Patient declined" rather than a bare
+ *                   "Declined", because at a till an unqualified "Declined"
+ *                   reads as the card being declined — that is what the word
+ *                   means on every card machine in the country — which is the
+ *                   exact opposite action. It also names who acted, so nothing
+ *                   here reads as a fault at the practice's end.
  */
 const STOPPED_DETAIL: Record<string, string> = {
-  expired:  'Didn’t finish in time',
-  declined: 'Patient declined',
+  expired:        'Didn’t finish in time',
+  declined:       'Patient declined',
+  payment_failed: 'Card didn’t go through',
 };
 
 type Props = {

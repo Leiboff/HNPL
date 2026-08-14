@@ -25,6 +25,7 @@ import {
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
 import { logPeachRawResponse } from '@/lib/payments/peach/logRawResponse';
+import { failCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 
 // ─── Peach Checkout webhook receiver ────────────────────────────────
 //
@@ -391,7 +392,31 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     }
     await supabase.from('payments').update({ status: 'failed', failure_reason: failureReason }).eq('id', payment.id);
     await supabase.from('plans').update({ status: 'cancelled' }).eq('id', plan.id);
-    console.log('[peach-webhook] payment.failure: plan cancelled', { planId: plan.id, reference, failureReason });
+
+    // ── Propagate to the POS counter session, if this bill had one ──────
+    // A till-issued bill carries a checkout_sessions row (0085) whose stage is
+    // what the till's "Today at this till" strip reports. The completion page
+    // early-returns on a rejected charge BEFORE its own stage write, and
+    // expire_stale_checkout_session only acts while the plan is still pending —
+    // so the line above freezes the session at 'scanned' permanently, and the
+    // front desk is told "Waiting on patient" about a card that was declined.
+    //
+    // Deliberately after the plan write and deliberately non-fatal: the plan
+    // status is the authoritative record and must not be held hostage to a
+    // second table, and this route answers 200 to everything rather than let
+    // Peach's retry ladder amplify a bug into a state-flip storm. Passes the
+    // handler's OWN service-role client rather than building a second one.
+    const sessionClose = await failCheckoutSessionsForPlan(plan.id, supabase);
+    if (sessionClose.error) {
+      console.error('[peach-webhook] ALERT payment.failure: checkout_sessions propagation failed', {
+        planId: plan.id, reference, error: sessionClose.error,
+        note: 'plan IS cancelled; the till strip may still show this session as waiting',
+      });
+    }
+
+    console.log('[peach-webhook] payment.failure: plan cancelled', {
+      planId: plan.id, reference, failureReason, sessionsClosed: sessionClose.closed,
+    });
     return;
   }
 

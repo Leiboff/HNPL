@@ -90,12 +90,23 @@ describe('the checklist stores nothing', () => {
   });
 
   it('the feature ships no migration of its own', () => {
-    // The highest migration is still 0094 (the previous task). If this
-    // feature ever needs schema, that is a decision to make deliberately.
-    const versions = readdirSync(resolve(ROOT, 'supabase/migrations'))
+    // Was written as `Math.max(...versions) === 94` — a high-water mark, which
+    // asserted something this test has no business asserting: it failed the
+    // moment ANY later feature added ANY migration (0095, the checkout-session
+    // payment_failed stage, tripped it), while never actually checking that
+    // the migration in question belonged to the checklist.
+    //
+    // The claim is "no schema was added FOR THIS FEATURE", so that is what is
+    // checked: no migration is NAMED for it. The test above is the other half
+    // — it reads every migration and fails if any declares checklist state on
+    // practices, whatever the file is called.
+    const named = readdirSync(resolve(ROOT, 'supabase/migrations'))
       .filter((f) => /^\d+_.*\.sql$/.test(f))
-      .map((f) => parseInt(f.slice(0, 4), 10));
-    expect(Math.max(...versions)).toBe(94);
+      // Not /onboard/: 0066_onboarding_gate.sql is the PATIENT onboarding
+      // gate, which the test above explicitly declines to police — "a
+      // different flow with a different lifecycle".
+      .filter((f) => /checklist|practice_setup|setup_complete/i.test(f));
+    expect(named).toEqual([]);
   });
 });
 
