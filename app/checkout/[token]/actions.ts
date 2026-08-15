@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef } from '@/lib/payments/peach/refs';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
@@ -385,6 +386,44 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       requireLogin: true,
       loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
     };
+  }
+
+  // ── 3-bis. One SA ID = one patient account (migration 0097) ──────────
+  //
+  // Refused HERE, before any account is created, for two reasons: a
+  // rejection after createUser would leave an orphan auth user, and the
+  // unique index would reject the profile upsert far downstream with a
+  // raw Postgres error the patient cannot act on. The index is still the
+  // authority — this is the message, not the enforcement.
+  //
+  // Self-exclusion: the person re-submitting their OWN ID must pass. On
+  // the 'reuse' fork we already know which account this checkout resolves
+  // to, so an owner that IS that account is not a duplicate. On
+  // 'create-new' there is no account yet, so ANY owner is somebody else.
+  {
+    const prospectiveUserId = decision.action === 'reuse' ? decision.userId : null;
+    let idOwner: Awaited<ReturnType<typeof findPatientBySaId>> = null;
+    try {
+      idOwner = await findPatientBySaId(svc, saIdPlain);
+    } catch (err) {
+      // A failed lookup is not permission to proceed — it is the one case
+      // where continuing could create the duplicate this exists to stop.
+      console.error('[checkout] SA ID duplicate check failed:', err instanceof Error ? err.message : err);
+      return { ok: false, error: 'We could not verify your ID number just now. Please try again.' };
+    }
+
+    if (idOwner && idOwner.id !== prospectiveUserId) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
+      const next   = resolved.kind === 'session'
+        ? `/checkout/${encodeURIComponent(token)}`
+        : `/patient/orders/${plan.id}/confirm`;
+      return {
+        ok:           false,
+        error:        'An account already exists for this ID number. Please log in to that account to continue — or use "Forgot password" if you can\'t get in.',
+        requireLogin: true,
+        loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
+      };
+    }
   }
 
   if (decision.action === 'reuse') {

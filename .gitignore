@@ -34,6 +34,11 @@ supabase/.branches
 .DS_Store
 *.pem
 
+# Restore files written by scripts/strip-duplicate-sa-ids.ts before it clears
+# a duplicate SA ID. They hold encrypted ID values for real accounts — never
+# commit one, and delete it once the cleanup is confirmed good.
+*.restore.json
+
 # debug
 npm-debug.log*
 yarn-debug.log*

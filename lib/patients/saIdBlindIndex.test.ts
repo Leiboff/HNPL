@@ -36,8 +36,14 @@ const MIG_NAME = '0096_sa_id_lookup_hash.sql';
  */
 const ddl = (src: string) => stripComments(src, { sql: true }).replace(/'[^']*'/g, "''");
 
+const UNIQ_NAME = '0097_sa_id_lookup_hash_unique.sql';
+
 const MIG      = readSql(`supabase/migrations/${MIG_NAME}`);
 const MIG_DDL  = ddl(readFileSync(resolve(ROOT, `supabase/migrations/${MIG_NAME}`), 'utf8'));
+const UNIQ_SQL = readSql(`supabase/migrations/${UNIQ_NAME}`);
+const UNIQ_DDL = ddl(readFileSync(resolve(ROOT, `supabase/migrations/${UNIQ_NAME}`), 'utf8'));
+const SALES    = read('app/admin/sales-team/actions.ts');
+const STRIP    = read('scripts/strip-duplicate-sa-ids.ts');
 const ENCRYPT  = read('lib/idEncryption.ts');
 const CHECKOUT = read('app/checkout/[token]/actions.ts');
 const ONBOARD  = read('lib/onboarding/actions.ts');
@@ -165,7 +171,10 @@ describe('the two scripts', () => {
     // identically, so the audit gets the same answer without ever touching
     // the second secret — which is what lets it run BEFORE that secret is
     // provisioned, i.e. exactly when the duplicate picture is needed.
-    expect(AUDIT).not.toMatch(/SA_ID_LOOKUP_HMAC_KEY/);
+    // It NAMES the key in the message it prints when the persisted column
+    // disagrees with the plaintext, which is the most useful thing to say
+    // there. What it must never do is READ it.
+    expect(AUDIT).not.toMatch(/process\.env\.SA_ID_LOOKUP_HMAC_KEY/);
     expect(AUDIT).not.toMatch(/hashIdForLookup/);
     expect(AUDIT).toMatch(/import \{ decryptId, maskId \}/);
   });
@@ -217,29 +226,136 @@ describe('the two scripts', () => {
   });
 });
 
-describe('Phase 1 stays inside its boundary', () => {
-  it('no migration in the tree adds uniqueness on the hash yet', () => {
-    const sql = readdirSync(MIG_DIR)
+describe('Phase 2: uniqueness lives in exactly one migration, with the right predicate', () => {
+  it('0097 is the ONLY migration that makes the hash unique', () => {
+    const named = readdirSync(MIG_DIR)
       .filter((f) => f.endsWith('.sql'))
-      .map((f) => readFileSync(resolve(MIG_DIR, f), 'utf8'));
-    const unique = sql.filter((s) => /sa_id_lookup_hash/.test(s) && /UNIQUE/i.test(ddl(s)));
-    expect(unique).toEqual([]);
+      .filter((f) => {
+        const s = readFileSync(resolve(MIG_DIR, f), 'utf8');
+        return /sa_id_lookup_hash/.test(s) && /UNIQUE/i.test(ddl(s));
+      });
+    expect(named).toEqual([UNIQ_NAME]);
   });
 
-  it('nothing yet REJECTS a signup on a duplicate ID — the gate is Phase 2', () => {
+  it('is partial on role = patient — a doctor who is also a patient is two legitimate accounts', () => {
+    // Read with comments stripped but string literals INTACT: the predicate
+    // is itself a quoted literal, and ddl() blanks those.
+    expect(UNIQ_SQL).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS profiles_sa_id_lookup_hash_patient_uniq/);
+    expect(UNIQ_SQL).toMatch(/ON profiles\(sa_id_lookup_hash\)/);
+    expect(UNIQ_SQL).toMatch(/WHERE role = 'patient' AND sa_id_lookup_hash IS NOT NULL/);
+  });
+
+  it('does not touch sa_id_number, RLS, or any account row', () => {
+    expect(UNIQ_DDL).not.toMatch(/ALTER COLUMN sa_id_number/i);
+    expect(UNIQ_DDL).not.toMatch(/UPDATE profiles/i);
+    expect(UNIQ_DDL).not.toMatch(/DELETE FROM/i);
+    expect(UNIQ_DDL).not.toMatch(/CREATE POLICY|DROP POLICY|GRANT/i);
+  });
+});
+
+describe('the server-side gate — the message, above the index that actually holds', () => {
+  it('BOTH patient ID-capture paths refuse an ID another account already holds', () => {
     for (const src of [CHECKOUT, ONBOARD]) {
-      expect(src).not.toMatch(/sa_id_lookup_hash[\s\S]{0,200}already (registered|exists)/i);
+      expect(src).toMatch(/findPatientBySaId\(/);
+      expect(src).toMatch(/An account already exists for this ID number/);
     }
   });
 
-  it('no code reads the column back yet — findPatientBySaId lands with the gate that needs it', () => {
-    // The reverted commit shipped lib/patients/findPatientBySaId.ts too. It
-    // is deliberately NOT resurrected here: nothing in Phase 1 looks a
-    // patient up by ID, and an unused lookup helper is the kind of dead
-    // code the original revert was complaining about.
+  it('excludes the caller from their own ID — re-submitting your own is not a duplicate', () => {
+    expect(CHECKOUT).toMatch(/idOwner\.id !== prospectiveUserId/);
+    expect(ONBOARD).toMatch(/idOwner\.id !== loaded\.userId/);
+  });
+
+  it('the checkout gate runs BEFORE the account is created, so a refusal leaves no orphan', () => {
+    const gate   = CHECKOUT.indexOf('findPatientBySaId(');
+    const create = CHECKOUT.indexOf('svc.auth.admin.createUser(');
+    expect(gate).toBeGreaterThan(0);
+    expect(create).toBeGreaterThan(gate);
+  });
+
+  it('a FAILED lookup refuses rather than proceeding', () => {
+    // null means "nobody owns this ID, let them register". An error must
+    // never be allowed to look like null, or the gate fails open in exactly
+    // the situation it exists for.
     for (const src of [CHECKOUT, ONBOARD]) {
-      expect(src).not.toMatch(/\.eq\('sa_id_lookup_hash'/);
-      expect(src).not.toMatch(/findPatientBySaId/);
+      expect(src).toMatch(/SA ID duplicate check failed/);
+      expect(src).toMatch(/could not verify your ID number/);
     }
+  });
+
+  it('the copy routes them somewhere, rather than stranding them', () => {
+    // The task's requirement: tell them plainly, and point at log in /
+    // recovery. A vague message strands a real returning patient.
+    expect(CHECKOUT).toMatch(/Forgot password/);
+    expect(CHECKOUT).toMatch(/requireLogin:\s*true/);
+    expect(ONBOARD).toMatch(/Forgot password/);
+  });
+
+  it('the app check is the message and the index is the enforcement — not the other way round', () => {
+    // Pinned because it is the thing that would quietly rot: if someone
+    // later drops the index believing the server action covers it, a
+    // direct insert re-opens the hole. lib/patients/saIdUniqueness.pglite
+    // .test.ts proves the index holds with no app in the picture.
+    expect(UNIQ_DDL).toMatch(/CREATE UNIQUE INDEX/);
+  });
+});
+
+describe('role changes across the partial index', () => {
+  it('revokeSalesRole translates a unique violation instead of leaking raw Postgres', () => {
+    expect(SALES).toMatch(/error\.code === '23505'/);
+    expect(SALES).toMatch(/profiles_sa_id_lookup_hash_patient_uniq/);
+    // Split across a string concatenation in the source, so matched on the
+    // half that carries the meaning rather than on the line break.
+    expect(SALES).toMatch(/registered to a different patient account/);
+  });
+
+  it('does not silently resolve the duplicate on the admin\'s behalf', () => {
+    const revoke = SALES.slice(SALES.indexOf('export async function revokeSalesRole'));
+    expect(revoke).not.toMatch(/sa_id_number:\s*null/);
+    expect(revoke).not.toMatch(/sa_id_lookup_hash:\s*null/);
+  });
+});
+
+describe('the cleanup script', () => {
+  it('never deletes an account — it clears the ID and nothing else', () => {
+    const updates = [...STRIP.matchAll(/\.update\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) {
+      expect(u).toMatch(/sa_id_number: null, sa_id_lookup_hash: null|onboarding_completed: true/);
+    }
+    expect(STRIP).not.toMatch(/\.delete\(/);
+    expect(STRIP).not.toMatch(/auth\.admin\.deleteUser/);
+  });
+
+  it('touches only role = patient rows — staff are outside the constraint', () => {
+    expect(STRIP).toMatch(/\.eq\('role', 'patient'\)/);
+  });
+
+  it('writes a restore file BEFORE the first clearing write', () => {
+    const restore = STRIP.indexOf('writeFileSync(OUT');
+    const clear   = STRIP.indexOf("update({ sa_id_number: null");
+    expect(restore).toBeGreaterThan(0);
+    expect(clear).toBeGreaterThan(restore);
+  });
+
+  it('refuses to strip an account that would be pushed back into onboarding', () => {
+    // profiles.onboarding_completed is a cached write-once-true flag that
+    // computeOnboarding short-circuits on. For a row where it is FALSE, the
+    // identity step reads sa_id_number directly — so clearing the ID sends
+    // that patient to /onboarding/identity, where the new gate refuses the
+    // only ID they have. A locked-out account.
+    expect(STRIP).toMatch(/onboarding_completed/);
+    expect(STRIP).toMatch(/wouldRelock/);
+    expect(STRIP).toMatch(/if \(!DRY\) process\.exit\(1\)/);
+  });
+
+  it('the opt-in flag fix only touches rows that satisfy every OTHER step', () => {
+    expect(STRIP).toMatch(/--fix-stale-onboarding/);
+    expect(STRIP).toMatch(/phone_verified_at && d\?\.salary_day !== null/);
+  });
+
+  it('verifies that 0097 can actually apply before reporting success', () => {
+    expect(STRIP).toMatch(/SA IDs still on >1 patient account/);
+    expect(STRIP).toMatch(/Migration 0097 would abort/);
   });
 });

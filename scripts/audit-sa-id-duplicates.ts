@@ -47,13 +47,14 @@ const supabase = createClient(URL, KEY, { auth: { persistSession: false } });
 const PAGE = 1000;
 
 type Profile = {
-  id:           string;
-  email:        string | null;
-  role:         string | null;
-  first_name:   string | null;
-  last_name:    string | null;
-  sa_id_number: string | null;
-  created_at:   string | null;
+  id:                 string;
+  email:              string | null;
+  role:               string | null;
+  first_name:         string | null;
+  last_name:          string | null;
+  sa_id_number:       string | null;
+  sa_id_lookup_hash:  string | null;
+  created_at:         string | null;
 };
 
 type Plan = {
@@ -94,7 +95,7 @@ async function fetchAllProfiles(): Promise<Profile[]> {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, email, role, first_name, last_name, sa_id_number, created_at')
+      .select('id, email, role, first_name, last_name, sa_id_number, sa_id_lookup_hash, created_at')
       .not('sa_id_number', 'is', null)
       .order('created_at', { ascending: true })
       .range(from, from + PAGE - 1);
@@ -160,6 +161,47 @@ async function main() {
     for (const p of legacyPlaintext) {
       console.log(`  ${p.id}  role=${p.role ?? '—'}  email=${p.email ?? '—'}  created=${p.created_at ?? '—'}`);
     }
+  }
+
+  // ── Cross-check: does the STORED hash column see the same duplicates? ──
+  //
+  // Everything above partitions the rows by decrypted plaintext, in this
+  // process. What a UNIQUE constraint will actually see is the persisted
+  // sa_id_lookup_hash column. Those two partitions must be identical — if
+  // they are not, the backfill is incomplete or was run under a different
+  // HMAC key, and duplicates would slip past the constraint. This is the
+  // check that catches that, and it is worth running before and after any
+  // cleanup.
+  const withHash = profiles.filter((p) => p.sa_id_lookup_hash);
+  if (withHash.length) {
+    const byHash = new Map<string, string[]>();
+    for (const p of withHash) {
+      const k = p.sa_id_lookup_hash as string;
+      const l = byHash.get(k) ?? []; l.push(p.id); byHash.set(k, l);
+    }
+    const plainSets = [...byPlain.values()]
+      .map((rows) => rows.map((r) => r.id).sort().join(','))
+      .sort();
+    const hashSets = [...byHash.values()].map((ids) => ids.sort().join(',')).sort();
+    const agree =
+      withHash.length === profiles.length &&
+      plainSets.length === hashSets.length &&
+      plainSets.every((s, i) => s === hashSets[i]);
+
+    console.log('\n── cross-check: stored hash column vs decrypted plaintext ──');
+    console.log(`  rows carrying a hash: ${withHash.length}/${profiles.length}`);
+    console.log(`  distinct hashes:      ${byHash.size}   distinct plaintexts: ${byPlain.size}`);
+    console.log(
+      agree
+        ? '  AGREE — the persisted column partitions the rows exactly as the'
+          + '\n  plaintext does, so a UNIQUE constraint on it would see these groups.'
+        : '  DISAGREE — the persisted column does NOT match the plaintext'
+          + '\n  partition. Re-run scripts/backfill-sa-id-lookup-hash.ts; if it'
+          + '\n  still disagrees, the column was written under a different'
+          + '\n  SA_ID_LOOKUP_HMAC_KEY and duplicates would escape the constraint.',
+    );
+  } else {
+    console.log('\n── cross-check skipped: no row carries a hash yet (backfill not run) ──');
   }
 
   // ── The duplicate groups ──────────────────────────────────────────────

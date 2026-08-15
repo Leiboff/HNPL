@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { currentFlags } from '@/lib/featureFlags';
@@ -154,6 +155,29 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
 
   if (!Number.isInteger(input.salaryDay) || !isAllowedSalaryDay(input.salaryDay)) {
     return { error: 'Please choose when your salary is paid.' };
+  }
+
+  // ── One SA ID = one patient account (migration 0097) ─────────────────
+  //
+  // Server-side, and before the write — the unique index is the authority,
+  // but it would surface as a raw constraint error the patient cannot act
+  // on. Self-exclusion matters here too: this step is re-enterable, so a
+  // patient correcting a typo re-submits an ID that is already their own.
+  {
+    let idOwner: Awaited<ReturnType<typeof findPatientBySaId>> = null;
+    try {
+      idOwner = await findPatientBySaId(svc(), cleanedId);
+    } catch (err) {
+      console.error('[onboarding] SA ID duplicate check failed:', err instanceof Error ? err.message : err);
+      return { error: 'We could not verify your ID number just now. Please try again.' };
+    }
+    if (idOwner && idOwner.id !== loaded.userId) {
+      return {
+        error:
+          'An account already exists for this ID number. Please log in to that account instead — ' +
+          'use "Forgot password" if you can\'t get in, or contact support if you think this is a mistake.',
+      };
+    }
   }
 
   let encrypted: string;
