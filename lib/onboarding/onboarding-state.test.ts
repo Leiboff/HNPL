@@ -383,8 +383,20 @@ describe('Onboarding state module — cached-true short-circuit', () => {
 
 describe('Onboarding server actions — validation + encryption + no raw logging', () => {
   it('imports the existing AES-256-GCM encryptId helper', () => {
+    // Matched per-symbol rather than as a whole import list: the list grew
+    // when the SA ID blind index (migration 0096) added hashIdForLookup,
+    // and a pin on the exact braces breaks on every future addition while
+    // testing nothing extra. What matters is WHERE encryptId comes from.
     expect(ACTIONS_TS).toMatch(/from ['"]@\/lib\/idEncryption['"]/);
-    expect(ACTIONS_TS).toMatch(/import \{ encryptId \}/);
+    expect(ACTIONS_TS).toMatch(/import \{[^}]*\bencryptId\b[^}]*\} from ['"]@\/lib\/idEncryption['"]/);
+  });
+
+  it('imports hashIdForLookup from the same module — the blind index is populated here too', () => {
+    // This is the primary organic ID-capture path. If it stopped writing
+    // sa_id_lookup_hash, most accounts would carry no value the duplicate
+    // check can key on, and uniqueness would quietly stop being enforceable.
+    expect(ACTIONS_TS).toMatch(/import \{[^}]*\bhashIdForLookup\b[^}]*\} from ['"]@\/lib\/idEncryption['"]/);
+    expect(ACTIONS_TS).toMatch(/sa_id_lookup_hash:\s*lookupHash,/);
   });
 
   it('imports validateSaId + isAllowedSalaryDay from the shared helpers', () => {

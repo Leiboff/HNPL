@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { encryptId } from '@/lib/idEncryption';
+import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { currentFlags } from '@/lib/featureFlags';
@@ -156,9 +157,38 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
     return { error: 'Please choose when your salary is paid.' };
   }
 
+  // ── One SA ID = one patient account (migration 0097) ─────────────────
+  //
+  // Server-side, and before the write — the unique index is the authority,
+  // but it would surface as a raw constraint error the patient cannot act
+  // on. Self-exclusion matters here too: this step is re-enterable, so a
+  // patient correcting a typo re-submits an ID that is already their own.
+  {
+    let idOwner: Awaited<ReturnType<typeof findPatientBySaId>> = null;
+    try {
+      idOwner = await findPatientBySaId(svc(), cleanedId);
+    } catch (err) {
+      console.error('[onboarding] SA ID duplicate check failed:', err instanceof Error ? err.message : err);
+      return { error: 'We could not verify your ID number just now. Please try again.' };
+    }
+    if (idOwner && idOwner.id !== loaded.userId) {
+      return {
+        error:
+          'An account already exists for this ID number. Please log in to that account instead — ' +
+          'use "Forgot password" if you can\'t get in, or contact support if you think this is a mistake.',
+      };
+    }
+  }
+
   let encrypted: string;
+  let lookupHash: string;
   try {
-    encrypted = encryptId(cleanedId);
+    encrypted  = encryptId(cleanedId);
+    // Deterministic blind index (migration 0096) — see hashIdForLookup in
+    // lib/idEncryption.ts. This is the primary organic-signup ID-capture
+    // path, so without it the majority of accounts would carry no value
+    // the duplicate check can key on.
+    lookupHash = hashIdForLookup(cleanedId);
   } catch {
     return { error: 'Encryption error — please contact support.' };
   }
@@ -166,8 +196,9 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
   const flags = currentFlags();
 
   const patch: Record<string, unknown> = {
-    sa_id_number: encrypted,
-    salary_day:   input.salaryDay,
+    sa_id_number:      encrypted,
+    sa_id_lookup_hash: lookupHash,
+    salary_day:        input.salaryDay,
   };
 
   // Credit-check seam. Flag-off auto-passes so the state model can

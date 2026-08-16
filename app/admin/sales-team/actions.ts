@@ -76,6 +76,9 @@ export async function grantSalesRole(email: string): Promise<{
     return { error: 'This user already has the sales role.' };
   }
 
+  // patient → sales REMOVES this row from 0097's partial unique index
+  // (which covers role='patient' only), so this direction can never
+  // collide. The mirror case is handled in revokeSalesRole.
   const { error: updErr } = await s
     .from('profiles')
     .update({ role: 'sales' })
@@ -117,7 +120,28 @@ export async function revokeSalesRole(userId: string): Promise<{ error: string |
     .update({ role: 'patient' })
     .eq('id', userId);
 
-  if (error) return { error: error.message };
+  // The unique index added in 0097 is PARTIAL on role='patient', so a row
+  // only enters it when its role becomes 'patient' — which is exactly what
+  // this update does. If some other patient account already holds this
+  // person's SA ID, the demotion violates the index at UPDATE time. The
+  // reverse direction (grantSalesRole) can never collide: it removes a row
+  // from the index.
+  //
+  // Raw Postgres text ("duplicate key value violates unique constraint …")
+  // tells an admin nothing about what to do, so it is translated. Nothing
+  // is auto-resolved here — deciding which of two accounts keeps an ID is
+  // not a side effect a role change should have.
+  if (error) {
+    const raw = error.message ?? String(error);
+    if (error.code === '23505' || /profiles_sa_id_lookup_hash_patient_uniq/.test(raw)) {
+      return {
+        error:
+          'This user cannot be returned to the patient role: their ID number is already ' +
+          'registered to a different patient account. Resolve the duplicate ID first, then retry.',
+      };
+    }
+    return { error: raw };
+  }
 
   revalidatePath('/admin/sales-team');
   return { error: null };
