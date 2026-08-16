@@ -66,19 +66,23 @@ describe('the diagnosis, and what closed it at the source', () => {
 describe('signed in, scanning a counter QR', () => {
   it('attempts the claim BEFORE the ownership comparison that would bounce them', () => {
     const claim  = PAGE.indexOf('claimUnboundSessionPlan(');
-    const bounce = PAGE.indexOf('<BillMatchCard failure=');
+    const bounce = PAGE.indexOf('<BillMatchCard');
     expect(claim).toBeGreaterThan(0);
     expect(bounce).toBeGreaterThan(claim);
   });
 
-  it('only ever claims a SESSION token whose plan has no owner', () => {
-    expect(PAGE).toMatch(/if \(sessionUser && resolved\.kind === 'session' && planPatientId === null\)/);
+  it('only ever claims an UNBOUND plan, and only when the token carries an ID', () => {
+    // Widened by 0098. It used to be session-only, because only a counter
+    // session carried an SA ID to prove anything with; an emailed bill now
+    // carries one too. What did NOT widen is the requirement itself — an
+    // unbound plan AND a stored ID, never "somebody is logged in".
+    expect(PAGE).toMatch(/if \(sessionUser && planPatientId === null && tokenSaIdEncrypted\)/);
   });
 
   it('passes the AUTHENTICATED user id, never anything from the request', () => {
     const block = PAGE.slice(PAGE.indexOf('claimUnboundSessionPlan('), PAGE.indexOf('claimUnboundSessionPlan(') + 500);
     expect(block).toMatch(/userId:\s*sessionUser\.id/);
-    expect(block).toMatch(/sessionSaIdEncrypted:\s*resolved\.row\.sa_id_number/);
+    expect(block).toMatch(/sessionSaIdEncrypted:\s*tokenSaIdEncrypted/);
   });
 
   it('routes a successful claim through the SAME ownership branch as an email bill', () => {
@@ -90,7 +94,7 @@ describe('signed in, scanning a counter QR', () => {
 
   it('leaves the bounce in place when the claim is refused', () => {
     const after = PAGE.slice(PAGE.indexOf('claimUnboundSessionPlan('));
-    expect(after).toMatch(/<BillMatchCard failure=/);
+    expect(after).toMatch(/<BillMatchCard/);
   });
 });
 
@@ -130,7 +134,7 @@ describe('regression: the paths that already worked', () => {
   it('a logged-out SESSION scan by a FIRST-TIMER still renders the anonymous form', () => {
     // The claim branch is gated on sessionUser, so a logged-out scan cannot
     // enter it, and no email lookup was added for session tokens.
-    expect(PAGE).toMatch(/if \(sessionUser && resolved\.kind === 'session'/);
+    expect(PAGE).toMatch(/if \(sessionUser && planPatientId === null && tokenSaIdEncrypted\)/);
     const loggedOut = PAGE.slice(PAGE.indexOf('let existingAccount = false;'));
     expect(loggedOut).toMatch(/if \(resolved\.kind === 'invitation'\)/);
     expect(loggedOut).not.toMatch(/findExistingAuthUser\(svcForLookup, resolved\.row\.email\)[\s\S]{0,40}session/);

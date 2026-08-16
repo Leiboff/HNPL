@@ -50,13 +50,13 @@ describe('the bug was the redirect, not the wording', () => {
 
   it('renders in place instead, on the screen the patient is already looking at', () => {
     expect(PAGE).toMatch(
-      /return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind, planPatientId !== null\)\} \/>/,
+      /failure=\{billMatchFailureFor\(\s*claimRefusal, resolved\.kind, planPatientId !== null, tokenSaIdEncrypted !== null,\s*\)\}/,
     );
   });
 
   it('the authorization rule is untouched — a non-owner still never reaches the plan', () => {
     const ownerBranch = PAGE.indexOf('if (planPatientId === sessionUser.id)');
-    const card        = PAGE.indexOf('<BillMatchCard failure=');
+    const card        = PAGE.indexOf('<BillMatchCard');
     expect(ownerBranch).toBeGreaterThan(0);
     expect(card).toBeGreaterThan(ownerBranch);
     expect(PAGE).toMatch(/redirect\(confirmPath\)/);
@@ -101,14 +101,15 @@ describe('the two paths that never consult the claim at all', () => {
     // The re-derivation. Both arms are invitations opened by the wrong
     // signed-in user, but only one of them has another account to send
     // that person to.
-    expect(MAPPER).toMatch(/return planIsBound \? 'different_account' : 'unclaimed_invitation';/);
+    expect(MAPPER).toMatch(/if \(planIsBound\) return 'different_account';/);
+    expect(MAPPER).toMatch(/if \(!tokenCarriesId\) return 'unclaimed_invitation';/);
   });
 
   it('an already-owned SESSION plan skips the claim and still lands somewhere true', () => {
     // Reason 6: the claim block is gated on planPatientId === null, so a
     // session plan owned by someone else leaves claimRefusal null. The
     // default arm catches it.
-    expect(PAGE).toMatch(/planPatientId === null\)/);
+    expect(PAGE).toMatch(/planPatientId === null && tokenSaIdEncrypted\)/);
     expect(PAGE).toMatch(/let claimRefusal: ClaimOutcome\['reason'\] \| null = null;/);
     expect(MAPPER).toMatch(/default:\s*return 'id_mismatch';/);
   });

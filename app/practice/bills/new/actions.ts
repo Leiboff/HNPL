@@ -16,7 +16,7 @@ import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPati
 import { isDuplicateBill, RECENT_BILL_WINDOW_MS } from './_lib/idempotency';
 import { captureBillIdentity } from '@/lib/patients/billIdentityCapture';
 import type { DeliveryMethod } from '@/lib/patients/billIdentity';
-import { CHECKOUT_SESSION_TTL_MS } from '@/lib/checkout/sessionTtl';
+import { CHECKOUT_SCAN_TTL_DASHBOARD_MS } from '@/lib/checkout/sessionTtl';
 import { maskId } from '@/lib/idEncryption';
 
 // ─── Public surface ──────────────────────────────────────────────────────────
@@ -405,7 +405,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   // is told only that the bill exists.
   if (delivery === 'qr') {
     const token     = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + CHECKOUT_SESSION_TTL_MS).toISOString();
+    const expiresAt = new Date(Date.now() + CHECKOUT_SCAN_TTL_DASHBOARD_MS).toISOString();
 
     const { error: sessionError } = await svc.from('checkout_sessions').insert({
       token,
@@ -510,6 +510,11 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     provider_id: providerMember.user_id ?? null,
     token,
     expires_at:  expiresAt,
+    // The ID the practice typed, carried onto the bill so checkout can
+    // compare it against the one the patient types. Without this the email
+    // path validates an ID and then throws it away, leaving the QR path the
+    // only one that actually enforces the customer key.
+    sa_id_number: identity.encryptedSaId,
   });
 
   if (inviteError) {

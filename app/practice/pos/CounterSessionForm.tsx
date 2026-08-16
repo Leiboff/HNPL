@@ -288,11 +288,23 @@ export default function CounterSessionForm({
     return () => { cancelled = true; window.clearInterval(id); };
   }, [issued, stage, getCounterSessionStage]);
 
-  // "This QR is dead" — the clock ran out, or the session reached an ending
-  // that isn't payment. 'completed' is excluded because it has its own panel.
+  // "This QR is dead" — the SCAN clock ran out, or the session reached an
+  // ending that isn't payment. 'completed' is excluded because it has its
+  // own panel.
+  //
+  // The `stage !== 'scanned'` guard is load-bearing. Since migration 0098
+  // the countdown on this screen measures the SCAN window only: the moment
+  // the patient scans, the server moves expires_at out to the completion
+  // window and this local clock stops describing anything real. Without the
+  // guard the teller would be shown "QR expired" while the patient is on
+  // their phone mid-signup — and the natural response to that is "Start
+  // next patient", which force-expires a live session and declines the
+  // plan. That would turn a timeout bug into a teller-triggered one, which
+  // is worse than the bug it replaced.
+  const scanned = stage === 'scanned';
   const expired =
     issued !== null &&
-    (secondsLeft <= 0 || (isTerminalStage(stage) && stage !== 'completed'));
+    ((secondsLeft <= 0 && !scanned) || (isTerminalStage(stage) && stage !== 'completed'));
 
   if (issued) {
     return (
@@ -334,6 +346,19 @@ export default function CounterSessionForm({
             <h2 className="text-xl font-semibold text-gray-900">QR expired</h2>
             <p className="text-sm text-gray-500">
               The patient didn&apos;t scan in time. Start a new session for them.
+            </p>
+          </>
+        ) : scanned ? (
+          // Scanned, not yet finished. The QR has done its job and the
+          // patient is working through signup on their own phone, which can
+          // legitimately take a while for a first-timer — ID, OTP,
+          // affordability, terms, card. Showing a countdown here would
+          // invite the teller to cut them off.
+          <>
+            <h2 className="text-xl font-semibold text-gray-900">Patient is paying</h2>
+            <p className="text-sm text-gray-500" data-testid="pos-scanned-note">
+              {formatRand(issued.billAmount)} — they&apos;ve scanned and are completing this on
+              their phone. First-time patients take a few minutes.
             </p>
           </>
         ) : (

@@ -96,6 +96,21 @@ function saIdErrorMessage(reason: SaIdInvalidReason): string {
   }
 }
 
+/**
+ * The ID typed here is not the one the practice put on this bill.
+ *
+ * Says nothing about the other value — not the ID, not who it belongs to,
+ * not whether it matches an account. The practice can see both; the person
+ * on this form cannot, and a payment page is not the place to teach anyone
+ * a digit of someone else's ID number.
+ *
+ * Both onward routes are real: the patient re-reads their card, or the
+ * practice re-issues. Neither is a corridor with a wall at the end.
+ */
+const BILL_ID_MISMATCH_MESSAGE =
+  'The ID number you entered doesn’t match the one on this bill. Check the ID number on '
+  + 'your card — if it’s right, ask the practice to re-issue the bill.';
+
 export type InitiateCheckoutInput = {
   token:       string;
   firstName:   string;
@@ -126,7 +141,10 @@ export type InitiateCheckoutInput = {
 // initiateCheckout and resumeFirstInstalmentCapture need "which plan/
 // practice does this token point at", so the lookup is shared here.
 type ResolvedCheckoutToken =
-  | { kind: 'invitation'; planId: string; practiceId: string; email: string }
+  // saIdNumber is the ID the PRACTICE typed when issuing the bill, still
+  // ENCRYPTED. NULL on invitations issued before migration 0098, which had
+  // no such column — a permanent possibility, not a transient one.
+  | { kind: 'invitation'; planId: string; practiceId: string; email: string; saIdNumber: string | null }
   // saIdNumber is still ENCRYPTED (v1: format) — the caller decrypts.
   | { kind: 'session';    planId: string; practiceId: string; saIdNumber: string };
 
@@ -137,7 +155,7 @@ async function resolveCheckoutToken(
 ): Promise<ResolvedCheckoutToken | null> {
   const { data: invitation } = await svc
     .from('patient_invitations')
-    .select('plan_id, practice_id, email')
+    .select('plan_id, practice_id, email, sa_id_number')
     .eq('token', token)
     .gt('expires_at', new Date().toISOString())
     .is('accepted_at', null)
@@ -148,6 +166,7 @@ async function resolveCheckoutToken(
       planId:     invitation.plan_id as string,
       practiceId: invitation.practice_id as string,
       email:      (invitation.email as string).trim().toLowerCase(),
+      saIdNumber: (invitation.sa_id_number as string | null) ?? null,
     };
   }
 
@@ -238,7 +257,8 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   if (!resolved) return { ok: false, error: 'This checkout link is no longer valid.' };
 
   // saIdNumber source + validation forks on token kind:
-  //   • invitation — patient-typed, validated here as always.
+  //   • invitation — patient-typed, validated here as always, and since
+  //     0098 CHECKED against the ID the practice put on the bill.
   //   • session    — already captured + validated at the till; decrypt
   //     the session's stored value server-side and IGNORE whatever the
   //     client sent for saIdNumber (the field is locked/masked on the
@@ -254,6 +274,35 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     if (age === null || age < MIN_AGE) {
       return { ok: false, error: `You must be ${MIN_AGE} or older to accept a payment plan.` };
     }
+    // ── The bill's own ID has to agree with the one being typed ────────
+    //
+    // Until 0098 the email path validated this ID and then discarded it,
+    // so a practice could bill under one ID and the patient claim under
+    // another with nothing noticing. The QR path never had that gap: it
+    // decrypts the session's stored value and ignores the client's
+    // entirely.
+    //
+    // Compared rather than overridden, because unlike the till the patient
+    // is remote and the field is theirs to fill — so a disagreement is
+    // something to surface, not to silently overwrite.
+    //
+    // Same discipline as claimUnboundSessionPlan: decrypt both sides,
+    // compare PLAINTEXT (two encryptions of one ID differ), fail CLOSED on
+    // anything unreadable, and say nothing about the other value.
+    if (resolved.saIdNumber) {
+      let billSaId: string;
+      try {
+        billSaId = decryptId(resolved.saIdNumber).trim();
+      } catch (err) {
+        console.error('[checkout] failed to decrypt invitation SA ID',
+          err instanceof Error ? err.message : err);
+        return { ok: false, error: 'Encryption error — please contact support.' };
+      }
+      if (!billSaId || billSaId !== input.saIdNumber.trim()) {
+        return { ok: false, error: BILL_ID_MISMATCH_MESSAGE };
+      }
+    }
+
     saIdPlain       = input.saIdNumber;
     normalizedEmail = resolved.email;
   } else {

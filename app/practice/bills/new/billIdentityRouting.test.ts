@@ -241,16 +241,36 @@ describe('QR is the default on both surfaces, email is reachable on both', () =>
     expect(emailsSent).toEqual([{ kind: 'invitation', to: 'new@example.com' }]);
   });
 
-  it('both write the SAME session TTL — one expiry authority for one table', async () => {
+  // A SAME-TTL assertion stood here, and was right while one window did
+  // both jobs. Migration 0098 split it, and the SCAN windows deliberately
+  // differ: the threat is a stranger reading a code off a screen, and a
+  // till faces a queue continuously where a practice manager's laptop does
+  // not. What must still match is the COMPLETION window — and neither
+  // surface sets that, the scan stamp does. See
+  // lib/checkout/sessionWindows.pglite.test.ts, which drives the real SQL.
+  it('the dashboard QR gets a LONGER scan window than the till, on purpose', async () => {
     await dashboard();
-    const fromDashboard = session() as { expires_at: string };
+    const dashSecs = (new Date((session() as { expires_at: string }).expires_at).getTime() - Date.now()) / 1000;
     inserts.length = 0;
     await till();
-    const fromTill = session() as { expires_at: string };
-    const delta = Math.abs(
-      new Date(fromDashboard.expires_at).getTime() - new Date(fromTill.expires_at).getTime(),
-    );
-    expect(delta).toBeLessThan(5000);
+    const tillSecs = (new Date((session() as { expires_at: string }).expires_at).getTime() - Date.now()) / 1000;
+
+    expect(tillSecs).toBeGreaterThan(60);          // ~2 minutes
+    expect(tillSecs).toBeLessThan(3 * 60);
+    expect(dashSecs).toBeGreaterThan(13 * 60);     // ~15 minutes
+    expect(dashSecs).toBeGreaterThan(tillSecs);
+  });
+
+  it('neither surface writes a COMPLETION-length window at issuance', async () => {
+    // If either ever stamped an hour at issue time, the scan window would
+    // have silently stopped existing on that surface — an unscanned QR
+    // would sit live for an hour.
+    for (const issue of [dashboard, till]) {
+      inserts.length = 0;
+      await issue();
+      const secs = (new Date((session() as { expires_at: string }).expires_at).getTime() - Date.now()) / 1000;
+      expect(secs).toBeLessThan(60 * 60);
+    }
   });
 });
 

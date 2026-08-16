@@ -17,6 +17,14 @@ import type { ClaimOutcome } from '@/lib/checkout/claimSessionPlan';
 // So each one is proven by CALLING the mapper, not by finding its name in
 // the source. The exhaustive sweep at the bottom then proves the converse —
 // that the buckets which exist are exactly the buckets the mapper emits.
+//
+// The fourth argument arrived with migration 0098: an emailed bill now
+// carries the practice's SA ID, so the claim runs for invitations too and
+// 'unclaimed_invitation' narrowed from "unbound invitation" to "invitation
+// with NO ID on it". That is a real, permanent state — rows issued before
+// 0098 — and the test below pins it through exactly that input, so if the
+// last legacy invitation expires and someone decides the bucket is dead,
+// they have to argue with a failing test rather than a hunch.
 
 type Refusal = ClaimOutcome['reason'] | null;
 
@@ -25,23 +33,24 @@ const REFUSALS: Refusal[] = [
 ];
 
 describe('each bucket has at least one input that produces it', () => {
-  const cases: Array<[BillMatchFailure, Refusal, 'invitation' | 'session', boolean]> = [
+  const cases: Array<[BillMatchFailure, Refusal, 'invitation' | 'session', boolean, boolean]> = [
+    // reason, kind, planIsBound, tokenCarriesId
+    //
     // The signed-in patient's account holds a different ID from the bill's.
-    ['id_mismatch',          'id_mismatch',   'session',    false],
+    ['id_mismatch',          'id_mismatch',   'session',    false, true],
     // Their account has no ID at all — the biggest bucket after the cleanup.
-    ['no_account_id',        'no_profile_id', 'session',    false],
+    ['no_account_id',        'no_profile_id', 'session',    false, true],
     // Unreadable ciphertext or a failed write. Never the patient's fault.
-    ['our_fault',            'decrypt_failed','session',    false],
+    ['our_fault',            'decrypt_failed','session',    false, true],
     // An emailed bill already bound to a real account, opened by someone else.
-    ['different_account',    null,            'invitation', true],
-    // An emailed bill bound to nobody, opened by someone else. Re-derived
-    // when every bill gained an ID; before that it was folded into
-    // different_account and got advice that cannot work here.
-    ['unclaimed_invitation', null,            'invitation', false],
+    ['different_account',    null,            'invitation', true,  true],
+    // An emailed bill from BEFORE 0098: no ID on it, so nothing to claim
+    // against. The only remaining route to this bucket.
+    ['unclaimed_invitation', null,            'invitation', false, false],
   ];
 
-  it.each(cases)('%s', (expected, reason, kind, bound) => {
-    expect(billMatchFailureFor(reason, kind, bound)).toBe(expected);
+  it.each(cases)('%s', (expected, reason, kind, bound, carriesId) => {
+    expect(billMatchFailureFor(reason, kind, bound, carriesId)).toBe(expected);
   });
 
   it('all five are covered by the table above — no bucket is left unproven', () => {
@@ -50,34 +59,65 @@ describe('each bucket has at least one input that produces it', () => {
   });
 });
 
+describe('0098 changed who lands where, and that is the point', () => {
+  it('an invitation WITH an ID no longer reaches unclaimed_invitation', () => {
+    // It goes through the claim instead, so a claim-reason bucket answers.
+    // This is the retired dead end: a patient who signed up organically
+    // after being emailed a bill used to be told to ask reception about a
+    // bill that was provably theirs.
+    for (const reason of REFUSALS) {
+      expect(billMatchFailureFor(reason, 'invitation', false, true)).not.toBe('unclaimed_invitation');
+    }
+  });
+
+  it('a session token can NEVER reach unclaimed_invitation — its ID column is NOT NULL', () => {
+    for (const reason of REFUSALS) {
+      for (const bound of [true, false]) {
+        expect(billMatchFailureFor(reason, 'session', bound, true)).not.toBe('unclaimed_invitation');
+      }
+    }
+  });
+
+  it('a bound invitation stays different_account regardless of whether it carries an ID', () => {
+    // The re-check: 0098 does not touch this arm. Bound means a real
+    // account owns the bill, which is what makes "sign in with it" a step
+    // that exists.
+    for (const carriesId of [true, false]) {
+      expect(billMatchFailureFor(null, 'invitation', true, carriesId)).toBe('different_account');
+    }
+  });
+});
+
 describe('the two invitation arms are genuinely different advice', () => {
-  it('bound → sign into the other account; unbound → there is no other account', () => {
-    const bound   = BILL_MATCH_COPY[billMatchFailureFor(null, 'invitation', true)];
-    const unbound = BILL_MATCH_COPY[billMatchFailureFor(null, 'invitation', false)];
+  it('bound → sign into the other account; no-ID → there is no other account', () => {
+    const bound   = BILL_MATCH_COPY[billMatchFailureFor(null, 'invitation', true,  true)];
+    const noId    = BILL_MATCH_COPY[billMatchFailureFor(null, 'invitation', false, false)];
 
     expect(bound.next).toMatch(/sign in with/i);
     // The whole point of the split: telling this person to sign into an
-    // account that does not exist is the wall the four-bucket version was
-    // built to stop building.
-    expect(unbound.next).not.toMatch(/sign in with/i);
-    expect(unbound.next).toMatch(/ask reception/i);
-    expect(bound.heading).not.toBe(unbound.heading);
+    // account that does not exist is the wall the bucket split was built to
+    // stop building.
+    expect(noId.next).not.toMatch(/sign in with/i);
+    expect(noId.next).toMatch(/ask reception/i);
+    expect(bound.heading).not.toBe(noId.heading);
   });
 });
 
 describe('the mapper is total, and emits nothing that has no copy', () => {
-  it('every (reason × kind × bound) combination lands on a bucket that has copy', () => {
+  it('every (reason × kind × bound × carriesId) combination lands on a bucket that has copy', () => {
     let seen = 0;
     for (const reason of REFUSALS) {
       for (const kind of ['invitation', 'session'] as const) {
         for (const bound of [true, false]) {
-          const bucket = billMatchFailureFor(reason, kind, bound);
-          expect(BILL_MATCH_COPY[bucket]).toBeTruthy();
-          seen += 1;
+          for (const carriesId of [true, false]) {
+            const bucket = billMatchFailureFor(reason, kind, bound, carriesId);
+            expect(BILL_MATCH_COPY[bucket]).toBeTruthy();
+            seen += 1;
+          }
         }
       }
     }
-    expect(seen).toBe(REFUSALS.length * 2 * 2);
+    expect(seen).toBe(REFUSALS.length * 2 * 2 * 2);
   });
 
   it('the set of buckets the mapper can EMIT equals the set that has copy', () => {
@@ -86,7 +126,9 @@ describe('the mapper is total, and emits nothing that has no copy', () => {
     const emitted = new Set<BillMatchFailure>();
     for (const reason of REFUSALS) {
       for (const kind of ['invitation', 'session'] as const) {
-        for (const bound of [true, false]) emitted.add(billMatchFailureFor(reason, kind, bound));
+        for (const bound of [true, false]) {
+          for (const carriesId of [true, false]) emitted.add(billMatchFailureFor(reason, kind, bound, carriesId));
+        }
       }
     }
     expect([...emitted].sort()).toEqual(Object.keys(BILL_MATCH_COPY).sort());

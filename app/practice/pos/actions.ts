@@ -12,7 +12,7 @@ import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { normalizePhoneZA } from '@/lib/validation';
 import { captureBillIdentity } from '@/lib/patients/billIdentityCapture';
 import type { DeliveryMethod } from '@/lib/patients/billIdentity';
-import { CHECKOUT_SESSION_TTL_MS } from '@/lib/checkout/sessionTtl';
+import { CHECKOUT_SCAN_TTL_TILL_MS } from '@/lib/checkout/sessionTtl';
 import { sendPatientInvitationEmail } from '@/lib/email/templates/patientInvitation';
 import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPatientBill';
 import {
@@ -427,6 +427,9 @@ export async function issueCounterSession(
       provider_id: providerMember.user_id ?? null,
       token:       inviteToken,
       expires_at:  inviteExp,
+      // Same as the dashboard's: the practice-typed ID rides the bill so
+      // checkout can compare it against the patient's own.
+      sa_id_number: identity.encryptedSaId,
     });
     if (inviteError) {
       await client.from('plans').delete().eq('id', planId);
@@ -447,7 +450,7 @@ export async function issueCounterSession(
 
   // ── Delivery: QR — the till's original path, unchanged ─────────────────
   const token     = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + CHECKOUT_SESSION_TTL_MS).toISOString();
+  const expiresAt = new Date(Date.now() + CHECKOUT_SCAN_TTL_TILL_MS).toISOString();
 
   const { error: sessionError } = await client.from('checkout_sessions').insert({
     token,

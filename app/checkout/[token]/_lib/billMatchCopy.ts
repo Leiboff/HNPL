@@ -58,12 +58,21 @@ export type BillMatchFailure =
   /** An EMAILED bill ALREADY BOUND to another account, opened while signed in as somebody else. */
   | 'different_account'
   /**
-   * An EMAILED bill bound to NOBODY, opened while signed in as somebody
-   * else. Re-derived when every bill gained an SA ID: 'different_account'
-   * used to cover this too, and its advice — "sign in with the account the
-   * bill was emailed to" — is impossible here, because reaching this state
-   * means neither the ID nor the address had an account at issuance. There
-   * is no other account to sign into.
+   * An EMAILED bill with NO ID on it, bound to nobody, opened while signed
+   * in as somebody else.
+   *
+   * Narrowed twice, and the second narrowing is the interesting one.
+   * Originally 'different_account' covered this, with advice — "sign in
+   * with the account the bill was emailed to" — that cannot work when
+   * neither the ID nor the address had an account at issuance.
+   *
+   * Then 0098 put the practice's ID on the invitation, and the claim
+   * stopped being session-only: any unbound plan whose token carries an ID
+   * now goes through claimUnboundSessionPlan and lands on a claim-reason
+   * bucket instead. So this one no longer means "unbound invitation" — it
+   * means an invitation with NO ID to claim against, which is a real and
+   * permanent state (rows issued before 0098; anything else that leaves the
+   * column NULL) but a narrower one.
    */
   | 'unclaimed_invitation';
 
@@ -115,16 +124,21 @@ export const BILL_MATCH_COPY: Record<BillMatchFailure, BillMatchCopy> = {
  * the claim outcome alone would leave those two uncovered.
  */
 export function billMatchFailureFor(
-  claimReason: ClaimOutcome['reason'] | null,
-  tokenKind:   'invitation' | 'session',
-  planIsBound: boolean,
+  claimReason:    ClaimOutcome['reason'] | null,
+  tokenKind:      'invitation' | 'session',
+  planIsBound:    boolean,
+  tokenCarriesId: boolean,
 ): BillMatchFailure {
-  // An invitation splits on whether the bill reached anyone. Bound means a
-  // real account owns it and can be signed into; unbound means the ID and
-  // the address both belonged to nobody at issuance, so there is no second
-  // account to send this person after.
   if (tokenKind === 'invitation') {
-    return planIsBound ? 'different_account' : 'unclaimed_invitation';
+    // Bound to a real account: that account can be signed into, which is a
+    // next step that exists.
+    if (planIsBound) return 'different_account';
+    // Unbound and no ID to prove anything with. Since 0098 this is only
+    // reachable for an invitation issued before that migration — every
+    // newer one carries an ID, so the claim runs and a claim-reason bucket
+    // answers instead. A session token always carries one (NOT NULL), so
+    // this arm is invitation-only by construction.
+    if (!tokenCarriesId) return 'unclaimed_invitation';
   }
 
   switch (claimReason) {

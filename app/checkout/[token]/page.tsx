@@ -67,6 +67,10 @@ type InvitationRpcRow = {
   plan_total_amount:   number | string;
   invoice_number:      string | null;
   practice_reference:  string | null;
+  // The ID the practice typed when issuing, ENCRYPTED (migration 0098).
+  // NULL on invitations issued before it — there was nothing to backfill
+  // from, so this is a permanent state, not a transient one.
+  sa_id_number:        string | null;
 };
 
 // ─── POS counter session (migration 0085) — the SA-ID-keyed sibling of
@@ -301,13 +305,22 @@ export default async function CheckoutPage({
   // billMatchFailureFor.
   let claimRefusal: ClaimOutcome['reason'] | null = null;
 
-  if (sessionUser && resolved.kind === 'session' && planPatientId === null) {
+  // Since 0098 an emailed bill carries the practice's ID too, so the claim
+  // is no longer session-only: it runs for ANY unbound plan whose token
+  // carries an ID. That retires a live dead end — a patient emailed a bill,
+  // who signed up organically before clicking the link, used to be told to
+  // ask reception about a bill that was provably theirs.
+  // Both row types carry it now; only the invitation's can be NULL, and
+  // only for rows issued before 0098.
+  const tokenSaIdEncrypted: string | null = resolved.row.sa_id_number ?? null;
+
+  if (sessionUser && planPatientId === null && tokenSaIdEncrypted) {
     const claim = await claimUnboundSessionPlan({
       svc:                  svcForLookup,
       planId:               row.plan_id,
       applicationId:        (planPatientRow?.application_id as string | null | undefined) ?? null,
       userId:               sessionUser.id,
-      sessionSaIdEncrypted: resolved.row.sa_id_number,
+      sessionSaIdEncrypted: tokenSaIdEncrypted,
     });
     if (claim.claimed) {
       planPatientId = sessionUser.id;
@@ -392,7 +405,13 @@ export default async function CheckoutPage({
     // than being redirected to a dashboard that silently discarded the
     // reason code. The authorization decision is identical; only the
     // honesty of the outcome differs.
-    return <BillMatchCard failure={billMatchFailureFor(claimRefusal, resolved.kind, planPatientId !== null)} />;
+    return (
+      <BillMatchCard
+        failure={billMatchFailureFor(
+          claimRefusal, resolved.kind, planPatientId !== null, tokenSaIdEncrypted !== null,
+        )}
+      />
+    );
   }
 
   // Logged out — check for an existing account.

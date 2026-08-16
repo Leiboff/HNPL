@@ -164,23 +164,29 @@ describe('the client-side posture is the same on both surfaces', () => {
   });
 });
 
-describe('no migration was needed for any of this', () => {
-  it('no new migration mentions bill delivery or a bill-side SA ID column', () => {
-    // plans/applications already carry patient_id, and
-    // checkout_sessions.sa_id_number already exists and is NOT NULL, so
-    // the delivery toggle and the issuance-time binding are pure app
-    // changes. If that ever stops being true this test is the prompt to
-    // say so out loud rather than slipping a migration in beside a UI
-    // change.
+describe('the delivery toggle itself needed no schema change', () => {
+  it('no migration exists for delivery or the issuance-time binding', () => {
+    // plans/applications already carry patient_id, checkout_sessions
+    // .sa_id_number already exists and is NOT NULL, and
+    // issued_via_device_id was already nullable — which is what lets a
+    // dashboard-issued QR record no device. Still true.
     const dir   = resolve(process.cwd(), 'supabase/migrations');
     const files = readdirSync(dir).filter((f) => f.endsWith('.sql'));
-    expect(files.filter((f) => /delivery|bill_sa_id|qr_/i.test(f))).toEqual([]);
+    expect(files.filter((f) => /delivery|qr_/i.test(f))).toEqual([]);
+  });
 
-    // And nothing added an SA ID column to the invitation table.
-    for (const f of files) {
-      const sql = readFileSync(resolve(dir, f), 'utf8');
-      if (!/patient_invitations/.test(sql)) continue;
-      expect(sql).not.toMatch(/ALTER TABLE\s+patient_invitations[\s\S]{0,80}sa_id/i);
-    }
+  it('EXACTLY ONE migration adds an SA ID to patient_invitations — 0098', () => {
+    // This pin used to assert that NO migration did. That changed on
+    // purpose: closing the invitation-ID gap needs the column, because the
+    // email path validated the practice's ID and then discarded it. The
+    // assertion is kept rather than deleted so a SECOND such column, or one
+    // slipped in beside a UI change, still fails here.
+    const dir   = resolve(process.cwd(), 'supabase/migrations');
+    const files = readdirSync(dir).filter((f) => f.endsWith('.sql'));
+
+    const adders = files.filter((f) =>
+      /ALTER TABLE\s+patient_invitations[\s\S]{0,120}sa_id_number/i.test(readFileSync(resolve(dir, f), 'utf8')),
+    );
+    expect(adders).toEqual(['0098_invitation_sa_id_and_completion_window.sql']);
   });
 });
