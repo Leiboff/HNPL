@@ -70,7 +70,9 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
     // explanation at all. The AUTHORIZATION rule is unchanged — they still
     // never reach the plan — but the outcome is now stated on the screen
     // they are already looking at.
-    expect(PAGE).toMatch(/return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind\)\} \/>/);
+    expect(PAGE).toMatch(
+      /failure=\{billMatchFailureFor\(\s*claimRefusal, resolved\.kind, planPatientId !== null, tokenSaIdEncrypted !== null,\s*\)\}/,
+    );
     expect(PAGE).not.toMatch(/invitation_not_yours/);
   });
 
@@ -190,7 +192,7 @@ describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not
     // that is what it now asserts.
     const ownerBranch = PAGE.indexOf('if (planPatientId === sessionUser.id)');
     const redirectIdx = PAGE.indexOf('redirect(confirmPath)');
-    const notYours    = PAGE.indexOf('<BillMatchCard failure=');
+    const notYours    = PAGE.indexOf('<BillMatchCard');
     expect(ownerBranch).toBeGreaterThan(0);
     expect(redirectIdx).toBeGreaterThan(ownerBranch);
     expect(notYours).toBeGreaterThan(redirectIdx);
@@ -206,7 +208,7 @@ describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not
     expect(ownerCheckIdx).toBeGreaterThan(0);
     expect(resumeIdx).toBeGreaterThan(ownerCheckIdx);
     // The non-owner exit must still be present after both.
-    expect(PAGE).toMatch(/<BillMatchCard failure=/);
+    expect(PAGE).toMatch(/<BillMatchCard/);
   });
 });
 

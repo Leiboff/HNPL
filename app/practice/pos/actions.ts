@@ -9,8 +9,12 @@ import {
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
 import { checkTradingGate } from '@/lib/practice/tradingGate';
-import { encryptId } from '@/lib/idEncryption';
-import { validateSaId, saIdAge, normalizePhoneZA } from '@/lib/validation';
+import { normalizePhoneZA } from '@/lib/validation';
+import { captureBillIdentity } from '@/lib/patients/billIdentityCapture';
+import type { DeliveryMethod } from '@/lib/patients/billIdentity';
+import { CHECKOUT_SCAN_TTL_TILL_MS } from '@/lib/checkout/sessionTtl';
+import { sendPatientInvitationEmail } from '@/lib/email/templates/patientInvitation';
+import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPatientBill';
 import {
   requireUnlockedDevice,
   hashTillSecret,
@@ -250,27 +254,38 @@ export async function checkDeviceStatus(deviceSecret: string | null): Promise<De
 // in the response payload, so it can't end up in till/reception
 // client state, logs, or a browser autocomplete cache.
 
-const SESSION_TTL_MS = 2 * 60 * 1000; // ~2 minutes
-
 export type IssueCounterSessionInput = {
   deviceSecret: string;
   billAmount:   number;
   saIdNumber:   string;
   cellNumber?:  string;
   providerMemberId: string;
+  /** Defaults to 'qr' — the till's original and still-default behaviour. */
+  delivery?:    DeliveryMethod;
+  /** REQUIRED under email delivery, and not collected under QR. */
+  patientEmail?: string;
 };
 
 export type IssueCounterSessionResult = {
   error:      string | null;
+  /** QR delivery only — the scannable secret. */
   token?:     string;
+  /** QR delivery only. */
   expiresAt?: string;
   planId?:    string;
+  /**
+   * Email delivery only. Whether the bill actually reached the address —
+   * a silent send failure would leave the teller thinking the patient has
+   * a bill they will never see.
+   */
+  emailSent?: boolean;
 };
 
 export async function issueCounterSession(
   data: IssueCounterSessionInput,
 ): Promise<IssueCounterSessionResult> {
   const { billAmount, providerMemberId, deviceSecret } = data;
+  const delivery: DeliveryMethod = data.delivery === 'email' ? 'email' : 'qr';
 
   const auth = await requireUnlockedDevice(deviceSecret);
   if (!auth.ok) return { error: auth.error };
@@ -283,15 +298,6 @@ export async function issueCounterSession(
   }
   if (!providerMemberId) {
     return { error: 'A healthcare provider must be selected.' };
-  }
-
-  const saIdResult = validateSaId(data.saIdNumber);
-  if (!saIdResult.valid) {
-    return { error: 'Enter a valid 13-digit SA ID number.' };
-  }
-  const age = saIdAge(data.saIdNumber);
-  if (age === null || age < 18) {
-    return { error: 'The patient must be 18 or older.' };
   }
 
   let normalizedCell: string | null = null;
@@ -317,26 +323,38 @@ export async function issueCounterSession(
     .maybeSingle();
   if (!providerMember) return { error: 'Selected provider is not a provider on this practice.' };
 
+  // ── Identity ───────────────────────────────────────────────────────────
+  //
+  // The SAME capture the dashboard runs: validation, the 18+ gate, both
+  // lookups, and the five-case conflict rule. The till used to validate
+  // and encrypt inline and never look the ID up at all, which is why a
+  // returning patient's plan stayed unbound until they scanned.
+  const identity = await captureBillIdentity({
+    svc:          client,
+    saIdNumber:   data.saIdNumber,
+    patientEmail: data.patientEmail ?? null,
+    delivery,
+  });
+  if (!identity.ok) return { error: identity.error };
+
   const { data: invoiceNumber, error: invoiceError } = await client.rpc('next_invoice_number');
   if (invoiceError || !invoiceNumber) {
     return { error: 'Failed to generate invoice number. Please try again.' };
   }
 
-  let encryptedSaId: string;
-  try {
-    encryptedSaId = encryptId(data.saIdNumber.trim());
-  } catch {
-    return { error: 'Encryption error — please contact support.' };
-  }
+  const encryptedSaId = identity.encryptedSaId;
 
-  // ── Create the plan the same way createBill does — patient_id is
-  // null until the phone-side checkout resolves who's paying. All
+  // ── Create the plan the same way createBill does. patient_id is now
+  // stamped AT ISSUANCE when the ID already has an account — that is what
+  // makes the SA ID the customer key rather than something matched later
+  // at checkout. It stays null only when the ID belongs to nobody yet, in
+  // which case claimUnboundSessionPlan still binds it at scan time. All
   // writes below go through the service-role client — there is no user
   // session in this path to drive RLS with. ──────────────────────────
   const applicationId = crypto.randomUUID();
   const { error: appError } = await client.from('applications').insert({
     id:          applicationId,
-    patient_id:  null,
+    patient_id:  identity.patientId,
     practice_id: practiceId,
     bill_amount: billAmount,
     status:      'pending',
@@ -347,7 +365,7 @@ export async function issueCounterSession(
   const { error: planError } = await client.from('plans').insert({
     id:                 planId,
     application_id:     applicationId,
-    patient_id:         null,
+    patient_id:         identity.patientId,
     practice_id:        practiceId,
     provider_member_id: providerMemberId,
     total_amount:       billAmount,
@@ -359,8 +377,80 @@ export async function issueCounterSession(
     return { error: `Failed to create plan: ${planError.message}` };
   }
 
+  // ── Delivery: email ────────────────────────────────────────────────────
+  //
+  // Bills get issued when the patient is not standing there, and some
+  // patients cannot or will not scan. The till gets the same choice the
+  // dashboard has; only the way the link travels differs.
+  if (delivery === 'email') {
+    const toEmail = identity.normalizedEmail;
+    if (!toEmail) {
+      // Unreachable: captureBillIdentity refuses email delivery with no
+      // address. Narrowed rather than asserted so a reshuffle fails here.
+      await client.from('plans').delete().eq('id', planId);
+      await client.from('applications').delete().eq('id', applicationId);
+      return { error: 'Enter the patient’s email address.' };
+    }
+
+    const { data: practiceRow } = await client
+      .from('practices')
+      .select('name')
+      .eq('id', practiceId)
+      .maybeSingle();
+    const practiceName = (practiceRow?.name as string | undefined) ?? 'your practice';
+    const appUrl       = process.env.NEXT_PUBLIC_APP_URL ?? '';
+
+    // Bound: the bill is already on their dashboard, so the email points
+    // there. Unbound: an invitation carrying the checkout link, exactly as
+    // createBill's own new-patient branch does.
+    if (identity.patientId) {
+      const sent = await sendExistingPatientBillEmail({
+        to:           toEmail,
+        practiceName,
+        amount:       billAmount,
+        dashboardUrl: `${appUrl}/patient/orders/${planId}/confirm`,
+      });
+      if (!sent.ok) console.error('[issueCounterSession] existing-patient bill email failed', sent.error);
+      return { error: null, planId, emailSent: sent.ok };
+    }
+
+    const inviteToken = crypto.randomBytes(32).toString('hex');
+    const inviteExp   = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { error: inviteError } = await client.from('patient_invitations').insert({
+      id:          crypto.randomUUID(),
+      email:       toEmail,
+      plan_id:     planId,
+      practice_id: practiceId,
+      // No logged-in user in this flow, and provider_id references
+      // profiles(id) — a roster-only practitioner has none either.
+      provider_id: providerMember.user_id ?? null,
+      token:       inviteToken,
+      expires_at:  inviteExp,
+      // Same as the dashboard's: the practice-typed ID rides the bill so
+      // checkout can compare it against the patient's own.
+      sa_id_number: identity.encryptedSaId,
+    });
+    if (inviteError) {
+      await client.from('plans').delete().eq('id', planId);
+      await client.from('applications').delete().eq('id', applicationId);
+      return { error: `Failed to create invitation: ${inviteError.message}` };
+    }
+
+    const sent = await sendPatientInvitationEmail({
+      to:          toEmail,
+      practiceName,
+      amount:      billAmount,
+      checkoutUrl: `${appUrl}/checkout/${inviteToken}`,
+      expiresAt:   inviteExp,
+    });
+    if (!sent.ok) console.error('[issueCounterSession] invitation email failed', sent.error);
+    return { error: null, planId, emailSent: sent.ok };
+  }
+
+  // ── Delivery: QR — the till's original path, unchanged ─────────────────
   const token     = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  const expiresAt = new Date(Date.now() + CHECKOUT_SCAN_TTL_TILL_MS).toISOString();
 
   const { error: sessionError } = await client.from('checkout_sessions').insert({
     token,

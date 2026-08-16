@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import CounterSessionForm from './CounterSessionForm';
 import type { CounterSessionStage } from './actions';
+import { VALID_SA_ID } from '@/lib/testing/saIdFixtures';
 
 // ─── CounterSessionForm — first-timer hard-stop + confirm-at-counter ──────
 //
@@ -55,7 +56,7 @@ function renderForm(overrides: {
 // deterministically drive the countdown/poll intervals.
 async function issueASession() {
   fireEvent.change(screen.getByLabelText(/Bill amount/i), { target: { value: '1000' } });
-  fireEvent.change(screen.getByTestId('pos-said-input'), { target: { value: '9001015800086' } });
+  fireEvent.change(screen.getByTestId('pos-said-input'), { target: { value: VALID_SA_ID } });
   // fireEvent.submit rather than clicking the submit button — more
   // reliable than relying on happy-dom's click-triggers-submit wiring.
   fireEvent.submit(screen.getByTestId('pos-entry-form'));

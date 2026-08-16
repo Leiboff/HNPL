@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stripComments } from '@/lib/testing/stripComments';
+import { VALID_SA_ID } from '@/lib/testing/saIdFixtures';
 import TillShell from './TillShell';
 import { TILL_DEVICE_SECRET_KEY } from './tillStorage';
 import type { TillActivity } from '@/lib/practice/tillActivity';
@@ -80,7 +81,7 @@ function mountTill() {
  */
 async function issueASession() {
   fireEvent.change(screen.getByLabelText(/Bill amount/i), { target: { value: '1000' } });
-  fireEvent.change(screen.getByTestId('pos-said-input'), { target: { value: '9001015800086' } });
+  fireEvent.change(screen.getByTestId('pos-said-input'), { target: { value: VALID_SA_ID } });
   fireEvent.submit(screen.getByTestId('pos-entry-form'));
   await waitFor(() => expect(screen.getByTestId('pos-qr-countdown')).toBeTruthy());
 }

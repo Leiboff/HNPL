@@ -4,6 +4,7 @@ import BillForm from './BillForm';
 import type { CreateBillResult, CreateBillSummary } from './actions';
 // ProviderOption is declared by the page (BillForm imports it from there too).
 import type { ProviderOption } from './page';
+import { VALID_SA_ID } from '@/lib/testing/saIdFixtures';
 
 // The success panel mounts BillWaitingPanel, which opens a Supabase Realtime
 // subscription. Stubbed out: this file is about validation feedback and the
@@ -45,20 +46,33 @@ function setup(createBill?: (data: unknown) => Promise<CreateBillResult>) {
   return {
     createBill: spy,
     email:  () => screen.getByLabelText(/Patient email/i) as HTMLInputElement,
+    saId:   () => screen.getByTestId('bill-said-input') as HTMLInputElement,
     amount: () => screen.getByLabelText(/Bill amount/i) as HTMLInputElement,
     submit: () => screen.getByTestId('submit-bill'),
+    chooseEmail: () => fireEvent.click(screen.getByTestId('delivery-email')),
   };
 }
 
-/** Fill in a valid email so amount is the only thing under test. */
-function fillValidEmail(f: ReturnType<typeof setup>) {
-  fireEvent.change(f.email(), { target: { value: 'patient@example.com' } });
+/**
+ * Fill everything the form needs EXCEPT the field under test.
+ *
+ * Since the delivery toggle landed, the address is only a field when email
+ * is the delivery method — QR is the default — so anything about the email
+ * has to select it first. The SA ID is required either way: it is the
+ * customer key, not a delivery detail.
+ */
+function fillIdentity(f: ReturnType<typeof setup>, opts: { email?: boolean } = {}) {
+  fireEvent.change(f.saId(), { target: { value: VALID_SA_ID } });
+  if (opts.email) {
+    f.chooseEmail();
+    fireEvent.change(f.email(), { target: { value: 'patient@example.com' } });
+  }
 }
 
 describe('bill amount validation is visible, never a silent no-op', () => {
   it('the submit button is NOT disabled on invalid data — a click must always produce feedback', () => {
     const f = setup();
-    fillValidEmail(f);
+    fillIdentity(f);
     fireEvent.change(f.amount(), { target: { value: '999999' } });
     // The old form disabled the button here, which is why nothing happened.
     expect((f.submit() as HTMLButtonElement).disabled).toBe(false);
@@ -72,7 +86,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
     ['negative',            '-100'],
   ])('%s (%s) shows an inline error and sends nothing', (_label, value) => {
     const f = setup();
-    fillValidEmail(f);
+    fillIdentity(f);
     fireEvent.change(f.amount(), { target: { value } });
     fireEvent.click(f.submit());
 
@@ -86,7 +100,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
 
   it('an empty amount reports it as missing rather than out of range', () => {
     const f = setup();
-    fillValidEmail(f);
+    fillIdentity(f);
     fireEvent.click(f.submit());
     expect(screen.getByTestId('amount-error').textContent).toMatch(/enter a bill amount/i);
     expect(f.createBill).not.toHaveBeenCalled();
@@ -94,7 +108,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
 
   it('the amount field itself gets a visual error state, not just gray helper text', () => {
     const f = setup();
-    fillValidEmail(f);
+    fillIdentity(f);
     // Before submitting: the neutral hint, no error styling.
     expect(f.amount().className).toMatch(/border-gray-300/);
     expect(screen.getByText(/Between R1 and R50\s?000/i)).toBeTruthy();
@@ -107,7 +121,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
 
   it('editing the amount clears the error so the field stops looking broken mid-typing', () => {
     const f = setup();
-    fillValidEmail(f);
+    fillIdentity(f);
     fireEvent.change(f.amount(), { target: { value: '60000' } });
     fireEvent.click(f.submit());
     expect(screen.queryByTestId('amount-error')).toBeTruthy();
@@ -118,7 +132,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
 
   it('ADVERSARIAL: rapid repeated clicks on invalid data show the error once, never stacked', () => {
     const f = setup();
-    fillValidEmail(f);
+    fillIdentity(f);
     fireEvent.change(f.amount(), { target: { value: '60000' } });
 
     for (let i = 0; i < 6; i++) fireEvent.click(f.submit());
@@ -133,6 +147,8 @@ describe('bill amount validation is visible, never a silent no-op', () => {
 describe('email validation has the same visible treatment (no silent gap)', () => {
   it('an empty email is reported inline and blocks submission', () => {
     const f = setup();
+    fillIdentity(f);
+    f.chooseEmail();
     fireEvent.change(f.amount(), { target: { value: '600' } });
     fireEvent.click(f.submit());
     expect(screen.getByTestId('email-error').textContent).toMatch(/enter the patient/i);
@@ -141,6 +157,8 @@ describe('email validation has the same visible treatment (no silent gap)', () =
 
   it('a malformed email is reported inline and blocks submission', () => {
     const f = setup();
+    fillIdentity(f);
+    f.chooseEmail();
     fireEvent.change(f.email(), { target: { value: 'not-an-email' } });
     fireEvent.change(f.amount(), { target: { value: '600' } });
     fireEvent.click(f.submit());
@@ -160,6 +178,8 @@ describe('valid input still submits (regression) and the preview is untouched', 
 
   it('submits the trimmed email and parsed amount through to createBill', async () => {
     const f = setup();
+    fillIdentity(f);
+    f.chooseEmail();
     fireEvent.change(f.email(), { target: { value: '  patient@example.com  ' } });
     fireEvent.change(f.amount(), { target: { value: '1000' } });
     fireEvent.click(f.submit());
@@ -167,6 +187,8 @@ describe('valid input still submits (regression) and the preview is untouched', 
     await waitFor(() => expect(f.createBill).toHaveBeenCalledTimes(1));
     expect(f.createBill.mock.calls[0][0]).toMatchObject({
       patientEmail: 'patient@example.com',
+      saIdNumber:   VALID_SA_ID,
+      delivery:     'email',
       billAmount:   1000,
       providerMemberId: 'mem-1',
       practiceId:   'practice-1',
@@ -188,6 +210,8 @@ function renderResult(summary: CreateBillSummary) {
   render(
     <BillForm feePercent={5} providers={PROVIDERS} practiceId="practice-1" createBill={createBill as never} />,
   );
+  fireEvent.change(screen.getByTestId('bill-said-input'), { target: { value: VALID_SA_ID } });
+  fireEvent.click(screen.getByTestId('delivery-email'));
   fireEvent.change(screen.getByLabelText(/Patient email/i), { target: { value: 'patient@example.com' } });
   fireEvent.change(screen.getByLabelText(/Bill amount/i), { target: { value: '1000' } });
   fireEvent.click(screen.getByTestId('submit-bill'));

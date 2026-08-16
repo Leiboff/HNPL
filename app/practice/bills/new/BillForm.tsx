@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { calculateFee } from '@/lib/finance';
 import { isValidEmail } from '@/lib/validation/email';
+import { validateSaId, saIdAge } from '@/lib/validation';
+import type { DeliveryMethod } from '@/lib/patients/billIdentity';
+import BillQrPanel from './BillQrPanel';
 import {
   isAllowedBillAmount,
   MIN_BILL_AMOUNT,
@@ -25,7 +28,9 @@ type Props = {
    */
   practiceId: string;
   createBill: (data: {
-    patientEmail:      string;
+    patientEmail?:     string;
+    saIdNumber:        string;
+    delivery:          DeliveryMethod;
     billAmount:        number;
     practiceReference?: string;
     providerMemberId:  string;
@@ -62,6 +67,7 @@ function SuccessPanel({
   /** Practice-scoped dashboard URL, same ?practiceId= shape the page header uses. */
   dashboardHref: string;
 }) {
+  const isQr             = !!summary.counterSession;
   const isInvite         = !!summary.invitation;
   const isExisting       = !!summary.existingAccount;
   const inviteDelivery   = summary.invitation?.emailDelivery;
@@ -71,6 +77,7 @@ function SuccessPanel({
 
   const heading =
     emailFailed         ? 'Bill created, but the email failed'
+    : isQr              ? 'Ready to scan'
     : isInvite          ? 'Invitation emailed'
     :                     'Bill sent';
 
@@ -104,6 +111,14 @@ function SuccessPanel({
               : 'The bill is on the patient\'s dashboard. Reach out directly, or correct the email and re-send.'}
           </p>
         </div>
+      )}
+
+      {/* ── QR delivery — the patient scans the screen ───────────── */}
+      {isQr && summary.counterSession && (
+        <BillQrPanel
+          token={summary.counterSession.token}
+          expiresAt={summary.counterSession.expiresAt}
+        />
       )}
 
       {/* ── Delivery confirmation (sent OK) ──────────────────────── */}
@@ -193,6 +208,11 @@ function SuccessPanel({
 
 export default function BillForm({ feePercent, providers, practiceId, createBill }: Props) {
   const [patientEmail,     setPatientEmail]     = useState('');
+  // QR is the default on BOTH surfaces. Email stays because bills get
+  // issued when the patient isn't standing there, and because some
+  // patients can't or won't scan.
+  const [delivery,         setDelivery]         = useState<DeliveryMethod>('qr');
+  const [saIdNumber,       setSaIdNumber]       = useState('');
   const [billAmountStr,    setBillAmountStr]    = useState('');
   const [practiceReference, setPracticeReference] = useState('');
   const [providerMemberId, setProviderMemberId] = useState(providers.length === 1 ? providers[0].memberId : '');
@@ -204,6 +224,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
   // same invalid data overwrites rather than stacking duplicates.
   const [amountError,      setAmountError]      = useState<string | null>(null);
   const [emailError,       setEmailError]       = useState<string | null>(null);
+  const [saIdError,        setSaIdError]        = useState<string | null>(null);
   const [providerError,    setProviderError]    = useState<string | null>(null);
 
   const billAmount = parseFloat(billAmountStr);
@@ -225,11 +246,31 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
     // button now only blocks while a request is in flight, and every
     // rejection path below writes a visible message.
     const trimmedEmail = patientEmail.trim();
-    const nextEmailError = !trimmedEmail
-      ? 'Enter the patient\'s email address.'
-      : !isValidEmail(trimmedEmail)
-        ? 'Enter a valid email address, e.g. patient@example.com.'
-        : null;
+    // The address is only a field when it is the delivery method. Under QR
+    // there is nothing to send to, so validating it would block a bill on
+    // an input the practice was never asked for.
+    const nextEmailError = delivery !== 'email'
+      ? null
+      : !trimmedEmail
+        ? 'Enter the patient\'s email address.'
+        : !isValidEmail(trimmedEmail)
+          ? 'Enter a valid email address, e.g. patient@example.com.'
+          : null;
+
+    // Same checks the server applies, in the same order. Client-side
+    // validation is the posture on BOTH surfaces now: with the patient
+    // standing there, a mistyped digit is cheapest to catch before the
+    // request. The server remains authoritative — see
+    // lib/patients/billIdentityCapture.ts.
+    const trimmedSaId = saIdNumber.trim();
+    const nextSaIdError = !trimmedSaId
+      ? 'Enter the patient\'s 13-digit SA ID number.'
+      : !validateSaId(trimmedSaId).valid
+        ? 'Enter a valid 13-digit SA ID number.'
+        : (saIdAge(trimmedSaId) ?? 0) < 18
+          ? 'The patient must be 18 or older.'
+          : null;
+
     const nextAmountError = !billAmountStr.trim()
       ? 'Enter a bill amount.'
       : !validAmount
@@ -238,10 +279,11 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
     const nextProviderError = !providerMemberId ? 'Select a healthcare provider.' : null;
 
     setEmailError(nextEmailError);
+    setSaIdError(nextSaIdError);
     setAmountError(nextAmountError);
     setProviderError(nextProviderError);
 
-    if (nextEmailError || nextAmountError || nextProviderError) {
+    if (nextEmailError || nextSaIdError || nextAmountError || nextProviderError) {
       // A general banner too, so the reason is apparent even if the
       // offending field is scrolled out of view.
       setError('Please fix the highlighted fields and try again.');
@@ -261,7 +303,9 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
     // even though the server-side work has completed.
     try {
       const result = await createBill({
-        patientEmail:     trimmedEmail,
+        patientEmail:     delivery === 'email' ? trimmedEmail : undefined,
+        saIdNumber:       trimmedSaId,
+        delivery,
         billAmount,
         practiceReference: practiceReference.trim() || undefined,
         providerMemberId,
@@ -358,32 +402,98 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
           )}
         </div>
 
-        {/* Patient email */}
+        {/* Patient SA ID — required on every bill, both delivery methods.
+            This is the customer key: QR and email only decide how the link
+            reaches them. */}
         <div>
-          <label htmlFor="patientEmail" className="block text-sm font-medium text-gray-700 mb-1">
-            Patient email
+          <label htmlFor="saIdNumber" className="block text-sm font-medium text-gray-700 mb-1">
+            Patient SA ID number
           </label>
           <input
-            id="patientEmail"
-            type="email"
+            id="saIdNumber"
+            type="text"
+            inputMode="numeric"
             required
-            value={patientEmail}
-            onChange={e => { setPatientEmail(e.target.value); setEmailError(null); }}
-            placeholder="patient@example.com"
-            aria-invalid={!!emailError}
-            aria-describedby={emailError ? 'patientEmail-error' : 'patientEmail-hint'}
-            className={fieldClass(!!emailError)}
+            maxLength={13}
+            value={saIdNumber}
+            onChange={e => { setSaIdNumber(e.target.value.replace(/\D/g, '')); setSaIdError(null); }}
+            placeholder="13 digits"
+            data-testid="bill-said-input"
+            aria-invalid={!!saIdError}
+            aria-describedby={saIdError ? 'saIdNumber-error' : 'saIdNumber-hint'}
+            className={fieldClass(!!saIdError)}
           />
-          {emailError ? (
-            <p id="patientEmail-error" role="alert" data-testid="email-error" className={FIELD_ERROR}>
-              {emailError}
+          {saIdError ? (
+            <p id="saIdNumber-error" role="alert" data-testid="said-error" className={FIELD_ERROR}>
+              {saIdError}
             </p>
           ) : (
-            <p id="patientEmail-hint" className="mt-1 text-xs text-gray-400">
-              If the patient doesn&apos;t have an account yet, we&apos;ll send them an invitation link.
+            <p id="saIdNumber-hint" className="mt-1 text-xs text-gray-400">
+              Read it off the patient&apos;s ID card — this is what links the bill to them.
             </p>
           )}
         </div>
+
+        {/* Delivery method — QR default, email the alternative */}
+        <fieldset data-testid="bill-delivery-toggle">
+          <legend className="block text-sm font-medium text-gray-700 mb-1">How should the patient get this bill?</legend>
+          <div className="flex gap-2">
+            {([
+              { value: 'qr'    as const, label: 'Show a QR code', hint: 'They scan it here' },
+              { value: 'email' as const, label: 'Send by email',  hint: 'They pay in their own time' },
+            ]).map(opt => (
+              <label
+                key={opt.value}
+                data-testid={`delivery-${opt.value}`}
+                className={`flex-1 cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                  delivery === opt.value
+                    ? 'border-[#13294B] bg-[#F4F7FC]'
+                    : 'border-gray-300 hover:border-gray-400'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="delivery"
+                  value={opt.value}
+                  checked={delivery === opt.value}
+                  onChange={() => { setDelivery(opt.value); setEmailError(null); }}
+                  className="sr-only"
+                />
+                <span className="block text-sm font-medium text-gray-800">{opt.label}</span>
+                <span className="block text-xs text-gray-500">{opt.hint}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        {/* Patient email — only when email IS the delivery method */}
+        {delivery === 'email' && (
+          <div>
+            <label htmlFor="patientEmail" className="block text-sm font-medium text-gray-700 mb-1">
+              Patient email
+            </label>
+            <input
+              id="patientEmail"
+              type="email"
+              required
+              value={patientEmail}
+              onChange={e => { setPatientEmail(e.target.value); setEmailError(null); }}
+              placeholder="patient@example.com"
+              aria-invalid={!!emailError}
+              aria-describedby={emailError ? 'patientEmail-error' : 'patientEmail-hint'}
+              className={fieldClass(!!emailError)}
+            />
+            {emailError ? (
+              <p id="patientEmail-error" role="alert" data-testid="email-error" className={FIELD_ERROR}>
+                {emailError}
+              </p>
+            ) : (
+              <p id="patientEmail-hint" className="mt-1 text-xs text-gray-400">
+                If the patient doesn&apos;t have an account yet, we&apos;ll send them an invitation link.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Bill amount */}
         <div>

@@ -14,21 +14,36 @@ import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { sendPatientInvitationEmail } from '@/lib/email/templates/patientInvitation';
 import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPatientBill';
 import { isDuplicateBill, RECENT_BILL_WINDOW_MS } from './_lib/idempotency';
+import { captureBillIdentity } from '@/lib/patients/billIdentityCapture';
+import type { DeliveryMethod } from '@/lib/patients/billIdentity';
+import { CHECKOUT_SCAN_TTL_DASHBOARD_MS } from '@/lib/checkout/sessionTtl';
+import { maskId } from '@/lib/idEncryption';
 
 // ─── Public surface ──────────────────────────────────────────────────────────
 //
-// createBill forks at SEND time on whether the patient email already
-// belongs to a confirmed BetterNow account:
+// IDENTITY vs DELIVERY
+//   The SA ID number is the CUSTOMER key. QR and email are DELIVERY
+//   methods. This action used to conflate the two: it took an email, never
+//   asked for an ID, and decided who the bill belonged to from the email
+//   lookup alone — while the till took an ID and no email. The whole
+//   decision now lives in lib/patients/billIdentityCapture.ts, which both
+//   surfaces call, and this file only issues what it is told to.
 //
-//   • Existing patient → the bill appears on their dashboard as a
-//     pending_acceptance plan; we email them "you have a new bill,
-//     log in to review and pay". They never see the anonymous
-//     checkout flow.
+// DELIVERY = 'qr' (default)
+//   A checkout_sessions row + an on-screen QR, exactly as the till issues.
+//   Nothing is sent anywhere; the patient scans the code in front of them.
 //
-//   • New email → we create a patient_invitations row + email the
-//     checkout link DIRECTLY to that email address. The link is
-//     NEVER returned to the provider — proving the patient controls
-//     the inbox is our email verification, replacing OTP.
+// DELIVERY = 'email'
+//   Unchanged in shape, and it forks on whether the bill got bound:
+//
+//   • Bound (the ID resolved to an account) → the bill appears on their
+//     dashboard as a pending_acceptance plan; we email "you have a new
+//     bill, log in to review and pay". They never see anonymous checkout.
+//
+//   • Unbound → a patient_invitations row + the checkout link emailed
+//     DIRECTLY to that address. The link is NEVER returned to the
+//     provider — proving the patient controls the inbox is our email
+//     verification, replacing OTP.
 //
 // If the email send fails (e.g. typo'd address), the provider sees
 // the failure in the returned summary and can re-issue with the
@@ -36,7 +51,16 @@ import { isDuplicateBill, RECENT_BILL_WINDOW_MS } from './_lib/idempotency';
 // door into the anonymous checkout.
 
 export type CreateBillInput = {
-  patientEmail:       string;
+  /**
+   * REQUIRED under email delivery, and not collected under QR — the QR is
+   * handed to the person standing there, so there is no address to send to
+   * and no reason to ask for one.
+   */
+  patientEmail?:      string;
+  /** REQUIRED on every bill. The customer key. */
+  saIdNumber:         string;
+  /** Defaults to 'qr' — the delivery method, chosen by the practice. */
+  delivery?:          DeliveryMethod;
   billAmount:         number;
   practiceReference?: string;
   providerMemberId:   string;
@@ -118,6 +142,15 @@ export type CreateBillSummary = {
     email:           string;
     emailDelivery:   InvitationEmailResult;
   };
+  /**
+   * Set ONLY under QR delivery. The token is the scannable secret and is
+   * rendered as a QR on the practice's own screen — the same shape the
+   * till issues, and like the till it carries no patient identity back.
+   */
+  counterSession?:    {
+    token:     string;
+    expiresAt: string;
+  };
 };
 
 export type CreateBillResult = {
@@ -129,8 +162,9 @@ export type CreateBillResult = {
 
 export async function createBill(data: CreateBillInput): Promise<CreateBillResult> {
   const { patientEmail, billAmount, practiceReference, providerMemberId } = data;
+  const delivery: DeliveryMethod = data.delivery === 'email' ? 'email' : 'qr';
 
-  if (!patientEmail || typeof patientEmail !== 'string') {
+  if (delivery === 'email' && (!patientEmail || typeof patientEmail !== 'string')) {
     return { error: 'Patient email is required.' };
   }
   if (!isAllowedBillAmount(billAmount)) {
@@ -238,21 +272,22 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   const feePercent  = Number(practice.fee_percent);
   const practiceName = practice.name as string;
 
-  const normalizedEmail = patientEmail.trim().toLowerCase();
+  // ── Identity ───────────────────────────────────────────────────────────
+  //
+  // One capture for both surfaces: validates the ID (checksum + date), the
+  // 18+ gate the till has always applied, both lookups, and the five-case
+  // conflict rule. A refusal here is a practice-facing message naming the
+  // field to re-check — never anything about the account we matched.
+  const identity = await captureBillIdentity({
+    svc,
+    saIdNumber:   data.saIdNumber,
+    patientEmail: patientEmail ?? null,
+    delivery,
+  });
+  if (!identity.ok) return { error: identity.error };
 
-  // Look up the patient. The "existing account" branch is taken only
-  // for CONFIRMED profiles — an unconfirmed orphan would still need
-  // to go through the anonymous checkout (it would never have set
-  // a password). The trigger that writes profiles fires on signup,
-  // so a profile row implies the auth user exists; we use the
-  // profile-only lookup here since unconfirmed orphans don't get
-  // routed through createBill's existing-patient branch.
-  const { data: patient } = await svc
-    .from('profiles')
-    .select('id, first_name, last_name')
-    .eq('email', normalizedEmail)
-    .eq('role', 'patient')
-    .maybeSingle();
+  const boundPatientId = identity.patientId;
+  const normalizedEmail = identity.normalizedEmail;
 
   const { gross, fee, net } = calculateFee(billAmount, feePercent);
 
@@ -270,16 +305,20 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   const now = Date.now();
   const windowStart = new Date(now - RECENT_BILL_WINDOW_MS).toISOString();
 
+  //
+  // An UNBOUND QR bill has neither key, so it gets no guard — the same
+  // position the till has always been in, and its UI issues one session at
+  // a time. A bound QR bill does get the patient_id guard.
   let dupCandidates: Array<{ created_at: string; total_amount: number | string }> = [];
-  if (patient) {
+  if (boundPatientId) {
     const { data } = await svc
       .from('plans')
       .select('created_at, total_amount')
-      .eq('patient_id', patient.id)
+      .eq('patient_id', boundPatientId)
       .eq('practice_id', practiceId)
       .gte('created_at', windowStart);
     dupCandidates = (data ?? []) as typeof dupCandidates;
-  } else {
+  } else if (normalizedEmail) {
     // New-patient case: plans don't have patient_id yet. Match via
     // any recent invitation row for this email + practice and pull
     // its plan's amount.
@@ -319,7 +358,9 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   const applicationId = crypto.randomUUID();
   const { error: appError } = await supabase.from('applications').insert({
     id:          applicationId,
-    patient_id:  patient?.id ?? null,
+    // Stamped from the ID lookup now, not the email lookup. This is what
+    // makes the SA ID the key rather than a thing matched at checkout.
+    patient_id:  boundPatientId,
     practice_id: practiceId,
     bill_amount: billAmount,
     status:      'pending',
@@ -333,7 +374,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   const { error: planError } = await supabase.from('plans').insert({
     id:                 planId,
     application_id:     applicationId,
-    patient_id:         patient?.id ?? null,
+    patient_id:         boundPatientId,
     practice_id:        practiceId,
     provider_member_id: providerMemberId,
     total_amount:       billAmount,
@@ -350,9 +391,68 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
   const trimmedRef = practiceReference?.trim() || undefined;
   const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? '';
 
-  // ── Scenario A: existing patient ───────────────────────────────────────
+  // ── Delivery: QR ───────────────────────────────────────────────────────
+  //
+  // The same checkout_sessions row the till mints, with the same TTL and
+  // the same encrypted SA ID. issued_via_device_id is NULL here — the
+  // column is nullable precisely because it records WHICH till issued a
+  // bill, and this one came from a logged-in user on the dashboard, whose
+  // authorisation was already established above.
+  //
+  // Nothing about the patient goes back to the caller: the response
+  // carries the token and the expiry, exactly as issueCounterSession's
+  // does. If the ID matched an account we bound the plan, but the practice
+  // is told only that the bill exists.
+  if (delivery === 'qr') {
+    const token     = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + CHECKOUT_SCAN_TTL_DASHBOARD_MS).toISOString();
+
+    const { error: sessionError } = await svc.from('checkout_sessions').insert({
+      token,
+      practice_id:          practiceId,
+      plan_id:              planId,
+      sa_id_number:         identity.encryptedSaId,
+      expires_at:           expiresAt,
+      issued_via_device_id: null,
+    });
+    if (sessionError) {
+      await supabase.from('plans').delete().eq('id', planId);
+      await supabase.from('applications').delete().eq('id', applicationId);
+      console.error('[createBill] Failed to create checkout session', sessionError.message);
+      return { error: BILL_SAVE_FAILED_MESSAGE };
+    }
+
+    return {
+      error: null,
+      summary: {
+        gross,
+        fee,
+        net,
+        // Masked, never a name. Under QR the practice proved it knows the
+        // ID and nothing else, so the ID is all it gets back.
+        patientName:       maskId(identity.saIdPlain),
+        invoiceNumber,
+        practiceReference: trimmedRef,
+        planId,
+        counterSession:    { token, expiresAt },
+      },
+    };
+  }
+
+  // ── Delivery: email, to an account we bound ────────────────────────────
   // Bill appears on their dashboard. Email them "log in to review".
-  if (patient) {
+  if (boundPatientId && normalizedEmail) {
+    // Read the name only HERE. Reaching this branch means the typed
+    // address belongs to the bound account (case B, or case C where the
+    // address matched), so the practice has already demonstrated it knows
+    // who this is — displaying the name tells it nothing new. Under any
+    // other case we never get here and never read the name.
+    const { data: boundProfile } = await svc
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('id', boundPatientId)
+      .maybeSingle();
+
     const dashboardUrl = `${appUrl}/patient/orders/${planId}/confirm`;
     const emailResult  = await sendExistingPatientBillEmail({
       to:           normalizedEmail,
@@ -371,7 +471,7 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
         gross,
         fee,
         net,
-        patientName:       `${patient.first_name} ${patient.last_name}`,
+        patientName:       `${boundProfile?.first_name ?? ''} ${boundProfile?.last_name ?? ''}`.trim() || normalizedEmail,
         invoiceNumber,
         practiceReference: trimmedRef,
         planId,
@@ -387,7 +487,17 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     };
   }
 
-  // ── Scenario B: new patient — invitation + checkout email ──────────────
+  // ── Delivery: email, to a patient with no account yet (case A) ─────────
+  //
+  // Unreachable with a null address: captureBillIdentity refuses email
+  // delivery without one, and the QR branch above has already returned.
+  // Narrowed rather than asserted with `!` so a future reshuffle that
+  // breaks the invariant fails here instead of emailing `null`.
+  if (!normalizedEmail) {
+    console.error('[createBill] email delivery reached the invitation branch with no address');
+    return { error: BILL_SAVE_FAILED_MESSAGE };
+  }
+
   const token        = crypto.randomBytes(32).toString('hex');
   const expiresAt    = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   const invitationId = crypto.randomUUID();
@@ -400,6 +510,11 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
     provider_id: providerMember.user_id ?? null,
     token,
     expires_at:  expiresAt,
+    // The ID the practice typed, carried onto the bill so checkout can
+    // compare it against the one the patient types. Without this the email
+    // path validates an ID and then throws it away, leaving the QR path the
+    // only one that actually enforces the customer key.
+    sa_id_number: identity.encryptedSaId,
   });
 
   if (inviteError) {
