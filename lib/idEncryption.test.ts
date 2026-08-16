@@ -18,7 +18,12 @@ const TEST_KEY_B64 = randomBytes(32).toString('base64');
 const LOOKUP_ENV_VAR = 'SA_ID_LOOKUP_HMAC_KEY';
 const TEST_LOOKUP_KEY_B64 = randomBytes(32).toString('base64');
 
-// Realistic 13-digit South African ID number used throughout.
+// A 13-digit string used throughout as the thing being encrypted.
+//
+// NOT a valid SA ID — it fails validateSaId's Luhn check. Harmless here,
+// because this file never validates it: encryptId takes any string. But do
+// not borrow it for a test that DOES validate. lib/testing/saIdFixtures.ts
+// holds IDs that actually pass.
 const SA_ID = '9001015800086';
 
 beforeAll(() => {
