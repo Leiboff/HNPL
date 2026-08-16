@@ -71,6 +71,15 @@ function makeClient() {
         error: null,
       });
       b.single = b.maybeSingle;
+      // findPatientBySaId reads profiles by the blind index with
+      // .order(...).limit(2). Modelled here rather than stubbed so an
+      // unseeded profiles table answers "nobody owns this ID" — which is
+      // what these tests mean by a first-time patient at the counter.
+      b.order = () => b;
+      b.limit = async (n: number) => ({
+        data: (state[table] ?? []).filter((r) => matches(r, filters)).slice(0, n),
+        error: null,
+      });
       b.insert = (row: Row) => {
         inserts.push({ table, row });
         (state[table] ??= []).push({ ...row });
@@ -112,6 +121,11 @@ beforeEach(async () => {
   gateResult = { ok: true };
   redeemRpcResult = null;
   process.env.SA_ID_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+  // The till now looks the ID up through the blind index before issuing, so
+  // it needs the SEPARATE HMAC key too. Missing it made every issue fail
+  // closed with "couldn't check this ID number" — the correct behaviour for
+  // an unusable key, and the reason this line is not optional.
+  process.env.SA_ID_LOOKUP_HMAC_KEY = randomBytes(32).toString('base64');
   process.env.TILL_AUTH_PEPPER    = 'test-pepper';
 
   const { hashTillSecret } = await import('@/lib/auth/tillDevice');

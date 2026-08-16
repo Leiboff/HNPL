@@ -70,7 +70,9 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
     // explanation at all. The AUTHORIZATION rule is unchanged — they still
     // never reach the plan — but the outcome is now stated on the screen
     // they are already looking at.
-    expect(PAGE).toMatch(/return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind\)\} \/>/);
+    expect(PAGE).toMatch(
+      /return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind, planPatientId !== null\)\} \/>/,
+    );
     expect(PAGE).not.toMatch(/invitation_not_yours/);
   });
 

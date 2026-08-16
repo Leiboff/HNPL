@@ -9,6 +9,8 @@ import {
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
 import type { IssueCounterSessionResult, CounterSessionStage, ProviderOption } from './actions';
+import type { DeliveryMethod } from '@/lib/patients/billIdentity';
+import { validateSaId, saIdAge, isValidEmail } from '@/lib/validation';
 import { formatRand } from '../billHelpers';
 
 // ─── CounterSessionForm ──────────────────────────────────────────────
@@ -73,6 +75,8 @@ type Props = {
     saIdNumber:  string;
     cellNumber?: string;
     providerMemberId: string;
+    delivery?:     DeliveryMethod;
+    patientEmail?: string;
   }) => Promise<IssueCounterSessionResult>;
   expireCounterSession: (token: string, opts?: { force?: boolean }) => Promise<{ error: string | null }>;
   getCounterSessionStage: (token: string) => Promise<{ error: string | null; stage?: CounterSessionStage }>;
@@ -88,6 +92,12 @@ export default function CounterSessionForm({
   const [billAmount, setBillAmount] = useState('');
   const [saIdNumber, setSaIdNumber] = useState('');
   const [cellNumber, setCellNumber] = useState('');
+  // QR stays the till's default — the patient is standing there. Email is
+  // the alternative for a bill issued when they are not, or for someone
+  // who can't scan.
+  const [delivery, setDelivery] = useState<DeliveryMethod>('qr');
+  const [patientEmail, setPatientEmail] = useState('');
+  const [emailSentTo, setEmailSentTo] = useState<string | null>(null);
   const [providerId, setProviderId] = useState(providers[0]?.memberId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -111,6 +121,7 @@ export default function CounterSessionForm({
     setBillAmount('');
     setSaIdNumber('');
     setCellNumber('');
+    setPatientEmail('');
     formRef.current?.reset();
   }
 
@@ -127,7 +138,27 @@ export default function CounterSessionForm({
       return;
     }
 
-    const saId = saIdNumber; // captured before the reset below
+    // Client-side ID validation, matching the dashboard's posture and the
+    // server's own checks. With the patient standing at the counter a
+    // mistyped digit is cheapest to catch before the request goes out;
+    // lib/patients/billIdentityCapture.ts remains authoritative.
+    const trimmedSaId = saIdNumber.trim();
+    if (!trimmedSaId || !validateSaId(trimmedSaId).valid) {
+      setError('Enter a valid 13-digit SA ID number.');
+      return;
+    }
+    if ((saIdAge(trimmedSaId) ?? 0) < 18) {
+      setError('The patient must be 18 or older.');
+      return;
+    }
+
+    const trimmedEmail = patientEmail.trim();
+    if (delivery === 'email' && (!trimmedEmail || !isValidEmail(trimmedEmail))) {
+      setError('Enter a valid email address, e.g. patient@example.com.');
+      return;
+    }
+
+    const saId = trimmedSaId; // captured before the reset below
 
     startTransition(async () => {
       const result = await issueCounterSession({
@@ -135,11 +166,29 @@ export default function CounterSessionForm({
         saIdNumber: saId,
         cellNumber: cellNumber.trim() || undefined,
         providerMemberId: providerId,
+        delivery,
+        patientEmail: delivery === 'email' ? trimmedEmail : undefined,
       });
 
       // Clear the ID from this component's state regardless of outcome
       // — a failed attempt is not a reason to keep it sitting around.
       resetForSession();
+
+      // Email delivery returns no token: there is no QR to render and no
+      // countdown to run. The teller needs one thing — did it actually go
+      // out — because a silent failure leaves them telling the patient to
+      // check an inbox that will stay empty.
+      if (delivery === 'email') {
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+        setEmailSentTo(result.emailSent ? trimmedEmail : null);
+        if (!result.emailSent) {
+          setError('The bill was created but we couldn’t email it. Check the address and issue it again.');
+        }
+        return;
+      }
 
       if (result.error || !result.token || !result.expiresAt) {
         setError(result.error ?? 'Something went wrong. Please try again.');
@@ -379,21 +428,81 @@ export default function CounterSessionForm({
         </p>
       </div>
 
-      <div>
-        <label htmlFor="pos-cell" className="block text-sm font-medium text-gray-700 mb-1.5">
-          Cellphone <span className="text-gray-400 font-normal">(optional — SMS fallback if the scan fails)</span>
-        </label>
-        <input
-          id="pos-cell"
-          type="tel"
-          inputMode="tel"
-          autoComplete="off"
-          value={cellNumber}
-          onChange={(e) => setCellNumber(e.target.value)}
-          placeholder="082 123 4567"
-          className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-base text-gray-900"
-        />
-      </div>
+      {/* Delivery method — QR default, matching the dashboard */}
+      <fieldset data-testid="pos-delivery-toggle">
+        <legend className="block text-sm font-medium text-gray-700 mb-1.5">How should the patient get this bill?</legend>
+        <div className="flex gap-2">
+          {([
+            { value: 'qr'    as const, label: 'Show a QR code', hint: 'They scan it here' },
+            { value: 'email' as const, label: 'Send by email',  hint: 'They pay in their own time' },
+          ]).map(opt => (
+            <label
+              key={opt.value}
+              data-testid={`pos-delivery-${opt.value}`}
+              className={`flex-1 cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                delivery === opt.value ? 'border-[#13294B] bg-[#F4F7FC]' : 'border-gray-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="pos-delivery"
+                value={opt.value}
+                checked={delivery === opt.value}
+                onChange={() => { setDelivery(opt.value); setError(null); }}
+                className="sr-only"
+              />
+              <span className="block text-sm font-medium text-gray-800">{opt.label}</span>
+              <span className="block text-xs text-gray-500">{opt.hint}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {delivery === 'email' && (
+        <div>
+          <label htmlFor="pos-email" className="block text-sm font-medium text-gray-700 mb-1.5">
+            Patient email
+          </label>
+          <input
+            id="pos-email"
+            type="email"
+            autoComplete="off"
+            data-testid="pos-email-input"
+            value={patientEmail}
+            onChange={(e) => setPatientEmail(e.target.value)}
+            placeholder="patient@example.com"
+            className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-base text-gray-900"
+          />
+        </div>
+      )}
+
+      {delivery === 'qr' && (
+        <div>
+          <label htmlFor="pos-cell" className="block text-sm font-medium text-gray-700 mb-1.5">
+            Cellphone <span className="text-gray-400 font-normal">(optional — SMS fallback if the scan fails)</span>
+          </label>
+          <input
+            id="pos-cell"
+            type="tel"
+            inputMode="tel"
+            autoComplete="off"
+            value={cellNumber}
+            onChange={(e) => setCellNumber(e.target.value)}
+            placeholder="082 123 4567"
+            className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-base text-gray-900"
+          />
+        </div>
+      )}
+
+      {emailSentTo && (
+        <div
+          role="status"
+          data-testid="pos-email-sent"
+          className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-900"
+        >
+          Bill emailed to <span className="font-medium">{emailSentTo}</span>.
+        </div>
+      )}
 
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
@@ -406,7 +515,9 @@ export default function CounterSessionForm({
         disabled={isPending}
         className="w-full inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
       >
-        {isPending ? 'Generating QR…' : 'Generate QR'}
+        {delivery === 'email'
+          ? (isPending ? 'Sending…' : 'Email the bill')
+          : (isPending ? 'Generating QR…' : 'Generate QR')}
       </button>
     </form>
   );

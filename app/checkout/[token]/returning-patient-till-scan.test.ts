@@ -33,15 +33,33 @@ const PAYCOMP = read('app/patient/payment-complete/page.tsx');
 const BILLS   = read('app/practice/bills/new/actions.ts');
 const POS     = read('app/practice/pos/actions.ts');
 
-describe('the diagnosis: why email works and the till does not', () => {
-  it('an email-issued bill is born with an owner when the account exists', () => {
-    expect(BILLS).toMatch(/patient_id:\s*patient\?\.id \?\? null/);
+describe('the diagnosis, and what closed it at the source', () => {
+  // AMENDMENT. This pair used to assert the asymmetry itself: an emailed
+  // bill was born with an owner (from the email lookup) and a till bill was
+  // born with none, because an SA ID was not an account. That asymmetry is
+  // gone — both surfaces now capture an SA ID and both bind at issuance
+  // when it resolves — so pinning "patient_id: null" here would be pinning
+  // the bug. What still matters, and is pinned instead, is that BOTH stamp
+  // the same resolved value from the same shared capture, and that the
+  // till still writes the encrypted ID onto the session so the claim path
+  // below keeps working for a genuinely new patient.
+
+  it('BOTH surfaces stamp the owner from the shared identity capture', () => {
+    expect(BILLS).toMatch(/patient_id:\s*boundPatientId/);
+    const issue = POS.slice(POS.indexOf('export async function issueCounterSession'));
+    expect(issue).toMatch(/patient_id:\s*identity\.patientId/);
+
+    for (const src of [BILLS, POS]) {
+      expect(src).toMatch(/captureBillIdentity\(\{/);
+    }
   });
 
-  it('a till-issued bill is born with no owner — there is only an SA ID', () => {
+  it('the till still carries the encrypted ID on the session, so an unbound plan is still claimable', () => {
+    // Case A — the ID belonged to nobody at issuance. patient_id stays
+    // null, and claimUnboundSessionPlan is what binds it at scan time.
     const issue = POS.slice(POS.indexOf('export async function issueCounterSession'));
-    expect(issue).toMatch(/patient_id:\s*null/);
     expect(issue).toMatch(/sa_id_number:\s*encryptedSaId/);
+    expect(issue).toMatch(/const encryptedSaId = identity\.encryptedSaId/);
   });
 });
 

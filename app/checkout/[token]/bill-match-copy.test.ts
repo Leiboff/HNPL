@@ -25,13 +25,14 @@ const ROOT = resolve(process.cwd());
 const read = (p: string) => stripComments(readFileSync(resolve(ROOT, p), 'utf8'));
 
 const PAGE    = read('app/checkout/[token]/page.tsx');
+const COPYSRC = read('app/checkout/[token]/_lib/billMatchCopy.ts');
 const CLAIM   = read('lib/checkout/claimSessionPlan.ts');
 const PATIENT = read('app/patient/page.tsx');
 
 /** The card's copy table, as source text. */
-const COPY   = PAGE.slice(PAGE.indexOf('const COPY: Record<BillMatchFailure'), PAGE.indexOf('const { heading, body, next }'));
+const COPY   = COPYSRC.slice(COPYSRC.indexOf('export const BILL_MATCH_COPY'), COPYSRC.indexOf('export function billMatchFailureFor'));
 /** The reason → bucket mapper, as source text. */
-const MAPPER = PAGE.slice(PAGE.indexOf('function billMatchFailureFor'));
+const MAPPER = COPYSRC.slice(COPYSRC.indexOf('export function billMatchFailureFor'));
 
 describe('the bug was the redirect, not the wording', () => {
   it('the page no longer sends anyone to /patient with a reason code', () => {
@@ -48,7 +49,9 @@ describe('the bug was the redirect, not the wording', () => {
   });
 
   it('renders in place instead, on the screen the patient is already looking at', () => {
-    expect(PAGE).toMatch(/return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind\)\} \/>/);
+    expect(PAGE).toMatch(
+      /return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind, planPatientId !== null\)\} \/>/,
+    );
   });
 
   it('the authorization rule is untouched — a non-owner still never reaches the plan', () => {
@@ -86,12 +89,19 @@ describe('every refusal the claim can produce maps to a bucket', () => {
 });
 
 describe('the two paths that never consult the claim at all', () => {
-  it('an INVITATION token gets its own bucket before the claim reason is even read', () => {
+  it('an INVITATION token is decided before the claim reason is even read', () => {
     // Reason 7 in the investigation: an emailed bill opened while signed in
     // as somebody else. claimUnboundSessionPlan is gated on
     // `resolved.kind === 'session'`, so it never runs — copy keyed only off
     // the claim outcome would leave this path uncovered.
-    expect(MAPPER).toMatch(/if \(tokenKind === 'invitation'\) return 'different_account';/);
+    expect(MAPPER).toMatch(/if \(tokenKind === 'invitation'\) \{/);
+  });
+
+  it('an invitation splits on whether the bill actually reached an account', () => {
+    // The re-derivation. Both arms are invitations opened by the wrong
+    // signed-in user, but only one of them has another account to send
+    // that person to.
+    expect(MAPPER).toMatch(/return planIsBound \? 'different_account' : 'unclaimed_invitation';/);
   });
 
   it('an already-owned SESSION plan skips the claim and still lands somewhere true', () => {
@@ -106,18 +116,20 @@ describe('the two paths that never consult the claim at all', () => {
 
 
 describe('the copy itself', () => {
-  it('has one entry per bucket, and only these four buckets exist', () => {
-    const union = PAGE.slice(PAGE.indexOf('type BillMatchFailure'), PAGE.indexOf('function BillMatchCard'));
+  it('has one entry per bucket, and only these five buckets exist', () => {
+    const union = COPYSRC.slice(COPYSRC.indexOf('export type BillMatchFailure'), COPYSRC.indexOf('export type BillMatchCopy'));
     const declared = [...union.matchAll(/\|\s*'([a-z_]+)'/g)].map((m) => m[1]);
-    expect(declared.sort()).toEqual(['different_account', 'id_mismatch', 'no_account_id', 'our_fault']);
+    expect(declared.sort()).toEqual([
+      'different_account', 'id_mismatch', 'no_account_id', 'our_fault', 'unclaimed_invitation',
+    ]);
     for (const b of declared) expect(COPY).toContain(`${b}: {`);
   });
 
   it('every bucket gives a heading, a plain statement, and a NEXT STEP', () => {
     const entries = [...COPY.matchAll(/heading:\s*['"]/g)];
-    expect(entries.length).toBe(4);
-    expect([...COPY.matchAll(/body:\s*'/g)].length).toBe(4);
-    expect([...COPY.matchAll(/next:\s*'/g)].length).toBe(4);
+    expect(entries.length).toBe(5);
+    expect([...COPY.matchAll(/body:\s*'/g)].length).toBe(5);
+    expect([...COPY.matchAll(/next:\s*'/g)].length).toBe(5);
   });
 
   it('never claims the bill isn\'t theirs — the old message\'s actual lie', () => {
@@ -133,10 +145,20 @@ describe('the copy itself', () => {
     expect(bucket).toMatch(/can’t be fixed from your side/);
   });
 
-  it('the emailed-bill bucket does not talk about ID numbers, which play no part in it', () => {
-    const bucket = COPY.slice(COPY.indexOf('different_account: {'));
-    expect(bucket).not.toMatch(/ID number/);
+  it('the bound-elsewhere bucket points at an account that actually exists', () => {
+    // Bounded slice: 'unclaimed_invitation' follows this entry and DOES
+    // mention an ID number, correctly — an unbounded slice would read the
+    // next bucket's copy and draw the opposite conclusion.
+    const bucket = COPY.slice(COPY.indexOf('different_account: {'), COPY.indexOf('unclaimed_invitation: {'));
     expect(bucket).toMatch(/sign in with the one the bill was emailed to/i);
+  });
+
+  it('the unclaimed-invitation bucket does NOT send them after an account that does not exist', () => {
+    // Reaching it means neither the ID nor the address had an account at
+    // issuance. "Sign in with the other account" would be a wall.
+    const bucket = COPY.slice(COPY.indexOf('unclaimed_invitation: {'));
+    expect(bucket).not.toMatch(/sign in with/i);
+    expect(bucket).toMatch(/ask reception to re-issue it/i);
   });
 
   it('the our-fault bucket blames neither the patient nor the practice', () => {
@@ -151,7 +173,7 @@ describe('the copy itself', () => {
   });
 
   it('gives everyone a way off the screen', () => {
-    const card = PAGE.slice(PAGE.indexOf('function BillMatchCard'), PAGE.indexOf('function billMatchFailureFor'));
+    const card = PAGE.slice(PAGE.indexOf('function BillMatchCard'));
     expect(card).toMatch(/href="\/patient"/);
   });
 });

@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { randomBytes } from 'crypto';
+import { VALID_SA_ID } from '@/lib/testing/saIdFixtures';
+
+// createBill now captures an SA ID on every bill, so it encrypts and hashes
+// one on the happy path. Fresh throwaway keys, never the production values.
+beforeAll(() => {
+  process.env.SA_ID_ENCRYPTION_KEY  = randomBytes(32).toString('base64');
+  process.env.SA_ID_LOOKUP_HMAC_KEY = randomBytes(32).toString('base64');
+});
 
 // ─── createBill — trading-gate enforcement ───────────────────────────────────
 //
@@ -132,6 +141,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
 
     const result = await createBill({
       patientEmail:  'pat@example.com',
+      saIdNumber:    VALID_SA_ID,
       billAmount:    1000,
       providerMemberId:    'provider-1',
     });
@@ -152,6 +162,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
 
     const result = await createBill({
       patientEmail:  'pat@example.com',
+      saIdNumber:    VALID_SA_ID,
       billAmount:    1000,
       providerMemberId:    'provider-1',
     });
@@ -166,6 +177,7 @@ describe('createBill — server-side trading-gate enforcement', () => {
 
     const result = await createBill({
       patientEmail:  'pat@example.com',
+      saIdNumber:    VALID_SA_ID,
       billAmount:    1000,
       providerMemberId:    'provider-1',
     });
@@ -181,6 +193,8 @@ describe('createBill — server-side trading-gate enforcement', () => {
 
     const result = await createBill({
       patientEmail:  '',
+      saIdNumber:    VALID_SA_ID,
+      delivery:      'email',
       billAmount:    1000,
       providerMemberId:    'provider-1',
     });
@@ -211,6 +225,7 @@ describe('createBill — practiceId scope selector (group→practice acting cont
     // yields {user_id: 'provider-1'} — non-null → guard passes.
     const result = await createBill({
       patientEmail:  'pat@example.com',
+      saIdNumber:    VALID_SA_ID,
       billAmount:    1000,
       providerMemberId:    'provider-1',
       practiceId:    'practice-1',
@@ -227,7 +242,8 @@ describe('createBill — practiceId scope selector (group→practice acting cont
     // Type-level pin: createBill's declared param shape includes practiceId?.
     // This is a compile-time property; we assert the type structurally.
     const _typeCheck: (data: {
-      patientEmail:       string;
+      patientEmail?:      string;
+      saIdNumber:         string;
       billAmount:         number;
       providerMemberId:         string;
       practiceReference?: string;
