@@ -64,8 +64,14 @@ describe('/checkout/[token] — anonymous flow is signup-only', () => {
     expect(PAGE).toMatch(/redirect\(confirmPath\)/);
   });
 
-  it('logged-in non-owner → redirect to /patient?reason=invitation_not_yours (never drop into a plan they don\'t own)', () => {
-    expect(PAGE).toMatch(/redirect\(\s*['"]\/patient\?reason=invitation_not_yours['"]\s*\)/);
+  it('logged-in non-owner → told why, in place (never dropped into a plan they don\'t own)', () => {
+    // Was a redirect to /patient?reason=invitation_not_yours. Nothing read
+    // that parameter, so the patient landed on their dashboard with no
+    // explanation at all. The AUTHORIZATION rule is unchanged — they still
+    // never reach the plan — but the outcome is now stated on the screen
+    // they are already looking at.
+    expect(PAGE).toMatch(/return <BillMatchCard failure=\{billMatchFailureFor\(claimRefusal, resolved\.kind\)\} \/>/);
+    expect(PAGE).not.toMatch(/invitation_not_yours/);
   });
 
   it('logged-out AND existing account (plan.patient_id OR email match) → /login?next=…', () => {
@@ -184,7 +190,7 @@ describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not
     // that is what it now asserts.
     const ownerBranch = PAGE.indexOf('if (planPatientId === sessionUser.id)');
     const redirectIdx = PAGE.indexOf('redirect(confirmPath)');
-    const notYours    = PAGE.indexOf("redirect('/patient?reason=invitation_not_yours')");
+    const notYours    = PAGE.indexOf('<BillMatchCard failure=');
     expect(ownerBranch).toBeGreaterThan(0);
     expect(redirectIdx).toBeGreaterThan(ownerBranch);
     expect(notYours).toBeGreaterThan(redirectIdx);
@@ -199,8 +205,8 @@ describe('/checkout/[token] — uncaptured plan resumes on the capture flow (not
     const resumeIdx     = PAGE.indexOf('<ResumeCapture');
     expect(ownerCheckIdx).toBeGreaterThan(0);
     expect(resumeIdx).toBeGreaterThan(ownerCheckIdx);
-    // The non-owner redirect must still be present after both.
-    expect(PAGE).toMatch(/redirect\(\s*['"]\/patient\?reason=invitation_not_yours['"]\s*\)/);
+    // The non-owner exit must still be present after both.
+    expect(PAGE).toMatch(/<BillMatchCard failure=/);
   });
 });
 

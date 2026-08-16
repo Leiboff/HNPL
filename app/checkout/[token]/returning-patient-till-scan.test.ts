@@ -48,7 +48,7 @@ describe('the diagnosis: why email works and the till does not', () => {
 describe('signed in, scanning a counter QR', () => {
   it('attempts the claim BEFORE the ownership comparison that would bounce them', () => {
     const claim  = PAGE.indexOf('claimUnboundSessionPlan(');
-    const bounce = PAGE.indexOf("redirect('/patient?reason=invitation_not_yours')");
+    const bounce = PAGE.indexOf('<BillMatchCard failure=');
     expect(claim).toBeGreaterThan(0);
     expect(bounce).toBeGreaterThan(claim);
   });
@@ -72,7 +72,7 @@ describe('signed in, scanning a counter QR', () => {
 
   it('leaves the bounce in place when the claim is refused', () => {
     const after = PAGE.slice(PAGE.indexOf('claimUnboundSessionPlan('));
-    expect(after).toMatch(/redirect\('\/patient\?reason=invitation_not_yours'\)/);
+    expect(after).toMatch(/<BillMatchCard failure=/);
   });
 });
 
