@@ -163,6 +163,12 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
   // but it would surface as a raw constraint error the patient cannot act
   // on. Self-exclusion matters here too: this step is re-enterable, so a
   // patient correcting a typo re-submits an ID that is already their own.
+  //
+  // The message names the situation ("an account already exists for this
+  // ID") rather than staying vague. That is a deliberate divergence from
+  // findExistingAuthUser's anti-enumeration posture on email — see the
+  // matching note in app/checkout/[token]/actions.ts for the full
+  // reasoning. Do not collapse the two for consistency.
   {
     let idOwner: Awaited<ReturnType<typeof findPatientBySaId>> = null;
     try {

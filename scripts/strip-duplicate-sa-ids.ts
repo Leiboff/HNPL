@@ -15,6 +15,19 @@
  *   staff members share an ID, which is a real data problem but not one
  *   this constraint or this script is scoped to.
  *
+ * OPEN QUESTION — uniqueness WITHIN role, not just for patients
+ *   The audit found two different practice_providers sharing one SA ID
+ *   (seeded placeholder data), and 0097 permits it: the index only covers
+ *   role='patient'. The rule that probably belongs here is uniqueness
+ *   within EACH role rather than a single global one — group 2 proves the
+ *   cross-role case is legitimate (one person, doctor and patient), while
+ *   two distinct doctors on one ID is straightforwardly wrong.
+ *
+ *   Not decided, and deliberately not decided now: it needs settling
+ *   before real practices seed real practitioners, and enforcing it today
+ *   would mean cleaning staff rows nobody has looked at. Logged here
+ *   because this is where the next person hits the question.
+ *
  * WHO SURVIVES
  *   Ranked, most-attached first, and the top of each group keeps its ID:
  *     1. has collected payments        (real money moved through it)

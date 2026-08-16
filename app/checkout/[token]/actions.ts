@@ -396,6 +396,21 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // raw Postgres error the patient cannot act on. The index is still the
   // authority — this is the message, not the enforcement.
   //
+  // ON SAYING "an account already exists for this ID" OUT LOUD
+  //   This DELIBERATELY diverges from findExistingAuthUser's posture, which
+  //   never confirms whether an email is registered. Do not "fix" it for
+  //   consistency — the divergence is the decision, not an oversight.
+  //
+  //   Two reasons it is right here and not there. First, the disclosure is
+  //   marginal: an SA ID reaches this action because a person physically
+  //   presented it at a counter and a receptionist typed it, or because
+  //   they typed their own. Email enumeration is a remote, scriptable probe
+  //   against arbitrary addresses; this is not. Second, the alternative is
+  //   worse than the leak. A vague refusal strands a REAL returning patient
+  //   at a till with no idea why they cannot pay and no next step, which is
+  //   the exact failure this whole flow keeps having to be rescued from.
+  //   Naming the situation is what lets them act on it.
+  //
   // Self-exclusion: the person re-submitting their OWN ID must pass. On
   // the 'reuse' fork we already know which account this checkout resolves
   // to, so an owner that IS that account is not a duplicate. On
