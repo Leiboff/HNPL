@@ -1,7 +1,28 @@
 import { createServerClient } from '@supabase/ssr';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { NextResponse, type NextRequest } from 'next/server';
 
-export async function updateSession(request: NextRequest) {
+export type UpdateSessionResult = {
+  /** The response carrying any refreshed auth cookies. */
+  response: NextResponse;
+  /**
+   * The authenticated user, or null.
+   *
+   * Returned rather than discarded so callers don't have to call
+   * `auth.getUser()` a second time — that call validates the JWT against
+   * Supabase over the network, so a duplicate is a real round trip added
+   * to every request. proxy.ts needs it for the absolute session cap.
+   */
+  user: User | null;
+  /**
+   * The cookie-bound client, so a caller can act on the session it just
+   * read (proxy.ts revokes here when the cap is exceeded) without
+   * constructing a second client against the same cookies.
+   */
+  supabase: SupabaseClient;
+};
+
+export async function updateSession(request: NextRequest): Promise<UpdateSessionResult> {
   // Start with a passthrough response. If setAll needs to write cookies it will
   // replace this with a new NextResponse that carries the Set-Cookie headers.
   let supabaseResponse = NextResponse.next({ request });
@@ -32,7 +53,7 @@ export async function updateSession(request: NextRequest) {
 
   // Refreshes the session and rotates the access token if it has expired.
   // Must be called before any logic that depends on the session.
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
-  return supabaseResponse;
+  return { response: supabaseResponse, user, supabase };
 }
