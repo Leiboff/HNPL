@@ -33,34 +33,53 @@ const NOW  = Date.parse('2026-08-17T12:00:00.000Z');
 const iso  = (ms: number) => new Date(ms).toISOString();
 
 describe('the cap value', () => {
-  it('is 12 hours', () => {
-    expect(ABSOLUTE_SESSION_MAX_MS).toBe(12 * HOUR);
+  it('is 2 hours', () => {
+    expect(ABSOLUTE_SESSION_MAX_MS).toBe(2 * HOUR);
   });
 
-  it('clears the longest realistic shift but not two of them', () => {
-    // The reasoning, pinned as a range rather than as the number twice.
-    // Long enough that a receptionist is never interrupted mid-shift;
-    // short enough that a session cannot straddle two shifts and two
-    // different people at the same desk.
-    expect(ABSOLUTE_SESSION_MAX_MS).toBeGreaterThanOrEqual(8 * HOUR);
-    expect(ABSOLUTE_SESSION_MAX_MS).toBeLessThan(24 * HOUR);
+  it('is sized against a STOLEN TOKEN, not against a working day', () => {
+    // RE-DERIVED from 12 h, and the re-derivation is the point.
+    //
+    // Sizing this against the length of a shift is the wrong axis. The
+    // idle timeout is client-side JavaScript, so it gives ZERO protection
+    // against a stolen token — an attacker does not run our app and never
+    // meets InactivityGuard. That makes this cap the ONLY thing between a
+    // captured refresh token and its 400-day cookie lifetime, and against
+    // that threat 12 h was a working day of free access.
+    //
+    // Pinned as a ceiling well below any plausible shift length, so a
+    // future "but staff keep having to log in" change has to confront the
+    // reasoning rather than quietly restore it.
+    expect(ABSOLUTE_SESSION_MAX_MS).toBeLessThanOrEqual(2 * HOUR);
   });
 
-  it('is far longer than the idle timeout — they bound different things', () => {
-    // Idle: 15 min for staff. Absolute: measured from sign-in and
-    // unaffected by activity. A cap anywhere near the idle window would
-    // just be a second idle timeout.
-    expect(ABSOLUTE_SESSION_MAX_MS).toBeGreaterThan(20 * 15 * 60 * 1000);
+  it('is not so short that it interrupts a long onboarding form', () => {
+    // The one genuinely avoidable annoyance: practice and provider setup
+    // are long, form-heavy flows, and being bounced to /login mid-setup
+    // loses real work. 1 h is defensible; 2 h clears these.
+    expect(ABSOLUTE_SESSION_MAX_MS).toBeGreaterThanOrEqual(1 * HOUR);
+  });
+
+  it('is still clearly longer than the idle timeout — they bound different things', () => {
+    // Idle: 15 min for staff, reset by activity. Absolute: measured from
+    // sign-in and unaffected by activity. If the two were close, the cap
+    // would just be a second idle timeout and the layer would be wasted.
+    const STAFF_IDLE_LOGOUT_MS = 15 * 60 * 1000;
+    expect(ABSOLUTE_SESSION_MAX_MS).toBeGreaterThan(4 * STAFF_IDLE_LOGOUT_MS);
   });
 });
 
 describe('sessionExceedsAbsoluteCap — measured from authentication', () => {
   it('a session younger than the cap survives', () => {
-    expect(sessionExceedsAbsoluteCap(iso(NOW - 11 * HOUR), NOW)).toBe(false);
+    expect(sessionExceedsAbsoluteCap(iso(NOW - 1 * HOUR), NOW)).toBe(false);
   });
 
   it('a session older than the cap does not', () => {
-    expect(sessionExceedsAbsoluteCap(iso(NOW - 13 * HOUR), NOW)).toBe(true);
+    expect(sessionExceedsAbsoluteCap(iso(NOW - 3 * HOUR), NOW)).toBe(true);
+  });
+
+  it('a full working day into a session is well past it', () => {
+    expect(sessionExceedsAbsoluteCap(iso(NOW - 8 * HOUR), NOW)).toBe(true);
   });
 
   it('the boundary is inclusive — exactly at the cap requires re-auth', () => {
@@ -72,9 +91,9 @@ describe('sessionExceedsAbsoluteCap — measured from authentication', () => {
     // The whole point of the layer. Activity is not an input to this
     // function, so there is no argument value that can represent "but
     // they were using it" — which is exactly the property we want.
-    const signedInAt = NOW - 13 * HOUR;
-    // Simulate a full day of being busy every single minute.
-    for (let m = 0; m <= 13 * 60; m++) {
+    const signedInAt = NOW - 4 * HOUR;
+    // Simulate being busy every single minute from sign-in onwards.
+    for (let m = 0; m <= 4 * 60; m++) {
       const t = signedInAt + m * 60_000;
       expect(sessionExceedsAbsoluteCap(iso(signedInAt), t)).toBe(t - signedInAt >= ABSOLUTE_SESSION_MAX_MS);
     }
@@ -241,8 +260,13 @@ describe('the login page explains the cap without lying about it', () => {
   });
 
   it('derives the hours from the constant so the copy cannot drift', () => {
+    // Generalised from `not.toMatch(/sessions end after 12 hours/)`, which
+    // named the old value and so stopped meaning anything the moment the
+    // cap moved. Any hardcoded number of hours in this sentence is the
+    // defect, whatever the number is.
     expect(LOGIN).toMatch(/ABSOLUTE_SESSION_MAX_MS/);
-    expect(LOGIN).not.toMatch(/sessions end after 12 hours/);
+    expect(LOGIN).not.toMatch(/sessions end after \d+ hours?/);
+    expect(LOGIN).toMatch(/sessions end after \$\{capHours\} hours/);
   });
 
   it('is informational, not an error', () => {
@@ -256,6 +280,38 @@ describe('the login page explains the cap without lying about it', () => {
     const scope = LOGIN.slice(start, end);
     expect(scope).toMatch(/setNotice\(/);
     expect(scope).not.toMatch(/setError\(/);
+  });
+});
+
+describe('the limits of this layer are written down where the code is', () => {
+  // These assert on the SOURCE, deliberately. They are not testing
+  // behaviour — they are testing that the reasoning survives, because the
+  // failure mode being guarded against is somebody reading the proxy check
+  // as sufficient and skipping the dashboard timebox.
+  const SRC = readFileSync(resolve(ROOT, 'lib/auth/sessionCap.ts'), 'utf8');
+
+  it('says the proxy check only binds traffic through our app', () => {
+    // A stolen refresh token can be POSTed straight at Supabase's token
+    // endpoint and used against PostgREST directly. Nothing in proxy.ts is
+    // on that path.
+    expect(SRC).toMatch(/THROUGH OUR APP/);
+    expect(SRC).toMatch(/grant_type=refresh_token/);
+  });
+
+  it('says the DASHBOARD timebox is the load-bearing layer, not this one', () => {
+    expect(SRC).toMatch(/LOAD-BEARING/);
+    expect(SRC).toMatch(/DEFENCE IN DEPTH/);
+  });
+
+  it('says the idle timeout gives ZERO protection against a stolen token', () => {
+    // The argument that sized the cap. If this sentence goes, the next
+    // person to think "2 hours seems harsh" has lost the reason for it.
+    expect(SRC).toMatch(/ZERO protection/);
+  });
+
+  it('the cap constant carries its own why-not-longer reasoning', () => {
+    expect(SRC).toMatch(/WHY SO SHORT/);
+    expect(SRC).toMatch(/WHY NOT ONE HOUR/);
   });
 });
 

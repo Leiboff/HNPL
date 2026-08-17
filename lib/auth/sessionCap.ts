@@ -44,6 +44,41 @@
  * rather than in the client — a control that answers to the browser is no
  * answer to a compromised browser.
  *
+ * ─── WHAT THIS CHECK DOES NOT BIND ────────────────────────────────────
+ *
+ * Recorded here because it is easy to over-read what the paragraph above
+ * promises, and because the answer changes which layer you should trust.
+ *
+ * The proxy check only sees traffic that comes THROUGH OUR APP. Somebody
+ * holding a stolen refresh token is not obliged to use our app at all:
+ * they can POST it straight to Supabase's own token endpoint
+ * (`/auth/v1/token?grant_type=refresh_token`) and get fresh access tokens
+ * back, then use those directly against the PostgREST and Storage APIs.
+ * Nothing in proxy.ts is on that path, so nothing in this file stops it.
+ *
+ * The same argument disposes of the idle timeout even more completely: it
+ * is client-side JavaScript, so it gives ZERO protection against a stolen
+ * token. An attacker does not run our app, does not mount our
+ * InactivityGuard, and never reads the localStorage timestamp.
+ *
+ * So the honest ordering of the layers is:
+ *
+ *   • THE SUPABASE DASHBOARD TIMEBOX IS LOAD-BEARING. It is enforced at
+ *     the token endpoint itself, which is the one place every path —
+ *     ours, curl, a script — has to go through. It is the only thing that
+ *     actually bounds a stolen refresh token.
+ *
+ *   • THIS FILE IS DEFENCE IN DEPTH. It bounds the ordinary cases, which
+ *     are the common ones: an unattended logged-in browser, a shared
+ *     reception machine, a lost laptop being used as a laptop. It is
+ *     pinned by tests and visible in review, which the dashboard value is
+ *     not. It is not a substitute for the dashboard setting and must not
+ *     be treated as one.
+ *
+ * That ordering is a correction to how this was originally scoped —
+ * code-first was approved on the understanding that the two layers were
+ * closer to equivalent than they are. They are not.
+ *
  * ─── WHY `last_sign_in_at` ────────────────────────────────────────────
  *
  * The cap must be measured from AUTHENTICATION, not from last activity —
@@ -52,35 +87,48 @@
  * NOT touch it on a token refresh, which makes it the correct anchor and,
  * being server-supplied, one the browser cannot forge.
  *
- * ─── WHY CODE RATHER THAN A DASHBOARD SETTING ─────────────────────────
+ * ─── WHY IN CODE AS WELL AS IN THE DASHBOARD ──────────────────────────
  *
- * Supabase can enforce a session timebox itself (Authentication →
- * Sessions), and doing so would be strictly stronger: it is applied at
- * the token endpoint, so nothing in our stack has to remember to check.
- * Enforcing it here as well is deliberate, not a substitute:
- *
- *   • a dashboard value is invisible to the repo, untestable in CI, and
- *     can be changed or reverted by anyone with project access without a
- *     trace in the diff;
- *   • this version is pinned by tests and reviewed like any other code.
- *
- * Both is the right end state. This is the half that can be code.
+ * Given the ordering above, the dashboard timebox is the one that must be
+ * set. This exists in addition to it because a dashboard value is
+ * invisible to the repo, untestable in CI, and can be changed or reverted
+ * by anyone with project access without leaving a trace in a diff —
+ * whereas this is pinned by tests and reviewed like any other code. Two
+ * independent layers, neither redundant: one covers paths that never
+ * touch our app, the other cannot be silently switched off.
  */
 
 /**
- * Twelve hours from sign-in.
+ * Two hours from sign-in.
  *
- * Chosen against the actual working pattern rather than a round number: a
- * practice receptionist signs in at the start of a shift and should never
- * be interrupted mid-shift, and 12 h clears the longest realistic day
- * with room to spare. Anything longer stops being a cap in practice —
- * daily sign-in is the property we want, and a 24 h value would let a
- * session straddle two shifts and two different people at the same desk.
+ * WHY SO SHORT — the reasoning that decided it
+ *   The instinct is to size this against the working day, and that is the
+ *   wrong axis. The idle timeout is client-side JavaScript, so it offers
+ *   NO protection against a stolen token: an attacker does not run our
+ *   app and never meets InactivityGuard. Which means this cap is the only
+ *   thing standing between a captured refresh token and its 400-day
+ *   cookie lifetime — and against that threat the difference between two
+ *   hours and twelve is the difference between a short window and a
+ *   working day of free access.
  *
- * On the other side, a stolen laptop or an XSS-captured refresh token
- * stops working the same day rather than next year.
+ *   So the length is set by how long a stolen token stays useful, not by
+ *   how long a shift is.
+ *
+ * WHY NOT ONE HOUR
+ *   One hour is defensible and was considered. Two is preferred for one
+ *   concrete reason: practice and provider onboarding are long, form-heavy
+ *   flows, and being bounced to /login mid-setup is the one genuinely
+ *   avoidable annoyance here. Two hours clears those without materially
+ *   widening the window.
+ *
+ * WHAT IT COSTS
+ *   Staff re-authenticate a few times a day rather than once. That is the
+ *   intended trade and it is a small one — note this is a cap on the
+ *   SESSION, not an idle timeout, so nobody is interrupted for being
+ *   away from the keyboard; they are asked to sign in again for having
+ *   been signed in a long time.
  */
-export const ABSOLUTE_SESSION_MAX_MS = 12 * 60 * 60 * 1000;
+export const ABSOLUTE_SESSION_MAX_MS = 2 * 60 * 60 * 1000;
 
 /** Where a capped session lands. The login page reads `reason`. */
 export const SESSION_CAP_REDIRECT_REASON = 'session_expired';
