@@ -13,6 +13,7 @@ import {
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 
 // ─── PatientSignupForm — account-only ─────────────────────────────────
 //
@@ -73,6 +74,11 @@ export default function PatientSignupForm({ invitation, token }: Props) {
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(false);
+  // Mirrors the flag above for PRESENTATION only — the flag and the call
+  // it guards are untouched. pending.disabled follows it immediately
+  // (double-tap safety is never delayed); pending.showLabel waits out the
+  // flash threshold. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: loading });
 
   // Field declaration order = focus-on-submit order.
   const schema = useMemo<FieldsSchema<Fields>>(() => ({
@@ -303,11 +309,11 @@ export default function PatientSignupForm({ invitation, token }: Props) {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={pending.disabled}
           className="flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
-          style={{ background: '#15A89E', boxShadow: loading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
+          style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
         >
-          {loading ? 'Creating account…' : 'Create account'}
+          {pending.showLabel ? 'Creating account…' : 'Create account'}
         </button>
       </form>
 

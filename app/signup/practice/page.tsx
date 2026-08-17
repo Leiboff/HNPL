@@ -11,6 +11,7 @@ import {
 } from '@/lib/forms/useFieldValidation';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,11 @@ export default function PracticeSignupPage() {
   const [fields,      setFields]      = useState<Fields>(BLANK);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(false);
+  // Mirrors the flag above for PRESENTATION only — the flag and the call
+  // it guards are untouched. pending.disabled follows it immediately
+  // (double-tap safety is never delayed); pending.showLabel waits out the
+  // flash threshold. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: loading });
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [emailLocked, setEmailLocked] = useState(false);
 
@@ -534,11 +540,11 @@ export default function PracticeSignupPage() {
           {/* ── Submit ─────────────────────────────────────────── */}
           <button
             type="submit"
-            disabled={loading}
+            disabled={pending.disabled}
             className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
-            {loading ? 'Creating practice…' : 'Create practice'}
+            {pending.showLabel ? 'Creating practice…' : 'Create practice'}
           </button>
 
           <p className="text-xs text-center text-gray-400">

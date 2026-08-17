@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import ConfirmChargeDialog from './ConfirmChargeDialog';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 import type { SettleAllOutcome } from './settle-actions';
 
 function formatRandCents(cents: number): string {
@@ -39,6 +40,11 @@ export default function SettleEntireBillButton({
 }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [isPending,  startTransition] = useTransition();
+  // This button had NO pending label — it disabled and went silent, which
+  // on a slow network is the frozen-app problem in miniature on a money
+  // action. disabled is immediate; the label appears only if the charge
+  // actually takes a moment.
+  const pending = usePendingAction({ pending: isPending });
   const [resultMsg,  setResultMsg]    = useState<string | null>(null);
   const [done,       setDone]         = useState(false);
 
@@ -110,11 +116,13 @@ export default function SettleEntireBillButton({
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        disabled={isPending}
+        disabled={pending.disabled}
         className={buttonCls}
         style={isMenuItem ? { color: '#13294B' } : undefined}
       >
-        Settle entire bill · {formatRandCents(outstandingTotalCents)}
+        {pending.showLabel
+          ? 'Settling…'
+          : `Settle entire bill · ${formatRandCents(outstandingTotalCents)}`}
       </button>
       {resultMsg && !confirming && (
         <p className={isMenuItem ? 'text-xs text-red-600 px-2' : 'text-xs text-red-600 text-center'}>

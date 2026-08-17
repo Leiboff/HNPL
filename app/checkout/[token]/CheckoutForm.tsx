@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useTransition, useMemo } from 'react';
+import { Spinner } from '@/components/loading/Skeleton';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
@@ -359,6 +361,18 @@ export default function CheckoutForm({
   // that surface. `redirecting` keeps the button in its pending state
   // while the navigation swaps the page.
   const [redirecting, setRedirecting] = useState(false);
+
+  // Presentation only — the transition and the initiateCheckout call are
+  // untouched. Declared HERE rather than beside useTransition because it
+  // reads `redirecting`, which is declared just above; referencing it
+  // earlier is a TDZ error at runtime that typecheck alone does not catch.
+  //
+  // `redirecting` is folded in deliberately: the button must stay busy
+  // through the navigation that follows a successful hand-off, not just
+  // through the action. disabled tracks both immediately — this is the
+  // money action, and a delayed guard is no guard — while the label waits
+  // out the flash threshold. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: isPending || redirecting });
 
   // Post-OTP hand-off. When true, the Verify step (3) swaps its OTP body
   // for a button-level "Setting up…" spinner while initiateCheckout runs
@@ -808,15 +822,15 @@ export default function CheckoutForm({
           actions={
             error ? (
               <div className="space-y-3">
-                <PrimaryButton onClick={submitPay} disabled={isPending || redirecting}>
-                  {(isPending || redirecting) ? 'Setting up…' : 'Try again'}
+                <PrimaryButton onClick={submitPay} disabled={pending.disabled}>
+                  {pending.showLabel ? 'Setting up…' : 'Try again'}
                 </PrimaryButton>
                 <div className="flex justify-center">
                   {/* Back goes to Details (2); the patient stays verified,
                       so re-verification isn't forced on the return. */}
                   <SecondaryButton
                     onClick={() => { setHandoff(false); setStep(2); }}
-                    disabled={isPending || redirecting}
+                    disabled={pending.disabled}
                   >
                     ← Back
                   </SecondaryButton>
@@ -827,10 +841,12 @@ export default function CheckoutForm({
               // interstitial screen. Disabled + spinner + "Setting up…".
               <PrimaryButton disabled>
                 <span className="inline-flex items-center justify-center gap-2">
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
-                  </svg>
+                  {/* Shared primitive. Was an inline animate-spin SVG with no
+                      reduced-motion handling; Spinner hides itself under
+                      prefers-reduced-motion rather than freezing into a grey
+                      arc, and the "Setting up…" text beside it is what
+                      carries the meaning either way. */}
+                  <Spinner />
                   Setting up…
                 </span>
               </PrimaryButton>

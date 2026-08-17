@@ -4,6 +4,7 @@ import { useCallback, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { ABSOLUTE_SESSION_MAX_MS } from '@/lib/auth/sessionCap';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 import { resendConfirmation } from '@/app/auth/resend/actions';
 import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
 import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
@@ -26,6 +27,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState<string | null>(null);
   const [loading,  setLoading]  = useState(false);
+  // Mirrors `loading` for PRESENTATION only — the flag itself and the
+  // signInWithPassword call below are untouched. pending.disabled tracks
+  // `loading` with no delay (double-tap safety), while pending.showLabel
+  // waits out the flash threshold so a fast sign-in never blinks
+  // "Signing in…". See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: loading });
   const [notice,   setNotice]   = useState<string | null>(null);
 
   const [notConfirmed, setNotConfirmed] = useState(false);
@@ -183,7 +190,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={handlePasskeySignIn}
-                disabled={passkeyLoading || loading}
+                disabled={passkeyLoading || pending.disabled}
                 className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -279,11 +286,11 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={pending.disabled}
               className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
               style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
-              {loading ? 'Signing in…' : 'Sign in'}
+              {pending.showLabel ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
         </div>
