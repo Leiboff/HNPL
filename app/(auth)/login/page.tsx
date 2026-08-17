@@ -3,6 +3,7 @@
 import { useCallback, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { ABSOLUTE_SESSION_MAX_MS } from '@/lib/auth/sessionCap';
 import { resendConfirmation } from '@/app/auth/resend/actions';
 import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
 import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
@@ -55,6 +56,16 @@ export default function LoginPage() {
     const reason = params.get('reason');
     if (reason === 'inactivity') {
       setNotice('You were signed out due to inactivity.');
+    }
+    // Absolute session cap (proxy.ts). A DIFFERENT message from
+    // inactivity on purpose — the user was not idle, and telling them
+    // they were is both wrong and confusing when they were mid-task.
+    // Naming the cause makes it read as routine rather than as a fault.
+    if (reason === 'session_expired') {
+      // Derived from the constant the proxy enforces, not written out, so
+      // the copy cannot drift away from the actual cap.
+      const capHours = Math.round(ABSOLUTE_SESSION_MAX_MS / (60 * 60 * 1000));
+      setNotice(`For your security, sessions end after ${capHours} hours. Please sign in again.`);
     }
   }, []);
 

@@ -60,7 +60,7 @@ export default async function ProviderLayout({ children }: { children: React.Rea
 
       {/* Inactivity auto-logout — provider tuning: warn at 10 min idle,
           log out 10 min later (20 min total). */}
-      <InactivityGuard minutesIdle={10} minutesWarn={10} />
+      <InactivityGuard minutesIdle={10} minutesWarn={5} />
     </div>
   );
 }

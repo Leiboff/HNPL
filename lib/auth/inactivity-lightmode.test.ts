@@ -24,9 +24,16 @@ import { resolve } from 'node:path';
 //     /login?reason=inactivity target.
 //   • Login page renders the informational notice on
 //     ?reason=inactivity.
-//   • Per-layout durations: patient 5/5, brand/practice/provider/
-//     admin 10/10.
+//   • Per-layout durations: patient 5/5 (logout at 10), and
+//     practice/brand/provider/admin/crm 10/5 (logout at 15, per PCI
+//     DSS 4.0 req 8.2.8). Re-derived from 10/10 — see the note there.
 //   • Diff scope: no payment/webhook/finance-math file changes.
+//
+// Behaviour lives elsewhere on purpose. This file is source-regex pins;
+// what the guard actually DOES with elapsed time (a reloaded tab, a
+// hidden tab, a forged timestamp) is driven through the real component in
+// InactivityGuard.elapsed.test.tsx, and the revocation shape is pinned in
+// sessionRevocation.test.ts.
 
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
@@ -42,6 +49,7 @@ const PRACTICE_LAY  = read('app/practice/layout.tsx');
 const BRAND_LAY     = read('app/brand/layout.tsx');
 const PROVIDER_LAY  = read('app/provider/layout.tsx');
 const ADMIN_LAY     = read('app/admin/layout.tsx');
+const CRM_LAY       = read('app/crm/layout.tsx');
 
 // ─── PART 1 — light-mode enforcement ──────────────────────────────────
 
@@ -109,8 +117,37 @@ describe('logoutAndRedirect — accepts optional target, defaults to /login', ()
     expect(LOGOUT_LIB).toMatch(/logoutAndRedirect\(\s*target:\s*string\s*=\s*['"]\/login['"]\s*\)/);
   });
 
-  it('still calls signOut with scope: local (never global)', () => {
+  // RE-DERIVED. This used to read "still calls signOut with scope: local
+  // (never global)", which pinned the wrong thing — it pinned the FIX
+  // rather than the PROPERTY, and so it also pinned the cost of that fix:
+  // scope:'local' makes no server call, so logout never invalidated the
+  // refresh token.
+  //
+  // The reasoning behind 'local' was sound and is preserved: the default
+  // scope:'global' POSTs to Supabase, and an unguarded `await signOut()`
+  // before a redirect could hang or throw on a flaky mobile network —
+  // killing the redirect, so the user tapped Log out and saw nothing
+  // happen. What that argument actually requires is not "never call the
+  // server" but:
+  //
+  //   THE REDIRECT MUST NOT BE REACHABLE FROM A NETWORK CALL'S RESULT.
+  //
+  // So the local clear is still pinned here as the step the user's
+  // experience depends on, and the no-unbounded-await property is pinned
+  // in full in lib/auth/sessionRevocation.test.ts alongside the
+  // revocation it now coexists with.
+  it('still clears locally — the step the redirect depends on', () => {
     expect(LOGOUT_LIB).toMatch(/signOut\(\s*\{\s*scope:\s*['"]local['"]\s*\}\s*\)/);
+  });
+
+  it('and does so unconditionally, after any revocation attempt', () => {
+    // A global signOut clears browser state only on success (auth-js does
+    // the network call first). Ordering the local clear last is what makes
+    // revocation safe to attempt at all.
+    const globalAt = LOGOUT_LIB.indexOf("scope: 'global'");
+    const localAt  = LOGOUT_LIB.indexOf("scope: 'local'");
+    expect(globalAt).toBeGreaterThan(0);
+    expect(localAt).toBeGreaterThan(globalAt);
   });
 
   it('the redirect happens in finally + uses window.location.assign(target)', () => {
@@ -179,34 +216,97 @@ describe('InactivityGuard component contract', () => {
   it('"Stay signed in" resets lastActivityRef to the current clock', () => {
     expect(GUARD).toMatch(/function stay\(\)[\s\S]*?lastActivityRef\.current\s*=\s*clock\(\)/);
   });
+
+  // ─── Elapsed time, not a running timer ──────────────────────────────
+
+  it('derives elapsed time from a PERSISTED timestamp, not just the ref', () => {
+    // The in-memory ref alone measured time-since-mount, so every reload
+    // minted a fresh idle window. Behaviour is proven in
+    // InactivityGuard.elapsed.test.tsx; this pins the wiring.
+    expect(GUARD).toMatch(/from ['"]\.\/activityStorage['"]/);
+    expect(GUARD).toMatch(/effectiveLastActivity\(lastActivityRef\.current,\s*readStoredActivity\(nowMs\)\)/);
+  });
+
+  it('mount does NOT write the timestamp', () => {
+    // If it did, the reload being detected would refresh the value on its
+    // way in and the check would always pass. Pinned as the absence of a
+    // seed on the persist ref.
+    expect(GUARD).toMatch(/lastPersistRef\s*=\s*useRef<number>\(0\)/);
+  });
+
+  it('"Stay signed in" writes THROUGH to storage, unthrottled', () => {
+    // Load-bearing. By the time the modal is open the stored value is the
+    // older of the two, and tick() takes the minimum — so resetting only
+    // the ref would leave the modal reopening on the very next tick.
+    expect(GUARD).toMatch(/function stay\(\)[\s\S]*?writeStoredActivity\(clock\(\)\)/);
+  });
+
+  it('activity writes through on a coarser throttle than the ref reset', () => {
+    expect(GUARD).toMatch(/ACTIVITY_PERSIST_THROTTLE_MS/);
+    expect(GUARD).toMatch(/writeStoredActivity\(t\)/);
+  });
 });
 
 // ─── Per-layout wiring + durations ────────────────────────────────────
 
 describe('Per-layout wiring — InactivityGuard mounted with role-appropriate durations', () => {
-  it('patient: 5 / 5', () => {
+  // RE-DERIVED from 10/10 to 10/5 on the staff surfaces. PCI DSS 4.0 req
+  // 8.2.8 requires re-authentication after 15 minutes idle for accounts
+  // with administrative capabilities — which every one of these is — and
+  // 10/10 logged out at 20.
+  //
+  // The COUNTDOWN was shortened rather than the working window: staff keep
+  // the familiar 10 minutes of uninterrupted work and lose only warning
+  // time, which nobody was supposed to be using as working time anyway.
+  const STAFF_LAYOUTS: [string, string][] = [
+    ['practice', PRACTICE_LAY],
+    ['brand',    BRAND_LAY],
+    ['provider', PROVIDER_LAY],
+    ['admin',    ADMIN_LAY],
+    ['crm',      CRM_LAY],
+  ];
+
+  it('patient: 5 / 5 → logout at 10 min (already inside 15, left alone)', () => {
     expect(PATIENT_LAY).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
     expect(PATIENT_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{5\}\s+minutesWarn=\{5\}\s*\/>/);
   });
 
-  it('practice: 10 / 10', () => {
-    expect(PRACTICE_LAY).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
-    expect(PRACTICE_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{10\}\s*\/>/);
+  it.each(STAFF_LAYOUTS)('%s: 10 / 5 → logout at 15 min', (_name, src) => {
+    expect(src).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
+    expect(src).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{5\}\s*\/>/);
   });
 
-  it('brand: 10 / 10', () => {
-    expect(BRAND_LAY).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
-    expect(BRAND_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{10\}\s*\/>/);
+  it('EVERY staff surface logs out at 15 minutes or under — 8.2.8', () => {
+    // Asserted arithmetically rather than by matching the literals again,
+    // so it holds if someone retunes the split. This is the compliance
+    // statement; the per-layout tests above are the wiring.
+    for (const [name, src] of STAFF_LAYOUTS) {
+      const m = src.match(/<InactivityGuard\s+minutesIdle=\{(\d+)\}\s+minutesWarn=\{(\d+)\}/);
+      expect(m, `${name} mounts an InactivityGuard`).not.toBeNull();
+      const total = Number(m![1]) + Number(m![2]);
+      expect(total, `${name} logs out after ${total} min`).toBeLessThanOrEqual(15);
+    }
   });
 
-  it('provider: 10 / 10', () => {
-    expect(PROVIDER_LAY).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
-    expect(PROVIDER_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{10\}\s*\/>/);
+  it('no staff surface was left on the old 20-minute total', () => {
+    // The regression that matters: adding a new dashboard tree by copying
+    // an old layout would reintroduce 10/10.
+    for (const [name, src] of STAFF_LAYOUTS) {
+      expect(src, name).not.toMatch(/minutesIdle=\{10\}\s+minutesWarn=\{10\}/);
+    }
   });
 
-  it('admin: 10 / 10', () => {
-    expect(ADMIN_LAY).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
-    expect(ADMIN_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{10\}\s*\/>/);
+  it('the patient side is genuinely unchanged, not swept along', () => {
+    expect(PATIENT_LAY).toMatch(/minutesIdle=\{5\}\s+minutesWarn=\{5\}/);
+    expect(PATIENT_LAY).not.toMatch(/minutesIdle=\{10\}/);
+  });
+
+  it('the till keeps its own server-side device lock, untouched', () => {
+    // Explicitly out of scope: it is server-side, sliding, and already
+    // well inside 15 minutes. Pinned so this task cannot be read as having
+    // moved it.
+    const TILL = read('lib/auth/tillDevice.ts');
+    expect(TILL).toMatch(/TILL_IDLE_TIMEOUT_MS\s*=\s*5\s*\*\s*60\s*\*\s*1000/);
   });
 });
 
@@ -260,11 +360,13 @@ describe('Diff scope — light-mode + inactivity guard only', () => {
     expect(GUARD).not.toMatch(/passkey/i);
   });
 
-  it('logout helper unchanged except for the optional target arg', () => {
-    // Still uses createClient + signOut. This test guards against
-    // scope regressions (e.g. someone removing scope: 'local').
+  it('logout helper still builds its client the same way and still clears locally', () => {
+    // RE-DERIVED. The `not.toMatch(scope: 'global')` line that used to live
+    // here was the load-bearing half of the old pin, and it was pinning the
+    // absence of server-side revocation as though that were the goal. It
+    // was a side effect. See the re-derivation note above, and
+    // sessionRevocation.test.ts for what replaced it.
     expect(LOGOUT_LIB).toMatch(/createClient/);
     expect(LOGOUT_LIB).toMatch(/scope:\s*['"]local['"]/);
-    expect(LOGOUT_LIB).not.toMatch(/scope:\s*['"]global['"]/);
   });
 });

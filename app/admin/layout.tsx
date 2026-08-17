@@ -92,7 +92,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
       {/* Inactivity auto-logout — admin tuning: warn at 10 min idle,
           log out 10 min later (20 min total). */}
-      <InactivityGuard minutesIdle={10} minutesWarn={10} />
+      <InactivityGuard minutesIdle={10} minutesWarn={5} />
     </div>
   );
 }

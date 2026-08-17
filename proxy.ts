@@ -1,6 +1,12 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { updateSession } from '@/lib/supabase/middleware';
+import {
+  SESSION_CAP_REDIRECT_REASON,
+  isCapExemptPath,
+  isSupabaseAuthCookie,
+  sessionExceedsAbsoluteCap,
+} from '@/lib/auth/sessionCap';
 
 export async function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
@@ -8,8 +14,60 @@ export async function proxy(request: NextRequest) {
 
   // Save reference so we can read its cookies after updateSession may refresh them.
   const modifiedRequest = new NextRequest(request, { headers: requestHeaders });
-  const response = await updateSession(modifiedRequest);
+  const { response, user, supabase } = await updateSession(modifiedRequest);
   response.headers.set('x-pathname', request.nextUrl.pathname);
+
+  // ── Absolute session cap ─────────────────────────────────────────────
+  // Enforced HERE, on the server, and not in the client: the whole value
+  // of a cap measured from authentication is that a compromised or
+  // cooperative browser cannot move it. The idle guard is the client-side
+  // layer and can be defeated by clearing localStorage; this one cannot be
+  // defeated from the browser at all, which is why it is the layer that
+  // bounds the 400-day, JS-readable auth cookie @supabase/ssr issues (the
+  // reasoning is written out in lib/auth/sessionCap.ts).
+  //
+  // Runs before the invitation claim below so an over-cap session cannot
+  // perform a write on its way out.
+  if (
+    user
+    && !isCapExemptPath(request.nextUrl.pathname)
+    && sessionExceedsAbsoluteCap(user.last_sign_in_at, Date.now())
+  ) {
+    // Revoke server-side first, so the refresh token is dead and not
+    // merely unreachable. Best-effort: if it fails we still clear the
+    // cookies below, which is what stops this browser.
+    try {
+      await supabase.auth.signOut({ scope: 'global' });
+    } catch (err) {
+      console.error('[proxy] session-cap revocation failed', err);
+    }
+
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = '/login';
+    loginUrl.search = '';
+    loginUrl.searchParams.set('reason', SESSION_CAP_REDIRECT_REASON);
+
+    const capped = NextResponse.redirect(loginUrl);
+
+    // Delete on the RESPONSE we are actually returning: signOut's own
+    // cookie writes landed on `response`, which this branch discards.
+    //
+    // Names are collected from BOTH the original request and the mutated
+    // one. updateSession's setAll writes refreshed cookies onto
+    // modifiedRequest, and a refresh can change the CHUNK COUNT (a session
+    // crossing the 4 KB limit splits into `…-auth-token.0`, `.1`). So the
+    // original request may not name every cookie now present, and a
+    // partially deleted chunked cookie is worse than either extreme —
+    // @supabase/ssr reassembles whatever it finds.
+    const names = new Set<string>([
+      ...request.cookies.getAll().map((c) => c.name),
+      ...modifiedRequest.cookies.getAll().map((c) => c.name),
+    ]);
+    for (const name of names) {
+      if (isSupabaseAuthCookie(name)) capped.cookies.delete(name);
+    }
+    return capped;
+  }
 
   // ── Invitation claim ─────────────────────────────────────────────────────
   // On the patient's first authenticated request after signup-via-invite,

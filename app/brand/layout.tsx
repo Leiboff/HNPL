@@ -12,7 +12,7 @@ export default function BrandLayout({ children }: { children: React.ReactNode })
   return (
     <>
       {children}
-      <InactivityGuard minutesIdle={10} minutesWarn={10} />
+      <InactivityGuard minutesIdle={10} minutesWarn={5} />
     </>
   );
 }

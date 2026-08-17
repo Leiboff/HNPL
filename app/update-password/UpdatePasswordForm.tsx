@@ -83,6 +83,29 @@ export default function UpdatePasswordForm({ email }: Props) {
       return;
     }
 
+    // The password changed, so every OTHER session must die. This is the
+    // whole point of a password reset: the usual reason to do one is that
+    // somebody else may hold a session, and Supabase's `local` logout
+    // never touched other devices' refresh tokens — so before this, a
+    // reset changed the credential and left the intruder signed in.
+    //
+    // scope:'others' rather than 'global' deliberately: it keeps THIS
+    // browser signed in, which is both what the user expects (they are
+    // about to be sent to /dashboard) and safe, because they just proved
+    // control of the account here.
+    //
+    // Awaited, not fired-and-forgotten: we are not racing a navigation
+    // here the way logout does, and a revocation that silently didn't
+    // happen is worse than a redirect that takes another moment.
+    try {
+      await supabase.auth.signOut({ scope: 'others' });
+    } catch (revokeErr) {
+      // Not surfaced to the user — their password DID change, and telling
+      // them otherwise would be wrong. Logged so a systematic failure is
+      // visible.
+      console.error('[update-password] failed to revoke other sessions', revokeErr);
+    }
+
     // Success — send them to the canonical role-dispatcher. This is
     // the SAME redirect the login page uses; from here /dashboard
     // reads profiles.role and forwards to /patient, /practice,

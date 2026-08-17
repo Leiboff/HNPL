@@ -2,6 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { logoutAndRedirect } from './logout';
+import {
+  ACTIVITY_PERSIST_THROTTLE_MS,
+  effectiveLastActivity,
+  readStoredActivity,
+  writeStoredActivity,
+} from './activityStorage';
 
 // ─── Inactivity guard — role-tuned idle logout with countdown modal ────
 //
@@ -14,10 +20,16 @@ import { logoutAndRedirect } from './logout';
 //     reaches zero without a "Stay signed in" tap, the user is logged
 //     out and bounced to /login?reason=inactivity.
 //
-// Role defaults (per the build brief):
+// Role durations:
 //   • patient: 5 / 5 (warning at 5 min, logout at 10 min).
-//   • practice / brand / provider / admin: 10 / 10 (warning at 10 min,
-//     logout at 20 min).
+//   • practice / brand / provider / admin / crm: 10 / 5 (warning at
+//     10 min, logout at 15 min). The 15-minute figure is not a
+//     preference — PCI DSS 4.0 req 8.2.8 requires re-authentication
+//     after 15 minutes idle for accounts with administrative
+//     capabilities, which these surfaces have. The split shortens the
+//     COUNTDOWN rather than the working window, so staff keep the
+//     familiar 10 minutes of uninterrupted work and lose only warning
+//     time they were never meant to be using.
 //
 // Design decisions:
 //
@@ -29,15 +41,27 @@ import { logoutAndRedirect } from './logout';
 //     ONE authority for both "should the modal be open?" and "should
 //     we log out now?" — deriving both from `Date.now() - lastActivity`
 //     rules out clock-drift and multi-timer races.
+//   • ELAPSED TIME, not a running countdown. `tick()` compares wall
+//     clock against a timestamp, so it does not matter how often the
+//     interval actually fires — a throttled or frozen timer in a
+//     hidden tab cannot lose time. And the timestamp is persisted
+//     (./activityStorage), which closes the hole a purely in-memory
+//     ref left open: a reload or a browser-discarded tab used to
+//     restart the clock at zero, handing an idle user a fresh window.
+//     The stored value can only ever SHORTEN the session, never
+//     extend it — see activityStorage.ts for the argument.
 //   • While the modal is visible, activity events do NOT reset the
 //     timer. This is deliberate: a passer-by scrolling the page on a
 //     shared device shouldn't silently extend someone else's session.
 //     Only the explicit "Stay signed in" button resets.
 //   • visibilitychange safety: when the tab returns from background,
 //     we re-check immediately. A tab hidden past the deadline logs
-//     out on wake rather than showing a stale modal.
-//   • Per-tab scope (v1): each tab tracks its own activity. No
-//     cross-tab coordination.
+//     out on wake rather than showing a stale modal — and because the
+//     check is on elapsed time there is no grace period.
+//   • One shared timestamp, not per-tab: there is one Supabase session
+//     per browser, so the strictest tab decides. This is what the
+//     per-tab timers already did in practice (an idle background tab
+//     fired its own logout and took the session with it).
 
 const ACTIVITY_EVENTS = ['pointerdown', 'touchstart', 'keydown', 'scroll', 'wheel'] as const;
 
@@ -67,6 +91,16 @@ export default function InactivityGuard({ minutesIdle, minutesWarn, now }: Inact
   const lastActivityRef = useRef<number>(clock());
   const lastResetRef    = useRef<number>(clock());
   const modalOpenRef    = useRef<boolean>(false);
+  // Starts at 0 so the first real activity writes through immediately
+  // rather than waiting out a throttle window. Deliberately NOT seeded
+  // with clock(): mount must not touch the stored timestamp, or the very
+  // reload we are trying to detect would refresh it on the way in.
+  const lastPersistRef  = useRef<number>(0);
+  // Latches once logout has been triggered. The interval keeps firing
+  // while window.location.assign tears the page down, and logging out is
+  // no longer free: each firing would dispatch another revocation POST and
+  // another global signOut. Harmless before, a small request burst now.
+  const loggingOutRef   = useRef<boolean>(false);
 
   // Mirror modalOpen into a ref so the activity-listener callback
   // (installed once, capturing refs by identity) can read the live
@@ -83,6 +117,14 @@ export default function InactivityGuard({ minutesIdle, minutesWarn, now }: Inact
       if (t - lastResetRef.current < RESET_THROTTLE_MS) return;
       lastResetRef.current = t;
       lastActivityRef.current = t;
+
+      // Write through on a coarser throttle. Lagging is safe in one
+      // direction only — a stale stored value can end the session
+      // slightly early, never late.
+      if (t - lastPersistRef.current >= ACTIVITY_PERSIST_THROTTLE_MS) {
+        lastPersistRef.current = t;
+        writeStoredActivity(t);
+      }
     }
 
     for (const evt of ACTIVITY_EVENTS) {
@@ -96,9 +138,18 @@ export default function InactivityGuard({ minutesIdle, minutesWarn, now }: Inact
     document.addEventListener('visibilitychange', onVisibility);
 
     function tick() {
-      const elapsed = clock() - lastActivityRef.current;
+      if (loggingOutRef.current) return;
+      const nowMs = clock();
+      // The single source of truth for "how long since activity". Takes
+      // the EARLIER of what this tab remembers and what storage says, so
+      // a forged-forward timestamp is inert and a reload cannot reset the
+      // clock. Runs on every tick, on mount, and on tab wake, so all
+      // three paths agree by construction rather than by duplication.
+      const since   = effectiveLastActivity(lastActivityRef.current, readStoredActivity(nowMs));
+      const elapsed = nowMs - since;
       if (elapsed >= idleMs + warnMs) {
-        // Expired — log out.
+        // Expired — log out, exactly once.
+        loggingOutRef.current = true;
         void logoutAndRedirect('/login?reason=inactivity');
         return;
       }
@@ -132,10 +183,19 @@ export default function InactivityGuard({ minutesIdle, minutesWarn, now }: Inact
   function stay() {
     lastActivityRef.current = clock();
     lastResetRef.current    = clock();
+    // MUST write through, unthrottled. The stored timestamp is by now the
+    // older of the two (it is what opened the modal), and tick() takes the
+    // minimum — so resetting only the in-memory ref would leave the modal
+    // reopening on the very next tick. "Stay signed in" is also the one
+    // explicit statement of presence we get, which is exactly the case a
+    // throttle should not swallow.
+    lastPersistRef.current  = clock();
+    writeStoredActivity(clock());
     setModalOpen(false);
   }
 
   async function signOutNow() {
+    loggingOutRef.current = true;
     await logoutAndRedirect('/login?reason=inactivity');
   }
 

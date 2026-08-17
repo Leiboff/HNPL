@@ -60,7 +60,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
 
       <CrmBottomNav counts={counts} />
 
-      <InactivityGuard minutesIdle={10} minutesWarn={10} />
+      <InactivityGuard minutesIdle={10} minutesWarn={5} />
     </div>
   );
 }
