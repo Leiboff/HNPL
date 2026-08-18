@@ -207,7 +207,18 @@ describe('checkTradingGate is a read-only dependency', () => {
   });
 
   it('the dashboard still runs the gate for the bill CTA and its panel', () => {
-    expect(DASH).toMatch(/const gate: TradingGateResult = await checkTradingGate\(svc, practiceId\)/);
+    // RE-DERIVED, not weakened. This used to pin the literal
+    // `const gate: TradingGateResult = await checkTradingGate(svc, practiceId)`.
+    // The gate now resolves inside the page's single parallel wave, so it has
+    // no `await` of its own and needs no annotation (Promise.all's tuple
+    // inference supplies the type). The literal is gone; the invariant is not,
+    // and the invariant is what this asserts: this page runs the gate exactly
+    // once, with service-role, and the gate's answer is what drives the panel.
+    expect(DASH).toMatch(/checkTradingGate\(svc, practiceId\)/);
+    // Exactly one call site — two would be two sources of truth for one answer.
+    expect((DASH.match(/checkTradingGate\(/g) ?? []).length).toBe(1);
+    // And the result is still what the CTA and panel key on.
+    expect(DASH).toMatch(/\bgate\.ok\b/);
     expect(DASH).toMatch(/data-testid="trading-gate-panel"/);
     expect(DASH).toMatch(/data-testid="trading-gate-bounce-banner"/);
   });
@@ -284,7 +295,12 @@ describe('the dashboard wires authority through without widening it', () => {
     // canManagePractice and isBrandAdmin were both already resolved for the
     // nav shell; re-querying them would be a second source of truth for the
     // same permission.
-    const callSites = (DASH.match(/await resolvePracticeShellAuthority\(/g) ?? []).length;
+    // RE-DERIVED: the call moved into the page's parallel wave, so it no
+    // longer carries an `await` of its own. Counting CALL SITES is what this
+    // invariant was always about — one source of truth for the permission —
+    // and it is now asserted without depending on how the call is awaited.
+    // The trailing paren keeps this off the import statement.
+    const callSites = (DASH.match(/resolvePracticeShellAuthority\(/g) ?? []).length;
     expect(callSites).toBe(1);
     expect(DASH).not.toMatch(/practice_group_members/);
   });

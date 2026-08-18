@@ -158,7 +158,23 @@ describe('Part 3 — home dashboard', () => {
   });
 
   it('reads approved_credit_limit from profiles.select', () => {
-    expect(HOME).toMatch(/select\([^)]*approved_credit_limit/);
+    // RELOCATED, not weakened. The page used to run its own
+    // profiles.select(...) with this column; that read was a DUPLICATE of one
+    // the patient layout already performed on the same row, so both now share
+    // a single request-scoped read (lib/patient/requestProfile.ts, React
+    // cache()). The column is still read; it is read once.
+    //
+    // Asserted in two halves so the invariant cannot be dodged: the shared
+    // read must select the column, AND this page must be the thing that
+    // consumes it rather than having quietly re-added an inline query.
+    const SHARED = read('lib/patient/requestProfile.ts');
+    // [\s\S] rather than the /s flag: the tsconfig target predates dotAll,
+    // and the select spans several lines.
+    expect(SHARED).toMatch(/select\([\s\S]*approved_credit_limit/);
+    expect(HOME).toMatch(/getPatientProfileForRequest\(user\.id\)/);
+    expect(HOME).not.toMatch(/from\('profiles'\)/);
+    // And it is still what feeds the approved-balance figure.
+    expect(HOME).toMatch(/profile\?\.approved_credit_limit/);
   });
 
   it('ApprovedBalanceCard renders null when limit is null (no placeholder)', () => {

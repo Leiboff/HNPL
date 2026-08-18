@@ -1,7 +1,10 @@
 import { redirect, notFound } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
+// TradingGateResult is no longer annotated explicitly: `gate` comes out of
+// the wave below, where Promise.all's tuple inference already gives it that
+// exact type.
+import { checkTradingGate } from '@/lib/practice/tradingGate';
 import PracticeShell from '../PracticeShell';
 import { resolvePracticeShellAuthority } from '../practiceShellAuthority';
 import { resolvePracticeViewer } from '../practiceViewer';
@@ -90,7 +93,26 @@ export default async function PracticeBillsPage({
   // render the same PlanSummary shape through the same table, and a second,
   // slightly-different projection is how one of them ends up missing a field
   // the shared component reads.
-  const { data: rawPlans } = await reader
+  // ─── One wave: plans, trading gate, shell authority ─────────────────────
+  //
+  // Three sequential awaits became one round trip. None depends on another —
+  // each is keyed on practiceId (plus user.id and canManagePractice, already
+  // resolved by the viewer above), so the ordering was incidental.
+  //
+  // Everything ABOVE stays strictly sequential and must: requireConfirmedUser,
+  // then the profile role gate, then resolvePracticeViewer. That is the
+  // authorisation chain, each step genuinely needing the previous one's
+  // result, and no data read may start before it finishes.
+  const [
+    { data: rawPlans },
+    gate,
+    { isBrandAdmin, canManageTill, brandPracticeCount },
+  ] = await Promise.all([
+    // Byte-identical select to the dashboard's, deliberately: the two surfaces
+    // render the same PlanSummary shape through the same table, and a second,
+    // slightly-different projection is how one of them ends up missing a field
+    // the shared component reads.
+    reader
     .from('plans')
     .select(`
       id, total_amount, status, created_at, invoice_number, practice_reference,
@@ -105,7 +127,10 @@ export default async function PracticeBillsPage({
     `)
     .eq('practice_id', practiceId)
     .order('created_at', { ascending: false })
-    .limit(500);
+    .limit(500),
+    checkTradingGate(svc, practiceId),
+    resolvePracticeShellAuthority(supabase, user.id, practiceId, canManagePractice),
+  ]);
 
   const plans = (rawPlans ?? []) as PlanSummary[];
 
@@ -117,12 +142,7 @@ export default async function PracticeBillsPage({
     if (m?.id && m.specialty) specialtyMap[m.id] = m.specialty;
   }
 
-  const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
 
-  const { isBrandAdmin, canManageTill, brandPracticeCount } =
-    await resolvePracticeShellAuthority(
-      supabase, user.id, practiceId, canManagePractice,
-    );
 
   return (
     <PracticeShell

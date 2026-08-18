@@ -99,7 +99,35 @@ export default async function PracticePayoutsPage({
   // The batches, their plans, and every date they need — all resolved server
   // side. ./PayoutBatchList receives pre-formatted SAST date strings and owns
   // no clock; see its header.
-  const history = await resolvePayoutHistory(reader, practiceId);
+  // ─── One wave: payout history, the chart's plans, shell authority ────────
+  //
+  // Three sequential awaits became one round trip. None depends on another —
+  // all three are keyed on practiceId / user.id, already resolved above.
+  //
+  // The authorisation chain above (requireConfirmedUser → profile role gate →
+  // resolvePracticeViewer) stays strictly sequential and no read joins it.
+  const [
+    history,
+    { data: chartPlans },
+    { isBrandAdmin, canManageTill, brandPracticeCount },
+  ] = await Promise.all([
+    // The batches, their plans, and every date they need — all resolved server
+    // side. ./PayoutBatchList receives pre-formatted SAST date strings and owns
+    // no clock; see its header.
+    resolvePayoutHistory(reader, practiceId),
+    // A NARROW projection, not the dashboard's: MonthlyRevenueChart reads five
+    // fields. Copying the dashboard's full plans select would pull patient
+    // names, provider embeds, payouts and invitations across the wire for a
+    // chart that renders none of them — and would make this the THIRD place
+    // that projection has to stay in step with.
+    reader
+      .from('plans')
+      .select('id, provider_member_id, total_amount, status, created_at')
+      .eq('practice_id', practiceId)
+      .order('created_at', { ascending: false })
+      .limit(2000),
+    resolvePracticeShellAuthority(supabase, user.id, practiceId, canManagePractice),
+  ]);
 
   // ── The 12-month revenue trend, moved here from the dashboard ───────────
   //
@@ -113,17 +141,7 @@ export default async function PracticePayoutsPage({
   // provider embeds, payouts and invitations across the wire for a chart that
   // renders none of them — and would make this the THIRD place that projection
   // has to stay in step with.
-  const { data: chartPlans } = await reader
-    .from('plans')
-    .select('id, provider_member_id, total_amount, status, created_at')
-    .eq('practice_id', practiceId)
-    .order('created_at', { ascending: false })
-    .limit(2000);
 
-  const { isBrandAdmin, canManageTill, brandPracticeCount } =
-    await resolvePracticeShellAuthority(
-      supabase, user.id, practiceId, canManagePractice,
-    );
 
   return (
     <PracticeShell

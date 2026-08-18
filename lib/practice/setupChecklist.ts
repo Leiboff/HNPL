@@ -427,32 +427,52 @@ export async function loadSetupChecklistFacts(
   practiceId: string,
   opts?: { resolveBanking?: typeof resolvePayoutBanking },
 ): Promise<SetupChecklistFacts> {
-  const { data: practice } = await supabase
-    .from('practices')
-    .select('phone, address_line1, latitude, longitude, till_pin_hash')
-    .eq('id', practiceId)
-    .maybeSingle();
-
-  const { data: providers } = await supabase
-    .from('practice_members')
-    .select('id')
-    .eq('practice_id', practiceId)
-    .eq('active', true)
-    .eq('role', 'provider')
-    .limit(1);
-
-  // Revoked devices are kept forever (0088 revokes, never deletes), so this
-  // MUST filter on revoked_at — counting rows would tick the item for a
-  // practice whose only till was revoked months ago.
-  const { data: devices } = await supabase
-    .from('till_devices')
-    .select('id')
-    .eq('practice_id', practiceId)
-    .is('revoked_at', null)
-    .limit(1);
-
   const resolveBanking = opts?.resolveBanking ?? resolvePayoutBanking;
-  const banking = await resolveBanking(supabase, practiceId);
+
+  // ─── All four reads at once ─────────────────────────────────────────────
+  //
+  // These were four sequential awaits. Nothing here depends on anything else
+  // here — every one is keyed on `practiceId` alone — so the sequence was an
+  // artefact of how it was written, and it cost four serial round trips.
+  //
+  // It matters more than the four suggests, because of ONE caller:
+  // resolveBrandPracticeSetup invokes this once per branch inside its own
+  // Promise.all. A twelve-branch brand was therefore paying four serial round
+  // trips, twelve times over concurrently. Collapsing this to one collapses
+  // that to one-times-twelve, and the saving grows with brand size.
+  //
+  // Nothing about the queries changes — same tables, same columns, same
+  // filters, same limits, same result shape. Only the number of sequential
+  // waits does.
+  const [
+    { data: practice },
+    { data: providers },
+    // Revoked devices are kept forever (0088 revokes, never deletes), so this
+    // MUST filter on revoked_at — counting rows would tick the item for a
+    // practice whose only till was revoked months ago.
+    { data: devices },
+    banking,
+  ] = await Promise.all([
+    supabase
+      .from('practices')
+      .select('phone, address_line1, latitude, longitude, till_pin_hash')
+      .eq('id', practiceId)
+      .maybeSingle(),
+    supabase
+      .from('practice_members')
+      .select('id')
+      .eq('practice_id', practiceId)
+      .eq('active', true)
+      .eq('role', 'provider')
+      .limit(1),
+    supabase
+      .from('till_devices')
+      .select('id')
+      .eq('practice_id', practiceId)
+      .is('revoked_at', null)
+      .limit(1),
+    resolveBanking(supabase, practiceId),
+  ]);
 
   return {
     phone:        (practice?.phone        as string | null) ?? null,

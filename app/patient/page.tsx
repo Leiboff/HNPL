@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getPatientProfileForRequest } from '@/lib/patient/requestProfile';
 import PatientScreen from './PatientScreen';
 import ActionCentreBell from './ActionCentreBell';
 import InstalmentLadder, { ladderFromCounts } from './InstalmentLadder';
@@ -82,7 +83,9 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
     isFrozen,
     { data: rawCards },
   ] = await Promise.all([
-    supabase.from('profiles').select('first_name, last_name, approved_credit_limit').eq('id', user.id).single(),
+    // Same request-scoped read the layout already performed, so this resolves
+    // from the memo with no second round trip. See lib/patient/requestProfile.ts.
+    getPatientProfileForRequest(user.id).then((data) => ({ data })),
     supabase
       .from('plans')
       .select('id, status, total_amount, plan_type, practice:practices(name), payments(amount, status, kind)')

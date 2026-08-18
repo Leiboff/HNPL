@@ -447,8 +447,20 @@ describe('Routing gate — patient layout redirects incomplete patients', () => 
   });
 
   it('reads the six onboarding columns from profiles', () => {
-    expect(LAYOUT).toMatch(/phone_verified_at,\s*sa_id_number,\s*salary_day/);
-    expect(LAYOUT).toMatch(/credit_check_status,\s*liveness_verified_at,\s*onboarding_completed/);
+    // RELOCATED, not weakened. The layout's profiles.select was a duplicate of
+    // one app/patient/page.tsx ran on the same row, so both now share a single
+    // request-scoped read (lib/patient/requestProfile.ts, React cache()). The
+    // six columns are still read — once per request instead of twice.
+    //
+    // Two halves, so re-adding an inline query cannot dodge it: the shared
+    // read selects the columns, AND the layout consumes that read.
+    const SHARED = readFileSync(
+      resolve(process.cwd(), 'lib/patient/requestProfile.ts'), 'utf8',
+    );
+    expect(SHARED).toMatch(/phone_verified_at,\s*sa_id_number,\s*salary_day/);
+    expect(SHARED).toMatch(/credit_check_status,\s*liveness_verified_at,\s*onboarding_completed/);
+    expect(LAYOUT).toMatch(/getPatientProfileForRequest\(user\.id\)/);
+    expect(LAYOUT).not.toMatch(/from\('profiles'\)/);
   });
 });
 

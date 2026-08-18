@@ -77,13 +77,52 @@ export async function checkTradingGate(
   practiceId: string,
   opts?: { resolveBanking?: BankingResolver },
 ): Promise<TradingGateResult> {
-  // ── Condition (a): status = 'approved' ──────────────────────────────────
-  const { data: practice, error: practiceError } = await supabase
-    .from('practices')
-    .select('status')
-    .eq('id', practiceId)
-    .single();
+  // ─── All three conditions read at once ──────────────────────────────────
+  //
+  // These were three sequential awaits with early returns between them, so a
+  // fully set-up practice — the common case, and the one on the hot path of
+  // /practice, /practice/bills and /practice/settings — paid every round trip
+  // in series on each page load. None of the three depends on another; all
+  // three are keyed on practiceId alone.
+  //
+  // WHAT THIS TRADES. The early returns meant a blocked practice issued only
+  // the queries it needed: an unapproved practice never read providers or
+  // banking. Now all three always run. That is the right way round — the
+  // discarded reads only happen on a path that is ALREADY blocked and
+  // rendering a refusal, while the win lands on every successful page load.
+  //
+  // PRECEDENCE IS PRESERVED EXACTLY, and it is load-bearing: a practice that
+  // is both unapproved AND provider-less must report pending_approval, not
+  // no_providers (pinned in tradingGate.test.ts). With the reads no longer
+  // short-circuiting, the ordering that used to be implicit in the control
+  // flow is now explicit in the checks below — same order, same reasons.
+  //
+  // Note the wave is bounded by resolveBanking, which is two serial reads
+  // internally (its second needs practice.group_id from its first). So this
+  // is 4 serial round trips becoming 2, not 3 becoming 1.
+  const resolveBanking = opts?.resolveBanking ?? resolvePayoutBanking;
 
+  const [
+    { data: practice, error: practiceError },
+    { data: providers, error: providerError },
+    banking,
+  ] = await Promise.all([
+    supabase
+      .from('practices')
+      .select('status')
+      .eq('id', practiceId)
+      .single(),
+    supabase
+      .from('practice_members')
+      .select('user_id')
+      .eq('practice_id', practiceId)
+      .eq('active', true)
+      .eq('role', 'provider')
+      .limit(1),
+    resolveBanking(supabase, practiceId),
+  ]);
+
+  // ── Condition (a): status = 'approved' ──────────────────────────────────
   if (practiceError || !practice) {
     // Treat "can't read the practice row" as pending so we fail closed.
     // A real "practice not found" is a different bug — the bill-creation
@@ -95,14 +134,6 @@ export async function checkTradingGate(
   }
 
   // ── Condition (b): >= 1 active provider ─────────────────────────────────
-  const { data: providers, error: providerError } = await supabase
-    .from('practice_members')
-    .select('user_id')
-    .eq('practice_id', practiceId)
-    .eq('active', true)
-    .eq('role', 'provider')
-    .limit(1);
-
   if (providerError || !providers || providers.length === 0) {
     return { ok: false, reason: 'no_providers', message: NO_PROVIDERS_MESSAGE };
   }
@@ -111,8 +142,6 @@ export async function checkTradingGate(
   // Universal post-0062: every practice has a brand, so the resolver
   // always returns 'branch' (own banking), 'group' (brand fallback),
   // or 'none'. We block only on 'none'.
-  const resolveBanking = opts?.resolveBanking ?? resolvePayoutBanking;
-  const banking = await resolveBanking(supabase, practiceId);
   if (banking.source === 'none') {
     return { ok: false, reason: 'no_banking', message: NO_BANKING_MESSAGE };
   }
