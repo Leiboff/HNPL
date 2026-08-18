@@ -1,8 +1,9 @@
 // ─── Minimal Resend wrapper ────────────────────────────────────────────────
 //
 // Posts to Resend's HTTP API directly — avoids pulling in the Resend SDK
-// for the single use case we have today (admin notifications). One file,
-// no dependency change to package.json / pnpm-lock.yaml.
+// for the handful of use cases we have (admin notifications, patient
+// invitations, and the public contact form). One file, no dependency change
+// to package.json / pnpm-lock.yaml.
 //
 // Required env vars (read at call time, not at import time, so a missing
 // var doesn't crash the build):
@@ -37,6 +38,22 @@ export type SendEmailInput = {
   html:    string;
   /** Override RESEND_FROM if needed for a specific call. */
   from?:   string;
+  /**
+   * Address a reply should go to instead of `from`.
+   *
+   * Added for the public contact form (app/contact/contactAction.ts): the
+   * enquiry is SENT BY our verified sender — it has to be, since RESEND_FROM
+   * is the only domain Resend will accept — but a reply has to reach the
+   * person who wrote it. Without this, answering an enquiry meant
+   * copy-pasting the address out of the body.
+   *
+   * NOT a from-address override, and deliberately kept separate from `from`:
+   * putting a visitor-supplied address in `from` would be sender spoofing,
+   * would fail SPF/DKIM for our domain, and would train spam filters against
+   * us. Reply-To carries no such authority, which is exactly why it is the
+   * right header for untrusted input.
+   */
+  replyTo?: string;
   /** Override the 8s default. Useful for tests. */
   timeoutMs?: number;
 };
@@ -72,6 +89,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
         to:      input.to,
         subject: input.subject,
         html:    input.html,
+        // Omitted entirely when unset — Resend rejects an explicit null,
+        // and every existing caller passes no replyTo.
+        ...(input.replyTo ? { reply_to: input.replyTo } : {}),
       }),
     });
 

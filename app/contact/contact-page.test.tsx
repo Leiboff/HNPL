@@ -1,125 +1,110 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { stripComments } from '@/lib/testing/stripComments';
 import { resolve, join, extname, sep } from 'node:path';
 import ContactPage from './ContactPage';
 import {
   ADDRESS_LINES,
   HOURS,
-  LEGAL_ENTITY,
   PHONE_DISPLAY,
   PHONE_TEL,
-  REGISTRATION_NUMBER,
   SUPPORT_EMAIL,
 } from '@/lib/config/contact';
 
-// ─── /contact — published contact details ───────────────────────────────
+// ─── /contact — two-column contact page ─────────────────────────────────
 //
-// This page exists for acquirer / merchant-onboarding compliance: a bank
-// needs to see real, verifiable contact details published on the site. It
-// is NOT a support experience, and these pins hold it to that:
+// The page publishes our contact details (acquirer / merchant-onboarding
+// compliance) AND carries an enquiry form. These pins hold both halves:
 //
-//   • the route is PUBLIC (no auth gate) — the whole point is that an
-//     onboarding reviewer with no account can read it,
+//   • the route is PUBLIC — an onboarding reviewer with no account reads it,
+//   • two columns: details left, form card right,
 //   • email and phone are TAPPABLE with the exact published values,
 //   • the hours render as one line, exactly as given,
-//   • the registered entity appears alongside the trading name,
-//   • the phone number lives in exactly ONE source location, and
-//   • no contact form / chat / ticketing / FAQ has crept in.
+//   • the phone number lives in exactly ONE source location,
+//   • and the things that were REMOVED stay removed.
+//
+// The form's own behaviour is tested in ContactForm.test.tsx, and the send
+// path in contactAction.test.ts. This file mocks the action so rendering the
+// page never reaches a server-only module.
 //
 // ─── On naming the literals in this file ──────────────────────────────
 //
-// The value assertions below hard-type the published details rather than
-// comparing a constant to itself. Asserting
-// `PHONE_DISPLAY === PHONE_DISPLAY` would pass no matter what the number
-// became, which is exactly the failure a compliance pin has to catch — a
-// typo'd or silently-swapped number would ship green. So the literals are
-// written out here ON PURPOSE, and CONFIG_MATCHES_PUBLISHED below ties
-// them to the config so the two cannot drift apart.
-//
-// The consequence is that the digits appear in this test file as well as in
-// lib/config/contact.ts, so the "exactly ONE source location" scan
-// deliberately excludes test files. The property being protected is that
-// PRODUCTION markup has a single home for the number — a test naming its
-// expected value is what makes that home verifiable, not a second home.
+// The value assertions hard-type the published details rather than comparing
+// a constant to itself. `PHONE_DISPLAY === PHONE_DISPLAY` would pass whatever
+// the number became, which is exactly the failure a compliance pin must
+// catch. CONFIG_MATCHES_PUBLISHED ties these literals to the config so the
+// two cannot drift, and the "exactly ONE source location" scan therefore
+// excludes test files — the property protected is that PRODUCTION markup has
+// a single home, and a test naming its expected value is what makes that home
+// verifiable rather than a second home.
 
-// ── The published details, verbatim from the compliance brief ──────────
+vi.mock('./contactAction', () => ({
+  submitContactEnquiry: async () => ({ ok: true }),
+}));
+
+// ── The published details, verbatim from the brief ─────────────────────
 const PUBLISHED = {
   email:   'support@betternow.co.za',
   phone:   '084 232 4201',
   tel:     '+27842324201',
-  address: 'Unit 35, 19 Cross Road, Glenhazel, Johannesburg, 2192',
+  address: '19 Cross Road, Glenhazel, Johannesburg, 2192',
   hours:   'Monday to Friday, 08:00–17:00',
-  entity:  'BETTERNOW (PTY) LTD',
-  regNo:   '2026/420968/07',
 } as const;
 
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
-const PAGE   = read('app/contact/page.tsx');
-const BODY   = read('app/contact/ContactPage.tsx');
+/** Comments stripped. Several assertions below check that a phrase is GONE
+ *  from the page, and the page's own comments explain WHY it was removed —
+ *  naming it there must not read as still shipping it. Only rendered content
+ *  is in scope. Uses the repo's own single-pass stripper. */
+const PAGE   = stripComments(read('app/contact/page.tsx'));
+const BODY   = stripComments(read('app/contact/ContactPage.tsx'));
+const BODY_RAW = read('app/contact/ContactPage.tsx');
+const FORM   = read('app/contact/ContactForm.tsx');
+const ACTION = read('app/contact/contactAction.ts');
 const CONFIG = read('lib/config/contact.ts');
+const CSS    = read('app/contact/contact.css');
 const FOOTER = read('app/_landing/SiteFooter.tsx');
 
 describe('/contact — the config is the published detail', () => {
   it('CONFIG_MATCHES_PUBLISHED: every constant equals the brief exactly', () => {
-    // This is the test that gives every other assertion its teeth: it is
-    // the one place the config is compared to an independently-written
-    // literal rather than to itself.
     expect(SUPPORT_EMAIL).toBe(PUBLISHED.email);
     expect(PHONE_DISPLAY).toBe(PUBLISHED.phone);
     expect(PHONE_TEL).toBe(PUBLISHED.tel);
     expect(HOURS).toBe(PUBLISHED.hours);
-    expect(LEGAL_ENTITY).toBe(PUBLISHED.entity);
-    expect(REGISTRATION_NUMBER).toBe(PUBLISHED.regNo);
     expect(ADDRESS_LINES.join(', ')).toBe(PUBLISHED.address);
   });
 
+  it('the address has NO unit number — it is "19 Cross Road"', () => {
+    expect(ADDRESS_LINES[0]).toBe('19 Cross Road');
+    expect(ADDRESS_LINES.join(', ')).not.toMatch(/unit/i);
+  });
+
   it('the display and tel: forms describe the SAME digits', () => {
-    // 084 232 4201 → +27 84 232 4201: drop the trunk 0, prefix +27.
     const localDigits = PHONE_DISPLAY.replace(/\D/g, '');
     expect(localDigits).toMatch(/^0\d{9}$/);
     expect(PHONE_TEL).toBe(`+27${localDigits.slice(1)}`);
   });
 
-  it('the phone number is flagged TEMPORARY in the config', () => {
-    // The number is a personal one standing in for a business line. The
-    // comment is what tells the next reader the swap is expected — losing
-    // it is how a placeholder quietly becomes permanent.
+  it('the phone number is still flagged TEMPORARY in the config', () => {
     expect(CONFIG).toMatch(/TEMPORARY/);
     expect(CONFIG).toMatch(/personal number/i);
   });
 });
 
-describe('/contact — the phone number has exactly ONE source location', () => {
-  // Every realistic way the number could be re-typed elsewhere. Matching
-  // formatted variants rather than stripping all punctuation from each
-  // file avoids false positives from unrelated digits becoming adjacent.
-  const VARIANTS = [
-    '084 232 4201',
-    '0842324201',
-    '084-232-4201',
-    '084.232.4201',
-    '+27842324201',
-    '+27 84 232 4201',
-    '+27 (84) 232 4201',
-    '27842324201',
-  ];
+// ─── "Unit 35" is gone from the whole repo, not just the page ──────────
 
+describe('no "Unit 35" survives anywhere in the repo', () => {
   function sourceFiles(dir: string): string[] {
     const out: string[] = [];
     const walk = (d: string) => {
       for (const entry of readdirSync(resolve(ROOT, d))) {
-        if (entry === 'node_modules' || entry.startsWith('.')) continue;
+        if (entry === 'node_modules' || entry === 'ds-bundle' || entry.startsWith('.')) continue;
         const rel = join(d, entry);
-        const abs = resolve(ROOT, rel);
-        if (statSync(abs).isDirectory()) { walk(rel); continue; }
-        if (!['.ts', '.tsx', '.css', '.js', '.jsx', '.json', '.md'].includes(extname(entry))) continue;
-        // Test files are allowed to name the expected value — see the
-        // header note. Excluding them is what makes the pin meaningful
-        // rather than self-defeating.
-        if (/\.test\.(ts|tsx)$/.test(entry)) continue;
+        if (statSync(resolve(ROOT, rel)).isDirectory()) { walk(rel); continue; }
+        if (!['.ts', '.tsx', '.css', '.js', '.jsx', '.json', '.md', '.sql'].includes(extname(entry))) continue;
         out.push(rel);
       }
     };
@@ -127,34 +112,72 @@ describe('/contact — the phone number has exactly ONE source location', () => 
     return out;
   }
 
-  it('appears in lib/config/contact.ts and NOWHERE else in app/ lib/ components/', () => {
-    const files = [
-      ...sourceFiles('app'),
-      ...sourceFiles('lib'),
-      ...sourceFiles('components'),
-    ];
+  /** This file, which has to name the banned string in order to ban it. */
+  const SELF = join('app', 'contact', 'contact-page.test.tsx');
 
+  it('appears in no source file under app/ lib/ components/ supabase/', () => {
+    // Scanned INCLUDING other tests: unlike the phone number, no file has a
+    // reason to name the old address, so the ban is otherwise absolute.
+    const files = [
+      ...sourceFiles('app'), ...sourceFiles('lib'),
+      ...sourceFiles('components'), ...sourceFiles('supabase'),
+    ].filter((f) => f !== SELF);
+    const hits = files.filter((f) => /unit\s*35/i.test(read(f)));
+    expect(hits).toEqual([]);
+  });
+
+  it('the self-exclusion still points at this file', () => {
+    // If this file is renamed the exclusion goes stale and would silently
+    // start flagging itself.
+    expect(existsSync(resolve(ROOT, SELF))).toBe(true);
+  });
+});
+
+// ─── The phone number still has exactly one home ──────────────────────
+
+describe('/contact — the phone number has exactly ONE source location', () => {
+  const VARIANTS = [
+    '084 232 4201', '0842324201', '084-232-4201', '084.232.4201',
+    '+27842324201', '+27 84 232 4201', '+27 (84) 232 4201', '27842324201',
+  ];
+
+  function sourceFiles(dir: string): string[] {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const entry of readdirSync(resolve(ROOT, d))) {
+        if (entry === 'node_modules' || entry === 'ds-bundle' || entry.startsWith('.')) continue;
+        const rel = join(d, entry);
+        if (statSync(resolve(ROOT, rel)).isDirectory()) { walk(rel); continue; }
+        if (!['.ts', '.tsx', '.css', '.js', '.jsx', '.json', '.md'].includes(extname(entry))) continue;
+        if (/\.test\.(ts|tsx)$/.test(entry)) continue;   // see header note
+        out.push(rel);
+      }
+    };
+    walk(dir);
+    return out;
+  }
+
+  it('appears in lib/config/contact.ts and NOWHERE else', () => {
+    const files = [...sourceFiles('app'), ...sourceFiles('lib'), ...sourceFiles('components')];
     const hits = files.filter((f) => {
       const text = read(f);
       return VARIANTS.some((v) => text.includes(v));
     });
-
     expect(hits).toEqual([['lib', 'config', 'contact.ts'].join(sep)]);
   });
 
-  it('the page markup renders the number from the config, never typed inline', () => {
+  it('the page renders it from the config, never typed inline', () => {
     for (const v of VARIANTS) expect(BODY).not.toContain(v);
     expect(BODY).toMatch(/PHONE_DISPLAY/);
     expect(BODY).toMatch(/PHONE_TEL/);
-    expect(BODY).toMatch(/from '@\/lib\/config\/contact'/);
   });
 
   it('the number is not propagated into page metadata', () => {
-    // metadata is crawlable and cacheable; a temporary personal number
-    // should not end up in a search result or a link preview.
     for (const v of VARIANTS) expect(PAGE).not.toContain(v);
   });
 });
+
+// ─── Route wiring ─────────────────────────────────────────────────────
 
 describe('/contact route wiring', () => {
   it('page.tsx exports metadata and renders the ContactPage component', () => {
@@ -163,11 +186,11 @@ describe('/contact route wiring', () => {
   });
 
   it('is publicly reachable — no auth gate, no redirect, no data fetch', () => {
-    // The compliance value of this page is that a reviewer with no account
-    // can read it. An auth client or a redirect would defeat it entirely.
     expect(PAGE).not.toMatch(/getUser|redirect\(|createClient/);
     expect(BODY).not.toMatch(/getUser|redirect\(|createClient/);
     expect(BODY).not.toMatch(/requireConfirmedUser|getRequestUser/);
+    // The ACTION is public too — no auth check, by design.
+    expect(ACTION).not.toMatch(/requireConfirmedUser|getRequestUser/);
   });
 
   it('uses the marketing chrome, not the authenticated app shell', () => {
@@ -175,21 +198,59 @@ describe('/contact route wiring', () => {
     expect(BODY).toMatch(/SiteFooter/);
     expect(BODY).toMatch(/landing\.css/);
     expect(BODY).toMatch(/lp-root/);
-    // Not the patient/practice shell.
     expect(BODY).not.toMatch(/PatientScreen|PracticeScreen/);
   });
 
-  it('is a server component — no client directive, no hooks', () => {
-    expect(BODY).not.toMatch(/^'use client'/m);
+  it('the PAGE stays a server component — the form is the only client boundary', () => {
+    expect(BODY_RAW).not.toMatch(/^'use client'/m);
     expect(BODY).not.toMatch(/useState|useEffect/);
+    expect(FORM).toMatch(/^'use client'/m);
+  });
+
+  it('the footer still links here', () => {
+    expect(FOOTER).toMatch(/<Link href="\/contact">Contact us<\/Link>/);
   });
 });
 
+// ─── Two columns ──────────────────────────────────────────────────────
+
+describe('/contact is a TWO-COLUMN layout', () => {
+  it('the markup has a details column and a form column inside one grid', () => {
+    expect(BODY).toMatch(/lp-contact-grid/);
+    expect(BODY).toMatch(/lp-contact-intro-col/);
+    expect(BODY).toMatch(/lp-contact-form-col/);
+  });
+
+  it('the grid really is two columns, and collapses on a narrow viewport', () => {
+    const grid = CSS.slice(CSS.indexOf('.lp-contact-grid'));
+    expect(grid).toMatch(/grid-template-columns:\s*minmax\([^)]*\)\s+minmax\([^)]*\)/);
+    // Stacks rather than squeezing on a phone.
+    expect(CSS).toMatch(/@media \(max-width: 900px\)[\s\S]*?grid-template-columns:\s*1fr/);
+  });
+
+  it('renders both columns, details BEFORE the form in source order', () => {
+    // Source order is what decides the stacked order on a phone, where the
+    // tappable number should come before a form the visitor may not want.
+    const details = BODY.indexOf('lp-contact-intro-col');
+    const form    = BODY.indexOf('lp-contact-form-col');
+    expect(details).toBeGreaterThan(-1);
+    expect(form).toBeGreaterThan(details);
+  });
+
+  it('both halves are actually on the page when rendered', () => {
+    const { container } = render(<ContactPage />);
+    expect(container.querySelector('.lp-contact-intro-col')).toBeTruthy();
+    expect(container.querySelector('.lp-contact-form-col')).toBeTruthy();
+    expect(screen.getByTestId('contact-form')).toBeTruthy();
+  });
+});
+
+// ─── Renders unauthenticated ──────────────────────────────────────────
+
 describe('/contact renders unauthenticated', () => {
-  // No auth mocking of any kind is set up in this file. That absence IS
-  // the test: the component renders with no session, no Supabase client
-  // and no request context available.
-  it('renders the page with a Contact heading and no session', () => {
+  // No auth mocking of any kind is set up for a session. That absence IS
+  // the test: the page renders with no session and no request context.
+  it('renders a Contact us heading', () => {
     render(<ContactPage />);
     expect(screen.getByRole('heading', { level: 1, name: /contact us/i })).toBeTruthy();
   });
@@ -211,9 +272,7 @@ describe('/contact renders unauthenticated', () => {
     const { container } = render(<ContactPage />);
     const text = container.textContent ?? '';
     expect(text).toContain(PUBLISHED.hours);
-    // Exactly one set of hours — not split per channel.
-    const occurrences = text.split(PUBLISHED.hours).length - 1;
-    expect(occurrences).toBe(1);
+    expect(text.split(PUBLISHED.hours).length - 1).toBe(1);
   });
 
   it('states only when we are OPEN — no closed days, no absence copy', () => {
@@ -227,89 +286,101 @@ describe('/contact renders unauthenticated', () => {
     }
   });
 
-  it('renders the physical address, line by line', () => {
+  it('renders the address, line by line, with no unit number', () => {
     const { container } = render(<ContactPage />);
     const text = container.textContent ?? '';
     for (const line of ADDRESS_LINES) expect(text).toContain(line);
-    // In a semantic <address> element.
+    expect(text).toContain('19 Cross Road');
+    expect(text).not.toMatch(/unit\s*35/i);
     expect(container.querySelector('address')).toBeTruthy();
   });
+});
 
-  it('renders the registered entity alongside the trading name', () => {
+// ─── What was deliberately REMOVED stays removed ──────────────────────
+
+describe('/contact carries no entity or registration details', () => {
+  // They live in the T&Cs (1.11) and the Privacy Policy (12.1), which is
+  // where a reviewer or regulator looks. A second copy on a contact page is
+  // non-standard, reads as boilerplate, and is another thing to keep in step
+  // with the legal documents.
+  it('the WHO WE ARE card is gone from the markup', () => {
+    expect(BODY).not.toMatch(/Who we are/i);
+    expect(BODY).not.toMatch(/contact-who/);
+    expect(BODY).not.toMatch(/lp-contact-entity|lp-contact-tradename/);
+  });
+
+  it('imports neither LEGAL_ENTITY nor REGISTRATION_NUMBER', () => {
+    // The constants still exist for the legal pages' benefit; this page must
+    // not pull them in.
+    const imports = BODY.slice(0, BODY.indexOf('export default'));
+    expect(imports).not.toMatch(/LEGAL_ENTITY/);
+    expect(imports).not.toMatch(/REGISTRATION_NUMBER/);
+  });
+
+  it('renders no registered name and no registration number', () => {
     const { container } = render(<ContactPage />);
     const text = container.textContent ?? '';
-    expect(text).toContain(PUBLISHED.entity);
-    expect(text).toContain(PUBLISHED.regNo);
-    expect(text.toLowerCase()).toContain('betternow');
+    expect(text).not.toMatch(/\(PTY\)\s*LTD/i);
+    expect(text).not.toMatch(/registration number/i);
+    // The registration-number shape itself: NNNN/NNNNNN/NN.
+    expect(text).not.toMatch(/\d{4}\/\d{6}\/\d{2}/);
+    expect(text).not.toMatch(/registered name/i);
+  });
+
+  it('the metadata does not carry them either', () => {
+    expect(PAGE).not.toMatch(/LEGAL_ENTITY|REGISTRATION_NUMBER/);
+    expect(PAGE).not.toMatch(/\(PTY\)\s*LTD/i);
   });
 });
 
-describe('/contact is NOT a support experience', () => {
-  it('has no contact form, no inputs, no chat widget in the markup', () => {
-    for (const banned of [
-      '<form', '<input', '<textarea', '<select',
-      'onSubmit', 'useForm', 'action=',
-    ]) {
-      expect(BODY).not.toContain(banned);
-    }
-  });
-
-  it('renders no form controls at all', () => {
+describe('/contact carries no filler copy', () => {
+  it('the Terms / Privacy line is gone', () => {
+    expect(BODY).not.toMatch(/Looking for our/i);
     const { container } = render(<ContactPage />);
-    expect(container.querySelector('form')).toBeNull();
-    expect(container.querySelector('input')).toBeNull();
-    expect(container.querySelector('textarea')).toBeNull();
+    const text = container.textContent ?? '';
+    // The FOOTER still links them — that is the right place, and it is on
+    // this page already. What must be gone is the in-body repetition.
+    expect(text).not.toMatch(/Looking for our/i);
   });
 
-  it('carries no FAQ, knowledge-base or ticketing copy', () => {
-    const text = BODY.toLowerCase();
-    for (const banned of [
-      'faq', 'frequently asked', 'knowledge base', 'help centre',
-      'help center', 'ticket', 'live chat', 'whatsapp',
-    ]) {
-      // The header comment explains WHY there is no FAQ; strip comments so
-      // the explanation itself does not trip the pin.
-      const stripped = text.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-      expect(stripped).not.toContain(banned);
+  it('the self-explaining intro is gone', () => {
+    const { container } = render(<ContactPage />);
+    const text = container.textContent ?? '';
+    expect(text).not.toMatch(/in one place/i);
+    expect(text).not.toMatch(/the same team answers/i);
+    expect(text).not.toMatch(/reach us any way below/i);
+  });
+
+  it('one short warm line stands in its place', () => {
+    render(<ContactPage />);
+    const lede = document.querySelector('.lp-contact-lede');
+    expect(lede).toBeTruthy();
+    const words = (lede!.textContent ?? '').trim().split(/\s+/).length;
+    // Short enough to read at a glance; long enough to be a sentence.
+    expect(words).toBeGreaterThan(4);
+    expect(words).toBeLessThan(40);
+  });
+});
+
+// ─── Still not a support experience ───────────────────────────────────
+
+describe('/contact is an enquiry form, not a support system', () => {
+  it('has no chat, ticketing or FAQ copy', () => {
+    const strip = (s: string) =>
+      s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').toLowerCase();
+    for (const src of [strip(BODY), strip(FORM)]) {
+      for (const banned of [
+        'faq', 'frequently asked', 'knowledge base', 'help centre',
+        'help center', 'ticket', 'live chat', 'whatsapp',
+      ]) {
+        expect(src).not.toContain(banned);
+      }
     }
   });
-});
 
-describe('the landing footer links to /contact', () => {
-  it('has a Contact us link beside the existing legal links', () => {
-    expect(FOOTER).toMatch(/<Link href="\/contact">Contact us<\/Link>/);
-  });
-
-  it('sits in the same column as Terms and Privacy', () => {
-    const legalCol = FOOTER.slice(FOOTER.indexOf('<h5>Legal</h5>'));
-    const col = legalCol.slice(0, legalCol.indexOf('</div>'));
-    expect(col).toMatch(/\/contact/);
-    expect(col).toMatch(/\/legal\/terms/);
-    expect(col).toMatch(/\/legal\/privacy/);
-  });
-});
-
-describe('in-app support affordances', () => {
-  const ACCOUNT  = read('app/patient/account/page.tsx');
-  const DECLINED = read('app/patient/orders/DeclinedPlanDetail.tsx');
-
-  it('the account "Get help" footer link reaches /contact', () => {
-    // The general-purpose help entry point. A page carrying every channel
-    // beats a bare mailto:, which dead-ends for anyone without a
-    // configured mail client.
-    const idx = ACCOUNT.indexOf('data-testid="account-get-help"');
-    expect(idx).toBeGreaterThan(-1);
-    const anchor = ACCOUNT.slice(ACCOUNT.lastIndexOf('<a', idx), idx);
-    expect(anchor).toMatch(/href="\/contact"/);
-    expect(anchor).not.toMatch(/mailto:/);
-  });
-
-  it('the CONTEXT-SPECIFIC support links deliberately stay mailto:', () => {
-    // Pinned as a decision, not an oversight. The declined-bill link
-    // pre-fills a subject line, and the locked-fields link reads as an
-    // inline sentence; routing either through a page would add a hop and
-    // lose the pre-filled context.
-    expect(DECLINED).toMatch(/mailto:support@betternow\.co\.za\?subject=Declined bill/);
-    expect(ACCOUNT).toMatch(/mailto:support@betternow\.co\.za[^?]*"[\s\S]{0,400}Contact support/);
+  it('renders exactly ONE form, and it is the enquiry form', () => {
+    const { container } = render(<ContactPage />);
+    expect(container.querySelectorAll('form')).toHaveLength(1);
+    expect(screen.getByTestId('contact-form')).toBeTruthy();
   });
 });
