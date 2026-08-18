@@ -12,6 +12,13 @@ import { PopiaIcon } from './icons';
 // us out — an acquirer's onboarding reviewer expects contact details,
 // terms and privacy in one cluster. It leads the column because a real
 // address and phone number are the thing being verified.
+//
+// The PAIA Manual link was REMOVED rather than repointed. It was href="#" —
+// a link that looked like a published document and went nowhere, in the
+// column a merchant-onboarding reviewer reads most closely. We are not
+// publishing a PAIA manual yet, and a visibly dead link is worse than its
+// absence. Privacy clause 10.2 still offers the manual "on request", which
+// remains true and is the operative route.
 
 export default function SiteFooter() {
   return (
@@ -40,7 +47,6 @@ export default function SiteFooter() {
             <Link href="/contact">Contact us</Link>
             <Link href="/legal/terms">Terms &amp; Conditions</Link>
             <Link href="/legal/privacy">Privacy Policy</Link>
-            <a href="#">PAIA Manual</a>
           </div>
         </div>
         <div className="copy">
