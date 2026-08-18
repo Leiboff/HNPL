@@ -1,104 +1,192 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { normalizePhoneZA } from '@/lib/validation';
 import { maskPhone } from '@/lib/patient/maskContact';
 import EmptyState from '@/components/EmptyState';
+import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
 
-// ─── Phone — masked, per-field edit inside Personal details ────────────
+// ─── Phone — masked, verified, and re-verified on change ───────────────
 //
-// Previously a separate accordion (own header, own body). Folded into
-// Personal details as one of its fields with the same edit-toggle
-// pattern as SalaryDaySection: display-only with a pencil affordance,
-// tap → editable + Save / Cancel.
+// ─── WHAT CHANGED AND WHY ─────────────────────────────────────────────
 //
-// ─── MASKED WHILE STILL EDITABLE ──────────────────────────────────────
+// This field used to save a new number with a bare `.update({ phone })`.
+// Because profiles.phone_verified_at is column-locked to the OTP path
+// (0054 / 0065), the timestamp stayed set from the ORIGINAL number's
+// verification — so the system believed an unverified number was verified,
+// and lib/payments/dunningNotifications.ts (which SMSes profiles.phone with
+// no verification check) delivered the patient's arrears reminders to it.
+//
+// Changing a number is now a three-state flow, and the OLD number stays
+// authoritative throughout:
+//
+//   idle      → masked current number + its verification state
+//   editing   → type the new number, "Send code" stages it
+//   verifying → PhoneOtpStep for the STAGED number; success promotes it
+//
+// Nothing writes profiles.phone until the code checks out. Abandoning at any
+// point — closing the tab, tapping Cancel — leaves the account on its
+// previously-verified number, because the pending value simply never gets
+// promoted. See ../account/phoneChangeActions.ts for the promotion.
+//
+// ─── THE OTP UI IS NOT REBUILT HERE ───────────────────────────────────
+//
+// PhoneOtpStep is the shared step already used by checkout and the organic
+// signup gate: auto-send on mount, 30s resend cooldown, auto-submit on the
+// sixth digit, and the coded-error vocabulary mapped to copy. It takes the
+// server actions as callbacks, so this is a third caller rather than a
+// second implementation. The 30s cooldown belongs to it and the real caps
+// live in the RPCs — nothing here re-implements or relaxes any of them.
+//
+// Note the first send is PhoneOtpStep's job, not ours: it auto-sends on
+// mount. `startPhoneChange` only stages. Sending from both would burn two of
+// the five codes a patient gets per day for one change.
+//
+// ─── MASKED, STILL EDITABLE ───────────────────────────────────────────
 //
 // The DISPLAY is masked to the last four digits, matching the SA ID field
-// beside it (lib/patient/maskContact.ts explains why all three identifiers
-// on this screen now use one discipline). Tapping Edit reveals the real
-// number, because a masked input cannot be edited.
-//
-// Nothing about the field's BEHAVIOUR changed: the validator, the
-// normalisation to E.164, the server action, and the no-stale-flash
-// mirroring below are all untouched. Masking is a display decision.
-//
-// ─── WHY THERE IS NO "LAST UPDATED" LINE HERE ─────────────────────────
-//
-// Deliberate, and worth stating so nobody adds one from the wrong column.
-// `profiles` carries no change timestamp for phone — no `updated_at`, no
-// `phone_changed_at`. The column that LOOKS like the answer,
-// `phone_verified_at`, is not: migrations 0054 and 0065 lock it so that only
-// the OTP verification path may write it, and the save path below
-// deliberately does not touch it. So after a patient edits their number it
-// still holds the date the OLD number was verified, and rendering it here
-// would state that an unverified number was verified.
-//
-// Migration 0052's own comment sets the rule this follows: "we never
-// retroactively claim a phone we did not verify." Where the data does not
-// exist, nothing renders.
-//
-// Two behaviours match SalaryDaySection:
-//   • The DISPLAYED value is a local mirror of the persisted phone — not
-//     the `current` prop directly. On save we advance it immediately so
-//     the row shows what was just saved (in canonical +27… form); the
-//     router.refresh() re-fetches the server value and the mirror re-syncs
-//     when the new prop lands. (Fixes the stale flash between "Saved." and
-//     the refresh completing.)
-//   • The number is validated as an SA mobile via the shared validator
-//     (never an inline regex) — client blocks an invalid save, and the
-//     server action re-validates as the real gate. Storage is E.164.
+// beside it. Tapping Edit gives an empty input rather than the old number
+// pre-filled: the task here is "what is your new number?", and pre-filling a
+// value the patient must replace is friction, not a convenience.
 
 type Props = {
-  current:       string | null;
-  updateProfile: (data: { phone: string | null }) => Promise<{ error: string | null }>;
+  /** The current, VERIFIED account number. E.164, or null if none. */
+  current:   string | null;
+  /** A number awaiting verification, if a change is already in flight. */
+  pending:   string | null;
+  /** When profiles.phone was last verified — drives the state pill only. */
+  verifiedAt: string | null;
+  startPhoneChange:      (phoneRaw: string) => Promise<{ ok: true } | { ok: false; code: string }>;
+  requestPhoneChangeOtp: () => Promise<{ ok: true } | { ok: false; code: string }>;
+  verifyPhoneChangeOtp:  (code: string) => Promise<{ ok: true } | { ok: false; code: string }>;
+  cancelPhoneChange:     () => Promise<{ ok: true } | { ok: false; code: string }>;
 };
 
 const inputCls =
   'rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
   'focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]';
 
-export default function PhoneField({ current, updateProfile }: Props) {
-  const [editing, setEditing] = useState(false);
-  const [phone,   setPhone]   = useState(current ?? '');
-  const [savedPhone, setSavedPhone] = useState(current ?? '');
+function startErrorCopy(code: string): string {
+  switch (code) {
+    case 'invalid_phone': return 'Enter a valid South African mobile number (e.g. 082 123 4567).';
+    case 'same_number':   return 'That’s already your number — nothing to change.';
+    case 'unauthenticated': return 'Your session expired. Please sign in again.';
+    default:              return 'Something went wrong. Please try again.';
+  }
+}
+
+/** Verification state, stated rather than implied. */
+function StatePill({ verified }: { verified: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
+      style={
+        verified
+          ? { background: 'rgba(21,168,158,.12)', color: '#0F766E' }
+          : { background: 'rgba(200,132,28,.12)', color: '#8A5A11' }
+      }
+      data-testid={verified ? 'phone-state-verified' : 'phone-state-unverified'}
+    >
+      {verified ? (
+        <svg width="9" height="9" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M5 10.5l3 3 7-7" />
+        </svg>
+      ) : null}
+      {verified ? 'Verified' : 'Not verified'}
+    </span>
+  );
+}
+
+export default function PhoneField({
+  current,
+  pending,
+  verifiedAt,
+  startPhoneChange,
+  requestPhoneChangeOtp,
+  verifyPhoneChangeOtp,
+  cancelPhoneChange,
+}: Props) {
+  // A change already in flight (staged on a previous visit) puts the field
+  // straight into the verifying state — a pending change must be visible, not
+  // something the patient has to rediscover.
+  const [mode, setMode] = useState<'idle' | 'editing' | 'verifying'>(
+    pending ? 'verifying' : 'idle',
+  );
+  const [draft,   setDraft]   = useState('');
+  const [staged,  setStaged]  = useState<string | null>(pending);
   const [error,   setError]   = useState<string | null>(null);
   const [okMsg,   setOkMsg]   = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  useEffect(() => { setSavedPhone(current ?? ''); }, [current]);
-
-  function reset() {
-    setPhone(savedPhone);
+  function backToIdle() {
+    setDraft('');
     setError(null);
-    setOkMsg(null);
-    setEditing(false);
+    setMode('idle');
   }
 
-  function onSave() {
+  function onSendCode() {
     setError(null);
     setOkMsg(null);
-    // Empty clears the number; anything else must be a valid SA mobile.
-    const raw = phone.trim();
+    // Client-side pre-check with the SHARED validator — the server action
+    // re-validates with the same one as the real gate.
+    const raw = draft.trim();
     const normalized = raw ? normalizePhoneZA(raw) : null;
-    if (raw && !normalized) {
+    if (!normalized) {
       setError('Enter a valid South African mobile number (e.g. 082 123 4567).');
       return;
     }
     startTransition(async () => {
-      const r = await updateProfile({ phone: normalized });
-      if (r.error) setError(r.error);
-      else {
-        // Reflect the saved (normalised) value immediately — no stale flash.
-        setSavedPhone(normalized ?? '');
-        setPhone(normalized ?? '');
-        setOkMsg('Saved.');
-        setEditing(false);
-        router.refresh();
-      }
+      const r = await startPhoneChange(raw);
+      if (!r.ok) { setError(startErrorCopy(r.code)); return; }
+      setStaged(normalized);
+      setMode('verifying');
     });
+  }
+
+  function onCancel() {
+    setError(null);
+    startTransition(async () => {
+      await cancelPhoneChange();
+      setStaged(null);
+      backToIdle();
+      router.refresh();
+    });
+  }
+
+  // ── Verifying: hand off to the shared OTP step ───────────────────────
+  if (mode === 'verifying' && staged) {
+    return (
+      <div data-testid="profile-phone-verifying">
+        <p className="text-[11px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#13294B', opacity: 0.45 }}>
+          Phone
+        </p>
+        <div className="mb-3 rounded-xl px-3 py-2" style={{ background: 'rgba(200,132,28,.08)' }}>
+          <p className="text-[12.5px] leading-[1.5]" style={{ color: '#8A5A11' }}>
+            <span className="font-semibold">Verifying {maskPhone(staged)}.</span>{' '}
+            Until you enter the code, {current ? `we'll keep using ${maskPhone(current)}` : 'no number is on your account'}.
+          </p>
+        </div>
+        <PhoneOtpStep
+          phoneDisplay={maskPhone(staged)}
+          requestCode={requestPhoneChangeOtp}
+          verifyCode={verifyPhoneChangeOtp}
+          onVerified={() => {
+            setStaged(null);
+            setOkMsg('Number updated and verified.');
+            setMode('idle');
+            router.refresh();
+          }}
+          onChangeNumber={onCancel}
+          // Plain body — the field is already inside an accordion section, so
+          // the step's default card chrome would be a card inside a card.
+          shell={(body, actions) => (
+            <div className="space-y-4">{body}{actions}</div>
+          )}
+        />
+      </div>
+    );
   }
 
   return (
@@ -108,25 +196,27 @@ export default function PhoneField({ current, updateProfile }: Props) {
       </p>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          {editing ? (
+          {mode === 'editing' ? (
             <input
               className={`${inputCls} w-full`}
               type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="e.g. 082 000 0000"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="New number, e.g. 082 000 0000"
+              autoFocus
               data-testid="profile-phone-input"
             />
-          ) : savedPhone ? (
-            <p
-              className="text-sm font-medium tabular-nums text-gray-800"
-              data-testid="profile-phone-value"
-            >
-              {maskPhone(savedPhone)}
-            </p>
+          ) : current ? (
+            <div className="flex items-center gap-2">
+              <p
+                className="text-sm font-medium tabular-nums text-gray-800"
+                data-testid="profile-phone-value"
+              >
+                {maskPhone(current)}
+              </p>
+              <StatePill verified={!!verifiedAt} />
+            </div>
           ) : (
-            // An unset number is an empty state, not a dash. The dash said
-            // nothing at all to someone who has never added a number.
             <div data-testid="profile-phone-value">
               <EmptyState icon="field" title="No mobile number" inline>
                 Add one so we can text you about a payment before it goes out.
@@ -134,12 +224,12 @@ export default function PhoneField({ current, updateProfile }: Props) {
             </div>
           )}
         </div>
-        {!editing ? (
+        {mode === 'idle' ? (
           <button
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={() => { setOkMsg(null); setMode('editing'); }}
             data-testid="profile-phone-edit"
-            aria-label="Edit phone"
+            aria-label="Change phone"
             className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-gray-50"
             style={{ color: '#13294B' }}
           >
@@ -147,13 +237,13 @@ export default function PhoneField({ current, updateProfile }: Props) {
               <path d="M12 20h9" strokeLinecap="round" />
               <path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5z" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Edit
+            {current ? 'Change' : 'Add'}
           </button>
         ) : (
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={reset}
+              onClick={backToIdle}
               disabled={isPending}
               className="text-xs text-gray-500 hover:underline disabled:opacity-50"
             >
@@ -161,18 +251,26 @@ export default function PhoneField({ current, updateProfile }: Props) {
             </button>
             <button
               type="button"
-              onClick={onSave}
+              onClick={onSendCode}
               disabled={isPending}
               data-testid="profile-phone-save"
               className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
               style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >
-              {isPending ? 'Saving…' : 'Save'}
+              {isPending ? 'Sending…' : 'Send code'}
             </button>
           </div>
         )}
       </div>
-      {error && <p className="mt-1.5 text-xs text-red-700">{error}</p>}
+
+      {mode === 'editing' && (
+        <p className="mt-1.5 text-[11.5px]" style={{ color: '#A3B1C2' }}>
+          We&rsquo;ll text a 6-digit code to the new number. Your current number stays in use
+          until you enter it.
+        </p>
+      )}
+
+      {error && <p className="mt-1.5 text-xs text-red-700" role="alert">{error}</p>}
       {okMsg && <p className="mt-1.5 text-xs text-emerald-700">{okMsg}</p>}
     </div>
   );
