@@ -17,6 +17,7 @@ import { computePlanProgress } from '@/lib/planProgress';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { summariseOutstanding } from '@/lib/patient/outstanding';
 import { formatRand, formatDate, formatDayMonth, relativeDay, todaySAST } from './_format';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Patient home dashboard — v4 ──────────────────────────────────────────
 //
@@ -73,7 +74,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
 
   const { welcome } = await searchParams;
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   const [

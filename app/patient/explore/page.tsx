@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import ExploreView from './ExploreView';
 import PatientScreen from '../PatientScreen';
 import type { DirectoryRow } from '@/lib/practitioner/grouping';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Find a Practitioner ───────────────────────────────────────────────
 //
@@ -29,7 +30,7 @@ import type { DirectoryRow } from '@/lib/practitioner/grouping';
 export default async function ExplorePage() {
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   // The view enforces (role='provider', active=true, status='approved')

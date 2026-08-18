@@ -167,9 +167,42 @@ export default async function CheckoutPage({
   // generation), so this is unambiguous.
   const supabase = await createClient();
 
-  const { data: invRpcRows, error: invRpcErr } = await supabase.rpc('get_invitation_by_token', {
-    p_token: token,
-  });
+  // ── ONE WAVE, EXPLICIT PRECEDENCE ───────────────────────────────
+  //
+  // These used to run strictly in sequence: try the invitation token,
+  // and only reach for the session token when it came back empty. That
+  // cost a POS counter scan a FULL extra round trip before anything
+  // rendered — on the one surface in the app that is used standing at a
+  // reception desk on a phone.
+  //
+  // Issuing both concurrently does not change which one wins. The token
+  // spaces do not overlap (different tables, independently generated),
+  // so at most one can return a row; and where the sequential version
+  // expressed invitation-first ordering IMPLICITLY (by only asking the
+  // second question when the first had no answer), the branch below now
+  // states it outright. Invitation still wins, including in the
+  // impossible case where both return a row.
+  //
+  // The cost is one extra concurrent RPC on the email path. It is not a
+  // wall-clock cost — the two run in parallel, so that path waits for
+  // the slower of two single-row indexed lookups instead of one — and it
+  // buys back a whole round trip for every QR scan.
+  //
+  // Error handling is preserved exactly, which is why the session error
+  // is checked INSIDE the else branch rather than next to the invitation
+  // one: an invitation-side failure still reports itself and never lets
+  // a session-side failure speak for it, and a session-side failure is
+  // still only relevant when the invitation lookup found nothing.
+  // .rpc() resolves with { data, error } rather than rejecting, so
+  // Promise.all cannot short-circuit here.
+  const [
+    { data: invRpcRows,     error: invRpcErr },
+    { data: sessionRpcRows, error: sessionRpcErr },
+  ] = await Promise.all([
+    supabase.rpc('get_invitation_by_token',       { p_token: token }),
+    supabase.rpc('get_checkout_session_by_token', { p_token: token }),
+  ]);
+
   if (invRpcErr) {
     console.error('[checkout] get_invitation_by_token failed', invRpcErr.message);
     return <InvalidLinkCard reason="Couldn't load this invitation. Please try again in a moment." />;
@@ -180,9 +213,6 @@ export default async function CheckoutPage({
   if (invRows.length > 0) {
     resolved = { kind: 'invitation', row: invRows[0] };
   } else {
-    const { data: sessionRpcRows, error: sessionRpcErr } = await supabase.rpc('get_checkout_session_by_token', {
-      p_token: token,
-    });
     if (sessionRpcErr) {
       console.error('[checkout] get_checkout_session_by_token failed', sessionRpcErr.message);
       return <InvalidLinkCard reason="Couldn't load this checkout. Please try again in a moment." />;
@@ -274,17 +304,31 @@ export default async function CheckoutPage({
   //     on a prior attempt; that plan belongs on the saved-card path.
   //     Absence + pending_first_payment = "attempt 1 wrote the schedule
   //     but never captured a card" = the resume case.
-  const { data: planPatientRow } = await svcForLookup
-    .from('plans')
-    .select('patient_id, status, peach_registration_id, application_id')
-    .eq('id', row.plan_id)
-    .maybeSingle();
+  //
+  // Paired with the session read below. Neither needs the other: the plan
+  // read is keyed on row.plan_id, which the token RPC already resolved, and
+  // the session read is keyed on this request's cookies. Nothing here is a
+  // gate on the other — the AUTHORISATION for this route is the token RPC
+  // that just returned a row, and it has already completed. The plan read
+  // is scoped to exactly the plan that token unlocked and runs identically
+  // for an anonymous visitor, so it is not waiting on a permission the
+  // session decides.
+  const [
+    { data: planPatientRow },
+    { data: { user: sessionUser } },
+  ] = await Promise.all([
+    svcForLookup
+      .from('plans')
+      .select('patient_id, status, peach_registration_id, application_id')
+      .eq('id', row.plan_id)
+      .maybeSingle(),
+    supabase.auth.getUser(),
+  ]);
+
   let   planPatientId      = (planPatientRow?.patient_id            as string | null | undefined) ?? null;
   const planStatus         = (planPatientRow?.status                as string | null | undefined) ?? null;
   const planRegistrationId = (planPatientRow?.peach_registration_id as string | null | undefined) ?? null;
   const isUncapturedPlan   = planStatus === 'pending_first_payment' && !planRegistrationId;
-
-  const { data: { user: sessionUser } } = await supabase.auth.getUser();
 
   // ── Returning patient, counter-issued bill: claim it ────────────────────
   //
@@ -462,55 +506,77 @@ export default async function CheckoutPage({
   // the plan creation. Session tokens have no known email yet — the
   // picker always renders for them, same as any first-time patient.
   //
-  // Service-role client scoped to a single lookup by email — safe
-  // because the invitation RPC (SECURITY DEFINER) already proved
-  // the caller controls this inbox. If the lookup fails for any
-  // reason we default to "no salary day known" and the picker
+  // Read with the service role — safe because the invitation RPC (SECURITY
+  // DEFINER) already proved the caller controls this inbox. If the lookup
+  // fails for any reason we default to "no salary day known" and the picker
   // renders — never blocks the flow.
-  let initialSalaryDay: number | null = null;
-  if (resolved.kind === 'invitation') {
-    try {
-      const svc = createServiceClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { persistSession: false } },
-      );
-      const { data: existingProfile } = await svc
-        .from('profiles')
-        .select('salary_day')
-        .eq('email', resolved.row.email)
-        .maybeSingle();
-      const stored = existingProfile?.salary_day as number | null | undefined;
-      if (isAllowedSalaryDay(stored)) initialSalaryDay = stored;
-    } catch (err) {
-      console.warn('[checkout] salary_day lookup failed (non-fatal)',
-        err instanceof Error ? err.message : err);
-    }
-  }
-
-  // ── viewed_at / scanned_at stamp ────────────────────────────────────────
-  // Drives the practice-side "Viewed" lifecycle signal (the receptionist
-  // wants to know the patient at least opened the link/scanned the QR).
-  // Both RPCs are idempotent — they only write on the first call per
-  // row — so re-loading the page does not overwrite the original
-  // timestamp.
   //
-  // CRITICAL: this MUST NOT block the patient. A transient RPC failure
-  // (DB hiccup, the migration not yet applied) is non-fatal — we render
-  // the form regardless. The promise is awaited so the request lifecycle
-  // captures it, but any error is swallowed.
-  try {
-    const stampRpc = resolved.kind === 'invitation' ? 'stamp_invitation_viewed' : 'stamp_checkout_session_scanned';
-    const { error: stampErr } = await supabase.rpc(stampRpc, { p_token: token });
-    if (stampErr) {
-      console.warn(`[checkout] ${stampRpc} failed (non-fatal)`, stampErr.message);
-    }
-  } catch (err) {
-    console.warn(
-      '[checkout] viewed/scanned stamp threw (non-fatal)',
-      err instanceof Error ? err.message : err,
-    );
-  }
+  // The two values below are hoisted out of the wave so the narrowing on
+  // `resolved.kind` happens HERE, at the top level, where TypeScript can do
+  // it: `resolved` is a `let`, and narrowing does not survive into a closure.
+  const invitationEmail = resolved.kind === 'invitation' ? resolved.row.email : null;
+  const stampRpc =
+    resolved.kind === 'invitation' ? 'stamp_invitation_viewed' : 'stamp_checkout_session_scanned';
+
+  // ── The last two reads, paired ──────────────────────────────────────────
+  //
+  // Both of these sit strictly AFTER the existing-account redirect above, so
+  // both run on exactly the same condition — we have decided to render the
+  // form. Nothing is discarded and nothing is speculated: pairing them costs
+  // one round trip and buys one back.
+  //
+  // Each keeps its OWN try/catch INSIDE the wave, which is the whole reason
+  // they are written as immediately-invoked async functions rather than bare
+  // promises. Promise.all rejects on the first rejection, so a shared catch
+  // would let a salary-day blip suppress the stamp — and both of these are
+  // explicitly non-fatal, independently. Neither may take the other down.
+  const [initialSalaryDay] = await Promise.all([
+    (async (): Promise<number | null> => {
+      if (!invitationEmail) return null;
+      try {
+        // Reuses svcForLookup rather than building a second service client.
+        // The old one here was constructed with identical URL, key and
+        // options — a duplicate object for no reason.
+        const { data: existingProfile } = await svcForLookup
+          .from('profiles')
+          .select('salary_day')
+          .eq('email', invitationEmail)
+          .maybeSingle();
+        const stored = existingProfile?.salary_day as number | null | undefined;
+        return isAllowedSalaryDay(stored) ? stored : null;
+      } catch (err) {
+        console.warn('[checkout] salary_day lookup failed (non-fatal)',
+          err instanceof Error ? err.message : err);
+        return null;
+      }
+    })(),
+    // ── viewed_at / scanned_at stamp ──────────────────────────────────
+    // Drives the practice-side "Viewed" lifecycle signal (the receptionist
+    // wants to know the patient at least opened the link/scanned the QR).
+    // Both RPCs are idempotent — they only write on the first call per
+    // row — so re-loading the page does not overwrite the original
+    // timestamp.
+    //
+    // CRITICAL: this MUST NOT block the patient. A transient RPC failure
+    // (DB hiccup, the migration not yet applied) is non-fatal — we render
+    // the form regardless. The promise is awaited so the request lifecycle
+    // captures it, but any error is swallowed. Being in a wave does not
+    // change that: it is still awaited, and its catch is still its own.
+    (async (): Promise<void> => {
+      try {
+        const { error: stampErr } = await supabase.rpc(stampRpc, { p_token: token });
+        if (stampErr) {
+          console.warn(`[checkout] ${stampRpc} failed (non-fatal)`, stampErr.message);
+        }
+      } catch (err) {
+        console.warn(
+          '[checkout] viewed/scanned stamp threw (non-fatal)',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    })(),
+  ]);
+
 
   // ── SA ID display for the session case ─────────────────────────────────
   // Decrypt + mask server-side only — CheckoutForm receives the masked

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
+import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { createBill } from './actions';
 import BillForm from './BillForm';
 import PracticeShell from '@/app/practice/PracticeShell';
@@ -106,7 +106,44 @@ export default async function NewBillPage({
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
-  const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
+  // ── Gate + the two things the page needs to render, one wave ──────────
+  //
+  // The AUTHORISATION for this page is the membership resolution above:
+  // memberRows decides whether the caller may bill from this practice at
+  // all, and its empty case already redirected. checkTradingGate is a
+  // different kind of check — business READINESS (approved, has a provider,
+  // has banking), not permission — so pairing it with the page's own reads
+  // does not put data ahead of authority.
+  //
+  // What it does do is fetch the providers list and the shell authority on
+  // the path where the gate then refuses. That is a deliberate trade, and
+  // the direction matters: for a practice that CAN bill — the normal
+  // working state, and the money path — this saves two full round trips on
+  // every visit to the bill form. For a gated practice the two extra reads
+  // are concurrent with the gate rather than after it, so the bounce waits
+  // for the slowest of three instead of just the gate; the results are
+  // dropped and nothing is rendered from them.
+  //
+  // The redirect below is unchanged and still fires before any of this
+  // reaches the page.
+  const [
+    gate,
+    { data: memberRowsForProviders },
+    { isBrandAdmin, canManageTill, brandPracticeCount },
+  ] = await Promise.all([
+    checkTradingGate(svc, practiceId),
+    // Fetch active providers for this practice. No user_id filter: a roster-only
+    // practitioner (user_id IS NULL) is a perfectly valid target for a bill since
+    // 0094, and excluding them here is what made the roster half-useful.
+    supabase
+      .from('practice_members')
+      .select(PROVIDER_MEMBER_SELECT)
+      .eq('practice_id', practiceId)
+      .eq('active', true)
+      .eq('role', 'provider'),
+    resolvePracticeShellAuthority(supabase, user.id, practiceId, picked.can_manage_practice),
+  ]);
+
   if (!gate.ok) {
     // Bounce back to the dashboard for THIS practice (not a random one)
     // so the trading-gate explanation lines up with the practice the
@@ -114,26 +151,11 @@ export default async function NewBillPage({
     redirect(`/practice?reason=trading_gate&practiceId=${practiceId}`);
   }
 
-  // Fetch active providers for this practice. No user_id filter: a roster-only
-  // practitioner (user_id IS NULL) is a perfectly valid target for a bill since
-  // 0094, and excluding them here is what made the roster half-useful.
-  const { data: memberRowsForProviders } = await supabase
-    .from('practice_members')
-    .select(PROVIDER_MEMBER_SELECT)
-    .eq('practice_id', practiceId)
-    .eq('active', true)
-    .eq('role', 'provider');
-
   const providers: ProviderOption[] = ((memberRowsForProviders ?? []) as unknown as ProviderMemberRef[])
     .map((m) => ({ memberId: m.id, name: providerMemberName(m) }))
     // Stable, human order — the query has none, and a picker whose options
     // reshuffle between renders is its own small bug.
     .sort((a, b) => a.name.localeCompare(b.name));
-
-  const { isBrandAdmin, canManageTill, brandPracticeCount } =
-    await resolvePracticeShellAuthority(
-      supabase, user.id, practiceId, picked.can_manage_practice,
-    );
 
   return (
     <PracticeShell

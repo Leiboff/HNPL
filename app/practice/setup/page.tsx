@@ -75,25 +75,37 @@ export default async function PracticeSetupPage() {
     redirect('/practice');
   }
 
-  const { data: membership } = await supabase
-    .from('practice_members')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('active', true)
-    .single();
+  // ── Membership + orphan check, one wave ───────────────────────────────
+  //
+  // Both are keyed on user.id alone and neither needs the other's answer.
+  // Pairing them saves a round trip on the path this page exists for — a new
+  // practice admin with no membership yet, who renders the setup form.
+  //
+  // The redirect ORDER is unchanged and that matters, because the second read
+  // leads to a WRITE. `if (membership)` is still evaluated first, so a caller
+  // who already has a membership is still bounced before the self-heal insert
+  // below can be reached. All they cost is one concurrent read whose result is
+  // dropped — a stale-bookmark path, not the one this page serves.
+  const [{ data: membership }, { data: ownedPractice }] = await Promise.all([
+    supabase
+      .from('practice_members')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('active', true)
+      .single(),
+    // Detect an orphaned practice: the practices insert succeeded on a previous
+    // attempt but the practice_members insert failed. Self-heal by creating the
+    // missing member row and sending the user straight to the dashboard.
+    supabase
+      .from('practices')
+      .select('id')
+      .eq('owner_id', user.id)
+      .maybeSingle(),
+  ]);
 
   if (membership) {
     redirect('/practice');
   }
-
-  // Detect an orphaned practice: the practices insert succeeded on a previous
-  // attempt but the practice_members insert failed. Self-heal by creating the
-  // missing member row and sending the user straight to the dashboard.
-  const { data: ownedPractice } = await supabase
-    .from('practices')
-    .select('id')
-    .eq('owner_id', user.id)
-    .maybeSingle();
 
   if (ownedPractice) {
     await supabase.from('practice_members').insert({

@@ -63,18 +63,31 @@ export default async function MembersPage({
   const isManager    = canManagePractice;
   const practiceName = viewer.scope.practiceName || 'Practice';
 
-  // ── Nav-shell authority — shared resolver, see ../practiceShellAuthority.
-  const { isBrandAdmin, canManageTill, brandPracticeCount } =
-    await resolvePracticeShellAuthority(
-      supabase, user.id, practiceId, isManager,
-    );
-
+  // ── Nav-shell authority + the roster, one wave ────────────────────────────
+  //
+  // resolvePracticeViewer above is THE gate for this page and has already
+  // returned — its setup and denied branches were acted on before either of
+  // these started. What remains is not a gate: the shell resolver decides
+  // which nav links and till controls to RENDER, and the roster read is the
+  // page's data. Neither is an input to the other, and both are keyed on the
+  // practiceId the gate resolved.
+  //
+  // `reader` is chosen from viaBrandAdmin, which came out of the viewer — so
+  // the service-role escalation below is still decided by the resolver, not
+  // by anything in this wave. Same pairing the dashboard already uses.
+  //
   // ── Fetch all members (active + inactive) with profile join ───────────────
   // Service-role only on the brand path, for the documented reason: the
   // profiles join is not reachable for a brand-admin-only caller (0061
   // widened practice_members but deliberately not profiles).
   const reader = viaBrandAdmin ? svc : supabase;
-  const { data: rawMembers } = await reader
+
+  const [
+    { isBrandAdmin, canManageTill, brandPracticeCount },
+    { data: rawMembers },
+  ] = await Promise.all([
+    resolvePracticeShellAuthority(supabase, user.id, practiceId, isManager),
+    reader
     .from('practice_members')
     .select(`
       id, user_id, role, active,
@@ -87,7 +100,8 @@ export default async function MembersPage({
     `)
     .eq('practice_id', practiceId)
     .order('active', { ascending: false })
-    .order('role',   { ascending: true  });
+    .order('role',   { ascending: true  }),
+  ]);
 
   const members = (rawMembers ?? []) as MemberRow[];
 

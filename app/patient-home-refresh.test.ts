@@ -94,9 +94,28 @@ describe('Part 1 — salary date is profile-only', () => {
   it('checkout page fetches initialSalaryDay via a service-role profile lookup and passes it to the form', () => {
     expect(CHECKOUT_PAGE).toMatch(/initialSalaryDay/);
     // Only meaningful for an invitation-sourced token (a POS session
-    // token has no known email yet) — see resolved.kind === 'invitation'
-    // guard around this lookup.
-    expect(CHECKOUT_PAGE).toMatch(/\.from\('profiles'\)[\s\S]*?\.select\('salary_day'\)[\s\S]*?\.eq\('email',\s*resolved\.row\.email\)/);
+    // token has no known email yet).
+    //
+    // RE-DERIVED, not relaxed. The lookup moved into a Promise.all alongside
+    // the viewed/scanned stamp, and TypeScript does not carry a `let`'s
+    // narrowing into a closure — so `resolved.row.email` had to be hoisted to
+    // a const before the wave. The old single regex matched the inlined
+    // expression; the same guarantee is now asserted as a chain of two links,
+    // which is what the original was really claiming:
+    //
+    //   1. the lookup is a profiles/salary_day read keyed on invitationEmail;
+    //   2. invitationEmail is derived ONLY from an invitation-kind token, and
+    //      is null otherwise;
+    //   3. a null invitationEmail skips the lookup entirely.
+    //
+    // Link 2 is the one the original could only imply.
+    expect(CHECKOUT_PAGE).toMatch(
+      /\.from\('profiles'\)[\s\S]*?\.select\('salary_day'\)[\s\S]*?\.eq\('email',\s*invitationEmail\)/,
+    );
+    expect(CHECKOUT_PAGE).toMatch(
+      /const invitationEmail =\s*resolved\.kind === 'invitation' \? resolved\.row\.email : null;/,
+    );
+    expect(CHECKOUT_PAGE).toMatch(/if \(!invitationEmail\) return null;/);
   });
 
   it('CheckoutForm only renders the salary picker when initialSalaryDay is null', () => {

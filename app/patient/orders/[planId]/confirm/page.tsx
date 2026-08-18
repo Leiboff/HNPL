@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import ConfirmForm from './ConfirmForm';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 export default async function ConfirmPage({
   params,
@@ -17,7 +18,7 @@ export default async function ConfirmPage({
   const fromRegistration = sp.from === 'registration';
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   const [{ data: rawPlan }, { data: profile }, { data: rawCards }, { data: rawProgress }] = await Promise.all([

@@ -1,7 +1,7 @@
 import { redirect, notFound } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
+import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { updateBranchDetails, updateBranchBanking } from '@/app/brand/actions';
 import PracticeShell from '../PracticeShell';
 import { resolvePracticeShellAuthority } from '../practiceShellAuthority';
@@ -150,8 +150,35 @@ export default async function PracticeSettingsPage({
   const showBanking = canSeeSettingsSection('banking', authority);
   const showTill    = canSeeSettingsSection('till',    authority);
 
+  // ── The three section reads, one wave ─────────────────────────────────
+  //
+  // Everything above this point is the authority chain, and it is all still
+  // strictly serial because it genuinely is: the profile role gate, then the
+  // caller's own can_manage_practice on THIS practice, then
+  // resolvePracticeShellAuthority which CONSUMES that flag, then
+  // canSeeAnySettingsSection which notFound()s a caller with nothing to see.
+  // The wave starts only after that refusal has had its chance.
+  //
+  // Below it, the three reads are independent of each other and all keyed on
+  // the practiceId already resolved. `showTill` is derived from the authority
+  // resolved above, so the till read is still gated on exactly the same
+  // condition as before.
+  //
+  // listDevices runs guardTillManager as its own first statement and that is
+  // UNCHANGED — it remains the authority for the till section, and a null
+  // result still means the guard refused and the section stands down. All
+  // that changed is that it is awaited concurrently with two other reads
+  // instead of after them.
+  //
+  // The `if (!practice) notFound()` moves below the wave, so on that path the
+  // gate and device reads are issued and discarded. That path means the
+  // practice row is unreadable or absent — an error state, not a routine one
+  // — and both discarded reads are harmless: the gate result is dropped, and
+  // listDevices' own guard governs whether it returns anything at all.
   const s = svc();
-  const { data: practice } = await s
+
+  const [{ data: practice }, gate, devicesResult] = await Promise.all([
+    s
     .from('practices')
     .select(`
       id, name, status, group_id,
@@ -162,22 +189,22 @@ export default async function PracticeSettingsPage({
       till_pin_hash
     `)
     .eq('id', practiceId)
-    .maybeSingle();
+    .maybeSingle(),
+    // Drives the co-located "add banking below" hint only — the same check
+    // the dashboard and the bill-creation action already run. Read-only
+    // consumption; nothing here changes the gate.
+    checkTradingGate(s, practiceId),
+    // The till section's data comes through listDevices(), which runs
+    // guardTillManager itself. Called only when the section is visible, and
+    // its own guard is still the authority — a null result means the guard
+    // refused, so the section stands down rather than rendering empty.
+    showTill ? listDevices(practiceId) : Promise.resolve(null),
+  ]);
 
   if (!practice) notFound();
 
   const practiceName = (practice.name as string) ?? 'Practice';
 
-  // Drives the co-located "add banking below" hint only — the same check
-  // the dashboard and the bill-creation action already run. Read-only
-  // consumption; nothing here changes the gate.
-  const gate: TradingGateResult = await checkTradingGate(s, practiceId);
-
-  // The till section's data comes through listDevices(), which runs
-  // guardTillManager itself. Called only when the section is visible, and
-  // its own guard is still the authority — a null result means the guard
-  // refused, so the section stands down rather than rendering empty.
-  const devicesResult = showTill ? await listDevices(practiceId) : null;
   const devices = devicesResult && !devicesResult.error ? (devicesResult.devices ?? []) : null;
 
   return (

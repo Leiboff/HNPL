@@ -2,6 +2,7 @@ import { redirect, notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import type { DirectoryRow } from '@/lib/practitioner/grouping';
 import DetailView from './DetailView';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Practitioner detail screen ────────────────────────────────────────
 //
@@ -37,7 +38,7 @@ export default async function PractitionerDetailPage({
   const { memberId } = await params;
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   // Step 1 — fetch THIS member's row. The view is GRANTed to
