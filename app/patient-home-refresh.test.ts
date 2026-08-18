@@ -20,10 +20,10 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 const MIG          = read('supabase/migrations/0065_credit_limit_and_passkey_prompt_cap.sql');
 const PROFILE_PAGE = read('app/patient/profile/page.tsx');
 // Account + Profile consolidated: salary date, phone, and their server
-// actions now live on the account page / AccountAccordion. The profile
+// actions now live on the account page / AccountSettings. The profile
 // route is an inert redirect. Wiring pins re-point to the successors.
 const ACCOUNT_PAGE = read('app/patient/account/page.tsx');
-const ACCOUNT_ACC  = read('app/patient/account/AccountAccordion.tsx');
+const ACCOUNT_SET  = read('app/patient/account/AccountSettings.tsx');
 const HOME         = read('app/patient/page.tsx');
 const LAYOUT       = read('app/patient/layout.tsx');
 const CHECKOUT_ACT = read('app/checkout/[token]/actions.ts');
@@ -144,10 +144,13 @@ describe('Part 1 — salary date is profile-only', () => {
 
 describe('Part 2 — phone folded into Personal Details', () => {
   it('account settings accordion no longer exposes a standalone "Phone number" section', () => {
-    expect(ACCOUNT_ACC).not.toMatch(/Phone number/);
-    // Post-consolidation the accordion has personal / notifications /
-    // security section keys (salary is nested in personal). No 'phone' key.
-    expect(ACCOUNT_ACC).not.toMatch(/SectionKey.*phone/);
+    expect(ACCOUNT_SET).not.toMatch(/Phone number/);
+    // Post-rework AccountSettings has personal / salary / pay / passkeys /
+    // password / notifications / signout section keys. Salary is its own
+    // section now rather than nested in personal, and there is still no
+    // 'phone' key — phone remains an inline field in Personal details,
+    // which is the property this test protects.
+    expect(ACCOUNT_SET).not.toMatch(/SectionKey.*phone/);
   });
 
   it('account page renders <PhoneField> inline within Personal Details', () => {

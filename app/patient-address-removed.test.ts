@@ -18,17 +18,27 @@ function read(p: string): string {
 
 const MIG_0059          = read('supabase/migrations/0059_drop_patient_address.sql');
 const PROFILE_PAGE      = read('app/patient/profile/page.tsx');
-// Account + Profile consolidated onto ONE surface: the profile SELECT and
-// updateProfile action moved into the account page; the settings accordion
-// is now AccountAccordion. The POPIA "no address fields anywhere" invariant
-// is re-pointed to those successors.
+// Account + Profile consolidated onto ONE surface: the profile SELECT moved
+// into the account page, and the settings component is now AccountSettings
+// (it replaced AccountAccordion when the account page was reworked into a
+// grouped hierarchy). The POPIA "no address fields anywhere" invariant is
+// re-pointed to those successors.
+//
+// This file stopped COLLECTING when AccountAccordion.tsx was deleted — the
+// read below is module-level, so the whole file threw before a single test
+// ran, and the POPIA invariant silently stopped executing rather than
+// failing. app/test-path-integrity.test.ts now makes that class of breakage
+// a visible test failure instead of a collection error.
 const ACCOUNT_PAGE      = read('app/patient/account/page.tsx');
-const ACCOUNT_ACCORDION = read('app/patient/account/AccountAccordion.tsx');
+const ACCOUNT_SETTINGS  = read('app/patient/account/AccountSettings.tsx');
 // Post-0065 the standalone phone accordion is gone — phone is now
 // an inline edit-toggle field inside Personal details, owned by
 // PhoneField.tsx. This test still verifies the phone-only capture
 // contract; just against the successor component.
 const PHONE_FORM        = read('app/patient/profile/PhoneField.tsx');
+// The phone SAVE path after the OTP-re-verification rework. The POPIA
+// invariant follows the write, so it follows this file now.
+const PHONE_ACTIONS     = read('app/patient/account/phoneChangeActions.ts');
 const ADMIN_CUSTOMER    = read('app/admin/customers/[patientId]/page.tsx');
 
 const DROPPED = [
@@ -62,9 +72,24 @@ describe('Patient account page — no longer reads or writes address fields', ()
     }
   });
 
-  it('the updateProfile server action accepts ONLY { phone } now', () => {
-    // The action's parameter type narrowed to { phone: string | null }.
-    expect(ACCOUNT_PAGE).toMatch(/data:\s*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
+  it('the phone save path takes a phone and NOTHING address-shaped', () => {
+    // RE-DERIVED. This pinned `data: { phone: string | null }` on an inline
+    // `updateProfile` action that no longer exists: a phone edit now requires
+    // OTP re-verification, so the save path moved to
+    // app/patient/account/phoneChangeActions.ts and the old action was
+    // deleted outright. Re-pointing the literal would have been meaningless,
+    // because the type it described is gone.
+    //
+    // The POPIA invariant is the point, and it is now asserted against the
+    // SUCCESSOR — which this file did not cover at all before:
+    expect(ACCOUNT_PAGE).not.toMatch(/async function updateProfile/);
+    // The staging write takes exactly one column, and it is not an address.
+    expect(PHONE_ACTIONS).toMatch(/\.update\(\{ phone_pending: normalized \}\)/);
+    // The promotion writes phone + its verification stamp, nothing else.
+    expect(PHONE_ACTIONS).toMatch(/phone_verified_at:/);
+    for (const col of DROPPED) {
+      expect(PHONE_ACTIONS).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
   });
 
   it('email + phone are still selected (we did NOT collateral-damage them)', () => {
@@ -80,28 +105,34 @@ describe('Patient account page — no longer reads or writes address fields', ()
   });
 });
 
-describe('AccountAccordion — the "Contact & billing address" section is gone', () => {
-  // Post-consolidation the settings accordion is AccountAccordion. There is
+describe('AccountSettings — the "Contact & billing address" section is gone', () => {
+  // Post-rework the settings component is AccountSettings. There is
   // no standalone Phone or address section — phone folded into Personal
   // details. Only the "no address-fields ANYWHERE" invariant matters here.
   it('no "contactAddress" or "billing address" copy remains in the accordion', () => {
-    expect(ACCOUNT_ACCORDION).not.toMatch(/contactAddress/);
-    expect(ACCOUNT_ACCORDION).not.toMatch(/billing address/i);
+    expect(ACCOUNT_SETTINGS).not.toMatch(/contactAddress/);
+    expect(ACCOUNT_SETTINGS).not.toMatch(/billing address/i);
   });
 
   it('accordion no longer has a standalone "Phone number" section title', () => {
     // Phone is inline within Personal details (PhoneField). The
     // standalone accordion header is gone.
-    expect(ACCOUNT_ACCORDION).not.toMatch(/title="Phone number"/);
+    expect(ACCOUNT_SETTINGS).not.toMatch(/title="Phone number"/);
   });
 });
 
 describe('PhoneField — phone-only editor (successor to AddressForm + PhoneForm)', () => {
   it('captures phone only (no address fields)', () => {
-    // PhoneField's update payload is a single `{ phone: string | null }`
-    // — this regex pins the shape without depending on a specific
-    // type alias name.
-    expect(PHONE_FORM).toMatch(/updateProfile.*\{\s*phone:\s*string\s*\|\s*null\s*\}/);
+    // RE-DERIVED. PhoneField no longer receives an `updateProfile` prop: it
+    // takes the four phone-change actions (start / requestOtp / verify /
+    // cancel), because a number change must be OTP-verified before it
+    // becomes the account's number. The payload-shape assertion therefore
+    // belongs on the actions module, and has moved to the test above.
+    //
+    // What this test protects is unchanged and still worth pinning: the
+    // phone editor captures a PHONE, and nothing address-shaped.
+    expect(PHONE_FORM).toMatch(/startPhoneChange/);
+    expect(PHONE_FORM).not.toMatch(/updateProfile/);
     for (const col of DROPPED) {
       expect(PHONE_FORM).not.toMatch(new RegExp(`\\b${col}\\b`));
     }
