@@ -11,7 +11,7 @@ const BOTTOM_NAV = read('app/patient/PatientBottomNav.tsx');
 const LANDING    = read('app/patient/explore/Landing.tsx');
 const HOME       = read('app/patient/page.tsx');
 const ACCOUNT    = read('app/patient/account/page.tsx');
-const ACCOUNT_ACC = read('app/patient/account/AccountAccordion.tsx');
+const ACCOUNT_SET = read('app/patient/account/AccountSettings.tsx');
 const THUMB      = read('app/patient/payment-methods/PaymentMethods.tsx');
 const DETAIL     = read('app/patient/orders/[planId]/page.tsx');
 const POLLING    = read('app/patient/payment-methods/complete/PollingConfirmation.tsx');
@@ -41,13 +41,29 @@ describe('home next-payment CTA labels the two-step action', () => {
 });
 
 describe('salary-date deep-link', () => {
-  // Post-consolidation: salary date lives nested inside Personal details on
-  // the single Account page. The old "Payday" row (→ /patient/profile) is
-  // gone; deep-linking is now the account settings accordion honouring
-  // ?section (legacy ?section=salary resolves to Personal details).
-  it('the account settings accordion honours the ?section deep-link', () => {
-    expect(ACCOUNT_ACC).toContain("searchParams?.get('section')");
-    expect(ACCOUNT_ACC).toContain("if (value === 'salary') return 'personal'");
+  // Post-consolidation the old "Payday" row (→ /patient/profile) is gone;
+  // deep-linking is the account settings component honouring ?section.
+  //
+  // RE-DERIVED, not merely re-pointed. AccountAccordion became
+  // AccountSettings, and salary date became its OWN section instead of a
+  // field nested inside Personal details. The old assertion pinned the
+  // legacy alias `if (value === 'salary') return 'personal'`, which existed
+  // only because there was no salary section to open. There is one now, so
+  // ?section=salary resolves to what it always said. Re-pointing that
+  // literal at the new file would have failed — correctly, because it
+  // describes behaviour that is gone.
+  //
+  // What survives is the property this test was actually about: the
+  // component reads the ?section param and resolves it through one
+  // function. The BEHAVIOUR (which section each value opens) is covered
+  // properly in app/patient/account/AccountSettings.test.tsx, which renders
+  // the component and asserts on aria-expanded — a stronger check than any
+  // source-text pin here, so this one deliberately does not duplicate it.
+  it('the account settings component honours the ?section deep-link', () => {
+    expect(ACCOUNT_SET).toContain("searchParams?.get('section')");
+    expect(ACCOUNT_SET).toContain('resolveSection(');
+    // The alias is gone, not relocated.
+    expect(ACCOUNT_SET).not.toContain("return 'personal'");
   });
 });
 
