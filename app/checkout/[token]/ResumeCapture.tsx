@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 import PeachWidget from '@/app/_components/PeachWidget';
 import { BillChip, ScheduleStrip } from './_components/CheckoutChrome';
 
@@ -69,6 +70,10 @@ export default function ResumeCapture({
   const [widget, setWidget] = useState<{ checkoutId: string; shopperResultUrl: string } | null>(null);
   const [error,  setError]  = useState<string | null>(null);
   const [busy,   setBusy]   = useState(false);
+  // This button had NO pending label — it disabled and went silent on the
+  // resume-payment path. disabled stays immediate; the label appears only
+  // if the hand-off actually takes a moment.
+  const pending = usePendingAction({ pending: busy });
 
   const cta = busy ? 'Setting up payment…' : `Pay ${formatRand(firstInstalmentAmount)} today`;
 
@@ -180,13 +185,13 @@ export default function ResumeCapture({
 
         <button
           type="button"
-          disabled={busy}
+          disabled={pending.disabled}
           onClick={() => void start()}
           data-testid="resume-capture-button"
           className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 hover:shadow-lg transition-shadow"
           style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
         >
-          {cta}
+          {pending.showLabel ? 'Setting up…' : cta}
         </button>
       </div>
 

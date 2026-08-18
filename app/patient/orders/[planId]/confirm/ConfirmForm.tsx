@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { payWithSavedCard, initializeCardRegistration } from '@/app/patient/actions';
@@ -97,6 +98,10 @@ export default function ConfirmForm({
 
   const [wantsNewCard,   setWantsNewCard]   = useState(false);
   const [submitting,     setSubmitting]     = useState(false);
+  // Presentation only. canSubmit already folds in !submitting, so the guard
+  // is unchanged; this is purely so 'Processing…' does not flash on a fast
+  // confirm. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: submitting });
   const [error,          setError]          = useState<string | null>(null);
   const [addCardLoading, setAddCardLoading] = useState(false);
   const [addCardError,   setAddCardError]   = useState<string | null>(null);
@@ -614,11 +619,16 @@ export default function ConfirmForm({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={!canSubmit}
+            // `canSubmit` already folds in !submitting, but that is React
+            // STATE — taps arriving before a re-render all see it as true.
+            // pending.disabled adds the hook's synchronous ref-backed guard,
+            // which on a confirm-and-pay button is the difference between a
+            // double-tap being ignored and it being a second charge.
+            disabled={!canSubmit || pending.disabled}
             className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:shadow-lg"
             style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
           >
-            {submitting ? 'Processing…' : resumeMode ? 'Resume payment' : 'Confirm and Pay First Instalment'}
+            {pending.showLabel ? 'Processing…' : resumeMode ? 'Resume payment' : 'Confirm and Pay First Instalment'}
           </button>
         )}
         <Link

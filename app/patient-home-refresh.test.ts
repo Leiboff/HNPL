@@ -339,10 +339,18 @@ describe('Part 4 — post-login passkey prompt', () => {
     // it, and the nextPath nav after that. Post-2026-07-30 the
     // navigation target is `nextPath` (safeNext-clamped, default
     // /dashboard) rather than a hardcoded /dashboard string.
-    const idxSignIn = LOGIN_PAGE.indexOf('signInWithPassword');
+    // Anchored on CODE, not on the raw file. The three assertions below
+    // are order-of-occurrence checks, so any COMMENT that happens to
+    // mention `signInWithPassword` earlier in the file silently moves the
+    // anchor and the test then compares the wrong pair of positions —
+    // reporting a reordering that never happened. This file already uses
+    // stripComments for exactly this reason elsewhere (see the codeOnly
+    // blocks); this assertion had been missed.
+    const codeOnly  = stripComments(LOGIN_PAGE);
+    const idxSignIn = codeOnly.indexOf('signInWithPassword');
     expect(idxSignIn).toBeGreaterThan(0);
-    const idxRecord = LOGIN_PAGE.indexOf('recordLoginLanding()', idxSignIn);
-    const idxNav    = LOGIN_PAGE.indexOf('window.location.href = nextPath', idxSignIn);
+    const idxRecord = codeOnly.indexOf('recordLoginLanding()', idxSignIn);
+    const idxNav    = codeOnly.indexOf('window.location.href = nextPath', idxSignIn);
     expect(idxRecord).toBeGreaterThan(idxSignIn);
     expect(idxNav).toBeGreaterThan(idxRecord);
   });

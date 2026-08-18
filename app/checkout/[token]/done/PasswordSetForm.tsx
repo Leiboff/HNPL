@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { StepShell, PrimaryButton } from '../_components/CheckoutChrome';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 
 // Setting a password is a SECONDARY, skippable next step — the success
 // confirmation above is the hero and must never be gated behind this.
@@ -27,6 +28,10 @@ export default function PasswordSetForm({ email, finalizePassword }: Props) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error,           setError]           = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // Presentation only — the transition itself is untouched. disabled
+  // follows isPending immediately; the label waits out the flash
+  // threshold. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: isPending });
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -55,8 +60,8 @@ export default function PasswordSetForm({ email, finalizePassword }: Props) {
         subhead={`Optional — set a password for ${email} to make next time's login one tap.`}
         actions={
           <div className="space-y-3">
-            <PrimaryButton type="submit" disabled={isPending}>
-              {isPending ? 'Saving…' : 'Create password'}
+            <PrimaryButton type="submit" disabled={pending.disabled}>
+              {pending.showLabel ? 'Saving…' : 'Create password'}
             </PrimaryButton>
             <div className="flex justify-center">
               <a

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import ConfirmChargeDialog from './ConfirmChargeDialog';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 import type { SelfSettleResult } from './settle-actions';
 
 function formatRandCents(cents: number): string {
@@ -45,6 +46,11 @@ export default function PayNowButton({
 }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [isPending,  startTransition] = useTransition();
+  // This button had NO pending label — it disabled and went silent, which
+  // on a slow network is the frozen-app problem in miniature, on a money
+  // action. disabled stays immediate; the label appears only if the charge
+  // actually takes a moment. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: isPending });
   const [feedback,   setFeedback] = useState<string | null>(null);
   const [done,       setDone] = useState(false);
 
@@ -115,11 +121,11 @@ export default function PayNowButton({
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        disabled={isPending}
+        disabled={pending.disabled}
         className={buttonCls}
         style={labelStyle}
       >
-        {label}
+        {pending.showLabel ? 'Charging…' : label}
       </button>
       {feedback && !confirming && (
         <p className={

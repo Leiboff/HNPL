@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { checkPassword } from '@/lib/validation';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 
 // ─── Set a new password (post-recovery-link form) ─────────────────────
 //
@@ -32,6 +33,11 @@ export default function UpdatePasswordForm({ email }: Props) {
   const [password, setPassword] = useState('');
   const [confirm,  setConfirm]  = useState('');
   const [loading,  setLoading]  = useState(false);
+  // Mirrors the flag above for PRESENTATION only — the flag and the call
+  // it guards are untouched. pending.disabled follows it immediately
+  // (double-tap safety is never delayed); pending.showLabel waits out the
+  // flash threshold. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: loading });
   const [error,    setError]    = useState<string | null>(null);
   const [showRecoveryError, setShowRecoveryError] = useState(false);
 
@@ -199,12 +205,12 @@ export default function UpdatePasswordForm({ email }: Props) {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={pending.disabled}
           data-testid="update-password-submit"
           className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
           style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
         >
-          {loading ? 'Updating…' : 'Update password'}
+          {pending.showLabel ? 'Updating…' : 'Update password'}
         </button>
       </form>
     </Card>

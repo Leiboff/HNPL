@@ -15,6 +15,7 @@ import {
 import type { CreateBillResult, CreateBillSummary, ProviderOption } from './page';
 import BillWaitingPanel from './BillWaitingPanel';
 import { formatRand } from '../../billHelpers';
+import { usePendingAction } from '@/components/loading/usePendingAction';
 
 type Props = {
   feePercent: number;
@@ -217,6 +218,11 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
   const [practiceReference, setPracticeReference] = useState('');
   const [providerMemberId, setProviderMemberId] = useState(providers.length === 1 ? providers[0].memberId : '');
   const [loading,          setLoading]          = useState(false);
+  // Mirrors the flag above for PRESENTATION only — the flag and the call
+  // it guards are untouched. pending.disabled follows it immediately
+  // (double-tap safety is never delayed); pending.showLabel waits out the
+  // flash threshold. See components/loading/usePendingAction.ts.
+  const pending = usePendingAction({ pending: loading });
   const [error,            setError]            = useState<string | null>(null);
   const [summary,          setSummary]          = useState<CreateBillSummary | null>(null);
   // Per-field validation messages, surfaced next to the field they
@@ -581,12 +587,12 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
           why. Now every click either submits or renders the reasons above. */}
       <button
         type="submit"
-        disabled={loading}
+        disabled={pending.disabled}
         data-testid="submit-bill"
         className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
         style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
       >
-        {loading ? 'Sending bill…' : 'Send bill to patient'}
+        {pending.showLabel ? 'Sending bill…' : 'Send bill to patient'}
       </button>
     </form>
   );
