@@ -9,12 +9,16 @@ import SalaryDaySection from '../profile/SalaryDaySection';
 import NotificationsToggle from '../profile/NotificationsToggle';
 import PasskeysSection from '../profile/PasskeysSection';
 import ProfileLogoutSection from '../profile/ProfileLogoutSection';
-import AccountAccordion from './AccountAccordion';
+import AccountSettings from './AccountSettings';
+import PasswordSection from './PasswordSection';
 import { initializeCardRegistration } from '../actions';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
-import { todaySAST } from '../_format';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
+import { maskEmail } from '@/lib/patient/maskContact';
+import EmptyState from '@/components/EmptyState';
+import { resolveAppVersion } from '@/lib/appVersion';
+import { todaySAST, formatDate } from '../_format';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import { normalizePhoneZA } from '@/lib/validation';
 import { getRequestUser } from '@/lib/auth/requestUser';
@@ -24,18 +28,53 @@ import {
   type CardRow,
 } from '../payment-methods/actions';
 
-// ─── Account — the single settings surface (v4, consolidated) ────────────
+// ─── Account — the single settings surface ───────────────────────────────
 //
-// Account and Profile are now ONE page, ONE pattern. A navy header carries
-// the identity; the sheet holds the honest payment record, the settings
-// accordion (Personal details — with phone + salary date nested — then
-// Notifications and Security & sign-in), the card-management surface
-// ("How you pay"), and a single Help + Log out. The old /patient/profile
-// route redirects here, so there is exactly one place for each control.
+// Account and Profile are ONE page. This pass gave it a hierarchy: four named
+// groups over seven sections, all in ONE interaction pattern.
 //
-// Honesty (per the build decision): "Your record" shows the count of
-// payments actually made — no invented rewards tier, no "we'll review your
-// limit" promise (that policy doesn't exist in code).
+// ─── WHAT WAS WRONG, SPECIFICALLY ─────────────────────────────────────
+//
+// The consolidation that merged Profile into Account left three interaction
+// patterns competing on one screen: four accordion sections, two flat cards
+// (the record, and Log out with its own eyebrow label), and one chevron
+// nav-row (Get help). Each was defensible where it was written; together they
+// made the page read as assembled rather than designed. Everything a patient
+// OPERATES is now an AccordionSection — see ./AccountSettings.tsx for the
+// grouping and why those four groups.
+//
+// ─── THE RECORD IS NOT A SETTING ──────────────────────────────────────
+//
+// "Your record" stays outside the accordion system, directly under the navy
+// header, as the sheet's first and largest object. Three reasons: it is the
+// only thing on this page that was EARNED rather than configured; it is
+// read-only, so the one-pattern rule — which governs sections you operate —
+// does not apply to it; and the InstalmentLadder is the app's signature
+// object (Home, both Plans lists, Plan detail), so the page that summarises
+// it should lead with it rather than file it under a heading.
+//
+// Honesty (unchanged): the record shows the count of payments actually made —
+// no invented rewards tier, no "we'll review your limit" promise, because
+// that policy does not exist in code.
+//
+// ─── PROVENANCE: WHAT RENDERS, AND WHAT DELIBERATELY DOES NOT ─────────
+//
+// Renders, because the data exists and cannot go stale:
+//   • "Member since" from profiles.created_at
+//   • terms acceptance from terms_accepted_at + terms_version (NULL on
+//     accounts predating migration 0081 — so it renders nothing there)
+//   • per-card "Added <date>" from payment_methods.created_at
+//
+// Renders NOTHING, because the data does not exist:
+//   • salary date — there is no change-frequency rule in this codebase and
+//     no timestamp for it. See ../profile/SalaryDaySection.tsx.
+//   • phone — no change timestamp; phone_verified_at is locked to the OTP
+//     path and goes stale on edit. See ../profile/PhoneField.tsx.
+//
+// Excluded on purpose: liveness_verified_at and credit_check_completed_at.
+// Both sit behind feature flags that default OFF, and the liveness check is a
+// stub that always returns pass — "Identity verified" from that would be a
+// claim the system cannot support.
 
 // ─── Server actions (moved here from the retired profile route) ──────────
 
@@ -93,20 +132,69 @@ async function saveSalaryDay(day: number): Promise<{ error: string | null }> {
   return { error: null };
 }
 
-function Chevron() {
+/**
+ * A field the patient cannot change, shown as visibly locked WITH its reason.
+ *
+ * Before, these were plain label/value pairs and the reason lived in a single
+ * footnote at the bottom of the section — so a field was read-only without
+ * looking locked, and the explanation was somewhere else. A padlock on the
+ * row and the reason under it means the field answers "why can't I edit
+ * this?" where the question is actually asked.
+ */
+function LockedField({
+  label,
+  value,
+  reason,
+}: {
+  label:  string;
+  value:  string;
+  /** Why it is locked. Rendered under the value, per field. */
+  reason: string;
+}) {
   return (
-    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#B6C1CD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
-      <path d="m9 6 6 6-6 6" />
-    </svg>
+    <div data-testid="locked-field">
+      <p
+        className="text-[11px] font-semibold uppercase tracking-widest mb-1.5"
+        style={{ color: '#13294B', opacity: 0.45 }}
+      >
+        {label}
+      </p>
+      <div className="flex items-center gap-1.5">
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#8496AA"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="flex-none"
+          aria-label="Locked"
+          role="img"
+          data-testid="locked-field-icon"
+        >
+          <rect x="4" y="10.5" width="16" height="10" rx="2.5" />
+          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+        </svg>
+        <p className="text-sm font-medium text-gray-800 truncate">{value || '—'}</p>
+      </div>
+      <p className="mt-1 text-[11.5px] leading-[1.45]" style={{ color: '#A3B1C2' }}>
+        {reason}
+      </p>
+    </div>
   );
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
+/** Discreet provenance under a field or in the footer. Renders NOTHING when
+ *  `children` is null/undefined — the whole point: a missing timestamp must
+ *  produce no element at all, never the string "undefined". */
+function Provenance({ children }: { children?: string | null }) {
+  if (!children) return null;
   return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#13294B', opacity: 0.45 }}>{label}</p>
-      <p className="text-sm font-medium text-gray-800">{value || '—'}</p>
-    </div>
+    <p className="text-[11.5px]" style={{ color: '#A3B1C2' }} data-testid="provenance">
+      {children}
+    </p>
   );
 }
 
@@ -119,7 +207,7 @@ export default async function AccountPage() {
   const [{ data: profile }, { data: rawCards }, { data: rawPayments }, { data: rawPlans }] = await Promise.all([
     supabase
       .from('profiles')
-      .select('first_name, last_name, email, phone, sa_id_number, salary_day')
+      .select('first_name, last_name, email, phone, sa_id_number, salary_day, created_at, terms_accepted_at, terms_version')
       .eq('id', user.id)
       .single(),
     // Active cards only — archived (soft-deleted) cards drop off the list.
@@ -146,6 +234,28 @@ export default async function AccountPage() {
 
   const decryptedSaId = decryptIdForDisplay(profile?.sa_id_number as string | null | undefined);
   const saIdMasked    = maskSaId(decryptedSaId);
+
+  // Email is masked everywhere it appears, including the navy header, where it
+  // used to render in full. Same discipline as the SA ID beside it.
+  const emailMasked = maskEmail(profile?.email as string | null | undefined);
+
+  // ── Account-level provenance ──────────────────────────────────────
+  // Both of these are NULL-able and each resolves to null rather than to a
+  // placeholder: created_at is NOT NULL in practice but is typed nullable, and
+  // terms_accepted_at is genuinely NULL on accounts predating migration 0081.
+  // <Provenance> renders no element for null, which is what keeps "undefined"
+  // off the screen.
+  const createdAtRaw = profile?.created_at as string | null | undefined;
+  const memberSince  = createdAtRaw ? `Member since ${formatDate(createdAtRaw.slice(0, 10))}` : null;
+
+  const termsAtRaw   = profile?.terms_accepted_at as string | null | undefined;
+  const termsVersion = profile?.terms_version     as string | null | undefined;
+  const termsLine    = termsAtRaw
+    ? `Terms${termsVersion ? ` v${termsVersion}` : ''} accepted ${formatDate(termsAtRaw.slice(0, 10))}`
+    : null;
+
+  // Null in local dev, a real build id on a deploy. Nothing renders for null.
+  const appVersion = resolveAppVersion();
 
   // Split the server-only token off before handing cards to the client.
   const rawCardRows = (rawCards ?? []) as (CardRow & { token: string })[];
@@ -197,40 +307,57 @@ export default async function AccountPage() {
       </span>
       <div className="min-w-0">
         <p className="text-[19px] font-semibold text-white truncate" style={{ letterSpacing: '-.02em' }}>{fullName}</p>
-        <p className="mt-0.5 text-[13px] truncate" style={{ color: 'rgba(255,255,255,.6)' }}>{profile?.email ?? ''}</p>
+        <p className="mt-0.5 text-[13px] truncate" style={{ color: 'rgba(255,255,255,.6)' }}>{emailMasked}</p>
       </div>
     </div>
   );
 
-  // ── Personal details body — locked identity + phone + nested salary ──
+  // ── Personal details — locked identity + the one editable field ──────
+  //
+  // Salary date is NO LONGER nested here: it is its own section now (see
+  // AccountSettings). What is left is identity — three locked fields, each
+  // carrying its own padlock and its own reason, plus phone, which is the
+  // only genuinely editable thing on this screen and edits per-field.
   const personalDetails = (
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
-        <ReadOnlyField label="First name"   value={firstName} />
-        <ReadOnlyField label="Last name"    value={lastName} />
-        <ReadOnlyField label="SA ID number" value={saIdMasked || ''} />
-        <ReadOnlyField label="Email"        value={profile?.email ?? ''} />
+        <LockedField
+          label="Full name"
+          value={fullName}
+          reason="Must match your SA ID. Support can change it."
+        />
+        <LockedField
+          label="SA ID number"
+          value={saIdMasked || ''}
+          reason="Verified at signup and fixed for life."
+        />
+        <LockedField
+          label="Email"
+          value={emailMasked}
+          reason="Your sign-in address. Support can change it."
+        />
       </div>
       <div className="border-t border-gray-100 pt-4">
         <PhoneField current={profile?.phone ?? null} updateProfile={updateProfile} />
       </div>
-      <div className="border-t border-gray-100 pt-4">
-        <SalaryDaySection current={salaryDay} saveSalaryDay={saveSalaryDay} />
-      </div>
-      <p className="text-xs text-gray-400 border-t border-gray-100 pt-4">
-        Name, SA ID and email are locked for security.{' '}
+      <p className="text-xs border-t border-gray-100 pt-4" style={{ color: '#A3B1C2' }}>
+        Locked fields protect your account.{' '}
         <a href="mailto:support@betternow.co.za" className="underline underline-offset-2 hover:text-gray-600 transition-colors">
           Contact support
         </a>{' '}
-        if these need to change.
+        if one of them is wrong.
       </p>
     </div>
   );
 
-  // ── How you pay — the single card-management surface ─────────────────
-  // Body only: the "How you pay" heading is now the accordion section
-  // header (AccountAccordion), so it isn't repeated here.
-  const howYouPay = (
+  // ── Salary date — its own section ────────────────────────────────────
+  // No provenance line: there is no change-frequency rule and no timestamp.
+  // See ../profile/SalaryDaySection.tsx for the full reasoning.
+  const salaryDate = <SalaryDaySection current={salaryDay} saveSalaryDay={saveSalaryDay} />;
+
+  // ── Payment cards — the single card-management surface ───────────────
+  // Body only: the section header carries the title, so it isn't repeated.
+  const paymentCards = (
     <div className="flex flex-col gap-[10px]">
       <p className="text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
         Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
@@ -268,40 +395,58 @@ export default async function AccountPage() {
               </span>
             )}
           </div>
-          {recordSegments.length > 0 && <InstalmentLadder segments={recordSegments} />}
-          <p className="text-[13px] leading-[1.55]" style={{ color: '#8496AA' }}>
-            {madeCount === 0
-              ? 'Your payment record builds here as you pay each instalment on time.'
-              : 'Every payment you keep on time builds your record with betternow.'}
-          </p>
+          {/* No ladder to draw yet — so the card shows an empty state with an
+              icon rather than a heading with nothing under it. That is what
+              distinguishes "nothing here yet" from "still loading", which
+              matters most on the one card that arrives above the fold. */}
+          {recordSegments.length === 0 ? (
+            <EmptyState icon="record" title="Nothing to show yet">
+              Your record starts building the first time an instalment is collected on time.
+            </EmptyState>
+          ) : (
+            <>
+              <InstalmentLadder segments={recordSegments} />
+              <p className="text-[13px] leading-[1.55]" style={{ color: '#8496AA' }}>
+                Every payment you keep on time builds your record with betternow.
+              </p>
+            </>
+          )}
         </div>
 
-        {/* Settings — one accordion pattern; cards ("How you pay") sit
-            inline between Personal details and the rest. */}
-        <AccountAccordion
+        {/* Settings — four groups, seven sections, ONE pattern. */}
+        <AccountSettings
           personalDetails={personalDetails}
-          howYouPay={howYouPay}
+          salaryDate={salaryDate}
+          paymentCards={paymentCards}
+          passkeys={<PasskeysSection />}
+          password={<PasswordSection />}
           notifications={<NotificationsToggle />}
-          security={<PasskeysSection />}
+          signOut={<ProfileLogoutSection />}
         />
 
-        {/* Help + Log out — once. */}
-        <div
-          className="rounded-[22px] bg-white overflow-hidden"
-          style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
-        >
+        {/* ── Footer ──────────────────────────────────────────────────────
+            Page FURNITURE, not a section — which is why it is plain text on
+            the sheet rather than an eighth card. "Get help" used to be a
+            chevron nav-row card, the page's third interaction pattern; as a
+            footer link it stops competing with the sections above it and
+            still sits where a patient looks for it.
+
+            The provenance lines and the build id render only when their data
+            exists, so on an account predating the terms columns, or in local
+            dev, this footer is simply shorter. */}
+        <div className="flex flex-col items-center gap-1.5 pt-3 pb-1 text-center">
           <a
             href="mailto:support@betternow.co.za"
-            className="flex items-center justify-between gap-3 px-[18px] py-[17px] hover:bg-gray-50 transition-colors"
+            data-testid="account-get-help"
+            className="text-[13px] font-semibold underline underline-offset-2 transition-colors hover:opacity-70"
+            style={{ color: '#13294B' }}
           >
-            <div className="min-w-0">
-              <p className="text-[14.5px] font-semibold" style={{ color: '#13294B' }}>Get help</p>
-            </div>
-            <Chevron />
+            Get help
           </a>
+          <Provenance>{memberSince}</Provenance>
+          <Provenance>{termsLine}</Provenance>
+          <Provenance>{appVersion}</Provenance>
         </div>
-
-        <ProfileLogoutSection />
 
       </div>
     </PatientScreen>

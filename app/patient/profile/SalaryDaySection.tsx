@@ -3,8 +3,28 @@
 import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
+import EmptyState from '@/components/EmptyState';
 
 // ─── Salary date — profile-only, edit-toggle ──────────────────────────
+//
+// ─── WHY THERE IS NO "LAST CHANGED" LINE HERE ─────────────────────────
+//
+// Stated explicitly because it is the obvious thing to want and the data does
+// not exist. There is NO rule in this codebase limiting how often a salary
+// date may change, and no timestamp recording when it last did:
+//
+//   • lib/salaryDates.ts constrains WHICH days are allowed
+//     (ALLOWED_SALARY_DAYS), not how often the value may move.
+//   • migration 0005 adds a CHECK for the 1..31 range. Nothing more.
+//   • `profiles` has no `updated_at` and no `salary_day_changed_at`.
+//
+// So there is no cooldown to pre-explain and no date to show. Anyone adding a
+// provenance line here needs a migration and a write in the save path first;
+// until then this renders nothing, rather than "unknown" or a date derived
+// from some other column that happens to be nearby.
+//
+// The consequence that DOES exist is already stated in the body below:
+// changes apply to future plans only.
 //
 // Per the "profile is the source of truth" decision, the patient's
 // salary day now lives ONLY on the profile. Checkout reads it
@@ -79,9 +99,9 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#13294B', opacity: 0.45 }}>
-            Salary date
-          </p>
+          {/* No eyebrow label: this is its own accordion section now, and the
+              section header already reads "Salary date". Repeating it was the
+              duplication the Passkeys sub-heading had. */}
           {editing ? (
             <select
               className={inputCls}
@@ -94,10 +114,14 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
                 <option key={d} value={d}>{ordinal(d)} of the month</option>
               ))}
             </select>
-          ) : (
+          ) : savedDay != null ? (
             <p className="text-sm font-medium text-gray-800">
-              {savedDay != null ? `${ordinal(savedDay)} of the month` : '—'}
+              {`${ordinal(savedDay)} of the month`}
             </p>
+          ) : (
+            <EmptyState icon="field" title="No salary date set" inline>
+              Pick the day you&rsquo;re paid and we&rsquo;ll line your instalments up with it.
+            </EmptyState>
           )}
         </div>
         {!editing ? (

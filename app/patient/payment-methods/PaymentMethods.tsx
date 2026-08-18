@@ -5,6 +5,8 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import PeachWidget from '@/app/_components/PeachWidget';
 import { ADD_CARD_PARAM } from '@/lib/patient/cardReturn';
 import { cardBrandLabel, cardBrandGradient } from '@/lib/patient/cardBrand';
+import EmptyState from '@/components/EmptyState';
+import { formatDate } from '@/app/patient/_format';
 import type {
   CardRow,
   ChangeDefaultResult,
@@ -256,10 +258,9 @@ export default function PaymentMethods({
       )}
 
       {cards.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-12 text-center">
-          <p className="font-medium text-gray-500">No payment methods</p>
-          <p className="mt-1 text-sm text-gray-400">Add a card to pay your instalments.</p>
-        </div>
+        <EmptyState icon="card" title="No saved cards">
+          Add one and we&rsquo;ll use it to collect your instalments on your salary date.
+        </EmptyState>
       ) : (
         <div className="space-y-3">
           {cards.map((card) => {
@@ -290,6 +291,17 @@ export default function PaymentMethods({
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5 truncate">
                       {card.cardholder_name} · Exp {formatExpiry(card.expiry_month, card.expiry_year)}
+                    </p>
+                    {/* Provenance. created_at is already on CardRow and already
+                        selected, so this is data the page had and did not show.
+                        `.slice(0, 10)` because created_at is a TIMESTAMPTZ and the
+                        SHARED formatDate takes YYYY-MM-DD — reused rather than
+                        copied locally.
+
+                        It cannot go stale: a card row is never re-pointed at a
+                        different card — adding one inserts a new row. */}
+                    <p className="text-[11px] text-gray-400 mt-0.5" data-testid="card-added-at">
+                      Added {formatDate(card.created_at.slice(0, 10))}
                     </p>
                     {card.is_default && (
                       // Microcopy: the default is consumed only when a NEW

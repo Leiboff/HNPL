@@ -23,6 +23,7 @@ const ACCOUNT      = read('app/patient/account/page.tsx');
 const PROFILE      = read('app/patient/profile/page.tsx');
 const VERIFY_PHONE = read('app/(auth)/verify-phone/page.tsx');
 const CONFIRM      = read('app/patient/orders/[planId]/confirm/page.tsx');
+const SETTINGS     = read('app/patient/account/AccountSettings.tsx');
 
 describe('account consolidation — canonical route + redirect', () => {
   it('the profile route is an inert redirect to /patient/account', () => {
@@ -30,6 +31,7 @@ describe('account consolidation — canonical route + redirect', () => {
     // Inert: no data fetch, no editor UI left behind.
     expect(PROFILE).not.toContain('createClient');
     expect(PROFILE).not.toContain('AccordionSection');
+    expect(PROFILE).not.toContain('AccountSettings');
     expect(PROFILE).not.toContain('SalaryDaySection');
   });
 
@@ -46,17 +48,34 @@ describe('account consolidation — everything on the one page', () => {
     expect(ACCOUNT).toContain('<SalaryDaySection');
   });
 
-  it('salary date is nested inside the Personal details body (not its own section)', () => {
-    // Both the locked-field grid and the salary section live in the same
-    // `personalDetails` node handed to the accordion.
-    const start = ACCOUNT.indexOf('const personalDetails =');
-    const end   = ACCOUNT.indexOf('const howYouPay =');
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    const body = ACCOUNT.slice(start, end);
-    expect(body).toContain('<SalaryDaySection');
-    expect(body).toContain('<PhoneField');
-    expect(body).toContain('SA ID number');
+  it('salary date has exactly ONE home on the page — now its own section', () => {
+    // RE-DERIVED, not relaxed. This pin was written when salary date was a
+    // field nested inside Personal details, and it asserted that nesting
+    // literally. The hierarchy rework promoted salary date to its own
+    // section, so the literal cannot hold.
+    //
+    // What the pin was really protecting is the consolidation guarantee:
+    // salary date exists in exactly ONE place on this page, not two. That is
+    // unchanged and is what is asserted now — plus the thing the original
+    // could not say, namely that it is NOT also still inside Personal
+    // details. A half-finished move that left it in both places would fail
+    // here, where the old pin would have passed.
+    expect(ACCOUNT.match(/<SalaryDaySection/g)!).toHaveLength(1);
+
+    const personalStart = ACCOUNT.indexOf('const personalDetails =');
+    const personalEnd   = ACCOUNT.indexOf('const salaryDate =');
+    expect(personalStart).toBeGreaterThan(-1);
+    expect(personalEnd).toBeGreaterThan(personalStart);
+    const personalBody = ACCOUNT.slice(personalStart, personalEnd);
+
+    // Identity fields and the one editable field stay in Personal details…
+    expect(personalBody).toContain('<PhoneField');
+    expect(personalBody).toContain('SA ID number');
+    // …and salary date is no longer among them.
+    expect(personalBody).not.toContain('<SalaryDaySection');
+
+    // It is wired as its own section, by name.
+    expect(ACCOUNT).toMatch(/salaryDate=\{salaryDate\}/);
   });
 
   it('Notifications, Security, and Log out each render on the account page', () => {
@@ -79,7 +98,7 @@ describe('account consolidation — no rows-to-another-page, renamed Payday', ()
     expect(ACCOUNT).not.toContain('<SettingRow');
   });
 
-  it('"Payday" is gone from the account page (renamed to Salary date via the nested section)', () => {
+  it('"Payday" is gone from the account page (it is "Salary date" everywhere)', () => {
     expect(ACCOUNT).not.toContain('Payday');
     expect(ACCOUNT).not.toContain('title="Payday"');
   });
@@ -91,8 +110,27 @@ describe('account consolidation — former inbound links land on canonical', () 
     expect(VERIFY_PHONE).not.toContain('href="/patient/profile"');
   });
 
-  it('the confirm "set salary date" CTA points at /patient/account', () => {
-    expect(CONFIRM).toContain('/patient/account?section=personal');
+  it('the confirm "set salary date" CTA points at the section that HOLDS salary date', () => {
+    // RE-DERIVED for the same move. The CTA is reached when a plan cannot be
+    // confirmed because no salary date is set, so it has to land on salary
+    // date. It used to deep-link `?section=personal` because that was where
+    // the field was nested; now that salary date is its own section, the same
+    // intent is `?section=salary`.
+    //
+    // Asserted as a PAIR so the link and the structure cannot drift apart:
+    // the CTA names a section key, and AccountSettings must actually route
+    // that key to the salary section.
+    expect(CONFIRM).toContain('/patient/account?section=salary');
+    expect(CONFIRM).not.toContain('?section=personal');
     expect(CONFIRM).not.toContain('href="/patient/profile"');
+    expect(SETTINGS).toMatch(/section\('salary',\s*'Salary date'/);
+  });
+
+  it('the verify-phone CTA still points at Personal details, where phone lives', () => {
+    // The mirror case, and the reason the two links must be checked
+    // separately: phone did NOT move, so this one must NOT have been swept
+    // along with the salary change.
+    expect(VERIFY_PHONE).toContain('/patient/account?section=personal');
+    expect(SETTINGS).toMatch(/section\('personal',\s*'Personal details'/);
   });
 });
