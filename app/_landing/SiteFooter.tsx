@@ -5,6 +5,13 @@ import { PopiaIcon } from './icons';
 //
 // Same on both landing pages. "For practices" now routes to the
 // dedicated /practices page rather than a landing anchor.
+//
+// "Contact us" sits at the TOP of the Legal column, beside the T&Cs and
+// Privacy Policy. It is grouped with them rather than under Product
+// because the audience that goes looking for it here is the one checking
+// us out — an acquirer's onboarding reviewer expects contact details,
+// terms and privacy in one cluster. It leads the column because a real
+// address and phone number are the thing being verified.
 
 export default function SiteFooter() {
   return (
@@ -30,6 +37,7 @@ export default function SiteFooter() {
           </div>
           <div className="col">
             <h5>Legal</h5>
+            <Link href="/contact">Contact us</Link>
             <Link href="/legal/terms">Terms &amp; Conditions</Link>
             <Link href="/legal/privacy">Privacy Policy</Link>
             <a href="#">PAIA Manual</a>
