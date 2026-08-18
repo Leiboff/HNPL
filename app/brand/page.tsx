@@ -96,20 +96,62 @@ export default async function BrandDashboardPage() {
 
   const practiceIds = branchRows.map((b) => b.id);
 
-  const { data: rawBrands } = await s
-    .from('practice_groups')
-    .select('id, name')
-    .in('id', groupIds);
+  const branches: BranchOption[] = branchRows.map((b) => ({
+    id:      b.id,
+    name:    b.name,
+    status:  b.status,
+    suburb:  b.suburb,
+    city:    b.city,
+    groupId: b.group_id,
+    feePct:  Number(b.fee_percent ?? 0),
+  }));
+
+  // ─── One wave: brands, plans, per-practice payouts ──────────────────────
+  //
+  // Three sequential awaits became one round trip. None of them depends on
+  // another: brands needs only groupIds, and plans and payouts need only the
+  // practice ids already derived from branchRows above.
+  //
+  // WHY THIS WAVE STARTS HERE AND NOT EARLIER. The obvious extra candidate is
+  // the branches read itself — it also needs only groupIds, so pairing it with
+  // brands looks free. It is not. branchRows is immediately followed by two
+  // early redirects (no branches → /practice/setup, exactly one →
+  // /practice?practiceId=…), and the single-branch case is the COMMON one: a
+  // solo owner lands here and is bounced straight to their own dashboard.
+  // Pairing across those redirects would issue a practice_groups query that is
+  // thrown away on the most frequent path through this page — paying real work
+  // on the common case to save a round trip on the rarer one. So the wave
+  // deliberately begins after the redirects, where nothing it fetches can be
+  // discarded.
+  //
+  // The authorisation chain above is untouched and stays sequential:
+  // auth.getUser(), then resolveBrandGroupIds on the caller's OWN client. Every
+  // read below is scoped by the group ids that produced — service-role, but
+  // never wider than the caller's own memberships.
+  const [
+    { data: rawBrands },
+    { data: rawPlans },
+    payouts,
+  ] = await Promise.all([
+    s.from('practice_groups')
+      .select('id, name')
+      .in('id', groupIds),
+    s.from('plans')
+      .select('id, practice_id, provider_member_id, total_amount, status, created_at')
+      .in('practice_id', practiceIds)
+      .limit(5000),
+    // Service-role, scoped to the practice ids resolved from the caller's own
+    // group memberships above — the same authority pattern every read on this
+    // page already uses. resolveBrandPayouts makes no scoping decision of its
+    // own; it delegates to resolveNextPayout per practice, which applies
+    // .eq('practice_id', …) unconditionally.
+    resolveBrandPayouts(s, branches.map((b) => ({ id: b.id, name: b.name }))),
+  ]);
+
   const brands = (rawBrands ?? []).map((g) => ({
     id:   g.id as string,
     name: (g.name as string) ?? '—',
   }));
-
-  const { data: rawPlans } = await s
-    .from('plans')
-    .select('id, practice_id, provider_member_id, total_amount, status, created_at')
-    .in('practice_id', practiceIds)
-    .limit(5000);
   const plans = (rawPlans ?? []) as PlanRow[];
 
   // Provider dropdown — MEMBERSHIP ids that appear on any of the group's
@@ -129,15 +171,6 @@ export default async function BrandDashboardPage() {
     }));
   }
 
-  const branches: BranchOption[] = branchRows.map((b) => ({
-    id:      b.id,
-    name:    b.name,
-    status:  b.status,
-    suburb:  b.suburb,
-    city:    b.city,
-    groupId: b.group_id,
-    feePct:  Number(b.fee_percent ?? 0),
-  }));
 
   // ── Next payouts, per practice ────────────────────────────────────────
   //
@@ -146,7 +179,6 @@ export default async function BrandDashboardPage() {
   // page already uses. resolveBrandPayouts makes no scoping decision of its
   // own; it delegates to resolveNextPayout per practice, which applies
   // .eq('practice_id', …) unconditionally.
-  const payouts = await resolveBrandPayouts(s, branches.map((b) => ({ id: b.id, name: b.name })));
 
   // Active plan count per practice, UNFILTERED — computeRevenue's own
   // definition of active, so the count on a payout row and the count in the

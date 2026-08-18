@@ -6,6 +6,7 @@ import InstallPrompt from '@/app/_pwa/InstallPrompt';
 import PostLoginPasskeyPrompt from './PostLoginPasskeyPrompt';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { getPatientProfileForRequest } from '@/lib/patient/requestProfile';
 import { currentFlags } from '@/lib/featureFlags';
 
 export default async function PatientLayout({
@@ -17,16 +18,11 @@ export default async function PatientLayout({
   // session exists but the email is still unconfirmed.
   const { user, supabase } = await requireConfirmedUser({ next: '/patient' });
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select(`
-      role, first_name, last_name, email, phone,
-      login_count, passkey_prompt_next_show_at_login, passkey_prompt_permanent_dismiss,
-      phone_verified_at, sa_id_number, salary_day,
-      credit_check_status, liveness_verified_at, onboarding_completed
-    `)
-    .eq('id', user.id)
-    .single();
+  // Shared with app/patient/page.tsx via React cache(), so this row is read
+  // ONCE per request instead of once here and again in the page. See
+  // lib/patient/requestProfile.ts — a layout cannot pass props to a page, so
+  // request-scoped memoisation is the mechanism available.
+  const profile = await getPatientProfileForRequest(user.id);
 
   if (profile?.role !== 'patient') {
     if (profile?.role === 'practice_admin' || profile?.role === 'practice_staff') {

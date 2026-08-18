@@ -117,9 +117,28 @@ describe('Trading gate — universal banking condition (no more branch-only gati
     // Post-0062 the call is unconditional. If a future edit reintroduces
     // the wrapper, this test fails.
     expect(TRADING_GATE).not.toMatch(/if \(practice\.group_id\)\s*\{/);
-    // Banking call must still be present and ungated.
-    expect(TRADING_GATE).toMatch(/const banking = await resolveBanking\(supabase, practiceId\);/);
+
+    // Banking call must still be present and UNGATED. Re-derived, not
+    // weakened: this used to pin the literal
+    // `const banking = await resolveBanking(supabase, practiceId);`. The three
+    // gate conditions now resolve in one Promise.all, so the call has no
+    // `await` of its own and `banking` is destructured from the wave. The
+    // invariant this test exists for is unchanged and is what is asserted
+    // below — the call happens, exactly once, with nothing conditioning it.
+    expect(TRADING_GATE).toMatch(/resolveBanking\(supabase, practiceId\)/);
+    expect((TRADING_GATE.match(/resolveBanking\(supabase, practiceId\)/g) ?? []).length).toBe(1);
     expect(TRADING_GATE).toMatch(/banking\.source === 'none'/);
+
+    // "Ungated" asserted directly rather than inferred: the call sits inside
+    // the Promise.all argument list, so there is no `if` between the start of
+    // the wave and the call itself. A future edit that reintroduced any
+    // conditional around it would have to take it back out of the wave, which
+    // the single-call-site check above would also catch.
+    const waveAt = TRADING_GATE.indexOf('await Promise.all([');
+    const callAt = TRADING_GATE.indexOf('resolveBanking(supabase, practiceId)', waveAt);
+    expect(waveAt).toBeGreaterThan(0);
+    expect(callAt).toBeGreaterThan(waveAt);
+    expect(TRADING_GATE.slice(waveAt, callAt)).not.toMatch(/\bif\s*\(/);
   });
 });
 

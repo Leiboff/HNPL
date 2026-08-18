@@ -1,7 +1,10 @@
 import { redirect, notFound } from 'next/navigation';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { checkTradingGate, type TradingGateResult } from '@/lib/practice/tradingGate';
+// TradingGateResult is no longer imported: `gate` now comes out of the page's
+// parallel wave, where Promise.all's tuple inference already gives it that
+// exact type. An explicit annotation there would be redundant, not safer.
+import { checkTradingGate } from '@/lib/practice/tradingGate';
 import PracticeShell from './PracticeShell';
 import { resolvePracticeShellAuthority } from './practiceShellAuthority';
 import { resolvePracticeViewer } from './practiceViewer';
@@ -88,7 +91,35 @@ export default async function PracticeDashboardPage({
   // have a (silent, auto-created) brand row.
   const practiceCount = membershipCount;
 
-  const { data: rawPlans } = await reader
+  // ─── One wave: plans, trading gate, next payout, shell authority ────────
+  //
+  // These were four sequential awaits; they are now one round trip. Not one of
+  // them depends on another — each is keyed on practiceId (plus user.id and
+  // canManagePractice, both already resolved by the viewer above) — so the
+  // sequence was an artefact of the order the features were written in, and it
+  // cost four serial round trips on every load of the busiest staff screen.
+  //
+  // WHAT IS DELIBERATELY NOT IN HERE. Everything above this point is
+  // authorisation and stays strictly sequential: requireConfirmedUser, then
+  // the profile role gate, then resolvePracticeViewer, each genuinely needing
+  // the previous one's result. Folding any of it into this wave would begin
+  // reading practice data before the caller's right to see it was established
+  // — the one refactor this file must never accept. The wave starts only after
+  // `viewer` has narrowed to an authorised practiceId and `reader` has been
+  // chosen from it.
+  //
+  // The setup checklist is not here either, and that is a real dependency
+  // rather than caution: whether it is fetched at all turns on isBrandAdmin /
+  // canManageTill, which this wave produces. A reception-level member skips
+  // those four reads entirely, which is worth more than folding them in.
+  const [
+    { data: rawPlans },
+    gate,
+    nextPayout,
+    { isBrandAdmin, canManageTill, brandPracticeCount },
+  ] = await Promise.all([
+    // Practice-scoped plans. Unchanged query, unchanged reader.
+    reader
     .from('plans')
     .select(`
       id, total_amount, status, created_at, invoice_number, practice_reference,
@@ -103,17 +134,25 @@ export default async function PracticeDashboardPage({
     `)
     .eq('practice_id', practiceId)
     .order('created_at', { ascending: false })
-    .limit(500);
+    .limit(500),
+    // Same check the bill-creation server action enforces. Drives whether the
+    // "+ Create a bill" CTA renders or whether we show a status panel pointing
+    // at the unmet condition. Server-action is still the authoritative reject.
+    // (Service-role either way — it always was; the gate is a property of the
+    // practice, not of the viewer.)
+    checkTradingGate(svc, practiceId),
+    // Reads through the SAME `reader` as every other practice-scoped query on
+    // this page, so it inherits the authority the viewer already resolved and
+    // widens nothing. Dates are resolved on the server below, never in the
+    // component — see the payoutDates block.
+    resolveNextPayout(reader, practiceId),
+    // Shared with the other shell-rendering screens via
+    // ./practiceShellAuthority rather than copied per screen.
+    resolvePracticeShellAuthority(supabase, user.id, practiceId, canManagePractice),
+  ]);
 
   const plans = (rawPlans ?? []) as PlanSummary[];
 
-  // ── Trading gate ───────────────────────────────────────────────────────
-  // Same check the bill-creation server action enforces. Drives whether the
-  // "+ Create a bill" CTA renders or whether we show a status panel pointing
-  // at the unmet condition. Server-action is still the authoritative reject.
-  // (Service-role either way — it always was; the gate is a property of
-  // the practice, not of the viewer.)
-  const gate: TradingGateResult = await checkTradingGate(svc, practiceId);
 
   // Specialty now rides along on the provider_member embed above, so the extra
   // practice_members round-trip this used to need is gone. Keyed on the
@@ -137,7 +176,7 @@ export default async function PracticeDashboardPage({
   // never inside the component. The window boundaries are SAST midnights, and
   // formatting one of those in the browser's timezone would name the wrong
   // day. Passing pre-resolved YYYY-MM-DD strings makes that impossible.
-  const nextPayout = await resolveNextPayout(reader, practiceId);
+  // (Fetched in the wave above.)
   const payoutWindow = nextPayout.next.kind === 'none' ? null : nextPayout.next.window;
   const payoutDates = {
     payoutDate:  payoutWindow ? payoutDateFor(payoutWindow)          : null,
@@ -161,10 +200,7 @@ export default async function PracticeDashboardPage({
   //
   // Shared with the other shell-rendering screens via
   // ./practiceShellAuthority rather than copied per screen.
-  const { isBrandAdmin, canManageTill, brandPracticeCount } =
-    await resolvePracticeShellAuthority(
-      supabase, user.id, practiceId, canManagePractice,
-    );
+  // (Fetched in the wave above — isBrandAdmin / canManageTill / brandPracticeCount.)
 
   // ── Setup checklist ────────────────────────────────────────────────────
   //

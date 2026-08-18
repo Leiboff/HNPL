@@ -80,24 +80,38 @@ export default async function BrandRevenuePage({
   // ── 0. Brand identity, for the shell header only ───────────────────
   // Scoped by the same group_ids the guard above proved. Display data;
   // nothing on this page is gated on it.
-  const { data: rawBrands } = await s
-    .from('practice_groups')
-    .select('id, name')
-    .in('id', groupIds);
-  const brands = (rawBrands ?? []) as Array<{ id: string; name: string | null }>;
-  const brandName  = brands[0]?.name ?? null;
-  const brandCount = brands.length;
-
+  // ─── One wave: the brand rows and the practices in them ─────────────
+  //
+  // Two sequential awaits became one round trip. Both are keyed on groupIds
+  // alone and neither reads the other's result. The plans read below is NOT
+  // in here and cannot be: it filters .in('practice_id', practiceIds), which
+  // only exists once the practices come back.
+  //
+  // The authorisation chain above is untouched: auth.getUser(), then
+  // resolveBrandGroupIds on the caller's OWN client, then the empty-groups
+  // redirect. Both reads below are scoped by the group ids that produced.
+  //
   // ── 1. Practices in this caller's group(s) ─────────────────────────
   // The brand_admin_select_branches RLS policy (0061) gates the
   // session-client view of these, but we use service-role here so
   // we never accidentally leak rows from a group the caller doesn't
   // belong to — the guard above is the authz boundary.
-  const { data: rawPractices } = await s
-    .from('practices')
-    .select('id, name, fee_percent, group_id')
-    .in('group_id', groupIds)
-    .order('name');
+  const [
+    { data: rawBrands },
+    { data: rawPractices },
+  ] = await Promise.all([
+    s.from('practice_groups')
+      .select('id, name')
+      .in('id', groupIds),
+    s.from('practices')
+      .select('id, name, fee_percent, group_id')
+      .in('group_id', groupIds)
+      .order('name'),
+  ]);
+
+  const brands = (rawBrands ?? []) as Array<{ id: string; name: string | null }>;
+  const brandName  = brands[0]?.name ?? null;
+  const brandCount = brands.length;
 
   const practices = (rawPractices ?? []) as Array<RevenuePractice & { group_id: string }>;
   const practiceIds = practices.map((p) => p.id);
