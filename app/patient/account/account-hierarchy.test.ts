@@ -30,6 +30,7 @@ const PASSKEYS = codeOf('app/patient/profile/PasskeysSection.tsx');
 const CARDS    = codeOf('app/patient/payment-methods/PaymentMethods.tsx');
 const LOGOUT   = codeOf('app/patient/profile/ProfileLogoutSection.tsx');
 const PASSWORD = codeOf('app/patient/account/PasswordSection.tsx');
+const PHONE_ACTIONS = codeOf('app/patient/account/phoneChangeActions.ts');
 const LOADING  = codeOf('app/patient/account/loading.tsx');
 
 // ─── Masking ──────────────────────────────────────────────────────────────
@@ -56,17 +57,35 @@ describe('sensitive values are masked consistently, and stay editable', () => {
   it('phone is masked for DISPLAY and raw in the INPUT', () => {
     // Masked-but-editable. A field whose input also showed bullets would be
     // uncorrectable, which is the way this requirement fails in practice.
-    expect(PHONE).toMatch(/\{maskPhone\(savedPhone\)\}/);
-    expect(PHONE).toMatch(/value=\{phone\}/);
+    //
+    // RE-DERIVED for the re-verification flow. The displayed value is now the
+    // CURRENT verified number (`current`) rather than a local mirror of the
+    // last save (`savedPhone`), and the input holds the NEW number being
+    // entered (`draft`) rather than the existing one — the task changed from
+    // "correct this number in place" to "what is your new number?". The
+    // property is the same and still asserted: what renders is masked, what
+    // you type is not.
+    expect(PHONE).toMatch(/\{maskPhone\(current\)\}/);
+    expect(PHONE).toMatch(/value=\{draft\}/);
     expect(PHONE).not.toMatch(/value=\{maskPhone/);
+    // The staged number is masked too — it is just as personal as the current
+    // one, and the pending banner is a place the raw value could easily leak.
+    expect(PHONE).toMatch(/maskPhone\(staged\)/);
   });
 
-  it('masking did not touch the phone validator or its save path', () => {
-    // The FORBIDDEN line: structure, affordance and copy only.
+  it('the phone validator is still the shared one, on both sides', () => {
+    // RE-DERIVED. The save path deliberately changed — a phone change now
+    // requires OTP re-verification, so the old
+    // `updateProfile({ phone: normalized })` write is gone by design and the
+    // page writes no phone at all. See ./phone-reverification.test.ts for the
+    // new path's own guarantees.
+    //
+    // What this pin still protects is the VALIDATOR: the same shared
+    // normaliser on the client pre-check and again in the server action as the
+    // real gate. That was true before and is true now.
     expect(PHONE).toMatch(/normalizePhoneZA\(raw\)/);
-    expect(PHONE).toMatch(/await updateProfile\(\{ phone: normalized \}\)/);
-    expect(PAGE).toMatch(/normalizePhoneZA\(raw\)/);
-    expect(PAGE).toMatch(/\.update\(\{ phone \}\)/);
+    expect(PHONE_ACTIONS).toMatch(/normalizePhoneZA\(\(phoneRaw \?\? ''\)\.trim\(\)\)/);
+    expect(PAGE).not.toMatch(/\.update\(\{ phone \}\)/);
   });
 });
 
@@ -165,13 +184,26 @@ describe('provenance renders only where the data exists', () => {
     expect(SALARY).toMatch(/Existing plans keep their current schedule/);
   });
 
-  it('PHONE renders no provenance line, and never reads phone_verified_at', () => {
-    // phone_verified_at is column-locked to the OTP path (migrations 0054 /
-    // 0065) and the save path does not touch it, so it holds the date the OLD
-    // number was verified. Rendering it beside an edited number would state
-    // that an unverified number was verified.
-    expect(PHONE).not.toMatch(/phone_verified_at/);
-    expect(PHONE).not.toMatch(/Verified|Last updated|Last changed/);
+  it('PHONE renders verification STATE but still no date', () => {
+    // RE-DERIVED, and the underlying reason is now gone rather than
+    // worked around. This pin previously required the field to say nothing
+    // about verification at all, because phone_verified_at could describe a
+    // PREVIOUS number: it is locked to the OTP path, and the old save path
+    // wrote profiles.phone without it.
+    //
+    // A phone change now requires OTP re-verification, and the promotion
+    // writes phone and phone_verified_at in ONE update — so the timestamp can
+    // no longer describe anything but the current number. Stating the state is
+    // therefore honest, and it is required ("the account page shows
+    // verification state honestly").
+    //
+    // What remains banned is a DATE. "Verified 12 Mar 2026" would invite the
+    // reader to treat the age of the verification as meaningful, and nothing
+    // acts on it; the binary fact is the whole of what we know.
+    expect(PHONE).toMatch(/phone-state-verified/);
+    expect(PHONE).toMatch(/phone-state-unverified/);
+    expect(PHONE).not.toMatch(/Last updated|Last changed/);
+    expect(PHONE).not.toMatch(/formatDate|toLocaleDateString/);
     expect(PHONE).not.toMatch(/<Provenance/);
   });
 
@@ -239,10 +271,16 @@ describe('every empty state has an icon and a sentence', () => {
 
 describe('every existing save path is intact', () => {
   it('the phone action still validates, normalises and revalidates', () => {
-    expect(PAGE).toMatch(/async function updateProfile\(data: \{ phone: string \| null \}\)/);
-    expect(PAGE).toMatch(/'use server'/);
-    expect(PAGE).toMatch(/if \(!phone\) return \{ error: 'Enter a valid South African mobile number\.' \}/);
-    expect(PAGE).toMatch(/revalidatePath\('\/patient\/account'\)/);
+    // RE-DERIVED to the action's new home. It moved out of this page into
+    // ./phoneChangeActions.ts when phone changes started requiring OTP
+    // re-verification; the three properties this pin cares about moved with
+    // it, and a fourth was added (the write goes to staging, not to the live
+    // column).
+    expect(PHONE_ACTIONS).toMatch(/'use server'/);
+    expect(PHONE_ACTIONS).toMatch(/normalizePhoneZA\(/);
+    expect(PHONE_ACTIONS).toMatch(/code: 'invalid_phone'/);
+    expect(PHONE_ACTIONS).toMatch(/revalidatePath\('\/patient\/account'\)/);
+    expect(PHONE_ACTIONS).toMatch(/\.update\(\{ phone_pending: normalized \}\)/);
   });
 
   it('the salary action still gates on ALLOWED_SALARY_DAYS and revalidates both routes', () => {

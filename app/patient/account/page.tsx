@@ -11,6 +11,12 @@ import PasskeysSection from '../profile/PasskeysSection';
 import ProfileLogoutSection from '../profile/ProfileLogoutSection';
 import AccountSettings from './AccountSettings';
 import PasswordSection from './PasswordSection';
+import {
+  startPhoneChange,
+  requestPhoneChangeOtp,
+  verifyPhoneChangeOtp,
+  cancelPhoneChange,
+} from './phoneChangeActions';
 import { initializeCardRegistration } from '../actions';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
@@ -20,7 +26,6 @@ import EmptyState from '@/components/EmptyState';
 import { resolveAppVersion } from '@/lib/appVersion';
 import { todaySAST, formatDate } from '../_format';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
-import { normalizePhoneZA } from '@/lib/validation';
 import { getRequestUser } from '@/lib/auth/requestUser';
 import {
   changeDefaultCard,
@@ -78,33 +83,18 @@ import {
 
 // ─── Server actions (moved here from the retired profile route) ──────────
 
-async function updateProfile(data: { phone: string | null }): Promise<{ error: string | null }> {
-  'use server';
-
-  // Trust-boundary validation (the client validates too, but this is the
-  // real gate). Empty clears the number; anything else must normalise to a
-  // valid SA mobile — stored in canonical E.164 (+27…) form.
-  const raw = data.phone?.trim() ?? '';
-  let phone: string | null = null;
-  if (raw) {
-    phone = normalizePhoneZA(raw);
-    if (!phone) return { error: 'Enter a valid South African mobile number.' };
-  }
-
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Session expired. Please log in again.' };
-
-  const { error } = await supabase
-    .from('profiles')
-    .update({ phone })
-    .eq('id', user.id);
-
-  if (error) return { error: error.message };
-
-  revalidatePath('/patient/account');
-  return { error: null };
-}
+// ─── Phone changes do NOT live here any more ─────────────────────────────
+//
+// This file used to hold an `updateProfile` action that wrote
+// `.update({ phone })` directly. That was the bug fixed by migration 0099:
+// profiles.phone_verified_at is column-locked to the OTP path, so it stayed
+// set from the previous number's verification and the system believed an
+// unverified number was verified — while dunningNotifications.ts SMSed the
+// patient's arrears reminders to it.
+//
+// A phone change is now staged and re-verified. The four actions live in
+// ./phoneChangeActions.ts, which is where the reasoning is written down.
+// Nothing on this page writes profiles.phone.
 
 // Changes apply to FUTURE plans only — a plan's own `salary_day` column is
 // snapshotted at plan creation, so existing schedules are untouched. The
@@ -207,7 +197,7 @@ export default async function AccountPage() {
   const [{ data: profile }, { data: rawCards }, { data: rawPayments }, { data: rawPlans }] = await Promise.all([
     supabase
       .from('profiles')
-      .select('first_name, last_name, email, phone, sa_id_number, salary_day, created_at, terms_accepted_at, terms_version')
+      .select('first_name, last_name, email, phone, phone_pending, phone_verified_at, sa_id_number, salary_day, created_at, terms_accepted_at, terms_version')
       .eq('id', user.id)
       .single(),
     // Active cards only — archived (soft-deleted) cards drop off the list.
@@ -338,7 +328,15 @@ export default async function AccountPage() {
         />
       </div>
       <div className="border-t border-gray-100 pt-4">
-        <PhoneField current={profile?.phone ?? null} updateProfile={updateProfile} />
+        <PhoneField
+          current={profile?.phone ?? null}
+          pending={(profile?.phone_pending as string | null | undefined) ?? null}
+          verifiedAt={(profile?.phone_verified_at as string | null | undefined) ?? null}
+          startPhoneChange={startPhoneChange}
+          requestPhoneChangeOtp={requestPhoneChangeOtp}
+          verifyPhoneChangeOtp={verifyPhoneChangeOtp}
+          cancelPhoneChange={cancelPhoneChange}
+        />
       </div>
       <p className="text-xs border-t border-gray-100 pt-4" style={{ color: '#A3B1C2' }}>
         Locked fields protect your account.{' '}
