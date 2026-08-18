@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── A provider's own view ───────────────────────────────────────────────
 //
@@ -73,7 +74,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export default async function ProviderDashboardPage() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   // ── Scoping ───────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getRequestUser } from './requestUser';
 
 // ─── requireConfirmedUser ────────────────────────────────────────────────────
 //
@@ -60,7 +61,18 @@ export async function requireConfirmedUser(
   options: RequireConfirmedUserOptions = {},
 ): Promise<RequireConfirmedUserResult> {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+
+  // Request-scoped: the async area layouts (/patient, /provider) call this,
+  // and the page inside then asks for the user again. That used to be two
+  // `GET /auth/v1/user` round trips for one answer. The GATE below is
+  // unchanged and still runs on every call — only the validation round trip
+  // is shared. See lib/auth/requestUser.ts.
+  //
+  // Deliberately NOT wrapping this whole function in cache(): `options`
+  // differs per caller (the `next` path), so it would key on a fresh object
+  // every time and never hit — and a memoised `redirect()` throw is not
+  // something to introduce on an auth path.
+  const user = await getRequestUser();
 
   if (!user) {
     redirect(options.unauthenticatedRedirect ?? '/login');

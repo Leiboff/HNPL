@@ -15,6 +15,7 @@ import {
 } from '@/lib/patient/instalmentStatus';
 import { cardBrandLabel } from '@/lib/patient/cardBrand';
 import { formatRand, formatDate, relativeDay, todaySAST } from '@/app/patient/_format';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Plan detail (v4 screen 03) ──────────────────────────────────────────
 //
@@ -62,7 +63,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
   const { planId } = await params;
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   const [{ data: rawPlan }, { data: rawCards }] = await Promise.all([

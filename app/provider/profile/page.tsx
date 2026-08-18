@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { decryptIdForDisplay, maskId } from '@/lib/idEncryption';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 async function updatePhone(phone: string): Promise<{ error: string | null }> {
   'use server';
@@ -38,7 +39,7 @@ function Row({ label, value }: { label: string; value: string }) {
 
 export default async function ProviderProfilePage() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   const { data: profile } = await supabase

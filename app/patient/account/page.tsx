@@ -17,6 +17,7 @@ import { decryptIdForDisplay } from '@/lib/idEncryption';
 import { maskSaId } from '@/lib/saIdMask';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import { normalizePhoneZA } from '@/lib/validation';
+import { getRequestUser } from '@/lib/auth/requestUser';
 import {
   changeDefaultCard,
   removeCard,
@@ -112,7 +113,7 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 export default async function AccountPage() {
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   const [{ data: profile }, { data: rawCards }, { data: rawPayments }, { data: rawPlans }] = await Promise.all([

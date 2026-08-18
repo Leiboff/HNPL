@@ -8,6 +8,7 @@ import OrdersView from './OrdersView';
 import { summariseOutstanding } from '@/lib/patient/outstanding';
 import { planBucket } from '@/lib/patient/planBucket';
 import { formatRand, todaySAST } from '../_format';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Types (shared with OrdersView via props) ─────────────────────────────────
 
@@ -48,7 +49,7 @@ export type PlanRow = {
 export default async function OrdersPage() {
   const supabase = await createClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect('/login');
 
   const { data: rawPlans } = await supabase

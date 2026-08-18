@@ -196,8 +196,33 @@ describe('each section keeps its OWN gate', () => {
     // listDevices() runs guardTillManager itself. The page calls it only when
     // the section is visible, and treats a refusal as "no section" rather
     // than rendering an empty device list.
-    expect(PAGE).toMatch(/showTill \? await listDevices\(practiceId\) : null/);
+    //
+    // RE-DERIVED, not relaxed: the three section reads now share one
+    // Promise.all, so the call is no longer individually awaited and the old
+    // literal (`showTill ? await listDevices(practiceId) : null`) cannot
+    // match. The property it protected is unchanged and is asserted in three
+    // parts instead of one:
+    //
+    //   1. listDevices is still reached ONLY through the showTill ternary —
+    //      there is no second, ungated call site.
+    //   2. the false arm still yields null (as a resolved promise, since it
+    //      sits in a wave), so a hidden section still produces `devices ===
+    //      null` rather than an empty array.
+    //   3. a refusal is still treated as "no section".
+    expect(PAGE).toMatch(/showTill \? listDevices\(practiceId\) : Promise\.resolve\(null\)/);
+    // Exactly one call site, and it is the gated one.
+    expect(PAGE.match(/listDevices\(/g) ?? []).toHaveLength(1);
     expect(PAGE).toMatch(/devicesResult && !devicesResult\.error/);
+  });
+
+  it('does not await the till read ahead of the page authority gate', () => {
+    // The wave the till read now lives in must start AFTER the gate. If it
+    // ever moved above `canSeeAnySettingsSection`, a caller entitled to no
+    // section at all would have their device list read before being refused.
+    const gateIdx = PAGE.indexOf('if (!canSeeAnySettingsSection(authority)) notFound()');
+    const waveIdx = PAGE.indexOf('await Promise.all([');
+    expect(gateIdx).toBeGreaterThan(0);
+    expect(waveIdx).toBeGreaterThan(gateIdx);
   });
 
   it('fails closed on a practice that does not resolve', () => {
