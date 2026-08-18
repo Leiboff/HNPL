@@ -89,7 +89,7 @@ export default async function ConfirmPage({
           </p>
           <div className="flex flex-col items-center gap-3">
             <Link
-              href="/patient/account?section=personal"
+              href="/patient/account?section=salary"
               className="inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
               style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
             >

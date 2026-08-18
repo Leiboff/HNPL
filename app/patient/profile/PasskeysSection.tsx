@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { usePasskeys, passkeyErrorMessage, type Passkey } from '@/lib/hooks/usePasskeys';
+import EmptyState from '@/components/EmptyState';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
 function formatDate(iso: string): string {
@@ -16,9 +17,10 @@ export default function PasskeysSection() {
 
   if (!supported) {
     return (
-      <p className="text-sm text-gray-500">
-        Passkeys aren’t supported in this browser. Try Safari, Chrome, or Edge on a recent device.
-      </p>
+      <EmptyState icon="key" title="Not available in this browser">
+        Passkeys need a recent version of Safari, Chrome or Edge. Everything else on your
+        account works as normal here.
+      </EmptyState>
     );
   }
 
@@ -48,10 +50,10 @@ export default function PasskeysSection() {
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : passkeys.length === 0 ? (
-        <p className="text-sm text-gray-500">
-          You haven’t added a passkey yet. Adding one lets you sign in with Face ID, fingerprint,
-          or your device PIN.
-        </p>
+        <EmptyState icon="key" title="No passkeys yet">
+          Add one to sign in with your face, fingerprint or device PIN instead of typing a
+          password.
+        </EmptyState>
       ) : (
         <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
           {passkeys.map((p) => (

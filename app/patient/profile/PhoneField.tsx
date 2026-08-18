@@ -3,13 +3,41 @@
 import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { normalizePhoneZA } from '@/lib/validation';
+import { maskPhone } from '@/lib/patient/maskContact';
+import EmptyState from '@/components/EmptyState';
 
-// ─── Phone — edit-toggle field inside Personal details ────────────────
+// ─── Phone — masked, per-field edit inside Personal details ────────────
 //
 // Previously a separate accordion (own header, own body). Folded into
 // Personal details as one of its fields with the same edit-toggle
 // pattern as SalaryDaySection: display-only with a pencil affordance,
 // tap → editable + Save / Cancel.
+//
+// ─── MASKED WHILE STILL EDITABLE ──────────────────────────────────────
+//
+// The DISPLAY is masked to the last four digits, matching the SA ID field
+// beside it (lib/patient/maskContact.ts explains why all three identifiers
+// on this screen now use one discipline). Tapping Edit reveals the real
+// number, because a masked input cannot be edited.
+//
+// Nothing about the field's BEHAVIOUR changed: the validator, the
+// normalisation to E.164, the server action, and the no-stale-flash
+// mirroring below are all untouched. Masking is a display decision.
+//
+// ─── WHY THERE IS NO "LAST UPDATED" LINE HERE ─────────────────────────
+//
+// Deliberate, and worth stating so nobody adds one from the wrong column.
+// `profiles` carries no change timestamp for phone — no `updated_at`, no
+// `phone_changed_at`. The column that LOOKS like the answer,
+// `phone_verified_at`, is not: migrations 0054 and 0065 lock it so that only
+// the OTP verification path may write it, and the save path below
+// deliberately does not touch it. So after a patient edits their number it
+// still holds the date the OLD number was verified, and rendering it here
+// would state that an unverified number was verified.
+//
+// Migration 0052's own comment sets the rule this follows: "we never
+// retroactively claim a phone we did not verify." Where the data does not
+// exist, nothing renders.
 //
 // Two behaviours match SalaryDaySection:
 //   • The DISPLAYED value is a local mirror of the persisted phone — not
@@ -89,10 +117,21 @@ export default function PhoneField({ current, updateProfile }: Props) {
               placeholder="e.g. 082 000 0000"
               data-testid="profile-phone-input"
             />
-          ) : (
-            <p className="text-sm font-medium text-gray-800" data-testid="profile-phone-value">
-              {savedPhone || '—'}
+          ) : savedPhone ? (
+            <p
+              className="text-sm font-medium tabular-nums text-gray-800"
+              data-testid="profile-phone-value"
+            >
+              {maskPhone(savedPhone)}
             </p>
+          ) : (
+            // An unset number is an empty state, not a dash. The dash said
+            // nothing at all to someone who has never added a number.
+            <div data-testid="profile-phone-value">
+              <EmptyState icon="field" title="No mobile number" inline>
+                Add one so we can text you about a payment before it goes out.
+              </EmptyState>
+            </div>
           )}
         </div>
         {!editing ? (
