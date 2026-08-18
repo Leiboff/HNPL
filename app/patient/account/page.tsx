@@ -429,12 +429,26 @@ export default async function AccountPage() {
             footer link it stops competing with the sections above it and
             still sits where a patient looks for it.
 
+            It now points at /contact rather than a bare mailto:. The page
+            carries every channel (email, phone, hours, address), so a
+            patient without a configured mail client is no longer stuck.
+            The two CONTEXT-SPECIFIC support links are deliberately left as
+            mailto: — the locked-fields one below, and the declined-bill
+            one on app/patient/orders/DeclinedPlanDetail.tsx, which
+            pre-fills a subject line. Sending those through a page would
+            add a hop and lose the pre-filled context.
+
+            A plain <a>, not <Link>: /contact is a MARKETING page with its
+            own chrome and stylesheets, so this deliberately leaves the app
+            shell rather than prefetching landing.css into the patient
+            bundle for a link most patients never tap.
+
             The provenance lines and the build id render only when their data
             exists, so on an account predating the terms columns, or in local
             dev, this footer is simply shorter. */}
         <div className="flex flex-col items-center gap-1.5 pt-3 pb-1 text-center">
           <a
-            href="mailto:support@betternow.co.za"
+            href="/contact"
             data-testid="account-get-help"
             className="text-[13px] font-semibold underline underline-offset-2 transition-colors hover:opacity-70"
             style={{ color: '#13294B' }}

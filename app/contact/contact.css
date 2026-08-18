@@ -1,0 +1,150 @@
+/* ─── /contact — published contact details ────────────────────────────────
+ *
+ * Styled with the marketing surface's existing design tokens. Every rule
+ * is scoped under `.lp-root` so it reads the same --navy / --teal / --line
+ * / --muted / --card / --bg custom properties landing.css defines, and
+ * class names are prefixed `lp-contact-` so nothing collides with
+ * landing.css (notably its own `.wrap`) or terms.css / privacy.css.
+ *
+ * A short page, so it is a single centred column — no side nav, unlike the
+ * legal pages, which need one because they are long enough to get lost in. */
+
+.lp-root .lp-contact-wrap {
+  max-width: 660px;
+  margin: 0 auto;
+  padding: 48px clamp(20px, 5vw, 40px) 88px;
+}
+
+/* ── Heading ─────────────────────────────────────────────────────────── */
+.lp-root .lp-contact-head {
+  margin-bottom: 28px;
+}
+.lp-root .lp-contact-head h1 {
+  font-size: clamp(28px, 5vw, 38px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--navy);
+  margin: 0 0 10px;
+}
+.lp-root .lp-contact-intro {
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0;
+  max-width: 46ch;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────── */
+.lp-root .lp-contact-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: clamp(20px, 4vw, 28px);
+  margin-bottom: 16px;
+}
+.lp-root .lp-contact-h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+  color: var(--muted);
+  margin: 0 0 18px;
+}
+
+/* ── "Who we are" lead line ──────────────────────────────────────────── */
+.lp-root .lp-contact-entity {
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--navy);
+  margin: 0 0 20px;
+}
+.lp-root .lp-contact-entity .brand {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.lp-root .lp-contact-tradename {
+  color: var(--muted);
+}
+
+/* ── Detail list ──────────────────────────────────────────────────────
+ *
+ * Two columns on a comfortable viewport, stacking to label-over-value on
+ * a narrow one. A <dl> rather than a table: these are label/value pairs,
+ * and the pairing is the semantics a screen reader should get. */
+.lp-root .lp-contact-dl {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 14px 20px;
+  margin: 0;
+  align-items: start;
+}
+.lp-root .lp-contact-dl dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0;
+  padding-top: 1px;
+}
+.lp-root .lp-contact-dl dd {
+  font-size: 15.5px;
+  line-height: 1.5;
+  color: var(--navy);
+  margin: 0;
+  font-weight: 500;
+}
+@media (max-width: 560px) {
+  .lp-root .lp-contact-dl {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  /* Keep each pair visually grouped once they stack. */
+  .lp-root .lp-contact-dl dd + dt {
+    margin-top: 16px;
+  }
+}
+
+/* ── Tappable email + phone ───────────────────────────────────────────
+ *
+ * This page is mostly read on a phone, so the mailto:/tel: targets get a
+ * touch target rather than being bare inline text. */
+.lp-root .lp-contact-link {
+  color: var(--teal);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(21, 168, 158, 0.35);
+  padding-bottom: 1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  /* Comfortable tap height without disturbing the grid rhythm. */
+  display: inline-block;
+  min-height: 24px;
+}
+.lp-root .lp-contact-link:hover {
+  color: var(--teal-bright);
+  border-color: var(--teal-bright);
+}
+
+/* ── Address ─────────────────────────────────────────────────────────── */
+.lp-root .lp-contact-address {
+  font-style: normal; /* <address> italicises by default */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Foot note ───────────────────────────────────────────────────────── */
+.lp-root .lp-contact-foot {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 24px 0 0;
+  text-align: center;
+}
+.lp-root .lp-contact-foot a {
+  color: var(--navy);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.lp-root .lp-contact-foot a:hover {
+  color: var(--teal);
+}
