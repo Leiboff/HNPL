@@ -171,10 +171,18 @@ const SECTIONS: Section[] = [
     clauses: [
       { n: '12.1', parts: [{ b: 'Responsible Party:' }, ' BETTERNOW (PTY) LTD, registration number 2026/420968/07.'] },
       // Identified by ROLE and contact route, not by person (v1.1). The
-      // previous wording carried an unfilled "[INSERT NAME / TITLE]"
-      // placeholder. Naming a route rather than an individual also means the
-      // clause does not go stale when the role changes hands, and it invents
-      // no fact we cannot stand behind.
+      // previous wording carried an unfilled bracketed placeholder where a
+      // name and title should have gone, and it shipped live. Naming a route
+      // rather than an individual also means the clause does not go stale
+      // when the role changes hands, and it invents no fact we cannot stand
+      // behind.
+      //
+      // The placeholder is described here rather than quoted. Quoting it put
+      // the literal back into the file, so a raw grep for it still matched
+      // this page — a comment about a removal reading as the removal not
+      // having happened. The privacy-page test strips comments before
+      // scanning and so passed either way, which is exactly why the raw grep
+      // is worth keeping clean too.
       { n: '12.2', parts: [{ b: 'Information Officer:' }, ' our Information Officer can be reached at ', SUPPORT, '. Please mark your message for the attention of the Information Officer so that it is routed correctly.'] },
       { n: '12.3', parts: [{ b: 'General privacy queries and requests:' }, ' ', SUPPORT, '.'] },
       { n: '12.4', parts: [{ b: 'Information Regulator (South Africa):' }, ' you may lodge a complaint with the Information Regulator. Details are available at the Regulator’s website, inforegulator.org.za.'] },
