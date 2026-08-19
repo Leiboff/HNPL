@@ -30,7 +30,7 @@ export const REGISTRATION_NUMBER = '2026/420968/07';
 
 /** Physical (street) address. An acquirer expects a real, verifiable one. */
 export const ADDRESS_LINES = [
-  'Unit 35, 19 Cross Road',
+  '19 Cross Road',
   'Glenhazel',
   'Johannesburg',
   '2192',

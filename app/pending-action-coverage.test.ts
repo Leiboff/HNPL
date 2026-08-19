@@ -58,6 +58,12 @@ const CONVERTED = [
   'app/signup/practice/page.tsx',
   // password set
   'app/update-password/UpdatePasswordForm.tsx',
+  // public contact enquiry — built with the hook from the start. Uses
+  // p.run() rather than a mirrored useTransition, because nothing
+  // revalidates: success swaps the card for a confirmation held in local
+  // state, so there is no transition to track. run()'s synchronous ref is
+  // also the double-submit guard for a public endpoint that sends mail.
+  'app/contact/ContactForm.tsx',
 ] as const;
 
 /**
