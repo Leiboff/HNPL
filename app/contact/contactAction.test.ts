@@ -217,6 +217,21 @@ describe('(c) honeypot', () => {
 // ─── (d) Per-IP rate limiting ─────────────────────────────────────────
 
 describe('(d) per-IP rate limit', () => {
+  it('the refusal routes the user to the support mailbox', async () => {
+    // Someone who has hit the limit still has something to say. Telling them
+    // only to "try later" strands them; the page already shows this address
+    // in its left column, so the copy points at it.
+    for (let i = 0; i < CONTACT_RATE_LIMIT_MAX; i++) await submitContactEnquiry(valid());
+    const res = await submitContactEnquiry(valid());
+    if (res.ok) throw new Error('expected a rate-limit refusal');
+    expect(res.error).toBe('rate_limited');
+    expect(res.message).toContain(SUPPORT_EMAIL);
+    // Honest about what happened: it does not imply the message was sent.
+    for (const claim of [/message (was |has been )?sent\b/i, /we('ve| have) sent/i, /thanks/i]) {
+      expect(res.message).not.toMatch(claim);
+    }
+  });
+
   it(`allows ${CONTACT_RATE_LIMIT_MAX} then refuses the next from the same IP`, async () => {
     for (let i = 0; i < CONTACT_RATE_LIMIT_MAX; i++) {
       expect(await submitContactEnquiry(valid())).toEqual({ ok: true });
@@ -236,15 +251,49 @@ describe('(d) per-IP rate limit', () => {
     expect(await submitContactEnquiry(valid())).toEqual({ ok: true });
   });
 
-  it('is checked BEFORE validation, so bad payloads still cost budget', async () => {
-    // Ordering matters: validating first would let an attacker burn CPU on
-    // unlimited malformed payloads for free.
-    for (let i = 0; i < CONTACT_RATE_LIMIT_MAX; i++) {
-      await submitContactEnquiry(valid({ email: 'garbage' }));
+  // ─── DELIBERATELY REVERSED ─────────────────────────────────────────
+  //
+  // This pin used to assert the opposite: "is checked BEFORE validation, so
+  // bad payloads still cost budget", on the reasoning that validating first
+  // would let an attacker burn CPU on unlimited malformed payloads.
+  //
+  // That reasoning did not survive costing it out. Validation here is a few
+  // trims, length caps and two regexes — no database, no email, no crypto.
+  // Meanwhile the old order had a real victim: someone fumbling the form
+  // spent all five tokens on mistakes and was locked out for an hour having
+  // never sent a single message. Protecting two regexes was not worth that.
+  //
+  // So the ORDER changed and this pin was rewritten to match the new
+  // invariant. It is not loosened — it asserts something strictly stronger
+  // about the failure the user can actually hit, and it fails if the order is
+  // ever put back.
+  it('✦ a flood of validation failures consumes NO token and never rate-limits', async () => {
+    // Well past the limit, so an off-by-one cannot hide the old behaviour.
+    for (let i = 0; i < CONTACT_RATE_LIMIT_MAX + 3; i++) {
+      const bad = await submitContactEnquiry(valid({ email: 'garbage' }));
+      expect(bad.ok).toBe(false);
+      // Every one must be a VALIDATION refusal, never a rate-limit refusal —
+      // if the limiter ran first, the later ones would come back
+      // 'rate_limited' and the user would never learn their email was wrong.
+      if (!bad.ok) expect(bad.error).toBe('invalid');
     }
-    const res = await submitContactEnquiry(valid());
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error).toBe('rate_limited');
+
+    // And the budget is untouched, so a corrected submission goes straight
+    // through. This is the case that was broken.
+    const good = await submitContactEnquiry(valid());
+    expect(good).toEqual({ ok: true });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('✦ a fumbling user still has the FULL budget after failing repeatedly', async () => {
+    for (let i = 0; i < CONTACT_RATE_LIMIT_MAX + 3; i++) {
+      await submitContactEnquiry(valid({ message: '' }));
+    }
+    // All five valid sends remain available.
+    for (let i = 0; i < CONTACT_RATE_LIMIT_MAX; i++) {
+      expect(await submitContactEnquiry(valid())).toEqual({ ok: true });
+    }
+    expect(sent).toHaveLength(CONTACT_RATE_LIMIT_MAX);
   });
 
   it('takes the first hop of x-forwarded-for, not the whole chain', async () => {

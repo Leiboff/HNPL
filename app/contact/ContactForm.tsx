@@ -38,6 +38,30 @@ import { submitContactEnquiry } from './contactAction';
 
 type FieldKey = 'kind' | 'name' | 'email' | 'phone' | 'message';
 
+/**
+ * Shown when the call to the action REJECTS rather than returning a result —
+ * offline, a dropped connection, a 500 from the action endpoint, a deploy
+ * mid-submit.
+ *
+ * NOTE THE HEDGE, it is the whole point. Every other failure message on this
+ * form can say plainly that nothing was sent, because the action returned and
+ * told us so. A rejection cannot say that: the request may have reached the
+ * server, sent the email, and then lost the connection on the way back. So
+ * "nothing was sent" here would be the same class of confident-false-statement
+ * as a fake success, merely inverted — and it would invite someone to write
+ * again when we already have their message.
+ *
+ * "Couldn't confirm" is the only honest description of what we know, and the
+ * advice that follows is safe under BOTH possibilities: emailing us directly
+ * costs a duplicate at worst, and a duplicate is recoverable in a way that
+ * silence is not.
+ *
+ * This copy lives here rather than in contactAction.ts because on this path
+ * the action never runs — there is no server response to carry a message.
+ */
+const COULD_NOT_CONFIRM =
+  `We couldn't confirm your message went through. To be safe, please email us directly at ${SUPPORT_EMAIL}.`;
+
 export default function ContactForm() {
   const pending = usePendingAction();
   const [sent, setSent]   = useState(false);
@@ -51,16 +75,44 @@ export default function ContactForm() {
     setField(null);
 
     const fd = new FormData(e.currentTarget);
-    const res = await pending.run(() =>
-      submitContactEnquiry({
-        kind:    String(fd.get('kind') ?? ''),
-        name:    String(fd.get('name') ?? ''),
-        email:   String(fd.get('email') ?? ''),
-        phone:   String(fd.get('phone') ?? ''),
-        message: String(fd.get('message') ?? ''),
-        website: String(fd.get('website') ?? ''),   // honeypot
-      }),
-    );
+
+    // ── Why this try/catch exists ───────────────────────────────────────
+    //
+    // usePendingAction's run() is `try { await fn() } finally { … }` — it
+    // clears its flag but does NOT swallow the rejection, by design, because
+    // the hook manages presentation and leaves failure policy to the caller.
+    // Without a catch HERE, a rejection escaped this async handler as an
+    // unhandled promise rejection: no error, no success, the button simply
+    // re-enabled. The user was left unable to tell whether they had contacted
+    // us. That is the one outcome this form exists to prevent.
+    //
+    // The catch belongs at this call site and NOT in the hook: ~31 other
+    // callers share it, several of which deliberately end in a redirect, and
+    // a catch there would change failure handling for all of them.
+    //
+    // The finally in run() has already cleared the pending flag by the time
+    // we get here, so the button re-enables and a retry is possible — the
+    // catch adds the message, it does not need to unstick anything.
+    let res;
+    try {
+      res = await pending.run(() =>
+        submitContactEnquiry({
+          kind:    String(fd.get('kind') ?? ''),
+          name:    String(fd.get('name') ?? ''),
+          email:   String(fd.get('email') ?? ''),
+          phone:   String(fd.get('phone') ?? ''),
+          message: String(fd.get('message') ?? ''),
+          website: String(fd.get('website') ?? ''),   // honeypot
+        }),
+      );
+    } catch {
+      // The rejection itself is not surfaced. It is a transport error, not
+      // something a visitor can act on, and this form's rule is that no
+      // provider or internal error string ever reaches the user.
+      setError(COULD_NOT_CONFIRM);
+      setField(null);
+      return;
+    }
 
     if (res.ok) {
       setSent(true);

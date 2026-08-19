@@ -40,6 +40,15 @@ const PHONE_FORM        = read('app/patient/profile/PhoneField.tsx');
 // invariant follows the write, so it follows this file now.
 const PHONE_ACTIONS     = read('app/patient/account/phoneChangeActions.ts');
 const ADMIN_CUSTOMER    = read('app/admin/customers/[patientId]/page.tsx');
+// The PUBLIC contact form. It sits outside the patient surface, which is
+// exactly why it was unguarded: app/contact/ was not on this file's list, so
+// an address input added there would have collected patient addresses with no
+// test objecting. This invariant has already gone silently absent once (the
+// whole file stopped collecting when a component it read was deleted), so the
+// lesson is to widen the list rather than to assume a surface is safe because
+// it is new.
+const CONTACT_FORM      = read('app/contact/ContactForm.tsx');
+const CONTACT_ACTION    = read('app/contact/contactAction.ts');
 
 const DROPPED = [
   'address_line1',
@@ -157,5 +166,60 @@ describe('Admin customer detail page — does not display patient address', () =
   it('still shows email + phone (we kept the load-bearing fields)', () => {
     expect(ADMIN_CUSTOMER).toMatch(/Field label="Email"/);
     expect(ADMIN_CUSTOMER).toMatch(/Field label="Phone"/);
+  });
+});
+
+// ─── The public contact form collects no address ──────────────────────
+//
+// Reuses this file's own `read` + DROPPED mechanism rather than a fresh
+// regex — lib/validation/regression.test.ts bans new validator regexes
+// outside lib/validation/, and more practically a second mechanism here would
+// be a second thing to keep in step with migration 0059.
+//
+// NOTE what is NOT in scope: the page renders OUR OWN office address (19 Cross
+// Road) as published contact detail. That is a business fact on a marketing
+// page, not personal information about a patient, and POPIA minimisation has
+// nothing to say about it. What must never appear is an INPUT that collects
+// somebody else's address.
+describe('the public contact form collects no address', () => {
+  it('references none of the dropped patient-address columns', () => {
+    for (const col of DROPPED) {
+      expect(CONTACT_FORM).not.toMatch(new RegExp(`\\b${col}\\b`));
+      expect(CONTACT_ACTION).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
+  });
+
+  it('has no address-shaped INPUT, textarea or select', () => {
+    // Field NAMES, not prose: the comment above deliberately discusses
+    // addresses, and the page legitimately renders our own. Only a form
+    // control that captures one is a violation.
+    const CONTROL_NAMES = /(?:name|id)=["'](?:[a-z_]*(?:address|suburb|postal|postcode|zip|street|province|city|line1|line2)[a-z_]*)["']/i;
+    expect(CONTACT_FORM).not.toMatch(CONTROL_NAMES);
+  });
+
+  it('the action accepts no address-shaped field in its input type', () => {
+    // The server contract is the other half: a field the form does not render
+    // but the action would accept is still a collection surface.
+    const input = CONTACT_ACTION.slice(
+      CONTACT_ACTION.indexOf('export type ContactEnquiryFormInput'),
+      CONTACT_ACTION.indexOf('export type ContactEnquiryResult'),
+    );
+    expect(input.length).toBeGreaterThan(0);
+    for (const word of ['address', 'suburb', 'postal', 'postcode', 'zip', 'street', 'province', 'city', 'line1', 'line2']) {
+      expect(input.toLowerCase()).not.toContain(word);
+    }
+  });
+
+  it('the field list is exactly the five it should be, plus the honeypot', () => {
+    // A whitelist, so a NEW field of any kind has to be considered here
+    // rather than only address-shaped ones being caught.
+    // The character class must admit DIGITS and hyphens. The first draft used
+    // [a-z_]+, which did not capture `address_line1` AT ALL — so a field named
+    // with a digit slipped past the whitelist silently. Found by
+    // mutation-testing this guard rather than by reading it.
+    const names = [...CONTACT_FORM.matchAll(/\bname="([a-zA-Z0-9_-]+)"/g)].map((m) => m[1]);
+    expect([...new Set(names)].sort()).toEqual(
+      ['email', 'kind', 'message', 'name', 'phone', 'website'],
+    );
   });
 });

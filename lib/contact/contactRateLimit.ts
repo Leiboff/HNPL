@@ -44,6 +44,18 @@
 const RATE_LIMIT_MAX       = 5;
 const RATE_LIMIT_WINDOW_MS = 60 * 60_000;   // 1 h
 
+// ─── WHAT "5/hour per IP" ACTUALLY MEANS ─────────────────────────────
+//
+// 5/hour per IP PER WARM SERVERLESS INSTANCE. This is an in-process Map: each
+// lambda that serves a request has its own copy, so N warm instances mean up
+// to 5N submissions per hour from one IP, and every deploy or cold start
+// resets every bucket to empty.
+//
+// That is defence-in-depth against casual abuse and accidental double-posting,
+// NOT a hard admission gate — do not cite it as one, and do not build anything
+// that depends on the ceiling actually holding. A durable store
+// (KV / Postgres) is a post-launch item if spam actually appears; until then
+// the honeypot and the server-side validation are the other two layers.
 const rateBuckets = new Map<string, number[]>();
 
 /** Returns true if the IP is within budget (and records the hit);

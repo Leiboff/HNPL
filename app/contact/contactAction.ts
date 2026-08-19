@@ -27,15 +27,17 @@ import { SUPPORT_EMAIL } from '@/lib/config/contact';
 //      name and same silent-success behaviour as the practices form, so the
 //      two public surfaces cannot be told apart by probing them.
 //
-//   2. PER-IP RATE LIMIT, checked BEFORE validation. Ordering is deliberate:
-//      validating first would let an attacker burn our CPU on 10 000 bad
-//      payloads for free, and would leak which fields are checked in what
-//      order through timing. See lib/contact/contactRateLimit.ts for why it
-//      has its own bucket rather than sharing the CRM one.
-//
-//   3. SERVER-SIDE VALIDATION, authoritative. The client validates too, for
+//   2. SERVER-SIDE VALIDATION, authoritative. The client validates too, for
 //      the error messages, but nothing here trusts it: `required` attributes
 //      and `type="email"` are absent the moment someone POSTs directly.
+//
+//   3. PER-IP RATE LIMIT, checked AFTER validation, so only a submission
+//      that would otherwise be SENT spends a token. The reasoning for that
+//      order is written out at the check itself; the short version is that
+//      validation costs two regexes and a few trims, which is not worth
+//      protecting with a budget a real person needs. See
+//      lib/contact/contactRateLimit.ts for why it has its own bucket rather
+//      than sharing the CRM one.
 //
 // Deliberately NOT added: a third-party captcha. It would be the first
 // third-party script on the marketing surface, it sends visitor data to a
@@ -95,20 +97,7 @@ export async function submitContactEnquiry(
     return { ok: true };
   }
 
-  // ── 2. Rate limit per IP, before any work ───────────────────
-  const h  = await headers();
-  const ip = (h.get('x-forwarded-for') ?? '').split(',')[0].trim()
-          || h.get('x-real-ip')
-          || 'anon';
-  if (!checkContactRate(ip)) {
-    return {
-      ok: false,
-      error: 'rate_limited',
-      message: 'That is a few messages in a short time. Please try again a little later.',
-    };
-  }
-
-  // ── 3. Validation — server-authoritative ────────────────────
+  // ── 2. Validation — server-authoritative ────────────────────
   const kindRaw = (input.kind ?? '').trim();
   const name    = (input.name  ?? '').trim().slice(0, MAX.name);
   const email   = (input.email ?? '').trim().toLowerCase().slice(0, MAX.email);
@@ -144,6 +133,41 @@ export async function submitContactEnquiry(
   const phoneNormalised = phone
     ? normalizePhoneZA(phone, { allowLandline: true }) ?? phone
     : '';
+
+  // ── 3. Rate limit per IP — AFTER validation, deliberately ───
+  //
+  // A token is spent only by a submission that would otherwise be SENT.
+  //
+  // This used to run before validation, on the reasoning that validating
+  // first lets an attacker burn CPU on unlimited malformed payloads. That
+  // reasoning does not survive looking at what validation actually costs:
+  // a handful of trims, length caps and two regexes. No database call, no
+  // email, no crypto. There is nothing there worth protecting with a
+  // budget that a real person needs.
+  //
+  // And the old order had a genuine victim. Someone fumbling the form —
+  // a mistyped email three times, a message they forgot to write twice —
+  // spent all five tokens without ever sending anything, and was then
+  // locked out for an hour having never once succeeded. That is a worse
+  // outcome than the CPU it was protecting.
+  //
+  // The honeypot still runs FIRST and still spends nothing, so a bot
+  // cannot drain the budget of a real visitor sharing its IP (CGNAT, a
+  // practice's office NAT). That ordering is load-bearing and pinned.
+  const h  = await headers();
+  const ip = (h.get('x-forwarded-for') ?? '').split(',')[0].trim()
+          || h.get('x-real-ip')
+          || 'anon';
+  if (!checkContactRate(ip)) {
+    return {
+      ok: false,
+      error: 'rate_limited',
+      // Routes to the mailbox as well as asking them to wait: someone who
+      // has hit the limit still has something to say, and the left column
+      // of the page already shows this address.
+      message: `You've sent a few messages in a short time — please try again shortly, or email us directly at ${SUPPORT_EMAIL}.`,
+    };
+  }
 
   // ── 4. Send. One email, to support, Reply-To the submitter ──
   const sent = await sendContactEnquiryEmail({

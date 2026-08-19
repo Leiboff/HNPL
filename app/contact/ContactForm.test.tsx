@@ -15,9 +15,15 @@ const calls: Input[] = [];
 let gate: { promise: Promise<ContactEnquiryResult>; resolve: (r: ContactEnquiryResult) => void } | null = null;
 let nextResult: ContactEnquiryResult = { ok: true };
 
+/** When set, the action REJECTS instead of resolving — a transport failure
+ *  (offline, dropped connection, 500 from the action endpoint, deploy
+ *  mid-submit) rather than a result the server chose to return. */
+let nextThrow: Error | null = null;
+
 vi.mock('./contactAction', () => ({
   submitContactEnquiry: (input: Input) => {
     calls.push(input);
+    if (nextThrow) return Promise.reject(nextThrow);
     return gate ? gate.promise : Promise.resolve(nextResult);
   },
 }));
@@ -44,6 +50,7 @@ beforeEach(() => {
   calls.length = 0;
   gate = null;
   nextResult = { ok: true };
+  nextThrow = null;
 });
 
 describe('the form renders its fields', () => {
@@ -250,6 +257,125 @@ describe('failure is honest', () => {
     nextResult = { ok: true };
     await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
     await waitFor(() => expect(screen.getByTestId('contact-form-sent')).toBeTruthy());
+    expect(screen.queryByTestId('contact-form-error')).toBeNull();
+  });
+});
+
+// ─── The throw path ───────────────────────────────────────────────────
+//
+// Before the try/catch in onSubmit, a rejection escaped the async handler as
+// an UNHANDLED PROMISE REJECTION: no error, no success, the button simply
+// re-enabled. Verified at the time by probe — errorShown=NO, successShown=NO,
+// buttonDisabled=false. The user could not tell whether they had contacted us,
+// which is the one outcome this form exists to prevent.
+//
+// MUTATION ANCHOR: removing the catch from ContactForm's onSubmit turns every
+// test in this block red and reintroduces the unhandled rejection.
+
+describe('a throwing action is reported, not swallowed', () => {
+  it('renders the error box rather than nothing', async () => {
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+
+    const err = await waitFor(() => screen.getByTestId('contact-form-error'));
+    expect(err).toBeTruthy();
+    // The same rendered path as every other failure, not a parallel one.
+    expect(screen.getByRole('alert')).toBe(err);
+  });
+
+  it('shows no success state', async () => {
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    await waitFor(() => expect(screen.getByTestId('contact-form-error')).toBeTruthy());
+    expect(screen.queryByTestId('contact-form-sent')).toBeNull();
+  });
+
+  it('re-enables the button so a retry is possible', async () => {
+    // run()'s finally already clears the flag; this pins that the catch does
+    // not strand it.
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    await waitFor(() => {
+      expect((screen.getByTestId('contact-form-submit') as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
+
+  it('keeps the form and its contents so nothing is lost', async () => {
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    await waitFor(() => expect(screen.getByTestId('contact-form-error')).toBeTruthy());
+    expect(screen.getByTestId('contact-form')).toBeTruthy();
+    expect((screen.getByTestId('contact-form-message') as HTMLTextAreaElement).value)
+      .toBe('A question about my plan.');
+  });
+
+  it('routes the user to the support mailbox', async () => {
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    const err = await waitFor(() => screen.getByTestId('contact-form-error'));
+    expect(err.textContent).toContain('support@betternow.co.za');
+  });
+
+  it('HEDGES — it must not claim the message was not sent', async () => {
+    // The distinguishing property of this path. A rejection cannot tell us
+    // whether the server sent the email before the connection dropped, so
+    // "nothing was sent" here would be a confident false statement of the
+    // same class as a fake success, merely inverted — and it would invite a
+    // duplicate we may already have.
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    const err = await waitFor(() => screen.getByTestId('contact-form-error'));
+    const text = err.textContent ?? '';
+
+    expect(text).toMatch(/couldn't confirm/i);
+    // No claim either way about delivery.
+    for (const claim of [
+      /nothing was sent/i,
+      /was not sent/i,
+      /wasn't sent/i,
+      /failed to send/i,
+      /message (was |has been )?sent\b/i,
+      /we('ve| have) sent/i,
+      /successfully/i,
+    ]) {
+      expect(text).not.toMatch(claim);
+    }
+  });
+
+  it('surfaces no part of the underlying error', async () => {
+    nextThrow = new Error('TypeError: Failed to fetch https://internal.example/action');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    const err = await waitFor(() => screen.getByTestId('contact-form-error'));
+    const text = err.textContent ?? '';
+    expect(text).not.toMatch(/TypeError|Failed to fetch|internal\.example|https?:/);
+  });
+
+  it('a later successful submit still works after a throw', async () => {
+    nextThrow = new Error('Failed to fetch');
+    render(<ContactForm />);
+    fill();
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    await waitFor(() => expect(screen.getByTestId('contact-form-error')).toBeTruthy());
+
+    nextThrow = null;
+    nextResult = { ok: true };
+    await act(async () => { fireEvent.submit(screen.getByTestId('contact-form')); });
+    await waitFor(() => expect(screen.getByTestId('contact-form-sent')).toBeTruthy());
+    // The stale error is cleared, not left alongside the confirmation.
     expect(screen.queryByTestId('contact-form-error')).toBeNull();
   });
 });
