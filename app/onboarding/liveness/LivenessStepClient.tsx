@@ -3,39 +3,86 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   getFaceTecInitParams,
-  relayFaceTecSessionRequest,
+  getFaceTecSessionTokenForOnboarding,
   runLiveness,
 } from '@/lib/onboarding/actions';
-import {
-  FaceTecInitializationError,
-  type FaceTecSDKGlobal,
-  type FaceTecSDKInstance,
-  type FaceTecSessionRequestProcessor,
-  type FaceTecSessionResult,
-} from '@/lib/facetec/browserSdkTypes';
 
-// ─── Liveness step (client) — FaceTec Browser SDK integration ──────────
+// ─── Liveness step (client) — FaceTec integration ───────────────────────
 //
-// Uses the SDK's actual (only) entry point in v10.1.9: initializeWithSessionRequest.
-// The SDK never hands us raw biometric data — every round trip, both the
-// init handshake and the real capture, is an opaque encrypted blob our
-// backend blind-relays to FaceTec via relayFaceTecSessionRequest (see
-// lib/facetec/relay.ts). The one signal we DO get is the session's exit
-// status, which runLiveness() gates on (see
-// lib/onboarding/liveness/livenessCheck.ts for that module's documented
-// limitation: it trusts the client-reported status until the relay's raw
-// `result` field is confirmed against FaceTec's actual response shape).
+// ⚠️  ONE REMAINING SEAM — READ BEFORE TOUCHING window.FaceTecSDK CALLS.  ⚠️
 //
-// Static SDK assets (FaceTecSDK.js, resources, images) live in
-// public/facetec/core-sdk/ — copied verbatim from the v10.1.9 zip, which
-// is the SAME version this file's types were transcribed from
-// (lib/facetec/browserSdkTypes.ts).
+// Everything except the exact SDK method surface below is real and
+// already wired: lib/facetec/datanamixClient.ts calls Datanamix's live
+// FaceTec Server SDK (session-token, liveness-3d), lib/onboarding/actions.ts
+// gates the onboarding step on its verdict, and a pass writes
+// profiles.liveness_verified_at for real.
+//
+// What's unverified is the exact `window.FaceTecSDK` API this file calls.
+// Datanamix's /session-token example response confirms their server runs
+// FaceTec Core Server SDK 9.7.25 — the CLASSIC integration generation
+// (initializeInProductionMode + `new FaceTecSession(...)`, where a
+// FaceScanProcessor receives the raw base64 FaceScan directly). The
+// FaceTec Browser SDK v10.1.9 zip bundled with this project does NOT
+// implement that: its FaceTecSDK.d.ts exposes exactly one entry point,
+// `initializeWithSessionRequest`, which speaks a different, opaque
+// encrypted-blob-relay protocol that Datanamix's documented REST API has
+// no endpoint for. So the classic asset this file expects at
+// /facetec/core-sdk/FaceTecSDK.js isn't in the repo yet — get a build
+// that matches Server SDK 9.7.25 from https://dev.facetec.com/signin
+// (Datanamix's docs give the download password "ZoomPBSA"; ask Datanamix
+// support which Browser SDK version to use if unsure), drop its
+// `core-sdk/` directory at `public/facetec/core-sdk/`, then verify the
+// method names below against THAT build's own .d.ts files — FaceTec has
+// renamed things across major versions before. Until then this component
+// fails closed with a clear "not available" message (see the
+// 'unavailable' phase) rather than pretending to work.
 
 declare global {
   interface Window {
     FaceTecSDK?: FaceTecSDKGlobal;
   }
 }
+
+// Minimal surface used here — NOT the SDK's own type declarations. Once
+// the real build is in place, prefer importing its shipped .d.ts instead
+// of this hand-written shim.
+type FaceTecSDKGlobal = {
+  setResourceDirectory: (dir: string) => void;
+  setImagesDirectory:   (dir: string) => void;
+  initializeInProductionMode: (
+    productionKeyText:           string,
+    deviceKeyIdentifier:         string,
+    publicFaceScanEncryptionKey: string,
+    callback: {
+      onSuccess: () => void;
+      onFaceTecSDKInitializationFailure: (error: unknown) => void;
+    },
+  ) => void;
+  createFaceTecAPIUserAgentString: (sessionId: string) => string;
+  FaceTecSession: new (sessionToken: string, processor: FaceTecFaceScanProcessor) => unknown;
+  FaceTecSessionStatus: { SessionCompletedSuccessfully: unknown };
+};
+
+type FaceTecSessionResult = {
+  status:               unknown;
+  sessionId:            string;
+  faceScan:             string | null;
+  auditTrail:           string[];
+  lowQualityAuditTrail: string[];
+};
+
+type FaceScanResultCallback = {
+  succeed: () => void;
+  cancel:  () => void;
+};
+
+type FaceTecFaceScanProcessor = {
+  processSessionResultWhileFaceTecSDKWaits: (
+    sessionResult: FaceTecSessionResult,
+    callback:      FaceScanResultCallback,
+  ) => void;
+  onFaceTecSDKSessionCompletelyDone: () => void;
+};
 
 const SDK_SCRIPT_SRC   = '/facetec/core-sdk/FaceTecSDK.js';
 const SDK_RESOURCE_DIR = '/facetec/core-sdk/resources';
@@ -44,37 +91,12 @@ const SDK_IMAGES_DIR   = '/facetec/core-sdk/FaceTec_images';
 const UNAVAILABLE_MESSAGE =
   'Face verification isn’t available right now. Please try again later or contact support.';
 
-type Phase = 'loading-sdk' | 'ready' | 'capturing' | 'unavailable';
-
-/**
- * Every round trip the SDK makes is an opaque blob relayed blind through
- * our backend to FaceTec — the init handshake and the real capture share
- * this exact same relaying logic. Only what happens at session exit
- * differs between the two use sites.
- */
-function makeSessionRequestProcessor(
-  onExit: (result: FaceTecSessionResult) => void,
-): FaceTecSessionRequestProcessor {
-  return {
-    onSessionRequest: (requestBlob, callback) => {
-      void (async () => {
-        const result = await relayFaceTecSessionRequest(requestBlob);
-        if (result.error || !result.responseBlob) {
-          callback.abortOnCatastrophicError();
-          return;
-        }
-        callback.processResponse(result.responseBlob);
-      })();
-    },
-    onFaceTecExit: onExit,
-  };
-}
+type Phase = 'loading-sdk' | 'ready' | 'capturing' | 'submitting' | 'unavailable';
 
 export default function LivenessStepClient() {
   const [phase, setPhase] = useState<Phase>('loading-sdk');
   const [error, setError] = useState<string | null>(null);
-  const bootedRef       = useRef(false);
-  const sdkInstanceRef  = useRef<FaceTecSDKInstance | null>(null);
+  const bootedRef = useRef(false);
 
   useEffect(() => {
     if (bootedRef.current) return;
@@ -84,12 +106,11 @@ export default function LivenessStepClient() {
     async function boot() {
       const initResult = await getFaceTecInitParams();
       if (cancelled) return;
-      if (initResult.error || !initResult.config) {
+      if (initResult.error || !initResult.keys) {
         setError(initResult.error ?? UNAVAILABLE_MESSAGE);
         setPhase('unavailable');
         return;
       }
-      const { deviceKeyIdentifier } = initResult.config;
 
       const script = document.createElement('script');
       script.src = SDK_SCRIPT_SRC;
@@ -108,25 +129,21 @@ export default function LivenessStepClient() {
         }
         sdk.setResourceDirectory(SDK_RESOURCE_DIR);
         sdk.setImagesDirectory(SDK_IMAGES_DIR);
-
-        // The init-time processor isn't expected to see onFaceTecExit —
-        // that only fires once a real session (start3DLiveness) runs.
-        const initProcessor = makeSessionRequestProcessor(() => {});
-
-        sdk.initializeWithSessionRequest(deviceKeyIdentifier, initProcessor, {
-          onSuccess: (sdkInstance) => {
-            if (cancelled) return;
-            sdkInstanceRef.current = sdkInstance;
-            setPhase('ready');
+        sdk.initializeInProductionMode(
+          initResult.keys.productionKeyText,
+          initResult.keys.deviceKeyIdentifier,
+          initResult.keys.publicFaceMapEncryptionKey,
+          {
+            onSuccess: () => { if (!cancelled) setPhase('ready'); },
+            onFaceTecSDKInitializationFailure: (initError) => {
+              console.error('[liveness] FaceTecSDK initialization failed', initError);
+              if (!cancelled) {
+                setError(UNAVAILABLE_MESSAGE);
+                setPhase('unavailable');
+              }
+            },
           },
-          onError: (initError) => {
-            console.error('[liveness] FaceTecSDK initialization failed', FaceTecInitializationError[initError]);
-            if (!cancelled) {
-              setError(UNAVAILABLE_MESSAGE);
-              setPhase('unavailable');
-            }
-          },
-        });
+        );
       };
       document.head.appendChild(script);
     }
@@ -136,26 +153,54 @@ export default function LivenessStepClient() {
   }, []);
 
   function handleStart() {
-    const sdk         = window.FaceTecSDK;
-    const sdkInstance = sdkInstanceRef.current;
-    if (!sdk || !sdkInstance || phase !== 'ready') return;
+    const sdk = window.FaceTecSDK;
+    if (!sdk || phase !== 'ready') return;
     setError(null);
     setPhase('capturing');
 
-    const processor = makeSessionRequestProcessor((result) => {
-      void (async () => {
-        const sessionCompleted = result.status === sdk.FaceTecSessionStatus.SessionCompleted;
-        const outcome = await runLiveness({ sessionCompleted });
-        if (outcome.error) {
-          setError(outcome.error);
-          setPhase('ready');
-          return;
-        }
-        window.location.href = outcome.nextPath ?? '/onboarding';
-      })();
-    });
+    const tokenUserAgent = sdk.createFaceTecAPIUserAgentString('');
 
-    sdkInstance.start3DLiveness(processor);
+    void (async () => {
+      const tokenResult = await getFaceTecSessionTokenForOnboarding(tokenUserAgent);
+      if (tokenResult.error || !tokenResult.sessionToken) {
+        setError(tokenResult.error ?? UNAVAILABLE_MESSAGE);
+        setPhase('ready');
+        return;
+      }
+
+      new sdk.FaceTecSession(tokenResult.sessionToken, {
+        processSessionResultWhileFaceTecSDKWaits: (sessionResult, callback) => {
+          void (async () => {
+            if (sessionResult.status !== sdk.FaceTecSessionStatus.SessionCompletedSuccessfully || !sessionResult.faceScan) {
+              callback.cancel();
+              setPhase('ready');
+              return;
+            }
+
+            setPhase('submitting');
+            const result = await runLiveness({
+              faceScan:                  sessionResult.faceScan,
+              auditTrailImage:           sessionResult.auditTrail[0] ?? '',
+              lowQualityAuditTrailImage: sessionResult.lowQualityAuditTrail[0] ?? '',
+              xUserAgent:                sdk.createFaceTecAPIUserAgentString(sessionResult.sessionId),
+            });
+
+            if (result.error) {
+              callback.cancel();
+              setError(result.error);
+              setPhase('ready');
+              return;
+            }
+
+            callback.succeed();
+            window.location.href = result.nextPath ?? '/onboarding';
+          })();
+        },
+        onFaceTecSDKSessionCompletelyDone: () => {
+          setPhase((p) => (p === 'submitting' ? p : 'ready'));
+        },
+      });
+    })();
   }
 
   return (
@@ -183,6 +228,7 @@ export default function LivenessStepClient() {
         {phase === 'loading-sdk' && 'Preparing…'}
         {phase === 'ready' && 'Start face check'}
         {phase === 'capturing' && 'Verifying…'}
+        {phase === 'submitting' && 'Verifying…'}
         {phase === 'unavailable' && 'Unavailable'}
       </button>
     </div>

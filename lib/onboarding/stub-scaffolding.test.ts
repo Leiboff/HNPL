@@ -41,20 +41,16 @@ describe('affordability — one isolated, clearly-marked stub', () => {
   });
 });
 
-describe('liveness — real FaceTec integration, one isolated module', () => {
+describe('liveness — real Datanamix integration, one isolated module', () => {
   it('runLiveness gates on checkLiveness (swappable to fail), never assumes a pass', () => {
     expect(ACTIONS).toMatch(/from '@\/lib\/onboarding\/liveness\/livenessCheck'/);
-    expect(ACTIONS).toMatch(/checkLiveness\(input\)\s*!==\s*'pass'/);
+    expect(ACTIONS).toMatch(/await checkLiveness\(scan\)\s*!==\s*'pass'/);
   });
 
-  it('the pass/fail decision reads the FaceTec-reported session outcome, not a hardcoded verdict', () => {
-    // checkLiveness is a pure gate on the caller-supplied session status —
-    // the network call to FaceTec lives in lib/facetec/relay.ts, exercised
-    // via relayFaceTecSessionRequest (actions.ts), not inside this module.
-    expect(LIVENESS).toMatch(/sessionCompleted/);
+  it('the pass/fail decision comes from Datanamix\'s live /liveness-3d endpoint, not a hardcoded verdict', () => {
+    expect(LIVENESS).toMatch(/from '@\/lib\/facetec\/datanamixClient'/);
+    expect(LIVENESS).toMatch(/postLiveness3d/);
     expect(LIVENESS).not.toMatch(/return\s+'pass';\s*$/m);
-    expect(ACTIONS).toMatch(/from '@\/lib\/facetec\/relay'/);
-    expect(ACTIONS).toMatch(/relayFaceTecRequest/);
   });
 });
 
@@ -86,13 +82,8 @@ describe('adversarial — affordability is still a no-op stub; liveness is not',
     expect(AFFORD).toMatch(/export function stubAffordabilityPolicy\(\):/);
   });
 
-  it('liveness verification DOES make a real network call to FaceTec (proves it left stub status)', () => {
-    // The call itself lives in lib/facetec/relay.ts — checkLiveness stays
-    // a pure gate so it's trivially testable, but it's wired from a real
-    // network round trip, not a hardcoded pass.
-    const RELAY = read('lib/facetec/relay.ts');
-    expect(RELAY).toMatch(/\bawait\s+fetch\s*\(/);
-    expect(ACTIONS).toMatch(/await\s+relayFaceTecRequest\s*\(/);
+  it('liveness DOES make a real provider call (proves it left stub status)', () => {
+    expect(LIVENESS).toMatch(/\bawait\s+postLiveness3d\s*\(/);
   });
 });
 

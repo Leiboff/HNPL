@@ -11,9 +11,8 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
-import { checkLiveness } from '@/lib/onboarding/liveness/livenessCheck';
-import { getFaceTecBrowserSdkConfig, type FaceTecBrowserSdkConfig } from '@/lib/facetec/browserSdkConfig';
-import { relayFaceTecRequest } from '@/lib/facetec/relay';
+import { checkLiveness, type LivenessScanInput } from '@/lib/onboarding/liveness/livenessCheck';
+import { getFaceTecBrowserSdkKeys, getFaceTecSessionToken, type FaceTecBrowserSdkKeys } from '@/lib/facetec/datanamixClient';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -310,61 +309,58 @@ export async function runCreditCheck(): Promise<ActionResult> {
 
 // ─── FaceTec Browser SDK bootstrapping ──────────────────────────────────
 //
-// Two thin auth-gated wrappers the liveness step's client component uses
-// to talk to FaceTec: getFaceTecInitParams() hands over the (public)
-// values the Browser SDK needs to initialize; relayFaceTecSessionRequest
-// blind-forwards every opaque request/response blob the SDK generates —
-// both the initializeWithSessionRequest handshake and the actual
-// start3DLiveness capture round trip — to FaceTec's production API via
-// lib/facetec/relay.ts, so the relay credentials never reach the browser.
+// Two thin auth-gated wrappers around lib/facetec/datanamixClient.ts.
+// Neither writes to the profile — they exist purely so the liveness
+// step's client component can get what it needs (init keys, then a
+// session token) without ever holding the Datanamix Basic Auth
+// credentials, which must never reach the browser.
 
 export type FaceTecInitParamsResult =
-  | { error: null; config: FaceTecBrowserSdkConfig }
-  | { error: string; config?: undefined };
+  | { error: null; keys: FaceTecBrowserSdkKeys }
+  | { error: string; keys?: undefined };
 
 export async function getFaceTecInitParams(): Promise<FaceTecInitParamsResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
   if (!currentFlags().liveness) return { error: 'Liveness check is not enabled.' };
 
-  const result = getFaceTecBrowserSdkConfig();
+  const result = await getFaceTecBrowserSdkKeys();
   if (!result.ok) return { error: 'Could not start the face check. Please try again.' };
-  return { error: null, config: result.data };
+  return { error: null, keys: result.data };
 }
 
-export type FaceTecRelayResult =
-  | { error: null; responseBlob: string }
-  | { error: string; responseBlob?: undefined };
+export type FaceTecSessionTokenResult =
+  | { error: null; sessionToken: string }
+  | { error: string; sessionToken?: undefined };
 
-export async function relayFaceTecSessionRequest(requestBlob: string): Promise<FaceTecRelayResult> {
+export async function getFaceTecSessionTokenForOnboarding(xUserAgent: string): Promise<FaceTecSessionTokenResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
   if (!currentFlags().liveness) return { error: 'Liveness check is not enabled.' };
 
-  const result = await relayFaceTecRequest(requestBlob);
-  if (!result.ok) return { error: 'Could not reach the face verification service. Please try again.' };
-  return { error: null, responseBlob: result.responseBlob };
+  const result = await getFaceTecSessionToken(xUserAgent);
+  if (!result.ok) return { error: 'Could not start the face check. Please try again.' };
+  return { error: null, sessionToken: result.sessionToken };
 }
 
 // ─── runLiveness ───────────────────────────────────────────────────────
 //
-// Integration seam. With ENABLE_LIVENESS on, marks liveness as verified
-// only when the FaceTec Browser SDK reported the session completed (see
-// lib/onboarding/liveness/livenessCheck.ts for why that's the signal in
-// this SDK generation, and its documented limitation). With the flag
-// OFF, this route redirects the user out; the state model excludes
-// 'liveness' from their step list.
+// Integration seam. With ENABLE_LIVENESS on, submits the completed
+// FaceTec 3D Liveness Check to Datanamix and marks liveness as verified
+// only on a real pass. With the flag OFF, this route redirects the user
+// out; the state model excludes 'liveness' from their step list.
 
-export async function runLiveness(input: { sessionCompleted: boolean }): Promise<ActionResult> {
+export async function runLiveness(scan: LivenessScanInput): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
   if (!currentFlags().liveness) {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  // Pass/fail decision comes from ONE isolated module. Gating on the
-  // result keeps it swappable: return 'fail' there and the step blocks.
-  if (checkLiveness(input) !== 'pass') {
+  // Pass/fail decision comes from ONE isolated module — checkLiveness
+  // calls the real Datanamix /liveness-3d endpoint. Gating on the result
+  // keeps it swappable: any provider that returns 'fail' blocks the step.
+  if (await checkLiveness(scan) !== 'pass') {
     return { error: 'We could not verify it was you. Please try again.' };
   }
 

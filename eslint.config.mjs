@@ -12,10 +12,6 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Vendored third-party FaceTec Browser SDK v10.1.9 static assets —
-    // not project source, never hand-edited (see lib/facetec/browserSdkTypes.ts
-    // for the corresponding hand-transcribed type declarations).
-    "public/facetec/**",
   ]),
 ]);
 
