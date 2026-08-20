@@ -169,68 +169,6 @@ export default function LandingPage() {
         </div>
       </div>
 
-      {/* ── Bill splitter ────────────────────────────────────────────────── */}
-      <section id="split" className="split-sec">
-        <div className="wrap">
-          <div className="split-two-col reveal">
-            <div className="split-intro">
-              <div className="kicker">Your bill, in doses</div>
-              <p className="split-lead">Drag the bill and pick your plan. Equal, interest-free instalments timed to your salary dates.</p>
-              <div className="split-controls">
-                <div className="split-bill">
-                  <span className="split-bill-label">Your bill</span>
-                  <span className="split-bill-amt">{randLabel(bill)}</span>
-                </div>
-                <input
-                  type="range"
-                  min={500}
-                  max={30000}
-                  step={500}
-                  value={bill}
-                  onChange={(e) => setBill(Number(e.target.value))}
-                  aria-label="Bill amount"
-                  className="split-range"
-                />
-                <div className="split-range-ends"><span>R500</span><span>R30,000</span></div>
-                <div className="split-plans">
-                  <button type="button" className={`split-plan${plan === 2 ? ' on' : ''}`} onClick={() => setPlan(2)}>Pay in 2</button>
-                  <button type="button" className={`split-plan${plan === 3 ? ' on' : ''}`} onClick={() => setPlan(3)}>Pay in 3</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="split-card">
-              <div className="split-card-top">
-                <span className="split-card-eyebrow">Your plan</span>
-                <span className="split-chip">
-                  <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 10.5l3 3 7-7" /></svg>
-                  Interest-free
-                </span>
-              </div>
-              <div className="split-per">
-                <span className="split-per-name">{plan === 2 ? 'Pay in 2' : 'Pay in 3'} · equal instalments</span>
-                <span className="split-per-amt">{randLabel(splitBase)}</span>
-                <span className="split-per-sub">per instalment</span>
-              </div>
-              <div className="split-rows">
-                {splitRows.map((r) => (
-                  <div className="split-row" key={r.n}>
-                    <span className="split-row-n">{r.n}</span>
-                    <span className="split-row-when">{r.when}</span>
-                    <span className="split-row-amt">{r.amount}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="split-totals">
-                <div className="split-total-row"><span>Total you pay</span><span>{randLabel(bill)}</span></div>
-                <div className="split-fees"><span>Interest and plan fees</span><span className="split-zero">R0.00</span></div>
-              </div>
-              <p className="split-note">Illustration only. Your allowance and instalments depend on your approved limit and chosen salary dates.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── Why betternow — exactly 3 reason cards (Payflex pattern) ───── */}
       <section id="why" className="band">
         <div className="wrap">
@@ -258,7 +196,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── How it works — vertical timeline + plan-chooser card ────────── */}
+      {/* ── How it works — vertical timeline + live bill-splitter widget ── */}
       <section id="how">
         <div className="wrap">
           <div className="sec-head reveal">
@@ -293,14 +231,62 @@ export default function LandingPage() {
             </ol>
 
             <div className="how-visual reveal">
-              <Image
-                className="plan-chooser"
-                src="/marketing/plan-chooser.png"
-                alt="betternow payment plan options — pay in 2 or pay in 3, interest-free"
-                width={1080}
-                height={1218}
-                priority={false}
-              />
+              <div className="split-two-col">
+                <div className="split-intro">
+                  <div className="kicker">Your bill, in doses</div>
+                  <p className="split-lead">Drag the bill and pick your plan. Equal, interest-free instalments timed to your salary dates.</p>
+                  <div className="split-controls">
+                    <div className="split-bill">
+                      <span className="split-bill-label">Your bill</span>
+                      <span className="split-bill-amt">{randLabel(bill)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={500}
+                      max={30000}
+                      step={500}
+                      value={bill}
+                      onChange={(e) => setBill(Number(e.target.value))}
+                      aria-label="Bill amount"
+                      className="split-range"
+                    />
+                    <div className="split-range-ends"><span>R500</span><span>R30,000</span></div>
+                    <div className="split-plans">
+                      <button type="button" className={`split-plan${plan === 2 ? ' on' : ''}`} onClick={() => setPlan(2)}>Pay in 2</button>
+                      <button type="button" className={`split-plan${plan === 3 ? ' on' : ''}`} onClick={() => setPlan(3)}>Pay in 3</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="split-card">
+                  <div className="split-card-top">
+                    <span className="split-card-eyebrow">Your plan</span>
+                    <span className="split-chip">
+                      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 10.5l3 3 7-7" /></svg>
+                      Interest-free
+                    </span>
+                  </div>
+                  <div className="split-per">
+                    <span className="split-per-name">{plan === 2 ? 'Pay in 2' : 'Pay in 3'} · equal instalments</span>
+                    <span className="split-per-amt">{randLabel(splitBase)}</span>
+                    <span className="split-per-sub">per instalment</span>
+                  </div>
+                  <div className="split-rows">
+                    {splitRows.map((r) => (
+                      <div className="split-row" key={r.n}>
+                        <span className="split-row-n">{r.n}</span>
+                        <span className="split-row-when">{r.when}</span>
+                        <span className="split-row-amt">{r.amount}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="split-totals">
+                    <div className="split-total-row"><span>Total you pay</span><span>{randLabel(bill)}</span></div>
+                    <div className="split-fees"><span>Interest and plan fees</span><span className="split-zero">R0.00</span></div>
+                  </div>
+                  <p className="split-note">Illustration only. Your allowance and instalments depend on your approved limit and chosen salary dates.</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>

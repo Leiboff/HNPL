@@ -151,9 +151,10 @@ describe('Slogan 2 — how-it-works heading: "Health can\'t wait. Payments can."
 
 describe('Slogan 3 — how-it-works sec-head sub-line: "Take your bill in smaller doses."', () => {
   // Post-restructure the old R3,600 split visual is retired; the
-  // plan-chooser mockup does its explanatory job. S3 relocates
-  // from that visual's lead line to the How-it-works sec-head
-  // sub-line so the slogan survives the visual retirement.
+  // live bill-splitter widget (embedded in How-it-works's right
+  // column) does its explanatory job now. S3 relocates from that
+  // old visual's lead line to the How-it-works sec-head sub-line so
+  // the slogan survives the visual retirement.
   const howHead = slice('id="how"', 'className="how-two-col"');
 
   it('appears as the how-it-works sec-head sub-line under the h2', () => {
@@ -552,7 +553,7 @@ describe('How it works — vertical timeline (Cherry pattern)', () => {
     expect(LANDING).not.toMatch(/<div className="num">STEP 1<\/div>/);
   });
 
-  it('the timeline sits INSIDE the two-column how-two-col container (LEFT), plan-chooser image on the RIGHT', () => {
+  it('the timeline sits INSIDE the two-column how-two-col container (LEFT), the bill-splitter widget on the RIGHT', () => {
     const twoColIdx  = LANDING.indexOf('className="how-two-col"');
     const timelineIdx = LANDING.indexOf('className="timeline reveal"');
     const visualIdx = LANDING.indexOf('className="how-visual reveal"');
@@ -562,25 +563,42 @@ describe('How it works — vertical timeline (Cherry pattern)', () => {
   });
 });
 
-describe('Mockups — plan-chooser in How-it-works + device-approved in Getting-started band', () => {
+describe('Mockups — live bill-splitter in How-it-works + device-approved in Getting-started band', () => {
+  // Post-restructure (2026-08-20): the static plan-chooser.png mockup is
+  // retired — the How-it-works right column now embeds the actual
+  // interactive bill-splitter widget (the "Your bill, in doses" demo,
+  // formerly its own top-level section between the hero and Why
+  // betternow) in its place, so a visitor tries the real slider instead
+  // of looking at a screenshot of one.
   it('landing imports next/image', () => {
     expect(LANDING).toMatch(/from 'next\/image'/);
   });
 
-  it('How-it-works right column carries plan-chooser.png with the specified alt', () => {
-    // The alt text is required by the task and must be verbatim.
-    expect(LANDING).toMatch(/src="\/marketing\/plan-chooser\.png"/);
-    expect(LANDING).toMatch(/alt="betternow payment plan options — pay in 2 or pay in 3, interest-free"/);
-    // width/height set (any positive integers) to prevent CLS —
-    // pin the presence, not the exact numbers.
-    expect(LANDING).toMatch(/className="plan-chooser"[\s\S]{0,400}width=\{\d+\}[\s\S]{0,80}height=\{\d+\}/);
+  it('plan-chooser.png is gone — no static mockup image in How-it-works any more', () => {
+    expect(LANDING).not.toMatch(/plan-chooser\.png/);
+    expect(LANDING).not.toMatch(/className="plan-chooser"/);
   });
 
-  it('the plan-chooser lives inside the How-it-works section, not the Getting-started band', () => {
-    const planChooserIdx = LANDING.indexOf('/marketing/plan-chooser.png');
-    const gsBandIdx      = LANDING.indexOf('<section className="gs-band">');
-    expect(planChooserIdx).toBeGreaterThan(-1);
-    expect(gsBandIdx).toBeGreaterThan(planChooserIdx);
+  it('How-it-works right column carries the interactive bill-splitter widget', () => {
+    const howIdx    = LANDING.indexOf('id="how"');
+    const visualIdx = LANDING.indexOf('className="how-visual reveal"', howIdx);
+    const widgetIdx = LANDING.indexOf('className="split-two-col"', howIdx);
+    expect(visualIdx).toBeGreaterThan(howIdx);
+    expect(widgetIdx).toBeGreaterThan(visualIdx);
+    expect(LANDING).toMatch(/<div className="kicker">Your bill, in doses<\/div>/);
+    expect(LANDING).toMatch(/<input[\s\S]{0,400}className="split-range"/);
+  });
+
+  it('the old standalone "Bill splitter" section (id="split") is gone — it now lives inside How-it-works', () => {
+    expect(LANDING).not.toMatch(/id="split"/);
+    expect(LANDING).not.toMatch(/className="split-sec"/);
+  });
+
+  it('the bill-splitter widget lives inside the How-it-works section, not the Getting-started band', () => {
+    const widgetIdx = LANDING.indexOf('className="split-two-col"');
+    const gsBandIdx = LANDING.indexOf('<section className="gs-band">');
+    expect(widgetIdx).toBeGreaterThan(-1);
+    expect(gsBandIdx).toBeGreaterThan(widgetIdx);
   });
 
   it('Getting-started band carries device-approved.png with the specified alt', () => {
@@ -719,9 +737,15 @@ describe('SiteHeader — nav link order matches spec (Why / How / For practices 
     expect(idx.faq).toBeGreaterThan(idx.practices);
   });
 
-  it('has a Sign in link and a burger button', () => {
-    expect(HEADER).toMatch(/<Link className="signin" href="\/login">Sign in<\/Link>/);
-    expect(HEADER).toMatch(/data-testid="site-header-burger"/);
+  it('the persistent header pill is Sign in, not Get started — the hero already has that CTA', () => {
+    // Scoped to the <div className="nav-cta"> cluster specifically —
+    // the mobile dropdown further down legitimately still offers BOTH
+    // Get started and Sign in as separate links once opened.
+    const navCta = HEADER.slice(HEADER.indexOf('<div className="nav-cta">'), HEADER.indexOf('</div>', HEADER.indexOf('<div className="nav-cta">')));
+    expect(navCta).toMatch(/<Link className="nav-signin" href="\/login">Sign in<\/Link>/);
+    expect(navCta).not.toMatch(/className="nav-get"/);
+    expect(navCta).not.toMatch(/>Get started</);
+    expect(navCta).toMatch(/data-testid="site-header-burger"/);
   });
 
   it('has "For practices" pointing at /practices (not a legacy hash anchor)', () => {

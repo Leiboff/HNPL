@@ -91,38 +91,8 @@
   gap: 10px;
 }
 
-.lp-root .signin {
-  text-decoration: none;
-  color: var(--navy);
-  font-weight: 500;
-  font-size: 15px;
-  padding: 9px 16px;
-  border-radius: 999px;
-  border: 1.5px solid var(--line);
-  transition: .2s;
-}
-
-.lp-root .signin:hover {
-  border-color: var(--navy);
-  background: #fff;
-}
-
 @media(min-width: 1080px) {
   .lp-root .nav-links { display: flex; }
-}
-
-/* Below 1080px the header only has room for the brand, the primary
-   "Get started" CTA, and the burger — three items (brand + Sign in +
-   Get started + burger) don't fit a phone viewport: Sign in's pill
-   wraps its text onto two lines (flex-shrink squeezing it below its
-   own content width) and pushes the burger off-screen, clipped by
-   .lp-root's overflow-x:hidden. Sign in is already duplicated in the
-   burger's own dropdown (.mobile-cta .m-signin), so hiding the header
-   copy here loses nothing. */
-.lp-root .signin { display: none; }
-
-@media(min-width: 1080px) {
-  .lp-root .signin { display: inline; }
 }
 
 /* ── Mobile burger + slide-down menu ───────────────────────────────────────── */
@@ -1267,8 +1237,9 @@
 .lp-v3 .nav-links a { padding: 9px 14px; border-radius: 999px; }
 .lp-v3 .nav-links a:hover { background: #F1F5F6; }
 
-/* Get started button in the header right cluster */
-.lp-v3 .nav-cta .nav-get {
+/* Sign in button in the header right cluster — the hero already carries
+   the primary "Get started" CTA, so this pill is Sign in instead. */
+.lp-v3 .nav-cta .nav-signin {
   text-decoration: none;
   font-weight: 600;
   font-size: 15px;
@@ -1280,9 +1251,9 @@
   box-shadow: 0 8px 18px -10px rgba(21,168,158,.95);
   transition: background .2s;
 }
-.lp-v3 .nav-cta .nav-get:hover { background: #12958C; }
-.lp-v3 header:not(.scrolled) .nav-cta .nav-get { background: #5CD9CE; color: #0F2544; }
-.lp-v3 header:not(.scrolled) .nav-cta .nav-get:hover { background: #8BE8E0; }
+.lp-v3 .nav-cta .nav-signin:hover { background: #12958C; }
+.lp-v3 header:not(.scrolled) .nav-cta .nav-signin { background: #5CD9CE; color: #0F2544; }
+.lp-v3 header:not(.scrolled) .nav-cta .nav-signin:hover { background: #8BE8E0; }
 
 /* Mobile menu CTAs */
 .lp-v3 .mobile-menu .mobile-cta {
@@ -1382,8 +1353,8 @@
 .lp-v3 .verb-marquee .vm-dot { color: #5CD9CE; }
 @keyframes v3Marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 
-/* ── Bill splitter ────────────────────────────────────────────────────────── */
-.lp-v3 .split-sec { background: #fff; }
+/* ── Bill splitter — now embedded as the "How it works" visual (was its
+   own top-level section; the .split-sec host class is gone) ────────────── */
 .lp-v3 .split-two-col {
   display: grid;
   gap: 44px;
@@ -1392,6 +1363,18 @@
 }
 @media(min-width: 1080px) {
   .lp-v3 .split-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: 72px; }
+}
+/* @media is viewport-relative, not container-relative — the rule above
+   assumed .split-two-col always had the full ~1140px wrap to itself
+   (true when it was its own top-level section), but nested inside
+   .how-visual it only ever gets that column's own share (~500-585px at
+   any desktop width), so the 2-up grid above squeezed both halves and
+   overlapped. Force it back to a single stacked column at every width
+   in THIS context; how-two-col's own breakpoint already put the whole
+   widget in the right-hand column of the section's 2-up layout. */
+.lp-v3 .how-visual .split-two-col {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px;
 }
 .lp-v3 .split-intro .kicker { display: block; }
 .lp-v3 .split-lead {
