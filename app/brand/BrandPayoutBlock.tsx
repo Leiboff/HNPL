@@ -16,6 +16,7 @@ import {
   brandOtherPendingNote,
 } from './brandPayoutCopy';
 import type { BrandPayoutRollup, BrandPracticePayout } from '@/lib/brand/brandPayouts';
+import { brand, cardShadow } from './brandTheme';
 
 // ─── Overview's money block: the group total, then the deposits it is made of ─
 //
@@ -50,7 +51,7 @@ import type { BrandPayoutRollup, BrandPracticePayout } from '@/lib/brand/brandPa
 // Those narrow an analysis by practice, doctor and date range; this is money in
 // flight, and a filtered payout figure would be a number nobody is owed.
 
-const NAVY = '#13294B';
+const NAVY = brand.ink;
 
 type Props = {
   rollup: BrandPayoutRollup;
@@ -67,9 +68,13 @@ export default function BrandPayoutBlock({ rollup, activePlanCounts }: Props) {
     <section
       aria-labelledby="brand-payout-heading"
       data-testid="brand-payout-block"
-      className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden"
+      className="rounded-3xl bg-white overflow-hidden"
+      style={{ boxShadow: cardShadow }}
     >
-      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-6 p-5 sm:p-6">
+      <div
+        className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-6 px-5 py-6 sm:px-8 sm:py-8"
+        style={{ background: brand.mint }}
+      >
         <div className="min-w-0">
           {rollup.depositCount === 0
             ? <EmptyState />
@@ -100,7 +105,8 @@ function GroupFigure({ rollup }: { rollup: BrandPayoutRollup }) {
       <div className="flex items-center gap-2">
         <p
           id="brand-payout-heading"
-          className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+          className="text-xs font-semibold uppercase tracking-wide"
+          style={{ color: brand.tealDeep }}
         >
           {BRAND_PAYOUT_LABEL}
         </p>
@@ -116,7 +122,7 @@ function GroupFigure({ rollup }: { rollup: BrandPayoutRollup }) {
 
       <p
         data-testid="brand-payout-total"
-        className="mt-1 text-3xl sm:text-4xl font-semibold tabular-nums"
+        className="mt-1 text-4xl sm:text-6xl font-semibold tabular-nums tracking-tight"
         style={{ color: NAVY }}
       >
         {totalLabel}
@@ -165,10 +171,10 @@ function GroupFigure({ rollup }: { rollup: BrandPayoutRollup }) {
 function EmptyState() {
   return (
     <div data-testid="brand-payout-empty">
-      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: brand.tealDeep }}>
         {BRAND_PAYOUT_LABEL}
       </p>
-      <p className="mt-1 text-lg font-semibold text-gray-400">{BRAND_PAYOUT_EMPTY_TITLE}</p>
+      <p className="mt-1 text-2xl font-semibold" style={{ color: brand.faint }}>{BRAND_PAYOUT_EMPTY_TITLE}</p>
       <p className="mt-1 text-xs text-gray-500">{BRAND_PAYOUT_EMPTY_NOTE}</p>
     </div>
   );
@@ -180,11 +186,12 @@ function PaidRecently({ net, count }: { net: number; count: number }) {
   return (
     <div
       data-testid="brand-paid-recently"
-      className="sm:min-w-45 sm:border-l sm:border-gray-100 sm:pl-6"
+      className="sm:min-w-45 sm:border-l sm:pl-6"
+      style={{ borderColor: brand.mintDeep }}
     >
-      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Paid out</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums text-green-700">{formatRand(net)}</p>
-      <p className="mt-0.5 text-xs text-gray-500">
+      <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: brand.tealDeep }}>Paid out</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: brand.tealDeep }}>{formatRand(net)}</p>
+      <p className="mt-0.5 text-xs text-gray-600">
         Last 30 days
         {count > 0 && ` · ${count} payout${count === 1 ? '' : 's'}`}
       </p>
@@ -202,7 +209,7 @@ function PracticeRows({
   activePlanCounts: Record<string, number>;
 }) {
   return (
-    <ul className="border-t border-gray-100 divide-y divide-gray-100" data-testid="brand-practice-rows">
+    <ul className="divide-y divide-gray-100" data-testid="brand-practice-rows">
       {rows.map((row) => (
         <PracticeRow
           key={row.practiceId}
@@ -231,7 +238,7 @@ function PracticeRow({
     <li
       data-testid={`brand-practice-row-${row.practiceId}`}
       data-state={row.state}
-      className="px-5 sm:px-6 py-3 flex items-start justify-between gap-3"
+      className="px-5 sm:px-6 py-4 flex items-start justify-between gap-3 hover:bg-gray-50/70 transition-colors"
     >
       <div className="min-w-0">
         {/* The doorway. One level down is where analysis and reconciliation
@@ -239,7 +246,7 @@ function PracticeRow({
         <Link
           href={`/brand/branch/${row.practiceId}`}
           data-testid={`brand-practice-link-${row.practiceId}`}
-          className="text-sm font-semibold underline underline-offset-2 hover:opacity-70 transition-opacity"
+          className="text-[15px] font-semibold hover:opacity-70 transition-opacity"
           style={{ color: NAVY }}
         >
           {row.practiceName}
@@ -253,7 +260,7 @@ function PracticeRow({
         {kind ? (
           <>
             <p
-              className="text-sm font-semibold tabular-nums"
+              className="text-base font-semibold tabular-nums"
               style={{ color: NAVY }}
               data-testid={`brand-practice-amount-${row.practiceId}`}
             >
