@@ -68,8 +68,11 @@ export default function SiteHeader() {
         </nav>
 
         <div className="nav-cta">
-          <Link className="signin" href="/login">Sign in</Link>
-          <Link className="nav-get" href="/signup/patient">Get started</Link>
+          {/* The hero already carries the primary "Get started" CTA
+              (LandingPage.tsx), so the persistent header pill is Sign
+              in instead — a returning patient's most common header
+              action, without duplicating the hero's own button. */}
+          <Link className="nav-signin" href="/login">Sign in</Link>
           <button
             type="button"
             className="burger"
