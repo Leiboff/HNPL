@@ -48,14 +48,16 @@ const LOADING  = codeOf('app/patient/account/loading.tsx');
 // ─── Masking ──────────────────────────────────────────────────────────────
 
 describe('sensitive values are masked consistently, and stay editable', () => {
-  it('the index page never renders a raw email — including in the navy header', () => {
-    // The header was the leak: it printed profile.email in full above a
-    // section that masked the SA ID. Both now go through maskEmail — the
-    // header still lives on the index page even though the SA ID moved to
-    // Personal details, so this pin still targets PAGE.
-    expect(PAGE).toMatch(/maskEmail\(profile\?\.email/);
-    expect(PAGE).not.toMatch(/\{profile\?\.email \?\? ''\}/);
+  it('the index page never renders a raw email — it no longer renders email at all', () => {
+    // The navy header used to print profile.email (later maskEmail'd, then
+    // the SA ID moved to Personal details). Direct product decision
+    // (2026-08-20): the header dropped the avatar initials and the email
+    // line entirely — just the name now — so there is no email column on
+    // this page's select, and no email string of any kind to leak.
+    expect(PAGE).not.toMatch(/\{profile\?\.email/);
     expect(PAGE).not.toMatch(/value=\{profile\?\.email/);
+    expect(PAGE).not.toMatch(/maskEmail/);
+    expect(PAGE).not.toMatch(/\bemail\b/);
   });
 
   it('Personal details also masks email (repeated for the identity field) and SA ID — neither is hand-rolled', () => {

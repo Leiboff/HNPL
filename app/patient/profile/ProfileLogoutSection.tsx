@@ -2,22 +2,17 @@
 
 import { logoutAndRedirect } from '@/lib/auth/logout';
 
-// ─── Sign out — body of the "Sign out" settings section ─────────────────
+// ─── Sign out — rendered at the bottom of AccountSettings ───────────────
 //
 // Unchanged behaviour: the same `logoutAndRedirect` helper, called the same
-// way. What changed is the chrome around it.
+// way. What changed is the chrome around it and where it lives.
 //
-// This used to render its OWN white card with its own "Session" eyebrow
-// label, which made it one of three competing patterns on the account page
-// (a flat card here, accordions above it, a chevron nav-row between). It is
-// now the body of a section in the single accordion system, so the card, the
-// shadow and the eyebrow are gone — the section header supplies the title,
-// and repeating it inside would be the same duplication the Passkeys
-// sub-heading had.
-//
-// Being collapsed by default is also the progressive disclosure a destructive
-// action wants: a red button no longer sits permanently on screen where a
-// mis-tap can reach it, but it is one tap away and clearly labelled.
+// This used to be its own screen behind a "Sign out" settings row
+// (/patient/account/signout) — a whole navigable page for one red button and
+// a line of copy. Direct product decision (2026-08-20): that was ceremony,
+// not real friction, so it now renders directly at the bottom of
+// AccountSettings instead. The button itself is still the deliberate tap a
+// destructive action wants; a screen in front of it didn't add a second one.
 
 export default function ProfileLogoutSection() {
   return (

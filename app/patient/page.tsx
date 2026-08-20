@@ -116,7 +116,6 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
   const cards    = (rawCards ?? []) as CardRow[];
 
   const firstName = (profile?.first_name as string | null) ?? null;
-  const lastName  = (profile?.last_name  as string | null) ?? null;
   const greetName = firstName ?? user.email?.split('@')[0] ?? 'there';
 
   const totalCount   = allPlans.length;
@@ -194,7 +193,6 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
     return (
       <HomeFailedState
         firstName={firstName}
-        lastName={lastName}
         amount={Number(urgent.amount) + Number(urgent.dunning_fees_cents ?? 0) / 100}
         practiceName={getPracticeName(planData?.practice ?? null)}
         dueDate={urgent.due_date}
@@ -238,22 +236,11 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
       ? { amount: overdue.overdueCents / 100, count: overdue.overdueCount }
       : null;
 
-  const initials = `${(firstName ?? '').charAt(0)}${(lastName ?? '').charAt(0)}`.toUpperCase()
-    || greetName.charAt(0).toUpperCase();
-
   // ── Navy hero header ──────────────────────────────────────────────
   const header = (
     <>
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-[11px]">
-          <span
-            className="w-[38px] h-[38px] rounded-full flex items-center justify-center text-[13px] font-semibold text-white"
-            style={{ background: 'rgba(255,255,255,.12)' }}
-          >
-            {initials}
-          </span>
-          <span className="text-[15.5px] font-semibold text-white">Hi {greetName}</span>
-        </div>
+        <span className="text-[15.5px] font-semibold text-white">Hi {greetName}</span>
         <ActionCentreBell onDark />
       </div>
 

@@ -4,7 +4,6 @@ import PatientScreen from '../PatientScreen';
 import InstalmentLadder, { type LadderSegment } from '../InstalmentLadder';
 import AccountSettings from './AccountSettings';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
-import { maskEmail } from '@/lib/patient/maskContact';
 import EmptyState from '@/components/EmptyState';
 import { resolveAppVersion } from '@/lib/appVersion';
 import { todaySAST, formatDate } from '../_format';
@@ -65,7 +64,7 @@ export default async function AccountPage() {
   const [{ data: profile }, { data: rawPayments }] = await Promise.all([
     supabase
       .from('profiles')
-      .select('first_name, last_name, email, created_at, terms_accepted_at, terms_version')
+      .select('first_name, last_name, created_at, terms_accepted_at, terms_version')
       .eq('id', user.id)
       .single(),
     supabase.from('payments').select('status, due_date, next_attempt_date').eq('patient_id', user.id).eq('kind', 'instalment'),
@@ -74,11 +73,6 @@ export default async function AccountPage() {
   const firstName = (profile?.first_name as string | null) ?? '';
   const lastName  = (profile?.last_name  as string | null) ?? '';
   const fullName  = [firstName, lastName].filter(Boolean).join(' ') || '—';
-  const initials  = [firstName[0], lastName[0]].filter(Boolean).join('').toUpperCase() || '?';
-
-  // Email is masked everywhere it appears, including the navy header, where it
-  // used to render in full. Same discipline as the SA ID beside it.
-  const emailMasked = maskEmail(profile?.email as string | null | undefined);
 
   // ── Account-level provenance ──────────────────────────────────────
   // Both of these are NULL-able and each resolves to null rather than to a
@@ -126,18 +120,9 @@ export default async function AccountPage() {
                       `${madeCount} payment${madeCount === 1 ? '' : 's'} made`;
 
   const header = (
-    <div className="flex items-center gap-[14px]">
-      <span
-        className="flex-none w-[52px] h-[52px] rounded-full flex items-center justify-center text-[17px] font-semibold text-white"
-        style={{ background: 'rgba(255,255,255,.14)' }}
-      >
-        {initials}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[19px] font-semibold text-white truncate" style={{ letterSpacing: '-.02em' }}>{fullName}</p>
-        <p className="mt-0.5 text-[13px] truncate" style={{ color: 'rgba(255,255,255,.6)' }}>{emailMasked}</p>
-      </div>
-    </div>
+    <p className="text-[19px] font-semibold text-white truncate" style={{ letterSpacing: '-.02em' }}>
+      {fullName}
+    </p>
   );
 
   return (

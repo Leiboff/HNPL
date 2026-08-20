@@ -25,10 +25,11 @@ const PROFILE_PAGE = read('app/patient/profile/page.tsx');
 const ACCOUNT_PAGE = read('app/patient/account/page.tsx');
 const ACCOUNT_SET  = read('app/patient/account/AccountSettings.tsx');
 // RE-POINTED (2026-08-20): the accordion→screens conversion moved salary
-// date, phone, and sign-out off the account index onto their own routes —
-// see app/patient/account/personal/page.tsx and .../signout/page.tsx.
+// date and phone off the account index onto their own route — see
+// app/patient/account/personal/page.tsx. Sign out took the opposite trip:
+// it briefly had its own /patient/account/signout route, then lost it again
+// the same day in favour of rendering directly on ACCOUNT_SET.
 const PERSONAL_PAGE = read('app/patient/account/personal/page.tsx');
-const SIGNOUT_PAGE  = read('app/patient/account/signout/page.tsx');
 const HOME         = read('app/patient/page.tsx');
 const LAYOUT       = read('app/patient/layout.tsx');
 const CHECKOUT_ACT = read('app/checkout/[token]/actions.ts');
@@ -493,11 +494,12 @@ describe('Header action centre — bell replaces logout in patient header', () =
 });
 
 describe('Logout is on Account (not the header)', () => {
-  it('the Sign out screen imports + renders ProfileLogoutSection (once, post-consolidation)', () => {
-    // Moved off the account index onto its own route in the
-    // accordion→screens conversion — see app/patient/account/signout/page.tsx.
-    expect(SIGNOUT_PAGE).toMatch(/import\s+ProfileLogoutSection\s+from\s+['"]@\/app\/patient\/profile\/ProfileLogoutSection['"]/);
-    expect(SIGNOUT_PAGE).toMatch(/<ProfileLogoutSection\s*\/>/);
+  it('AccountSettings imports + renders ProfileLogoutSection (once, directly — no dedicated route)', () => {
+    // Briefly its own route in the accordion→screens conversion, then moved
+    // back onto AccountSettings the same day — a whole screen for one red
+    // button was ceremony, not real friction.
+    expect(ACCOUNT_SET).toMatch(/import\s+ProfileLogoutSection\s+from\s+['"]@\/app\/patient\/profile\/ProfileLogoutSection['"]/);
+    expect(ACCOUNT_SET).toMatch(/<ProfileLogoutSection\s*\/>/);
     // Neither the account index nor the retired profile route renders it
     // (no duplicate log out).
     expect(ACCOUNT_PAGE).not.toMatch(/ProfileLogoutSection/);

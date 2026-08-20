@@ -10,7 +10,9 @@ import { stripComments } from '@/lib/testing/stripComments';
 // accordion→screens conversion (2026-08-20):
 //   • /patient/profile is still an inert redirect to /patient/account.
 //   • Each former accordion section now lives on exactly ONE dedicated
-//     route under /patient/account/*, not duplicated across pages.
+//     route under /patient/account/*, not duplicated across pages — with
+//     one deliberate exception: Sign out (see below), reversed back OFF
+//     its own route on 2026-08-20.
 //   • Salary date AND salary amount live in Personal details now — not as
 //     their own section — per direct product decision reversing the
 //     earlier "salary date is its own section" call.
@@ -84,14 +86,21 @@ describe('account consolidation — salary date and salary amount live in Person
 });
 
 describe('account consolidation — every former section has exactly one screen', () => {
-  it('Notifications, Passkeys, and Log out each render on their own route, not the index', () => {
+  it('Notifications and Passkeys each render on their own route, not the index', () => {
     expect(read('app/patient/account/notifications/page.tsx')).toContain('<NotificationsToggle');
     expect(read('app/patient/account/passkeys/page.tsx')).toContain('<PasskeysSection');
-    expect(read('app/patient/account/signout/page.tsx')).toContain('<ProfileLogoutSection');
 
     expect(ACCOUNT).not.toContain('<NotificationsToggle');
     expect(ACCOUNT).not.toContain('<PasskeysSection');
     expect(ACCOUNT).not.toContain('<ProfileLogoutSection');
+  });
+
+  it('Sign out is the one exception — no dedicated route, renders directly on AccountSettings', () => {
+    // Reversed on purpose (2026-08-20): a whole screen for one red button
+    // was ceremony, not real friction. See AccountSettings.tsx's own
+    // comment for the reasoning.
+    expect(existsSync(resolve(process.cwd(), 'app/patient/account/signout'))).toBe(false);
+    expect(SETTINGS).toContain('<ProfileLogoutSection');
   });
 
   it('Payment cards renders on its own route, and PROFILE (retired) still holds none of it', () => {
