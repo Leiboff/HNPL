@@ -1,4 +1,5 @@
 import BrandNav from './BrandNav';
+import { brand } from './brandTheme';
 
 // ─── Brand chrome — the header and the nav, in one place ────────────────────
 //
@@ -32,15 +33,15 @@ export default function BrandShell({ brandName, brandCount, children }: Props) {
   const title = brandCount > 1 ? 'My brands' : (brandName ?? 'My practices');
 
   return (
-    <div className="min-h-screen bg-[#f7fbfb]">
-      <header className="bg-white border-b border-gray-100">
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 pt-5 pb-3">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400">
+    <div className="min-h-screen" style={{ background: brand.paper, color: brand.ink }}>
+      <header className="bg-white border-b" style={{ borderColor: brand.line }}>
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 pt-6 pb-4">
+          <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: brand.faint }}>
             Brand
           </p>
           <h1
-            className="text-xl sm:text-2xl font-semibold mt-0.5"
-            style={{ color: '#13294B' }}
+            className="text-2xl sm:text-[28px] font-semibold mt-1 tracking-tight"
+            style={{ color: brand.ink }}
             data-testid="brand-shell-title"
           >
             {title}
@@ -50,7 +51,7 @@ export default function BrandShell({ brandName, brandCount, children }: Props) {
 
       <BrandNav />
 
-      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+      <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-10 space-y-6 sm:space-y-8">
         {children}
       </div>
     </div>

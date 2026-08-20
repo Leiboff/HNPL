@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { brand, cardShadow } from './brandTheme';
 
 // ─── Overview's two quick actions ───────────────────────────────────────────
 //
@@ -24,19 +25,21 @@ export default function BrandQuickActions() {
     >
       <Link
         href="/brand/new-practice"
-        className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+        className="rounded-2xl px-5 py-4 transition-colors hover:bg-white"
+        style={{ border: `1.5px dashed ${brand.mintDeep}`, background: 'transparent' }}
         data-testid="group-add-practice"
       >
-        <p className="text-xs uppercase tracking-widest text-gray-500">Add</p>
-        <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>+ Add a practice</p>
+        <p className="text-xs uppercase tracking-widest" style={{ color: brand.faint }}>Add</p>
+        <p className="text-sm font-semibold mt-1" style={{ color: brand.tealDeep }}>+ Add a practice</p>
       </Link>
       <Link
         href="/brand/group"
-        className="rounded-xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 hover:bg-gray-50"
+        className="rounded-2xl bg-white px-5 py-4 hover:bg-gray-50 transition-colors"
+        style={{ boxShadow: cardShadow }}
         data-testid="group-settings"
       >
-        <p className="text-xs uppercase tracking-widest text-gray-500">Brand</p>
-        <p className="text-sm font-semibold mt-1" style={{ color: '#13294B' }}>Settings &amp; logo</p>
+        <p className="text-xs uppercase tracking-widest" style={{ color: brand.faint }}>Brand</p>
+        <p className="text-sm font-semibold mt-1" style={{ color: brand.ink }}>Settings &amp; logo</p>
       </Link>
     </section>
   );

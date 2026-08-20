@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { getBrandNavLinks, isBrandNavActive } from './brandNavLinks';
+import { brand } from './brandTheme';
 
 // ─── Brand nav — Overview · Practices · Reports · Settings ─────────────────
 //
@@ -25,9 +26,10 @@ export default function BrandNav() {
     <nav
       aria-label="Brand"
       data-testid="brand-nav"
-      className="border-b border-gray-200 bg-white"
+      className="bg-white border-b"
+      style={{ borderColor: brand.line }}
     >
-      <div className="mx-auto max-w-5xl px-4 sm:px-6">
+      <div className="mx-auto max-w-3xl px-4 sm:px-6 py-2.5">
         {/* Scrolls rather than wraps: four tabs fit a phone, but a fifth
             must push sideways instead of silently forming a second row that
             reads as two separate navs. */}
@@ -40,12 +42,12 @@ export default function BrandNav() {
                 href={href}
                 aria-current={active ? 'page' : undefined}
                 data-testid={`brand-nav-${label.toLowerCase()}`}
-                className={[
-                  'whitespace-nowrap px-3 py-3 text-sm font-medium border-b-2 -mb-px transition-colors',
-                  active
-                    ? 'border-[#13294B] text-[#13294B]'
-                    : 'border-transparent text-gray-500 hover:text-gray-900',
-                ].join(' ')}
+                className="whitespace-nowrap px-3.5 py-2 text-sm rounded-full transition-colors"
+                style={{
+                  background: active ? brand.mint : 'transparent',
+                  color: active ? brand.ink : brand.muted,
+                  fontWeight: active ? 600 : 500,
+                }}
               >
                 {label}
               </Link>
