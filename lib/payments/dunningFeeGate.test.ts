@@ -5,12 +5,15 @@ import { dunningFeesEnabled } from './dunning';
 
 // ─── Phase 1 — dunning fee gate (compliance) ────────────────────────────
 //
-// Charging a default fee requires disclosed + accepted T&Cs which are not
-// yet persisted. Until then ALL fee CHARGING is gated OFF via
-// DUNNING_FEES_ENABLED (default OFF). These tests pin:
+// Charging a default fee requires disclosed + accepted T&Cs — now live
+// (lib/legal/terms.ts / lib/legal/privacy.ts). The gate itself stays: it
+// is the single kill switch every charge point consults, defaulting OFF
+// until DUNNING_FEES_ENABLED=true is set deliberately (an env var, not a
+// code change — see lib/payments/dunning.ts). These tests pin:
 //   • the flag's parsing (only the literal 'true' enables it)
-//   • the three CHARGE-point gates in source (webhook accrual, the
-//     per-instalment debit, the settle-entire-bill RPC total)
+//   • the three CHARGE-point gates in source (the grace-elapsed dunning-fee
+//     assessment pass, the per-instalment debit, the settle-entire-bill
+//     RPC total)
 // The behavioural "gated → instalment only, ungated → fee applies" guard
 // lives in chargeInstalment.test.ts against the real charge path.
 
@@ -47,8 +50,13 @@ describe('dunningFeesEnabled — default OFF, only "true" enables', () => {
 
 // ─── Charge-point gates in source ───────────────────────────────────────
 
-describe('fee gate — webhook accrual + terminal (source pins)', () => {
-  const src = readSrc('app/api/payments/peach/webhook/route.ts');
+describe('fee gate — dunning-fee assessment accrual + terminal (source pins)', () => {
+  // RE-POINTED (2026-08-20): the fee/terminal decision moved out of the
+  // webhook into the grace-elapsed assessment pass — the webhook's
+  // payment.failure handler no longer calls dunningFeesEnabled at all;
+  // it just records the failure and starts the 24-hour self-pay clock.
+  // See lib/payments/assessDunningFee.ts.
+  const src = readSrc('lib/payments/assessDunningFee.ts');
 
   it('reads the gate and only accrues fees when enabled', () => {
     expect(src).toMatch(/const\s+feesEnabled\s*=\s*dunningFeesEnabled\(\)/);
@@ -58,7 +66,10 @@ describe('fee gate — webhook accrual + terminal (source pins)', () => {
   });
 
   it('drives the terminal off the MAX_ATTEMPTS backstop while gated', () => {
-    expect(src).toMatch(/import\s*\{\s*MAX_ATTEMPTS\s*\}\s*from\s*'@\/lib\/payments\/chargeInstalment'/);
+    // Same-directory import, relative — matches this codebase's own
+    // convention for lib/payments/* importing its siblings (compare
+    // chargeInstalment.ts's `from './dunning'`).
+    expect(src).toMatch(/import\s*\{\s*MAX_ATTEMPTS\s*\}\s*from\s*'\.\/chargeInstalment'/);
     expect(src).toMatch(/retry_count\s*\?\?\s*0\)\s*>=\s*MAX_ATTEMPTS/);
   });
 

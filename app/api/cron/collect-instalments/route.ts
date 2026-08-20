@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
+import { assessDunningFee } from '@/lib/payments/assessDunningFee';
 
 // ─── Daily installment collection cron ──────────────────────────────────────
 //
@@ -17,6 +18,15 @@ import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 // The route is the ONLY public endpoint that can fire real-money
 // charges against stored cards on a schedule. Unauthenticated requests
 // MUST be rejected.
+//
+// TWO jobs in one daily run, back to back:
+//   1. Collect due instalments (charge attempts — step 2 below).
+//   2. Assess grace-elapsed dunning fees (step 5 below) — the 24-hour
+//      self-pay window a failed attempt gets before its Default Fee
+//      posts. Same daily cadence serves both; no second Vercel Cron
+//      entry needed. Because the run is once daily at a fixed time,
+//      "24 hours" in practice means "the next day's run", which is the
+//      granularity this whole system already operates at.
 
 export const dynamic = 'force-dynamic';
 
@@ -145,15 +155,61 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // ── 5. Assess pending dunning fees — the OTHER half of a failed
+  //       instalment's life. A failed attempt doesn't earn its Default
+  //       Fee immediately any more (see lib/payments/dunning.ts /
+  //       assessDunningFee.ts); the patient gets a 24-hour self-pay
+  //       window first (payments.dunning_grace_until, stamped by the
+  //       Peach webhook). This is the ONLY place that window gets
+  //       checked: rows still 'failed' whose grace has elapsed.
+  //
+  //       A self-pay within the window already moved the row out of
+  //       'failed' via the normal success path, so it's naturally
+  //       excluded here — no extra guard needed. assessDunningFee is its
+  //       own atomic claim (mirrors attemptChargeInstalment), so running
+  //       concurrent batches against overlapping ids is safe here too.
+  const { data: graceElapsedRows, error: graceErr } = await svc
+    .from('payments')
+    .select('id')
+    .eq('kind', 'instalment')
+    .eq('status', 'failed')
+    .not('dunning_grace_until', 'is', null)
+    .lte('dunning_grace_until', todayStr);
+
+  if (graceErr) {
+    console.error('[cron/collect-instalments] grace-elapsed query failed', graceErr);
+  }
+
+  let feesAssessed  = 0;
+  let feesApplied   = 0;
+  let newlyDefaulted = 0;
+  let assessClaimLost = 0;
+
+  for (const row of (graceElapsedRows ?? []) as Array<{ id: string }>) {
+    const outcome = await assessDunningFee(svc, row.id, { today: todayStr });
+    if (outcome.kind === 'assessed') {
+      feesAssessed++;
+      if (outcome.feeAppliedCents > 0) feesApplied++;
+      if (outcome.terminal) newlyDefaulted++;
+    } else {
+      assessClaimLost++;
+    }
+  }
+
   const finishedAt = new Date();
   const summary = {
-    started_at:          startedAt.toISOString(),
-    finished_at:         finishedAt.toISOString(),
-    eligible_count:      due.length,
-    charged_count:       charged,
-    claim_lost_count:    claimLost,
-    transport_errors:    transportErrors,
-    transport_error_ids: transportErrorIds,
+    started_at:            startedAt.toISOString(),
+    finished_at:           finishedAt.toISOString(),
+    eligible_count:        due.length,
+    charged_count:         charged,
+    claim_lost_count:      claimLost,
+    transport_errors:      transportErrors,
+    transport_error_ids:   transportErrorIds,
+    grace_elapsed_count:   (graceElapsedRows ?? []).length,
+    fees_assessed_count:   feesAssessed,
+    fees_applied_count:    feesApplied,
+    newly_defaulted_count: newlyDefaulted,
+    assess_claim_lost_count: assessClaimLost,
   };
 
   // ── 5. Record the run for observability. A cron that silently stops

@@ -156,6 +156,55 @@ describe('notifyAttemptFailed', () => {
     expect(arg.subject).toMatch(/R115\.00/);
     expect(arg.html).toMatch(/default fee was added/i);
   });
+
+  // ── feeGraceUntil — the immediate just-failed notice, before any fee ────
+  //
+  // Set ONLY by the webhook's payment.failure handler, before the fee/
+  // ladder decision has even been made (that happens 24h later, in
+  // assessDunningFee.ts). No fee, no "we'll try again" line — a pay-by
+  // deadline instead.
+
+  it('grace notice: names the pay-by date, not a fee or a next-attempt date', async () => {
+    const svc = makeSvcReturning(samplePayment, { name: 'TestPractice' });
+    await notifyAttemptFailed(svc, {
+      paymentId: 'p1',
+      consecutiveFailedAttemptsBefore: 0,
+      feeAppliedCents: 0,
+      dunningFeesCentsAfter: 0,
+      attemptedAmountCents: 25_000,
+      nextAttemptDate: null,
+      feeGraceUntil: '2026-06-17',
+    });
+
+    const [emailArg] = sendEmailSpy.mock.calls[0] as [{ subject: string; html: string }];
+    expect(emailArg.subject).toMatch(/pay by 17 jun 2026/i);
+    expect(emailArg.html).toMatch(/Pay by <strong>17 Jun 2026<\/strong>/);
+    // No fee line (none applied) and no "we'll automatically try again"
+    // line — the whole ladder is on hold until the grace resolves.
+    expect(emailArg.html).not.toMatch(/default fee was added/i);
+    expect(emailArg.html).not.toMatch(/automatically try again/i);
+
+    const [, smsBody] = sendSmsSpy.mock.calls[0] as [string, string];
+    expect(smsBody).toMatch(/Pay by 17 Jun 2026 to avoid a fee/);
+    expect(smsBody).not.toMatch(/fee was added/i);
+    expect(smsBody).not.toMatch(/https?:\/\//); // still no URL
+  });
+
+  it('grace line wins even if a nextAttemptDate is also present (defensive — should never co-occur in practice)', async () => {
+    const svc = makeSvcReturning(samplePayment, { name: 'TestPractice' });
+    await notifyAttemptFailed(svc, {
+      paymentId: 'p1',
+      consecutiveFailedAttemptsBefore: 0,
+      feeAppliedCents: 0,
+      dunningFeesCentsAfter: 0,
+      attemptedAmountCents: 25_000,
+      nextAttemptDate: '2026-06-22', // should never be set alongside feeGraceUntil in practice
+      feeGraceUntil: '2026-06-17',
+    });
+    const [emailArg] = sendEmailSpy.mock.calls[0] as [{ html: string }];
+    expect(emailArg.html).toMatch(/Pay by <strong>17 Jun 2026<\/strong>/);
+    expect(emailArg.html).not.toMatch(/automatically try again/i);
+  });
 });
 
 describe('notifyRecoverySucceeded', () => {

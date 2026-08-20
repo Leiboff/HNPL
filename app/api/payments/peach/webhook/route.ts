@@ -15,15 +15,15 @@ import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { saveCardForPatient as saveCardForPatientPeach } from '@/lib/payments/peach/saveCardForPatient';
 import { sendPushToUser } from '@/lib/notifications/sendPush';
-import { advanceLadderAfterFailure, chargeAmountCents, dunningFeesEnabled } from '@/lib/payments/dunning';
-import { MAX_ATTEMPTS } from '@/lib/payments/chargeInstalment';
+import { chargeAmountCents, addDaysISO, DUNNING_FEE_CENTS, FEE_GRACE_PERIOD_DAYS } from '@/lib/payments/dunning';
 import {
   notifyAttemptFailed,
-  notifyDefaulted,
   notifyRecoverySucceeded,
+  formatISODate,
 } from '@/lib/payments/dunningNotifications';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
+import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { logPeachRawResponse } from '@/lib/payments/peach/logRawResponse';
 import { failCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 
@@ -255,9 +255,13 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
   const { error: pmtErr } = await supabase
     .from('payments')
     .update({
-      status:            'collected',
-      collected_at:      now,
-      next_attempt_date: null,
+      status:              'collected',
+      collected_at:        now,
+      next_attempt_date:   null,
+      // Clears a pending fee-grace decision left over from a failure this
+      // success supersedes — e.g. the patient self-paid within the
+      // 24-hour window. Harmless no-op when there was never one pending.
+      dunning_grace_until: null,
     })
     .eq('id', payment.id);
   if (pmtErr) {
@@ -284,6 +288,41 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
       paymentId:            payment.id,
       collectedAmountCents: collectedCents,
       viaSelfSettle:        false,
+    });
+  }
+
+  // ── Recover any other defaulted balance on this plan ──
+  //
+  // A 'defaulted' instalment is terminal to the normal cron ladder — it
+  // is never retried (see lib/payments/chargeInstalment.ts's charge-
+  // eligibility queries). Left alone, that debt just sits there frozen
+  // forever, uncollected, even while the SAME card goes on to
+  // successfully collect later instalments. A successful collection is
+  // the best evidence we have that the card currently has funds, so we
+  // use it as the trigger to also attempt any other defaulted instalment
+  // on this plan — each as its OWN separate charge (own Peach reference,
+  // own amount), never bundled into the instalment that just succeeded.
+  // Reuses the exact same atomic-claim path the patient's own "Pay now"
+  // button uses (attemptChargeInstalment with selfSettle:true), which is
+  // the one eligibility mode that allows claiming a 'defaulted' row and
+  // bypasses the retry-cap/due-date gates the normal ladder enforces.
+  // The eventual outcome (collected or failed again) is reconciled by
+  // this same webhook the normal way when Peach calls back for that
+  // charge's own reference — no special-case handling needed here.
+  const { data: defaultedSiblings } = await supabase
+    .from('payments')
+    .select('id')
+    .eq('plan_id', plan.id)
+    .eq('kind', 'instalment')
+    .eq('status', 'defaulted');
+
+  for (const sibling of (defaultedSiblings ?? []) as Array<{ id: string }>) {
+    const recoveryOutcome = await attemptChargeInstalment(supabase, sibling.id, { selfSettle: true });
+    console.log('[peach-webhook] payment.success: auto-recovery attempt on defaulted sibling', {
+      planId:             plan.id,
+      triggeringPaymentId: payment.id,
+      defaultedPaymentId: sibling.id,
+      outcome:            recoveryOutcome.kind,
     });
   }
 
@@ -425,138 +464,66 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     return;
   }
 
-  const todayUtc      = new Date().toISOString().slice(0, 10);
-  const feesBefore    = (payment.dunning_fees_cents ?? 0) as number;
-  const counterBefore = (payment.consecutive_failed_attempts ?? 0) as number;
+  // ── No fee, no ladder advance, no terminal decision — not yet ──────────
+  //
+  // Direct product decision: a failed attempt no longer earns its Default
+  // Fee (or a shot at terminal `defaulted`) the instant it fails. The
+  // patient gets FEE_GRACE_PERIOD_DAYS to settle manually (Pay now)
+  // first. This handler's ENTIRE job on a failure is now: mark it failed,
+  // stamp the grace deadline, tell the patient. Nothing here touches
+  // dunning_fees_cents, consecutive_failed_attempts, or next_attempt_date
+  // — advanceLadderAfterFailure is not called from this file at all any
+  // more. The daily cron's assessment pass (lib/payments/
+  // assessDunningFee.ts) is the ONLY caller, and only once
+  // dunning_grace_until has elapsed with the instalment STILL unpaid (a
+  // self-pay within the window flips status away from 'failed' via the
+  // success path above, which drops it out of that pass's query for free).
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const feesBefore = (payment.dunning_fees_cents ?? 0) as number;
   const attemptedAmountCents = chargeAmountCents(Number(payment.amount), feesBefore);
-
-  const ladder = advanceLadderAfterFailure({
-    consecutiveFailedAttemptsBefore: counterBefore,
-    dunningFeesCentsBefore:          feesBefore,
-    originalBillRands:               Number(plan.total_amount),
-    today:                           todayUtc,
-  });
-
-  // ── Fee gate (compliance). While fees are OFF the ladder advances and
-  //    retries schedule exactly as normal — but no fee is persisted
-  //    (dunning_fees_cents is NOT grown) and no fee is charged. The
-  //    terminal `defaulted` still lands (see the two-signal logic in the
-  //    gated branch below). When fees are ON, the pure ladder's rand-cap
-  //    terminal is authoritative.
-  const feesEnabled    = dunningFeesEnabled();
-  const feeThisAttempt = feesEnabled ? ladder.feeAppliedThisAttempt : 0;
-  const feesCentsAfter = feesEnabled ? ladder.dunningFeesCentsAfter  : feesBefore;
-
-  let newStatus: 'failed' | 'defaulted';
-  let nextAttemptDate: string | null;
-  let capReached: boolean;
-  if (feesEnabled) {
-    newStatus       = ladder.terminalStatus ?? 'failed';
-    nextAttemptDate = ladder.nextAttemptDate;
-    capReached      = ladder.capReached;
-  } else {
-    // Two terminal signals while gated:
-    //   • ladder.capReached — fires when a SINGLE would-be fee already
-    //     meets the cap (small bills: 50%-of-plan cap ≤ one fee). This
-    //     is correct even with the ledger frozen at 0, because one fee
-    //     alone reaches the cap — matches the ungated early-default.
-    //   • the MAX_ATTEMPTS backstop — for normal bills, where the cap
-    //     needs multiple fees to accumulate (which the frozen ledger
-    //     can't track), we terminate at the attempt-count backstop.
-    const backstopHit = Number(payment.retry_count ?? 0) >= MAX_ATTEMPTS;
-    capReached      = ladder.capReached || backstopHit;
-    newStatus       = capReached ? 'defaulted' : 'failed';
-    nextAttemptDate = capReached ? null : ladder.nextAttemptDate;
-    if (ladder.feeAppliedThisAttempt > 0) {
-      console.log(
-        `[peach-webhook] default fee ${formatRandCents(ladder.feeAppliedThisAttempt / 100)} WOULD apply [gated]`,
-        { paymentId: payment.id, reference },
-      );
-    }
-  }
+  const graceUntil = addDaysISO(todayUtc, FEE_GRACE_PERIOD_DAYS);
 
   await supabase
     .from('payments')
     .update({
-      status:                      newStatus,
-      failure_reason:              failureReason,
-      consecutive_failed_attempts: ladder.consecutiveFailedAttemptsAfter,
-      dunning_fees_cents:          feesCentsAfter,
-      next_attempt_date:           nextAttemptDate,
+      status:              'failed',
+      failure_reason:       failureReason,
+      dunning_grace_until:  graceUntil,
     })
     .eq('id', payment.id);
 
-  const planEventInserts: Record<string, unknown>[] = [
-    {
-      plan_id:    plan.id,
-      patient_id: plan.patient_id,
-      event_type: 'instalment_attempt_failed',
-      payload: {
-        payment_id:                        payment.id,
-        instalment_number:                 payment.instalment_number,
-        failure_reason:                    failureReason,
-        consecutive_failed_attempts_after: ladder.consecutiveFailedAttemptsAfter,
-        next_attempt_date:                 nextAttemptDate,
-      },
+  await supabase.from('plan_events').insert({
+    plan_id:    plan.id,
+    patient_id: plan.patient_id,
+    event_type: 'instalment_attempt_failed',
+    payload: {
+      payment_id:         payment.id,
+      instalment_number:  payment.instalment_number,
+      failure_reason:     failureReason,
+      fee_grace_until:    graceUntil,
     },
-  ];
-  if (feeThisAttempt > 0) {
-    planEventInserts.push({
-      plan_id:    plan.id,
-      patient_id: plan.patient_id,
-      event_type: 'dunning_fee_applied',
-      payload: {
-        payment_id:               payment.id,
-        instalment_number:        payment.instalment_number,
-        fee_applied_cents:        feeThisAttempt,
-        dunning_fees_cents_after: feesCentsAfter,
-      },
-    });
-  }
-  if (capReached) {
-    planEventInserts.push({
-      plan_id:    plan.id,
-      patient_id: plan.patient_id,
-      event_type: 'instalment_defaulted',
-      payload: {
-        payment_id:               payment.id,
-        instalment_number:        payment.instalment_number,
-        outstanding_amount_cents: chargeAmountCents(Number(payment.amount), feesCentsAfter),
-      },
-    });
-  }
-  await supabase.from('plan_events').insert(planEventInserts);
+  });
 
   await notifyAttemptFailed(supabase, {
     paymentId:                       payment.id,
-    consecutiveFailedAttemptsBefore: counterBefore,
-    feeAppliedCents:                 feeThisAttempt,
-    dunningFeesCentsAfter:           feesCentsAfter,
+    consecutiveFailedAttemptsBefore: (payment.consecutive_failed_attempts ?? 0) as number,
+    feeAppliedCents:                 0,
+    dunningFeesCentsAfter:           feesBefore,
     attemptedAmountCents,
-    nextAttemptDate,
+    nextAttemptDate:                 null,
+    feeGraceUntil:                   graceUntil,
   });
-  if (capReached) {
-    await notifyDefaulted(supabase, {
-      paymentId:              payment.id,
-      outstandingAmountCents: chargeAmountCents(Number(payment.amount), feesCentsAfter),
-    });
-  }
+
   if (plan.patient_id) {
     // NOTE: this file's formatRandCents takes RANDS (not cents — unlike the
     // same-named helper in dunningNotifications). attemptedAmountCents is
     // cents, so `/ 100` is the correct cents→rands conversion. Do NOT
     // "fix" the /100 away — see dunningFeeGate/route.test push-format pin.
     await safePush(plan.patient_id, {
-      title: capReached ? 'Account frozen — action needed' : 'Payment didn\'t go through',
-      body:  capReached
-        ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)} after several attempts. No more retries — your account is frozen from new plans until you settle. Tap to settle and lift the freeze.`
-        : feeThisAttempt > 0
-          ? `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. A ${formatRandCents(feeThisAttempt / 100)} fee was added. Tap to settle now and stop further fees.`
-          : `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. We'll try again — fund your card now or settle to avoid further fees.`,
+      title: 'Payment didn\'t go through',
+      body:  `We couldn't collect ${formatRandCents(attemptedAmountCents / 100)}. Pay by ${formatISODate(graceUntil)} to avoid a ${formatRandCents(DUNNING_FEE_CENTS / 100)} default fee.`,
       url:   `/patient/orders`,
-      tag:   capReached
-        ? `payment:${payment.id}:defaulted`
-        : `payment:${payment.id}:failed:r${payment.retry_count ?? 0}`,
+      tag:   `payment:${payment.id}:failed:r${payment.retry_count ?? 0}`,
     });
   }
 }

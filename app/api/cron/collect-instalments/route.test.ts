@@ -6,30 +6,48 @@ import { NextRequest } from 'next/server';
 // Focus areas:
 //   • CRON_SECRET enforcement (the route can fire real charges; this
 //     must be unbypassable).
-//   • Two-source pull: scheduled by due_date + failed by next_attempt_date.
-//   • Per-row attempt invokes attemptChargeInstalment.
+//   • Two-source charge-attempt pull: scheduled by due_date + failed by
+//     next_attempt_date.
+//   • A THIRD source: grace-elapsed dunning-fee assessment (still-'failed'
+//     rows whose dunning_grace_until has arrived) — the 24-hour self-pay
+//     window a failed attempt gets before its Default Fee posts. See
+//     lib/payments/assessDunningFee.ts.
+//   • Per-row attempt invokes attemptChargeInstalment / assessDunningFee.
 //   • Summary record is inserted into cron_runs.
 //   • Outcome counts are accurate.
 
 const attemptChargeInstalmentSpy = vi.fn();
+const assessDunningFeeSpy        = vi.fn();
 
 vi.mock('@/lib/payments/chargeInstalment', () => ({
   attemptChargeInstalment: (...args: unknown[]) => attemptChargeInstalmentSpy(...args),
-  MAX_ATTEMPTS:            4,
+  MAX_ATTEMPTS:            3,
 }));
 
-// Stub the service-role Supabase client. Each test sets up scheduledRows
-// and failedRows separately so we can assert the cron's two-source pull
-// behaves correctly (it issues one SELECT per source via Promise.all).
+vi.mock('@/lib/payments/assessDunningFee', () => ({
+  assessDunningFee: (...args: unknown[]) => assessDunningFeeSpy(...args),
+}));
+
+// Stub the service-role Supabase client. Each test sets up scheduledRows,
+// failedRows and graceElapsedRows separately so we can assert the cron's
+// three-source pull behaves correctly (it issues one SELECT per source).
 // The capturedOrCalls array records every .or() filter the cron sends —
 // used by the same-day-noop test to verify the per-day guard is present
-// on BOTH the scheduled and failed pulls.
+// on the two CHARGE-attempt pulls (the grace-elapsed pull carries no such
+// guard — its own idempotency comes from assessDunningFee's atomic claim,
+// not a same-day filter here).
+//
+// Both the "failed" charge-retry pull AND the grace-elapsed pull filter
+// status='failed', so distinguishing them needs a second signal: which
+// column the query's .not(col, 'is', null) names — 'next_attempt_date'
+// for the former, 'dunning_grace_until' for the latter.
 const inserts: Array<{ table: string; row: unknown }> = [];
 const capturedOrCalls: string[] = [];
 const queryState: {
-  scheduled: Array<{ id: string }>;
-  failed:    Array<{ id: string }>;
-} = { scheduled: [], failed: [] };
+  scheduled:    Array<{ id: string }>;
+  failed:       Array<{ id: string }>;
+  graceElapsed: Array<{ id: string }>;
+} = { scheduled: [], failed: [], graceElapsed: [] };
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
@@ -37,11 +55,17 @@ vi.mock('@supabase/supabase-js', () => ({
       return {
         select() {
           let selectedStatus: string | null = null;
+          let notColumn:       string | null = null;
           const builder: Record<string, unknown> = {};
-          for (const k of ['in', 'lte', 'not']) {
+          for (const k of ['in', 'lte']) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (builder as any)[k] = function () { return builder; };
           }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (builder as any).not = function (col: string) {
+            notColumn = col;
+            return builder;
+          };
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (builder as any).or = function (expr: string) {
             capturedOrCalls.push(expr);
@@ -55,6 +79,7 @@ vi.mock('@supabase/supabase-js', () => ({
           (builder as { then: (resolve: (v: unknown) => void) => void }).then = (resolve) => {
             const data =
               selectedStatus === 'scheduled' ? queryState.scheduled :
+              selectedStatus === 'failed' && notColumn === 'dunning_grace_until' ? queryState.graceElapsed :
               selectedStatus === 'failed'    ? queryState.failed    :
               [];
             resolve({ data, error: null });
@@ -72,10 +97,12 @@ vi.mock('@supabase/supabase-js', () => ({
 
 beforeEach(() => {
   attemptChargeInstalmentSpy.mockReset();
+  assessDunningFeeSpy.mockReset();
   inserts.length = 0;
   capturedOrCalls.length = 0;
   queryState.scheduled = [];
   queryState.failed = [];
+  queryState.graceElapsed = [];
   process.env.CRON_SECRET = 'test-secret-abc';
   process.env.NEXT_PUBLIC_SUPABASE_URL    = 'https://test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY    = 'service-role-test';
@@ -200,5 +227,73 @@ describe('cron route — behaviour', () => {
     const row = recorded!.row as { summary: { eligible_count: number; charged_count: number } };
     expect(row.summary.eligible_count).toBe(0);
     expect(row.summary.charged_count).toBe(0);
+  });
+});
+
+// ─── Grace-elapsed dunning-fee assessment — the third source ─────────────
+//
+// A failed attempt no longer earns its Default Fee immediately — the
+// patient gets a 24-hour self-pay window (payments.dunning_grace_until).
+// This is the ONLY place that window gets checked: still-'failed' rows
+// whose grace has elapsed. Separate from the charge-attempt pulls above
+// (which explicitly exclude grace-pending rows via next_attempt_date
+// being null while grace is open) and from attemptChargeInstalment
+// entirely — assessDunningFee never touches the card.
+
+describe('cron route — grace-elapsed dunning-fee assessment', () => {
+  it('assesses every grace-elapsed row via assessDunningFee, independent of the charge-attempt pulls', async () => {
+    queryState.graceElapsed = [{ id: 'grace-1' }, { id: 'grace-2' }];
+    assessDunningFeeSpy.mockResolvedValue({ kind: 'assessed', paymentId: 'x', feeAppliedCents: 11_500, terminal: false });
+
+    await POST(makeReq('Bearer test-secret-abc'));
+
+    expect(assessDunningFeeSpy).toHaveBeenCalledTimes(2);
+    const ids = (assessDunningFeeSpy.mock.calls as unknown[][]).map(c => c[1]);
+    expect(ids.sort()).toEqual(['grace-1', 'grace-2']);
+    // Not conflated with the charge-attempt pull — no card was touched.
+    expect(attemptChargeInstalmentSpy).not.toHaveBeenCalled();
+  });
+
+  it('tallies fees applied and new defaults separately from the charge-attempt counts', async () => {
+    queryState.graceElapsed = [{ id: 'g1' }, { id: 'g2' }, { id: 'g3' }];
+    assessDunningFeeSpy
+      .mockResolvedValueOnce({ kind: 'assessed',   paymentId: 'g1', feeAppliedCents: 11_500, terminal: false })
+      .mockResolvedValueOnce({ kind: 'assessed',   paymentId: 'g2', feeAppliedCents: 11_500, terminal: true  })
+      .mockResolvedValueOnce({ kind: 'claim_lost', paymentId: 'g3', reason: 'already_claimed' });
+
+    const res = await POST(makeReq('Bearer test-secret-abc'));
+    const body = await res.json();
+
+    expect(body.grace_elapsed_count).toBe(3);
+    expect(body.fees_assessed_count).toBe(2);   // the two 'assessed' outcomes
+    expect(body.fees_applied_count).toBe(2);    // both carried a fee
+    expect(body.newly_defaulted_count).toBe(1); // only g2 was terminal
+    expect(body.assess_claim_lost_count).toBe(1);
+
+    const recorded = inserts.find(i => i.table === 'cron_runs');
+    const row = recorded!.row as { summary: Record<string, unknown> };
+    expect(row.summary.grace_elapsed_count).toBe(3);
+  });
+
+  it('a grace-elapsed row that resolved with no fee (self-paid mid-assessment-batch) still counts as assessed', async () => {
+    queryState.graceElapsed = [{ id: 'g1' }];
+    assessDunningFeeSpy.mockResolvedValueOnce({ kind: 'assessed', paymentId: 'g1', feeAppliedCents: 0, terminal: false });
+
+    const res = await POST(makeReq('Bearer test-secret-abc'));
+    const body = await res.json();
+
+    expect(body.fees_assessed_count).toBe(1);
+    expect(body.fees_applied_count).toBe(0);
+    expect(body.newly_defaulted_count).toBe(0);
+  });
+
+  it('zero grace-elapsed rows — the pass runs and reports zero, no crash', async () => {
+    queryState.graceElapsed = [];
+    const res = await POST(makeReq('Bearer test-secret-abc'));
+    const body = await res.json();
+
+    expect(body.grace_elapsed_count).toBe(0);
+    expect(body.fees_assessed_count).toBe(0);
+    expect(assessDunningFeeSpy).not.toHaveBeenCalled();
   });
 });
