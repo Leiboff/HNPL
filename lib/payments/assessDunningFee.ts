@@ -23,6 +23,12 @@ import { sendPushToUser } from '@/lib/notifications/sendPush';
 // which drops it out of the claim query for free — no special-casing
 // needed here).
 //
+// The weekly retry schedule stays anchored to the REAL attempt dates
+// (Day 0, 7, 14 — payments.last_dunning_attempt_date), never to whenever
+// this assessment pass happens to run. Only WHICH DAY THE FEE POSTS
+// shifts by the grace period (Day 1, 8, 15); the next charge attempt's
+// date does not. See lib/payments/dunning.ts's module banner.
+//
 // Mirrors lib/payments/chargeInstalment.ts's atomic-claim shape: the
 // claiming UPDATE's WHERE clause is itself the concurrency guard (a
 // second concurrent run finds zero rows and reports claim_lost), and it
@@ -78,7 +84,7 @@ export async function assessDunningFee(
     .eq('status', 'failed')
     .not('dunning_grace_until', 'is', null)
     .lte('dunning_grace_until', todayStr)
-    .select('id, plan_id, instalment_number, amount, dunning_fees_cents, consecutive_failed_attempts, retry_count, patient_id');
+    .select('id, plan_id, instalment_number, amount, dunning_fees_cents, consecutive_failed_attempts, retry_count, patient_id, last_dunning_attempt_date');
 
   if (claimErr || !claimed || claimed.length === 0) {
     return { kind: 'claim_lost', paymentId, reason: 'already_claimed' };
@@ -87,6 +93,7 @@ export async function assessDunningFee(
     id: string; plan_id: string; instalment_number: number; amount: number;
     dunning_fees_cents: number | null; consecutive_failed_attempts: number | null;
     retry_count: number | null; patient_id: string | null;
+    last_dunning_attempt_date: string | null;
   };
 
   // ── 2. Plan lookup — needed for the 50%-of-bill cap and patient_id.
@@ -118,16 +125,20 @@ export async function assessDunningFee(
   const counterBefore = (payment.consecutive_failed_attempts ?? 0) as number;
   const attemptedAmountCents = chargeAmountCents(Number(payment.amount), feesBefore);
 
-  // ── 4. The pure ladder math — "today" here is the ASSESSMENT date
-  //       (grace-elapsed), not the original failure date. See the
-  //       cadence note in lib/payments/dunning.ts's module banner: the
-  //       weekly retry gap is measured from whenever a failure actually
-  //       gets assessed, which already has the grace day folded in.
+  // ── 4. The pure ladder math — anchored to the date the failed charge
+  //       ATTEMPT itself fired (last_dunning_attempt_date), NOT today's
+  //       assessment date. chargeInstalment.ts's atomic claim always
+  //       stamps last_dunning_attempt_date before firing the charge, so
+  //       it's guaranteed set for any row that has ever failed an
+  //       attempt. See the CRITICAL note in lib/payments/dunning.ts's
+  //       module banner for why the assessment date would silently drift
+  //       every retry a grace period late.
+  const attemptDate = (payment.last_dunning_attempt_date as string).slice(0, 10);
   const ladder = advanceLadderAfterFailure({
     consecutiveFailedAttemptsBefore: counterBefore,
     dunningFeesCentsBefore:          feesBefore,
     originalBillRands:               Number(plan.total_amount),
-    today:                           todayStr,
+    attemptDate,
     nextInstalmentDueDate,
   });
 

@@ -6,8 +6,14 @@
 // fails, Default Fee #1 attaches — after a 24-hour self-pay grace period
 // (see below) — and we re-attempt weekly, each still-unpaid failure
 // carrying another fee after its own grace, until the cap (3 fees) is
-// reached → terminal `defaulted`. Fee-bearing days on a normal bill (grace
-// folded in): due date, +8, +15 — see FEE_GRACE_PERIOD_DAYS.
+// reached → terminal `defaulted`.
+//
+// Attempt days on a normal bill: due date (Day 0), Day 7, Day 14 — fixed,
+// weekly, anchored to the REAL attempt dates. The grace period shifts
+// only WHEN THE FEE for a given attempt posts (Day 1, Day 8, Day 15 —
+// each attempt day + FEE_GRACE_PERIOD_DAYS); it never shifts WHEN THE
+// NEXT ATTEMPT fires. See attemptDate below for why that distinction is
+// load-bearing.
 //
 // Bounded a second way too: the ladder never schedules a retry that would
 // land on or after the PLAN'S NEXT instalment's own due date. Once that
@@ -31,21 +37,29 @@
 //
 // That grace is deliberately NOT modelled as a parameter of
 // advanceLadderAfterFailure. The function stays pure schedule-and-fee
-// math over "today" — what changed is WHEN a caller is allowed to call
-// it: the Peach webhook's payment.failure handler no longer calls this
-// module at all. It just records the failure and stamps
+// math over `attemptDate` — what changed is WHEN a caller is allowed to
+// call it: the Peach webhook's payment.failure handler no longer calls
+// this module at all. It just records the failure and stamps
 // payments.dunning_grace_until = today + FEE_GRACE_PERIOD_DAYS. A daily
 // cron pass (lib/payments/assessDunningFee.ts) is the ONLY caller of
 // advanceLadderAfterFailure now, and only for rows whose grace has
-// elapsed and are STILL unpaid — "today" passed in is the assessment
-// date, not the original failure date, so the weekly retry cadence below
-// is measured from whenever a failure actually got assessed, which
-// already has the grace day folded in.
+// elapsed and are STILL unpaid.
+//
+// CRITICAL: the caller MUST pass the date the failed charge attempt
+// itself fired (payments.last_dunning_attempt_date) as `attemptDate` —
+// NOT "today" / the assessment date the cron happens to be running on.
+// Those two dates are FEE_GRACE_PERIOD_DAYS apart by construction (the
+// assessment only runs once grace has elapsed), so anchoring the +7
+// weekly math to the assessment date instead of the real attempt date
+// silently drifts every retry one grace-period late — compounding each
+// cycle (Day 7 retry lands as Day 8, Day 14 as Day 16, ...). Anchoring to
+// the real attempt date keeps retries fixed at Day 0 / 7 / 14 regardless
+// of how much grace delay happened before each fee got assessed.
 //
 // This module is PURE — no DB, no fetch, no I/O. The caller passes in
-// the pre-attempt state and "today" (plus the next instalment's due date,
-// if any), and gets back the post-attempt state to persist. That lets the
-// same engine drive:
+// the pre-attempt state and `attemptDate` (plus the next instalment's due
+// date, if any), and gets back the post-attempt state to persist. That
+// lets the same engine drive:
 //   • the daily grace-elapsed assessment pass (advance on a still-unpaid
 //     failure once its 24-hour self-pay window has closed)
 //   • tests (deterministic, no clock + no stub Supabase needed)
@@ -115,8 +129,15 @@ export type LadderInput = {
    * cap. Caller reads `plans.total_amount` and passes it through.
    */
   originalBillRands: number;
-  /** Today's UTC ISO date (YYYY-MM-DD). Drives the next-attempt-date math. */
-  today: string;
+  /**
+   * The date the FAILED CHARGE ATTEMPT itself fired (UTC ISO,
+   * YYYY-MM-DD) — i.e. `payments.last_dunning_attempt_date`. NOT the
+   * assessment date. Drives the next-attempt-date math: the weekly
+   * retry is `attemptDate + WEEKLY_RETRY_GAP_DAYS`, always anchored to
+   * the real attempt, never to whenever the fee happened to get
+   * assessed. See the module banner's CRITICAL note above.
+   */
+  attemptDate: string;
   /**
    * Due date (YYYY-MM-DD) of the NEXT instalment on this plan, or `null`
    * if this is the plan's last instalment (nothing bounds the retry
@@ -215,7 +236,7 @@ export function advanceLadderAfterFailure(input: LadderInput): LadderOutcome {
   const dunningFeesCentsAfter = input.dunningFeesCentsBefore + feeThisAttempt;
   const capReached            = dunningFeesCentsAfter >= capCents;
 
-  const proposedNextAttemptDate = addDaysISO(input.today, WEEKLY_RETRY_GAP_DAYS);
+  const proposedNextAttemptDate = addDaysISO(input.attemptDate, WEEKLY_RETRY_GAP_DAYS);
   const nextInstalmentBoundaryHit =
     input.nextInstalmentDueDate !== null &&
     proposedNextAttemptDate >= input.nextInstalmentDueDate;

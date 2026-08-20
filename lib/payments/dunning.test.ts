@@ -124,7 +124,7 @@ describe('advanceLadderAfterFailure — full timeline on a R1000 bill', () => {
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           day0,
+      attemptDate:                           day0,
       nextInstalmentDueDate:           null,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
@@ -141,7 +141,7 @@ describe('advanceLadderAfterFailure — full timeline on a R1000 bill', () => {
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS,
       originalBillRands:               bill,
-      today:                           day7,
+      attemptDate:                           day7,
       nextInstalmentDueDate:           null,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
@@ -156,7 +156,7 @@ describe('advanceLadderAfterFailure — full timeline on a R1000 bill', () => {
       consecutiveFailedAttemptsBefore: 2,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS * 2,
       originalBillRands:               bill,
-      today:                           day14,
+      attemptDate:                           day14,
       nextInstalmentDueDate:           null,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS);
@@ -180,7 +180,7 @@ describe('advanceLadderAfterFailure — small-bill cap binds early', () => {
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           null,
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS); // R115, fits under R200
@@ -197,7 +197,7 @@ describe('advanceLadderAfterFailure — small-bill cap binds early', () => {
       consecutiveFailedAttemptsBefore: 1,
       dunningFeesCentsBefore:          DUNNING_FEE_CENTS,
       originalBillRands:               bill,
-      today:                           '2026-06-22',
+      attemptDate:                           '2026-06-22',
       nextInstalmentDueDate:           null,
     });
     expect(r.feeAppliedThisAttempt).toBe(cap - DUNNING_FEE_CENTS); // 20_000 − 11_500 = 8_500 (R85)
@@ -217,7 +217,7 @@ describe('advanceLadderAfterFailure — tiny-bill cap < single fee', () => {
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               150,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           null,
     });
     expect(r.feeAppliedThisAttempt).toBe(7_500); // R75 (clamped to headroom)
@@ -245,7 +245,7 @@ describe('advanceLadderAfterFailure — bounded by the next instalment due date'
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           '2026-08-01', // weeks away
     });
     expect(r.nextInstalmentBoundaryHit).toBe(false);
@@ -254,13 +254,13 @@ describe('advanceLadderAfterFailure — bounded by the next instalment due date'
   });
 
   it('proposed retry lands EXACTLY on the next instalment due date — boundary hit, terminal', () => {
-    // today + 7 days = 2026-06-22, which is exactly the next instalment's
+    // attemptDate + 7 days = 2026-06-22, which is exactly the next instalment's
     // due date. The instalment stops being separately chased right there.
     const r = advanceLadderAfterFailure({
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           '2026-06-22',
     });
     expect(r.feeAppliedThisAttempt).toBe(DUNNING_FEE_CENTS); // the fee for THIS failed attempt still applies
@@ -275,7 +275,7 @@ describe('advanceLadderAfterFailure — bounded by the next instalment due date'
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           '2026-06-18', // short Pay-in-2 gap, already past by the time +7 lands
     });
     expect(r.nextInstalmentBoundaryHit).toBe(true);
@@ -288,7 +288,7 @@ describe('advanceLadderAfterFailure — bounded by the next instalment due date'
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           '2026-06-23', // one day after the proposed 2026-06-22 retry
     });
     expect(r.nextInstalmentBoundaryHit).toBe(false);
@@ -301,7 +301,7 @@ describe('advanceLadderAfterFailure — bounded by the next instalment due date'
       consecutiveFailedAttemptsBefore: 0,
       dunningFeesCentsBefore:          0,
       originalBillRands:               bill,
-      today:                           '2026-06-15',
+      attemptDate:                           '2026-06-15',
       nextInstalmentDueDate:           null,
     });
     expect(r.nextInstalmentBoundaryHit).toBe(false);
@@ -323,27 +323,27 @@ describe('advanceLadderAfterFailure — end-to-end ladder run (R1000 bill)', () 
     const bill = 1000;
     let counter = 0;
     let fees    = 0;
-    let today: string | null = '2026-06-15';
+    let attemptDate: string | null = '2026-06-15';
 
     const days:  string[] = [];
     const feesPerAttempt: number[] = [];
     let terminal: string | null = null;
     let guard = 0;
 
-    while (today && guard++ < 10) {
-      days.push(today);
+    while (attemptDate && guard++ < 10) {
+      days.push(attemptDate);
       const r = advanceLadderAfterFailure({
         consecutiveFailedAttemptsBefore: counter,
         dunningFeesCentsBefore:          fees,
         originalBillRands:               bill,
-        today,
+        attemptDate,
         nextInstalmentDueDate:           null,
       });
       feesPerAttempt.push(r.feeAppliedThisAttempt);
       counter  = r.consecutiveFailedAttemptsAfter;
       fees     = r.dunningFeesCentsAfter;
       terminal = r.terminalStatus;
-      today    = r.nextAttemptDate; // null terminates the loop
+      attemptDate    = r.nextAttemptDate; // null terminates the loop
     }
 
     // Exactly 3 attempts: the due-date attempt + 2 further weekly retries.

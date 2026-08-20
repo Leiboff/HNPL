@@ -39,6 +39,8 @@ type PaymentRow = {
   retry_count: number;
   dunning_grace_until: string | null;
   patient_id?: string | null;
+  last_dunning_attempt_date?: string | null;
+  next_attempt_date?: string | null;
 };
 type PlanRow = { id: string; patient_id: string; total_amount: number };
 
@@ -130,6 +132,7 @@ const BASE_PAYMENT: PaymentRow = {
   consecutive_failed_attempts: 0,
   retry_count: 1,
   dunning_grace_until: '2026-06-16',
+  last_dunning_attempt_date: '2026-06-15', // the failed attempt itself — one day before grace elapses
   patient_id: 'u1',
 };
 const BASE_PLAN: PlanRow = { id: 'plan-1', patient_id: 'u1', total_amount: 1000 };
@@ -191,8 +194,13 @@ describe('assessDunningFee — fee gate ON', () => {
     expect(state.payments[0].status).toBe('failed');
     expect(state.payments[0].dunning_grace_until).toBeNull();
 
-    // Weekly retry, from the ASSESSMENT date (today), per the module's
-    // documented cadence — not from the original failure date.
+    // Weekly retry anchored to the REAL attempt date (last_dunning_
+    // attempt_date = 2026-06-15) + 7 = 2026-06-22 — NOT to today's
+    // assessment date (2026-06-16) + 7 = 2026-06-23. Getting this wrong
+    // silently drifts every retry a grace period late (Day 7 → Day 8,
+    // Day 14 → Day 16, ...).
+    expect(state.payments[0].next_attempt_date).toBe('2026-06-22');
+
     const events = (state as unknown as { plan_events?: Array<{ event_type: string }> }).plan_events ?? [];
     expect(events.some((e) => e.event_type === 'dunning_fee_applied')).toBe(true);
     expect(events.some((e) => e.event_type === 'instalment_defaulted')).toBe(false);
