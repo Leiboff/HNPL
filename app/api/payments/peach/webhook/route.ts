@@ -23,6 +23,7 @@ import {
 } from '@/lib/payments/dunningNotifications';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
+import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { logPeachRawResponse } from '@/lib/payments/peach/logRawResponse';
 import { failCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 
@@ -287,6 +288,41 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
       paymentId:            payment.id,
       collectedAmountCents: collectedCents,
       viaSelfSettle:        false,
+    });
+  }
+
+  // ── Recover any other defaulted balance on this plan ──
+  //
+  // A 'defaulted' instalment is terminal to the normal cron ladder — it
+  // is never retried (see lib/payments/chargeInstalment.ts's charge-
+  // eligibility queries). Left alone, that debt just sits there frozen
+  // forever, uncollected, even while the SAME card goes on to
+  // successfully collect later instalments. A successful collection is
+  // the best evidence we have that the card currently has funds, so we
+  // use it as the trigger to also attempt any other defaulted instalment
+  // on this plan — each as its OWN separate charge (own Peach reference,
+  // own amount), never bundled into the instalment that just succeeded.
+  // Reuses the exact same atomic-claim path the patient's own "Pay now"
+  // button uses (attemptChargeInstalment with selfSettle:true), which is
+  // the one eligibility mode that allows claiming a 'defaulted' row and
+  // bypasses the retry-cap/due-date gates the normal ladder enforces.
+  // The eventual outcome (collected or failed again) is reconciled by
+  // this same webhook the normal way when Peach calls back for that
+  // charge's own reference — no special-case handling needed here.
+  const { data: defaultedSiblings } = await supabase
+    .from('payments')
+    .select('id')
+    .eq('plan_id', plan.id)
+    .eq('kind', 'instalment')
+    .eq('status', 'defaulted');
+
+  for (const sibling of (defaultedSiblings ?? []) as Array<{ id: string }>) {
+    const recoveryOutcome = await attemptChargeInstalment(supabase, sibling.id, { selfSettle: true });
+    console.log('[peach-webhook] payment.success: auto-recovery attempt on defaulted sibling', {
+      planId:             plan.id,
+      triggeringPaymentId: payment.id,
+      defaultedPaymentId: sibling.id,
+      outcome:            recoveryOutcome.kind,
     });
   }
 

@@ -37,7 +37,12 @@ import { settleRef } from '@/lib/payments/peach/refs';
 //   • 'failed'     — in the ladder; cron will retry on next_attempt_date.
 //                    Self-settling pre-empts the next attempt.
 //   • 'defaulted'  — cap-hit; cron will NOT retry. Self-settle is the
-//                    only way back from here besides admin write-off.
+//                    only PATIENT-initiated way back (besides admin
+//                    write-off) — the system also makes its own
+//                    opportunistic attempt on this row, as a separate
+//                    charge, the next time any OTHER instalment on the
+//                    same plan collects successfully (see the webhook's
+//                    "Recover any other defaulted balance" step).
 //
 // Outcomes (mirrored from attemptChargeInstalment):
 //   • 'charged'        — Peach accepted the charge. The webhook
