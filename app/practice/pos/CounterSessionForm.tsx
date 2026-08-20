@@ -103,6 +103,7 @@ export default function CounterSessionForm({
   const [isPending, startTransition] = useTransition();
   const [issued, setIssued] = useState<Issued | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(SESSION_TTL_S);
   const [stage, setStage] = useState<CounterSessionStage | null>(null);
   const [acknowledging, setAcknowledging] = useState(false);
@@ -235,10 +236,17 @@ export default function CounterSessionForm({
   }
 
   // ── Render the QR once a session is issued ─────────────────────────
+  // Derived, not stateful: `window` exists by the time `issued` is ever
+  // truthy (it's only set from a client-side form submit), so there's no
+  // async gap to bridge with an effect the way qrDataUrl (an awaited
+  // encode) needs.
+  const checkoutUrl = issued && typeof window !== 'undefined'
+    ? `${window.location.origin}/checkout/${issued.token}`
+    : null;
+
   useEffect(() => {
     if (!issued) return;
-    const appUrl = window.location.origin;
-    const url = `${appUrl}/checkout/${issued.token}`;
+    const url = `${window.location.origin}/checkout/${issued.token}`;
     let cancelled = false;
     QRCode.toDataURL(url, { width: 320, margin: 1 })
       .then((dataUrl) => { if (!cancelled) setQrDataUrl(dataUrl); })
@@ -383,6 +391,41 @@ export default function CounterSessionForm({
             <p className="text-sm font-medium text-gray-700" data-testid="pos-qr-countdown">
               Expires in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
             </p>
+
+            {/* Camera scanning isn't available on every phone (notably
+                Safari/iOS lacks the barcode-detection API the in-app
+                scanner needs). This link is the only other way a patient
+                reaches checkout — read it aloud or send it to them. */}
+            {checkoutUrl && (
+              <div className="pt-1 text-left">
+                <p className="text-xs text-gray-500">Can&apos;t scan? Read or send this link instead</p>
+                <div className="mt-1.5 flex gap-2">
+                  <input
+                    readOnly
+                    value={checkoutUrl}
+                    data-testid="pos-qr-link"
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 font-mono text-[11px] text-gray-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(checkoutUrl);
+                        setLinkCopied(true);
+                        setTimeout(() => setLinkCopied(false), 2000);
+                      } catch {
+                        // Clipboard access can be denied/unavailable — the
+                        // input above is still selectable by hand.
+                      }
+                    }}
+                    className="flex-none rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-medium text-white"
+                  >
+                    {linkCopied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
         <button

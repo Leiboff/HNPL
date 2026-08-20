@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import jsQR from 'jsqr';
 
 // ─── ScanView — camera QR scanner for /patient/scan ──────────────────────
 //
@@ -10,22 +11,26 @@ import { useRouter } from 'next/navigation';
 // pushes the patient straight into the existing /checkout/[token] flow —
 // this page does no claiming or lookup of its own.
 //
-// Decoding uses the browser's Shape Detection API (`BarcodeDetector`),
-// which is Chrome/Android only — not in TS's DOM lib and not implemented in
-// Safari/iOS. The manual-entry field below is therefore not optional
-// polish; on iOS it's the only way this page works at all.
-
-type BarcodeDetectorResult = { rawValue: string };
-type BarcodeDetectorLike = {
-  detect(source: CanvasImageSource): Promise<BarcodeDetectorResult[]>;
-};
-declare global {
-  interface Window {
-    BarcodeDetector?: new (opts: { formats: string[] }) => BarcodeDetectorLike;
-  }
-}
+// Decoding used to go through the browser's Shape Detection API
+// (`BarcodeDetector`) — Chrome/Android only. Safari has never implemented
+// it, on iOS or macOS, which meant this page silently did nothing useful
+// for a large share of patients. jsQR is a pure-JS decoder that only needs
+// a <canvas> and getUserMedia — both supported since iOS 11 — so it works
+// the same way everywhere. The manual-entry field stays as the fallback
+// for the cases even that can't cover (camera denied, no camera at all).
 
 type Status = 'starting' | 'scanning' | 'denied' | 'unsupported' | 'redirecting';
+
+/** How often to pull a frame and try to decode it. jsQR is real CPU work
+    (pixel-by-pixel pattern matching), so this runs on a timer rather than
+    every animation frame — 5/s is plenty responsive for a code someone is
+    deliberately holding still. */
+const SCAN_INTERVAL_MS = 200;
+
+/** Frames are downscaled to this before decoding. QR detection doesn't
+    need the camera's native resolution (often 1080p+ on a phone) and
+    decoding a smaller frame is substantially faster. */
+const MAX_SCAN_DIMENSION = 480;
 
 /** Pull a /checkout/:token destination out of whatever we're handed — a
     full URL (what a QR encodes), a bare path, or a raw token (manual
@@ -48,25 +53,26 @@ function resolveDestination(raw: string): string | null {
 
 export default function ScanView() {
   const router = useRouter();
-  const videoRef      = useRef<HTMLVideoElement>(null);
-  const streamRef      = useRef<MediaStream | null>(null);
-  const rafRef          = useRef<number | null>(null);
-  const detectingRef    = useRef(false);
+  const videoRef  = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const foundRef  = useRef(false);
 
   const [status, setStatus]           = useState<Status>('starting');
   const [manual, setManual]           = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
 
   const go = useCallback((dest: string) => {
+    foundRef.current = true;
     setStatus('redirecting');
     router.push(dest);
   }, [router]);
 
   useEffect(() => {
     let cancelled = false;
+    let intervalId: number | null = null;
 
     async function start() {
-      if (!navigator.mediaDevices?.getUserMedia || !window.BarcodeDetector) {
+      if (!navigator.mediaDevices?.getUserMedia) {
         setStatus('unsupported');
         return;
       }
@@ -94,36 +100,48 @@ export default function ScanView() {
       }
       setStatus('scanning');
 
-      const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      // Offscreen — never attached to the DOM, purely a scratch buffer for
+      // pulling pixel data out of the <video> element each tick.
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-      const tick = async () => {
-        if (cancelled) return;
-        if (detectingRef.current || !videoRef.current) {
-          rafRef.current = requestAnimationFrame(tick);
+      const scanTick = () => {
+        if (foundRef.current || !ctx || !videoRef.current) return;
+        const video = videoRef.current;
+        if (video.readyState < video.HAVE_ENOUGH_DATA || !video.videoWidth) return;
+
+        const scale = Math.min(1, MAX_SCAN_DIMENSION / Math.max(video.videoWidth, video.videoHeight));
+        const w = Math.max(1, Math.round(video.videoWidth * scale));
+        const h = Math.max(1, Math.round(video.videoHeight * scale));
+        if (canvas.width !== w) canvas.width = w;
+        if (canvas.height !== h) canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+
+        let imageData: ImageData;
+        try {
+          imageData = ctx.getImageData(0, 0, w, h);
+        } catch {
           return;
         }
-        detectingRef.current = true;
-        try {
-          const codes = await detector.detect(videoRef.current);
-          const dest = codes.length > 0 ? resolveDestination(codes[0].rawValue) : null;
-          if (dest) {
-            go(dest);
-            return;
-          }
-        } catch {
-          // Transient decode errors (frame mid-repaint, etc.) — just retry.
+
+        // dontInvert: a checkout QR is always dark-on-light, and skipping
+        // jsQR's inverted-image pass roughly halves the work per frame.
+        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+        const dest = code?.data ? resolveDestination(code.data) : null;
+        if (dest) {
+          if (intervalId !== null) { window.clearInterval(intervalId); intervalId = null; }
+          go(dest);
         }
-        detectingRef.current = false;
-        if (!cancelled) rafRef.current = requestAnimationFrame(tick);
       };
-      rafRef.current = requestAnimationFrame(tick);
+
+      intervalId = window.setInterval(scanTick, SCAN_INTERVAL_MS);
     }
 
     start();
 
     return () => {
       cancelled = true;
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      if (intervalId !== null) window.clearInterval(intervalId);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, [go]);
@@ -187,7 +205,7 @@ export default function ScanView() {
 
         {status === 'unsupported' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
-            <p className="text-sm font-medium text-white">Scanning isn&apos;t supported on this browser</p>
+            <p className="text-sm font-medium text-white">Camera scanning isn&apos;t available on this device</p>
             <p className="text-[13px] text-white/70">Enter the code from the bill below instead.</p>
           </div>
         )}

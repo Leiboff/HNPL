@@ -27,11 +27,16 @@ export default function BillQrPanel({
   const [qrDataUrl,   setQrDataUrl]   = useState<string | null>(null);
   const [qrError,     setQrError]     = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [copied,      setCopied]      = useState(false);
+
+  // Derived, not stateful: `window` exists by the time this client
+  // component ever actually renders this branch, so there's no async gap
+  // to bridge with an effect the way qrDataUrl (an awaited encode) needs.
+  const checkoutUrl = typeof window !== 'undefined' ? `${window.location.origin}/checkout/${token}` : null;
 
   useEffect(() => {
-    const url = `${window.location.origin}/checkout/${token}`;
     let cancelled = false;
-    QRCode.toDataURL(url, { width: 320, margin: 1 })
+    QRCode.toDataURL(`${window.location.origin}/checkout/${token}`, { width: 320, margin: 1 })
       .then((dataUrl) => { if (!cancelled) setQrDataUrl(dataUrl); })
       .catch(() => { if (!cancelled) setQrError(true); });
     return () => { cancelled = true; };
@@ -76,6 +81,43 @@ export default function BillQrPanel({
             <p data-testid="bill-qr-countdown" className="text-xs tabular-nums text-[#7A8AA0]">
               Expires in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
             </p>
+          )}
+
+          {/* Camera scanning isn't available on every phone (notably
+              Safari/iOS lacks the barcode-detection API the in-app scanner
+              needs), and this is the ONLY place the underlying link exists —
+              without it, a patient who can't scan has no way to reach
+              checkout at all. Read aloud or copied into a message, it's the
+              fallback path. */}
+          {checkoutUrl && (
+            <div className="pt-1 text-left">
+              <p className="text-xs text-[#7A8AA0]">Can&apos;t scan? Send this link instead</p>
+              <div className="mt-1.5 flex gap-2">
+                <input
+                  readOnly
+                  value={checkoutUrl}
+                  data-testid="bill-qr-link"
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="min-w-0 flex-1 rounded-lg border border-[#E5E9F0] bg-[#F7FAFA] px-2.5 py-1.5 font-mono text-[11px] text-[#3A4B66]"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(checkoutUrl);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    } catch {
+                      // Clipboard access can be denied/unavailable — the
+                      // input above is still selectable by hand.
+                    }
+                  }}
+                  className="flex-none rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
           )}
         </>
       )}
