@@ -27,10 +27,16 @@ type Status = 'starting' | 'scanning' | 'denied' | 'unsupported' | 'redirecting'
     deliberately holding still. */
 const SCAN_INTERVAL_MS = 200;
 
-/** Frames are downscaled to this before decoding. QR detection doesn't
-    need the camera's native resolution (often 1080p+ on a phone) and
-    decoding a smaller frame is substantially faster. */
-const MAX_SCAN_DIMENSION = 480;
+/** Frames are downscaled to this before decoding. Too small and a
+    real-world photographed code (angled, at arm's length, some motion
+    blur) loses the module detail jsQR needs; too large costs CPU for no
+    benefit, since QR detection doesn't need the camera's native
+    resolution (often 1080p+ on a phone). */
+const MAX_SCAN_DIMENSION = 640;
+
+/** How long the "that's not a BetterNow code" hint stays up after a
+    decode that resolves to nothing useful. */
+const WRONG_CODE_HINT_MS = 2500;
 
 /** Pull a /checkout/:token destination out of whatever we're handed — a
     full URL (what a QR encodes), a bare path, or a raw token (manual
@@ -53,13 +59,19 @@ function resolveDestination(raw: string): string | null {
 
 export default function ScanView() {
   const router = useRouter();
-  const videoRef  = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const foundRef  = useRef(false);
+  const videoRef       = useRef<HTMLVideoElement>(null);
+  const streamRef       = useRef<MediaStream | null>(null);
+  const foundRef         = useRef(false);
+  const hintTimeoutRef    = useRef<number | null>(null);
 
   const [status, setStatus]           = useState<Status>('starting');
   const [manual, setManual]           = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
+  // Distinguishes "nothing is being detected" from "something was
+  // detected but it isn't a checkout code" — without this, both look
+  // identical to a patient (and to us, diagnosing a report that scanning
+  // "doesn't pick anything up").
+  const [wrongCodeHint, setWrongCodeHint] = useState(false);
 
   const go = useCallback((dest: string) => {
     foundRef.current = true;
@@ -104,6 +116,10 @@ export default function ScanView() {
       // pulling pixel data out of the <video> element each tick.
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      // The browser's default smoothing blurs the downscale, which softens
+      // exactly the sharp module edges jsQR relies on. Nearest-neighbour
+      // keeps them crisp.
+      if (ctx) ctx.imageSmoothingEnabled = false;
 
       const scanTick = () => {
         if (foundRef.current || !ctx || !videoRef.current) return;
@@ -124,14 +140,27 @@ export default function ScanView() {
           return;
         }
 
-        // dontInvert: a checkout QR is always dark-on-light, and skipping
-        // jsQR's inverted-image pass roughly halves the work per frame.
-        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-        const dest = code?.data ? resolveDestination(code.data) : null;
+        // attemptBoth: costs a bit more per frame than dontInvert, but at a
+        // 200ms cadence (not every animation frame) there's headroom to
+        // spend on not missing a real code over a light/dark background we
+        // didn't anticipate.
+        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'attemptBoth' });
+        if (!code?.data) return;
+
+        const dest = resolveDestination(code.data);
         if (dest) {
           if (intervalId !== null) { window.clearInterval(intervalId); intervalId = null; }
           go(dest);
+          return;
         }
+
+        // A QR WAS read — the camera and decoder are working — it just
+        // isn't a BetterNow checkout code. Say so, rather than looking
+        // identical to "nothing detected" and leaving the patient guessing
+        // whether to keep trying or give up on scanning entirely.
+        setWrongCodeHint(true);
+        if (hintTimeoutRef.current !== null) window.clearTimeout(hintTimeoutRef.current);
+        hintTimeoutRef.current = window.setTimeout(() => setWrongCodeHint(false), WRONG_CODE_HINT_MS);
       };
 
       intervalId = window.setInterval(scanTick, SCAN_INTERVAL_MS);
@@ -142,6 +171,7 @@ export default function ScanView() {
     return () => {
       cancelled = true;
       if (intervalId !== null) window.clearInterval(intervalId);
+      if (hintTimeoutRef.current !== null) window.clearTimeout(hintTimeoutRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, [go]);
@@ -177,8 +207,23 @@ export default function ScanView() {
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div
               className="h-[62%] w-[62%] rounded-[18px]"
-              style={{ border: '3px solid rgba(255,255,255,.85)', boxShadow: '0 0 0 999px rgba(0,0,0,.28)' }}
+              style={{
+                border: `3px solid ${wrongCodeHint ? '#F5A524' : 'rgba(255,255,255,.85)'}`,
+                boxShadow: '0 0 0 999px rgba(0,0,0,.28)',
+                transition: 'border-color 0.15s',
+              }}
             />
+          </div>
+        )}
+
+        {status === 'scanning' && wrongCodeHint && (
+          <div className="absolute inset-x-0 bottom-3 flex justify-center px-6">
+            <p
+              className="rounded-full px-3.5 py-2 text-[12.5px] font-medium text-white text-center"
+              style={{ background: 'rgba(180,90,10,.85)' }}
+            >
+              That QR isn&apos;t a BetterNow checkout code
+            </p>
           </div>
         )}
 
