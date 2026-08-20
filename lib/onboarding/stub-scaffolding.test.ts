@@ -15,10 +15,9 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n
 
 const ACTIONS  = read('lib/onboarding/actions.ts');
 const AFFORD   = read('lib/underwriting/stubAffordabilityPolicy.ts');
-const LIVENESS = read('lib/onboarding/liveness/stubLivenessCheck.ts');
+const LIVENESS = read('lib/onboarding/liveness/livenessCheck.ts');
 // Whitespace-collapsed views so phrase checks survive comment line-wraps.
 const AFFORD1  = AFFORD.replace(/\s+/g, ' ');
-const LIVENESS1 = LIVENESS.replace(/\s+/g, ' ');
 const HOME     = read('app/patient/page.tsx');
 const BAL_CARD = read('app/patient/ApprovedBalanceCard.tsx');
 const NOTICE   = read('app/patient/TestBalanceNotice.tsx');
@@ -42,16 +41,16 @@ describe('affordability — one isolated, clearly-marked stub', () => {
   });
 });
 
-describe('liveness — one isolated, clearly-marked stub', () => {
-  it('carries a prominent STUB / not-a-real-check warning', () => {
-    expect(LIVENESS).toMatch(/STUB/);
-    expect(LIVENESS).toMatch(/NOT a real liveness/i);
-    expect(LIVENESS1).toMatch(/replace this entire module.*before/i);
+describe('liveness — real Datanamix integration, one isolated module', () => {
+  it('runLiveness gates on checkLiveness (swappable to fail), never assumes a pass', () => {
+    expect(ACTIONS).toMatch(/from '@\/lib\/onboarding\/liveness\/livenessCheck'/);
+    expect(ACTIONS).toMatch(/await checkLiveness\(scan\)\s*!==\s*'pass'/);
   });
 
-  it('runLiveness gates on the stub result (swappable to fail)', () => {
-    expect(ACTIONS).toMatch(/from '@\/lib\/onboarding\/liveness\/stubLivenessCheck'/);
-    expect(ACTIONS).toMatch(/stubLivenessCheck\(\)\s*!==\s*'pass'/);
+  it('the pass/fail decision comes from Datanamix\'s live /liveness-3d endpoint, not a hardcoded verdict', () => {
+    expect(LIVENESS).toMatch(/from '@\/lib\/facetec\/datanamixClient'/);
+    expect(LIVENESS).toMatch(/postLiveness3d/);
+    expect(LIVENESS).not.toMatch(/return\s+'pass';\s*$/m);
   });
 });
 
@@ -74,15 +73,17 @@ describe('the R5,000 has exactly ONE source (grep proves no second)', () => {
   });
 });
 
-describe('adversarial — no real bureau / liveness / credit computation', () => {
-  it('the stub modules make no network / provider calls and take no inputs', () => {
-    for (const src of [AFFORD, LIVENESS]) {
-      expect(src).not.toMatch(/\bfetch\s*\(/);
-      expect(src).not.toMatch(/https?:\/\//);
-      expect(src).not.toMatch(/\b(axios|XMLHttpRequest)\b/);
-    }
+describe('adversarial — affordability is still a no-op stub; liveness is not', () => {
+  it('the affordability stub makes no network / provider calls and takes no inputs', () => {
+    expect(AFFORD).not.toMatch(/\bfetch\s*\(/);
+    expect(AFFORD).not.toMatch(/https?:\/\//);
+    expect(AFFORD).not.toMatch(/\b(axios|XMLHttpRequest)\b/);
     // Zero-arg policy — no income/expense inputs are collected to compute from.
     expect(AFFORD).toMatch(/export function stubAffordabilityPolicy\(\):/);
+  });
+
+  it('liveness DOES make a real provider call (proves it left stub status)', () => {
+    expect(LIVENESS).toMatch(/\bawait\s+postLiveness3d\s*\(/);
   });
 });
 

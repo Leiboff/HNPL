@@ -11,7 +11,8 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
-import { stubLivenessCheck } from '@/lib/onboarding/liveness/stubLivenessCheck';
+import { checkLiveness, type LivenessScanInput } from '@/lib/onboarding/liveness/livenessCheck';
+import { getFaceTecBrowserSdkKeys, getFaceTecSessionToken, type FaceTecBrowserSdkKeys } from '@/lib/facetec/datanamixClient';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -306,23 +307,60 @@ export async function runCreditCheck(): Promise<ActionResult> {
   return { error: null, nextPath: finalize.nextPath };
 }
 
+// ─── FaceTec Browser SDK bootstrapping ──────────────────────────────────
+//
+// Two thin auth-gated wrappers around lib/facetec/datanamixClient.ts.
+// Neither writes to the profile — they exist purely so the liveness
+// step's client component can get what it needs (init keys, then a
+// session token) without ever holding the Datanamix Basic Auth
+// credentials, which must never reach the browser.
+
+export type FaceTecInitParamsResult =
+  | { error: null; keys: FaceTecBrowserSdkKeys }
+  | { error: string; keys?: undefined };
+
+export async function getFaceTecInitParams(): Promise<FaceTecInitParamsResult> {
+  const loaded = await loadUserAndProfile();
+  if (!loaded.ok) return { error: loaded.error };
+  if (!currentFlags().liveness) return { error: 'Liveness check is not enabled.' };
+
+  const result = await getFaceTecBrowserSdkKeys();
+  if (!result.ok) return { error: 'Could not start the face check. Please try again.' };
+  return { error: null, keys: result.data };
+}
+
+export type FaceTecSessionTokenResult =
+  | { error: null; sessionToken: string }
+  | { error: string; sessionToken?: undefined };
+
+export async function getFaceTecSessionTokenForOnboarding(xUserAgent: string): Promise<FaceTecSessionTokenResult> {
+  const loaded = await loadUserAndProfile();
+  if (!loaded.ok) return { error: loaded.error };
+  if (!currentFlags().liveness) return { error: 'Liveness check is not enabled.' };
+
+  const result = await getFaceTecSessionToken(xUserAgent);
+  if (!result.ok) return { error: 'Could not start the face check. Please try again.' };
+  return { error: null, sessionToken: result.sessionToken };
+}
+
 // ─── runLiveness ───────────────────────────────────────────────────────
 //
-// Integration seam. Today: with ENABLE_LIVENESS on, marks liveness as
-// verified via a stub. With the flag OFF, this route redirects the user
+// Integration seam. With ENABLE_LIVENESS on, submits the completed
+// FaceTec 3D Liveness Check to Datanamix and marks liveness as verified
+// only on a real pass. With the flag OFF, this route redirects the user
 // out; the state model excludes 'liveness' from their step list.
 
-export async function runLiveness(): Promise<ActionResult> {
+export async function runLiveness(scan: LivenessScanInput): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
   if (!currentFlags().liveness) {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  // Pass/fail decision comes from ONE isolated module — the current stub
-  // always returns 'pass' (no real check; see its banner). Gating on the
-  // result keeps it swappable: return 'fail' there and the step blocks.
-  if (stubLivenessCheck() !== 'pass') {
+  // Pass/fail decision comes from ONE isolated module — checkLiveness
+  // calls the real Datanamix /liveness-3d endpoint. Gating on the result
+  // keeps it swappable: any provider that returns 'fail' blocks the step.
+  if (await checkLiveness(scan) !== 'pass') {
     return { error: 'We could not verify it was you. Please try again.' };
   }
 
