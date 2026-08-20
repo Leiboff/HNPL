@@ -6,6 +6,7 @@ import { normalizePhoneZA } from '@/lib/validation';
 import { maskPhone } from '@/lib/patient/maskContact';
 import EmptyState from '@/components/EmptyState';
 import EditIconButton from '@/components/EditIconButton';
+import ProfileFieldRow from '@/components/ProfileFieldRow';
 import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
 
 // ─── Phone — masked, verified, and re-verified on change ───────────────
@@ -159,73 +160,42 @@ export default function PhoneField({
   // ── Verifying: hand off to the shared OTP step ───────────────────────
   if (mode === 'verifying' && staged) {
     return (
-      <div data-testid="profile-phone-verifying">
-        <p className="text-[11px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#13294B', opacity: 0.45 }}>
-          Phone
-        </p>
-        <div className="mb-3 rounded-xl px-3 py-2" style={{ background: 'rgba(200,132,28,.08)' }}>
-          <p className="text-[12.5px] leading-[1.5]" style={{ color: '#8A5A11' }}>
-            <span className="font-semibold">Verifying {maskPhone(staged)}.</span>{' '}
-            Until you enter the code, {current ? `we'll keep using ${maskPhone(current)}` : 'no number is on your account'}.
-          </p>
+      <ProfileFieldRow icon="phone" label="Phone">
+        <div data-testid="profile-phone-verifying">
+          <div className="mb-3 rounded-xl px-3 py-2" style={{ background: 'rgba(200,132,28,.08)' }}>
+            <p className="text-[12.5px] leading-[1.5]" style={{ color: '#8A5A11' }}>
+              <span className="font-semibold">Verifying {maskPhone(staged)}.</span>{' '}
+              Until you enter the code, {current ? `we'll keep using ${maskPhone(current)}` : 'no number is on your account'}.
+            </p>
+          </div>
+          <PhoneOtpStep
+            phoneDisplay={maskPhone(staged)}
+            requestCode={requestPhoneChangeOtp}
+            verifyCode={verifyPhoneChangeOtp}
+            onVerified={() => {
+              setStaged(null);
+              setOkMsg('Number updated and verified.');
+              setMode('idle');
+              router.refresh();
+            }}
+            onChangeNumber={onCancel}
+            // Plain body — the field is already inside a profile row, so the
+            // step's default card chrome would be a card inside a card.
+            shell={(body, actions) => (
+              <div className="space-y-4">{body}{actions}</div>
+            )}
+          />
         </div>
-        <PhoneOtpStep
-          phoneDisplay={maskPhone(staged)}
-          requestCode={requestPhoneChangeOtp}
-          verifyCode={verifyPhoneChangeOtp}
-          onVerified={() => {
-            setStaged(null);
-            setOkMsg('Number updated and verified.');
-            setMode('idle');
-            router.refresh();
-          }}
-          onChangeNumber={onCancel}
-          // Plain body — the field is already inside an accordion section, so
-          // the step's default card chrome would be a card inside a card.
-          shell={(body, actions) => (
-            <div className="space-y-4">{body}{actions}</div>
-          )}
-        />
-      </div>
+      </ProfileFieldRow>
     );
   }
 
   return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: '#13294B', opacity: 0.45 }}>
-        Phone
-      </p>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          {mode === 'editing' ? (
-            <input
-              className={`${inputCls} w-full`}
-              type="tel"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="New number, e.g. 082 000 0000"
-              autoFocus
-              data-testid="profile-phone-input"
-            />
-          ) : current ? (
-            <div className="flex items-center gap-2">
-              <p
-                className="text-sm font-medium tabular-nums text-gray-800"
-                data-testid="profile-phone-value"
-              >
-                {maskPhone(current)}
-              </p>
-              <StatePill verified={!!verifiedAt} />
-            </div>
-          ) : (
-            <div data-testid="profile-phone-value">
-              <EmptyState icon="field" title="No mobile number" inline>
-                Add one so we can text you about a payment before it goes out.
-              </EmptyState>
-            </div>
-          )}
-        </div>
-        {mode === 'idle' ? (
+    <ProfileFieldRow
+      icon="phone"
+      label="Phone"
+      action={
+        mode === 'idle' ? (
           <EditIconButton
             label={current ? 'Change phone' : 'Add phone'}
             onClick={() => { setOkMsg(null); setMode('editing'); }}
@@ -252,8 +222,36 @@ export default function PhoneField({
               {isPending ? 'Sending…' : 'Send code'}
             </button>
           </div>
-        )}
-      </div>
+        )
+      }
+    >
+      {mode === 'editing' ? (
+        <input
+          className={`${inputCls} w-full`}
+          type="tel"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="New number, e.g. 082 000 0000"
+          autoFocus
+          data-testid="profile-phone-input"
+        />
+      ) : current ? (
+        <div className="flex items-center gap-2">
+          <p
+            className="text-sm font-medium tabular-nums text-gray-800"
+            data-testid="profile-phone-value"
+          >
+            {maskPhone(current)}
+          </p>
+          <StatePill verified={!!verifiedAt} />
+        </div>
+      ) : (
+        <div data-testid="profile-phone-value">
+          <EmptyState icon="field" title="No mobile number" inline>
+            Add one so we can text you about a payment before it goes out.
+          </EmptyState>
+        </div>
+      )}
 
       {mode === 'editing' && (
         <p className="mt-1.5 text-[11.5px]" style={{ color: '#A3B1C2' }}>
@@ -264,6 +262,6 @@ export default function PhoneField({
 
       {error && <p className="mt-1.5 text-xs text-red-700" role="alert">{error}</p>}
       {okMsg && <p className="mt-1.5 text-xs text-emerald-700">{okMsg}</p>}
-    </div>
+    </ProfileFieldRow>
   );
 }

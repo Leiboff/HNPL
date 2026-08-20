@@ -6,6 +6,7 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { formatRand } from '@/app/patient/_format';
 import EmptyState from '@/components/EmptyState';
 import EditIconButton from '@/components/EditIconButton';
+import ProfileFieldRow from '@/components/ProfileFieldRow';
 
 // ─── Salary amount — profile-only, edit-toggle ────────────────────────
 //
@@ -73,44 +74,11 @@ export default function SalaryAmountSection({ current, saveSalaryAmount }: Props
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p
-            className="text-[11px] font-semibold uppercase tracking-widest mb-1.5"
-            style={{ color: '#13294B', opacity: 0.45 }}
-          >
-            Monthly income
-          </p>
-          {editing ? (
-            <div className="relative max-w-[220px]">
-              <span
-                aria-hidden
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500"
-              >
-                R
-              </span>
-              <input
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step="0.01"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                data-testid="profile-salary-amount-input"
-                placeholder="15,000"
-                className={inputCls}
-              />
-            </div>
-          ) : savedAmount != null ? (
-            <p className="text-sm font-medium text-gray-800">{formatRand(savedAmount)} / month</p>
-          ) : (
-            <EmptyState icon="field" title="No income on file" inline>
-              Add what you earn a month — used for the affordability check.
-            </EmptyState>
-          )}
-        </div>
-        {!editing ? (
+    <ProfileFieldRow
+      icon="income"
+      label="Monthly income"
+      action={
+        !editing ? (
           <EditIconButton
             label="Edit monthly income"
             onClick={() => setEditing(true)}
@@ -137,11 +105,39 @@ export default function SalaryAmountSection({ current, saveSalaryAmount }: Props
               {isPending ? 'Saving…' : 'Save'}
             </button>
           </div>
-        )}
-      </div>
+        )
+      }
+    >
+      {editing ? (
+        <div className="relative max-w-[220px]">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500"
+          >
+            R
+          </span>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            data-testid="profile-salary-amount-input"
+            placeholder="15,000"
+            className={inputCls}
+          />
+        </div>
+      ) : savedAmount != null ? (
+        <p className="text-sm font-medium text-gray-800">{formatRand(savedAmount)} / month</p>
+      ) : (
+        <EmptyState icon="field" title="No income on file" inline>
+          Add what you earn a month — used for the affordability check.
+        </EmptyState>
+      )}
 
-      {error && <p className="text-xs text-red-700">{error}</p>}
-      {okMsg && <p className="text-xs text-emerald-700">{okMsg}</p>}
-    </div>
+      {error && <p className="mt-1.5 text-xs text-red-700">{error}</p>}
+      {okMsg && <p className="mt-1.5 text-xs text-emerald-700">{okMsg}</p>}
+    </ProfileFieldRow>
   );
 }
