@@ -5,6 +5,7 @@ import SubScreenHeader from '../SubScreenHeader';
 import PhoneField from '@/app/patient/profile/PhoneField';
 import SalaryDaySection from '@/app/patient/profile/SalaryDaySection';
 import SalaryAmountSection from '@/app/patient/profile/SalaryAmountSection';
+import ProfileFieldRow, { type ProfileFieldIconName } from '@/components/ProfileFieldRow';
 import { saveSalaryDay, saveSalaryAmount } from '../actions';
 import {
   startPhoneChange,
@@ -42,19 +43,23 @@ import { getRequestUser } from '@/lib/auth/requestUser';
 /**
  * A field the patient cannot change here. No lock icon and no per-field
  * reason any more — the single "Contact support" line at the bottom of the
- * card covers why, in one place instead of three times.
+ * card covers why, in one place instead of three times. Renders through the
+ * same ProfileFieldRow shape as the editable fields below it, just with no
+ * action slot, so the whole card reads as one uniformly-spaced list.
  */
-function LockedField({ label, value }: { label: string; value: string }) {
+function LockedField({
+  icon,
+  label,
+  value,
+}: {
+  icon:  ProfileFieldIconName;
+  label: string;
+  value: string;
+}) {
   return (
-    <div data-testid="locked-field">
-      <p
-        className="text-[11px] font-semibold uppercase tracking-widest mb-1.5"
-        style={{ color: '#13294B', opacity: 0.45 }}
-      >
-        {label}
-      </p>
+    <ProfileFieldRow icon={icon} label={label} testId="locked-field">
       <p className="text-sm font-medium text-gray-800 truncate">{value || '—'}</p>
-    </div>
+    </ProfileFieldRow>
   );
 }
 
@@ -83,36 +88,28 @@ export default async function PersonalDetailsPage() {
   return (
     <PatientScreen header={<SubScreenHeader title="Personal details" />} sheetClassName="px-[18px] pt-5 pb-6">
       <div
-        className="rounded-[22px] bg-white p-[18px] flex flex-col gap-4"
+        className="rounded-[22px] bg-white p-[18px] divide-y divide-gray-100"
         style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
-          <LockedField label="Full name" value={fullName} />
-          <LockedField label="SA ID number" value={saIdMasked || ''} />
-          <LockedField label="Email" value={emailMasked} />
-        </div>
+        <LockedField icon="name" label="Full name" value={fullName} />
+        <LockedField icon="id" label="SA ID number" value={saIdMasked || ''} />
+        <LockedField icon="email" label="Email" value={emailMasked} />
 
-        <div className="border-t border-gray-100 pt-4">
-          <PhoneField
-            current={profile?.phone ?? null}
-            pending={(profile?.phone_pending as string | null | undefined) ?? null}
-            verifiedAt={(profile?.phone_verified_at as string | null | undefined) ?? null}
-            startPhoneChange={startPhoneChange}
-            requestPhoneChangeOtp={requestPhoneChangeOtp}
-            verifyPhoneChangeOtp={verifyPhoneChangeOtp}
-            cancelPhoneChange={cancelPhoneChange}
-          />
-        </div>
+        <PhoneField
+          current={profile?.phone ?? null}
+          pending={(profile?.phone_pending as string | null | undefined) ?? null}
+          verifiedAt={(profile?.phone_verified_at as string | null | undefined) ?? null}
+          startPhoneChange={startPhoneChange}
+          requestPhoneChangeOtp={requestPhoneChangeOtp}
+          verifyPhoneChangeOtp={verifyPhoneChangeOtp}
+          cancelPhoneChange={cancelPhoneChange}
+        />
 
-        <div className="border-t border-gray-100 pt-4">
-          <SalaryDaySection current={salaryDay} saveSalaryDay={saveSalaryDay} />
-        </div>
+        <SalaryDaySection current={salaryDay} saveSalaryDay={saveSalaryDay} />
 
-        <div className="border-t border-gray-100 pt-4">
-          <SalaryAmountSection current={salaryAmount} saveSalaryAmount={saveSalaryAmount} />
-        </div>
+        <SalaryAmountSection current={salaryAmount} saveSalaryAmount={saveSalaryAmount} />
 
-        <p className="text-xs border-t border-gray-100 pt-4" style={{ color: '#A3B1C2' }}>
+        <p className="text-xs py-4 first:pt-0 last:pb-0" style={{ color: '#A3B1C2' }}>
           Locked fields protect your account.{' '}
           <a href="mailto:support@betternow.co.za" className="underline underline-offset-2 hover:text-gray-600 transition-colors">
             Contact support

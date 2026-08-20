@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 import EmptyState from '@/components/EmptyState';
 import EditIconButton from '@/components/EditIconButton';
+import ProfileFieldRow from '@/components/ProfileFieldRow';
 
 // ─── Salary date — profile-only, edit-toggle ──────────────────────────
 //
@@ -97,38 +98,11 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p
-            className="text-[11px] font-semibold uppercase tracking-widest mb-1.5"
-            style={{ color: '#13294B', opacity: 0.45 }}
-          >
-            Salary date
-          </p>
-          {editing ? (
-            <select
-              className={inputCls}
-              value={day ?? ''}
-              onChange={(e) => setDay(e.target.value ? Number(e.target.value) : null)}
-              data-testid="profile-salary-day-select"
-            >
-              <option value="">Select a day…</option>
-              {ALLOWED_SALARY_DAYS.map((d) => (
-                <option key={d} value={d}>{ordinal(d)} of the month</option>
-              ))}
-            </select>
-          ) : savedDay != null ? (
-            <p className="text-sm font-medium text-gray-800">
-              {`${ordinal(savedDay)} of the month`}
-            </p>
-          ) : (
-            <EmptyState icon="field" title="No salary date set" inline>
-              Pick the day you&rsquo;re paid and we&rsquo;ll line your instalments up with it.
-            </EmptyState>
-          )}
-        </div>
-        {!editing ? (
+    <ProfileFieldRow
+      icon="calendar"
+      label="Salary date"
+      action={
+        !editing ? (
           <EditIconButton
             label="Edit salary date"
             onClick={() => setEditing(true)}
@@ -155,15 +129,37 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
               {isPending ? 'Saving…' : 'Save'}
             </button>
           </div>
-        )}
-      </div>
+        )
+      }
+    >
+      {editing ? (
+        <select
+          className={inputCls}
+          value={day ?? ''}
+          onChange={(e) => setDay(e.target.value ? Number(e.target.value) : null)}
+          data-testid="profile-salary-day-select"
+        >
+          <option value="">Select a day…</option>
+          {ALLOWED_SALARY_DAYS.map((d) => (
+            <option key={d} value={d}>{ordinal(d)} of the month</option>
+          ))}
+        </select>
+      ) : savedDay != null ? (
+        <p className="text-sm font-medium text-gray-800">
+          {`${ordinal(savedDay)} of the month`}
+        </p>
+      ) : (
+        <EmptyState icon="field" title="No salary date set" inline>
+          Pick the day you&rsquo;re paid and we&rsquo;ll line your instalments up with it.
+        </EmptyState>
+      )}
 
-      <p className="text-xs text-gray-500">
+      <p className="mt-1.5 text-xs text-gray-500">
         Sets when we collect your monthly instalments on NEW plans. Existing plans keep their current schedule.
       </p>
 
-      {error && <p className="text-xs text-red-700">{error}</p>}
-      {okMsg && <p className="text-xs text-emerald-700">{okMsg}</p>}
-    </div>
+      {error && <p className="mt-1.5 text-xs text-red-700">{error}</p>}
+      {okMsg && <p className="mt-1.5 text-xs text-emerald-700">{okMsg}</p>}
+    </ProfileFieldRow>
   );
 }
