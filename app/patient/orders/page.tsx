@@ -1,3 +1,4 @@
+import { cache, Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { declinePlan } from '../actions';
@@ -9,6 +10,7 @@ import { summariseOutstanding } from '@/lib/patient/outstanding';
 import { planBucket } from '@/lib/patient/planBucket';
 import { formatRand, todaySAST } from '../_format';
 import { getRequestUser } from '@/lib/auth/requestUser';
+import { NavyLine, PatientListBody } from '@/components/loading/PatientShellShape';
 
 // ─── Types (shared with OrdersView via props) ─────────────────────────────────
 
@@ -45,12 +47,17 @@ export type PlanRow = {
 };
 
 // ─── Page — v4 "Plans" ──────────────────────────────────────────────────────
+//
+// "Plans" itself is a static title — it renders immediately. Everything
+// else on this screen (the outstanding/overdue summary in the header AND
+// the plan list below it) reads the same `plans` query, so both stream in
+// together off ONE shared, request-memoised fetch (loadOrdersData) rather
+// than each re-querying. That still lets the real title (and the sheet's
+// shape) paint before the numbers are ready, instead of the whole screen
+// waiting on the slowest thing before ANY of it appears.
 
-export default async function OrdersPage() {
+const loadOrdersData = cache(async (user: { id: string }) => {
   const supabase = await createClient();
-
-  const user = await getRequestUser();
-  if (!user) redirect('/login');
 
   const { data: rawPlans } = await supabase
     .from('plans')
@@ -108,27 +115,50 @@ export default async function OrdersPage() {
       ? 'Nothing outstanding'
       : `${formatRand(outstandingCents / 100)} outstanding · ${overdueCount > 0 ? `${overdueCount} overdue` : 'nothing overdue'}`;
 
+  return { isFrozen, pendingPlans, currentPlans, finishedPlans, declinedPlans, patientBlocked, today, summary };
+});
+
+async function OrdersSummaryLine({ user }: { user: { id: string } }) {
+  const { summary } = await loadOrdersData(user);
+  return <p className="mt-1.5 text-[13.5px] tabular-nums" style={{ color: 'rgba(255,255,255,.62)' }}>{summary}</p>;
+}
+
+async function OrdersBody({ user }: { user: { id: string } }) {
+  const { isFrozen, pendingPlans, currentPlans, finishedPlans, declinedPlans, patientBlocked, today } = await loadOrdersData(user);
+  return (
+    <div className="flex flex-col gap-[14px]">
+      <DefaultFreezeBanner frozen={isFrozen} />
+      <OrdersView
+        pendingPlans={pendingPlans}
+        currentPlans={currentPlans}
+        finishedPlans={finishedPlans}
+        declinedPlans={declinedPlans}
+        declinePlan={declinePlan}
+        patientBlocked={patientBlocked}
+        today={today}
+      />
+    </div>
+  );
+}
+
+export default async function OrdersPage() {
+  const user = await getRequestUser();
+  if (!user) redirect('/login');
+
   const header = (
     <>
       <p className="text-[24px] font-semibold text-white" style={{ letterSpacing: '-.025em' }}>Plans</p>
-      <p className="mt-1.5 text-[13.5px] tabular-nums" style={{ color: 'rgba(255,255,255,.62)' }}>{summary}</p>
+      <Suspense fallback={<NavyLine w="w-40" h="h-3" className="mt-1.5" />}>
+        <OrdersSummaryLine user={user} />
+      </Suspense>
     </>
   );
 
   return (
     <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
-      <div className="flex flex-col gap-[14px]">
-        <DefaultFreezeBanner frozen={isFrozen} />
-        <OrdersView
-          pendingPlans={pendingPlans}
-          currentPlans={currentPlans}
-          finishedPlans={finishedPlans}
-          declinedPlans={declinedPlans}
-          declinePlan={declinePlan}
-          patientBlocked={patientBlocked}
-          today={today}
-        />
-      </div>
+      <Suspense fallback={<PatientListBody label="Loading your plans" />}>
+        <OrdersBody user={user} />
+      </Suspense>
     </PatientScreen>
   );
 }
