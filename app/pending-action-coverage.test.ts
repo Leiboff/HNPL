@@ -115,6 +115,7 @@ const NOT_YET_CONVERTED = [
   'app/patient/profile/NotificationsToggle.tsx',
   'app/patient/profile/PasskeysSection.tsx',
   'app/patient/profile/PhoneField.tsx',
+  'app/patient/profile/SalaryAmountSection.tsx',
   'app/patient/profile/SalaryDaySection.tsx',
   'app/practice/details/BranchBankingForm.tsx',
   'app/practice/details/BranchDetailsForm.tsx',

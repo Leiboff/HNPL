@@ -1,15 +1,18 @@
 // ─── Single source of truth for the card-management surface ─────────────
 //
-// v4 folds card management into the Account tab (its "How you pay"
-// section). There is exactly ONE place that lists/manages cards — this
-// constant names it, and every card-flow return path resolves through
-// here so the add-card flow always lands the user back where they were,
-// never on a page they never navigated to.
+// v4 folds card management into the Account tab's "Payment cards" screen
+// (its own route since the accordion→screens conversion, 2026-08-20 — was
+// a section on /patient/account itself before that). There is exactly ONE
+// place that lists/manages cards — this constant names it, and every
+// card-flow return path resolves through here so the add-card flow always
+// lands the user back where they were, never on a page they never
+// navigated to (landing on the account INDEX instead of this screen would
+// mean a just-added card is invisible until the patient taps back in).
 //
 // The standalone /patient/payment-methods route redirects here; the
 // Checkout V2 "add card" completion route resolves its redirect here too.
 
-export const CARDS_SURFACE = '/patient/account';
+export const CARDS_SURFACE = '/patient/account/pay';
 
 // Query flag that tells the card surface to auto-open the "add card" widget
 // on load — used by the "Try again" affordance after a failed/timed-out

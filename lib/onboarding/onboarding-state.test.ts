@@ -56,6 +56,7 @@ const BLANK_PROFILE: ProfileForOnboarding = {
   phone_verified_at:    null,
   sa_id_number:         null,
   salary_day:           null,
+  salary_amount:        null,
   credit_check_status:  null,
   liveness_verified_at: null,
   onboarding_completed: false,
@@ -195,6 +196,7 @@ describe('computeOnboarding — flags off (launch shape)', () => {
       phone_verified_at: '2026-07-06T10:00:00Z',
       sa_id_number:      'v1:iv:tag:ciphertext',
       salary_day:        25,
+      salary_amount:     15000,
     };
     const s = computeOnboarding(GOOGLE_USER, p, FLAGS_OFF);
     expect(s.done).toBe(true);
@@ -208,6 +210,7 @@ describe('computeOnboarding — flags ON add credit-check + liveness to the flow
       phone_verified_at: '2026-07-06T10:00:00Z',
       sa_id_number:      'v1:iv:tag:ciphertext',
       salary_day:        25,
+      salary_amount:     15000,
     };
     const s = computeOnboarding(GOOGLE_USER, p, FLAGS_ON);
     expect(s.done).toBe(false);
@@ -223,6 +226,7 @@ describe('computeOnboarding — flags ON add credit-check + liveness to the flow
       phone_verified_at:   '2026-07-06T10:00:00Z',
       sa_id_number:        'v1:iv:tag:ciphertext',
       salary_day:          25,
+      salary_amount:       15000,
       credit_check_status: 'passed',
     };
     const s = computeOnboarding(GOOGLE_USER, p, FLAGS_ON);
@@ -236,6 +240,7 @@ describe('computeOnboarding — flags ON add credit-check + liveness to the flow
       phone_verified_at:    '2026-07-06T10:00:00Z',
       sa_id_number:         'v1:iv:tag:ciphertext',
       salary_day:           25,
+      salary_amount:        15000,
       credit_check_status:  'passed',
       liveness_verified_at: '2026-07-06T10:00:00Z',
     };
@@ -253,6 +258,7 @@ describe('cached onboarding_completed — write-once-true, no retro-lock', () =>
       phone_verified_at:    '2026-07-06T10:00:00Z',
       sa_id_number:         'v1:iv:tag:ciphertext',
       salary_day:           25,
+      salary_amount:        15000,
       credit_check_status:  null,      // flag was OFF at completion
       liveness_verified_at: null,      // flag was OFF at completion
       onboarding_completed: true,      // cached
@@ -446,7 +452,7 @@ describe('Routing gate — patient layout redirects incomplete patients', () => 
     expect(LAYOUT).toMatch(/redirect\(['"]\/onboarding['"]\)/);
   });
 
-  it('reads the six onboarding columns from profiles', () => {
+  it('reads the seven onboarding columns from profiles (incl. salary_amount)', () => {
     // RELOCATED, not weakened. The layout's profiles.select was a duplicate of
     // one app/patient/page.tsx ran on the same row, so both now share a single
     // request-scoped read (lib/patient/requestProfile.ts, React cache()). The

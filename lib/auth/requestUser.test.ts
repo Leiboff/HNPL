@@ -127,15 +127,23 @@ describe('the memo is shaped so that it can actually hit', () => {
 });
 
 describe('server actions were left alone', () => {
-  it.each([
-    'app/patient/account/page.tsx',
-    'app/provider/profile/page.tsx',
-  ])('%s keeps auth.getUser() in its server actions', (file) => {
-    // These files contain both shapes. A server action is its own request, so
-    // there is no sibling caller to share with and nothing to gain; more to
-    // the point, its failure mode differs — it returns an error object rather
-    // than redirecting, and that distinction is load-bearing for the form UI.
-    const code = read(file);
+  it('app/patient/account/actions.ts keeps auth.getUser() in its server actions', () => {
+    // Moved out of the account page during the accordion→screens
+    // conversion, into a standalone actions module both the index page
+    // (well, now Personal details) and any future caller can import.
+    // Still whole-file, not sliced before a default export — this module
+    // has no page component at all, it is entirely server actions.
+    const code = read('app/patient/account/actions.ts');
+    expect(code).toMatch(/auth\.getUser\(\)/);
+    expect(code).toMatch(/return \{ error:/);
+  });
+
+  it('app/provider/profile/page.tsx keeps auth.getUser() in its server actions', () => {
+    // A server action is its own request, so there is no sibling caller to
+    // share with and nothing to gain; more to the point, its failure mode
+    // differs — it returns an error object rather than redirecting, and
+    // that distinction is load-bearing for the form UI.
+    const code = read('app/provider/profile/page.tsx');
     const actions = code.slice(0, code.indexOf('export default async function'));
     expect(actions).toMatch(/auth\.getUser\(\)/);
     expect(actions).toMatch(/return \{ error:/);

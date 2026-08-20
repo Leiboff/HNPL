@@ -1,209 +1,96 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import AccountSettings, { resolveSection } from './AccountSettings';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import AccountSettings from './AccountSettings';
 
-// ─── AccountSettings — ONE pattern, four groups, seven sections ──────────
+// ─── AccountSettings — ONE pattern, four groups, six navigable rows ──────
 //
-// The page this replaced ran three interaction patterns at once: four
-// accordion sections, two flat cards (the record, and Log out with its own
-// eyebrow), and a chevron nav-row (Get help). The single most valuable thing
-// to pin is therefore the uniformity itself — not that a particular section
-// exists, but that NO section is a foreign pattern.
+// Replaces the accordion-era test suite. Direct product decision
+// (2026-08-20): tapping a settings row now opens a full screen with the
+// details, rather than expanding a panel in place — the accordion, its
+// open/closed state, and its `?section=` deep-link resolution are gone.
+// Salary date and salary amount are no longer their own row: they moved
+// into Personal details (see app/patient/account/personal/page.tsx), so
+// SECTIONS below has six rows where the accordion-era list had seven.
 //
-// Driven through the real component rather than asserted against source, so
-// "shares one pattern" is measured on what actually renders.
+// The single most valuable thing to pin is still the uniformity: every row
+// is a plain link to its own route, none is a button/disclosure, and none
+// is styled differently from the others.
 
-let sectionParam: string | null = null;
-vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(sectionParam ? `section=${sectionParam}` : ''),
-}));
-
-const SECTIONS = [
-  'Personal details',
-  'Salary date',
-  'Payment cards',
-  'Passkeys',
-  'Password & recovery',
-  'Notifications',
-  'Sign out',
+const ROWS = [
+  ['Personal details',      '/patient/account/personal'],
+  ['Payment cards',         '/patient/account/pay'],
+  ['Passkeys',              '/patient/account/passkeys'],
+  ['Password & recovery',   '/patient/account/password'],
+  ['Notifications',         '/patient/account/notifications'],
+  ['Sign out',              '/patient/account/signout'],
 ] as const;
 
 const GROUPS = ['Your details', 'How you pay', 'Sign-in & security', 'This device'] as const;
 
-function renderSettings() {
-  return render(
-    <AccountSettings
-      personalDetails={<div>PERSONAL_BODY</div>}
-      salaryDate={<div>SALARY_BODY</div>}
-      paymentCards={<div>CARDS_BODY</div>}
-      passkeys={<div>PASSKEYS_BODY</div>}
-      password={<div>PASSWORD_BODY</div>}
-      notifications={<div>NOTIFICATIONS_BODY</div>}
-      signOut={<div>SIGNOUT_BODY</div>}
-    />,
-  );
-}
-
-const headerFor = (title: string) => screen.getByText(title).closest('button');
-
-afterEach(() => { cleanup(); sectionParam = null; });
-
-describe('ONE interaction pattern across every section', () => {
-  it('every section is a disclosure button with a controlled panel', () => {
-    // THE test for this rework. Each of the seven must be the same thing: a
-    // button carrying aria-expanded and pointing at a panel via
-    // aria-controls. A flat block or a nav-row would have neither.
-    renderSettings();
-    for (const title of SECTIONS) {
-      const btn = headerFor(title);
-      expect(btn, title).toBeTruthy();
-      expect(btn!.getAttribute('aria-expanded'), title).toMatch(/^(true|false)$/);
-      expect(btn!.getAttribute('aria-controls'), title).toBeTruthy();
+describe('every row is a plain link to its own screen', () => {
+  it('renders exactly six rows, each a link to its expected route', () => {
+    render(<AccountSettings />);
+    for (const [title, href] of ROWS) {
+      const link = screen.getByText(title).closest('a');
+      expect(link, title).toBeTruthy();
+      expect(link!.getAttribute('href'), title).toBe(href);
     }
   });
 
-  it('renders exactly seven section headers and no eighth surface', () => {
-    renderSettings();
-    const expanders = screen
-      .getAllByRole('button')
-      .filter((b) => b.getAttribute('aria-expanded') !== null);
-    expect(expanders).toHaveLength(SECTIONS.length);
+  it('renders no eighth surface — link count matches ROWS exactly', () => {
+    render(<AccountSettings />);
+    expect(screen.getAllByRole('link')).toHaveLength(ROWS.length);
   });
 
-  it('every section title appears exactly once', () => {
-    // Duplication was the specific defect in the old Security section, which
-    // had both a section header and an inner "Passkeys" sub-heading.
-    renderSettings();
-    for (const title of SECTIONS) {
+  it('no row carries accordion semantics (aria-expanded / aria-controls)', () => {
+    // The retired pattern. A row that still behaves like a disclosure button
+    // would mean the conversion is incomplete.
+    render(<AccountSettings />);
+    for (const [title] of ROWS) {
+      const link = screen.getByText(title).closest('a')!;
+      expect(link.getAttribute('aria-expanded'), title).toBeNull();
+      expect(link.hasAttribute('aria-controls'), title).toBe(false);
+    }
+  });
+
+  it('every row title appears exactly once', () => {
+    render(<AccountSettings />);
+    for (const [title] of ROWS) {
       expect(screen.getAllByText(title), title).toHaveLength(1);
-    }
-  });
-
-  it('no section renders a link styled as a navigation row', () => {
-    // The retired third pattern. A chevron row masquerading as a section is
-    // what made the old page read as three designs.
-    const { container } = renderSettings();
-    const rowLinks = Array.from(container.querySelectorAll('a')).filter((a) =>
-      a.className.includes('justify-between'),
-    );
-    expect(rowLinks).toHaveLength(0);
-  });
-
-  it('every section toggles — none is permanently open', () => {
-    renderSettings();
-    for (const title of SECTIONS) {
-      const btn = headerFor(title)!;
-      const before = btn.getAttribute('aria-expanded');
-      fireEvent.click(btn);
-      expect(btn.getAttribute('aria-expanded'), title).not.toBe(before);
     }
   });
 });
 
 describe('four groups carry the hierarchy', () => {
   it('renders all four group headers', () => {
-    renderSettings();
+    render(<AccountSettings />);
     for (const g of GROUPS) expect(screen.getAllByText(g), g).toHaveLength(1);
   });
 
   it('group headers are NOT interactive', () => {
-    // Collapsible groups containing collapsible sections would be two
-    // disclosure levels for one decision. The headers are labels.
-    renderSettings();
+    // Collapsible groups containing navigable rows would be two different
+    // interaction models stacked on one decision. The headers are labels.
+    render(<AccountSettings />);
     for (const g of GROUPS) {
-      expect(screen.getByText(g).closest('button'), g).toBeNull();
+      const el = screen.getByText(g);
+      expect(el.closest('a'), g).toBeNull();
+      expect(el.closest('button'), g).toBeNull();
     }
   });
 });
 
-describe('destructive and rare actions sit behind a deliberate expand', () => {
-  // NOTE on how "collapsed" is asserted here. AccordionSection collapses with
-  // CSS (grid-rows 0fr) rather than by conditional render, so the body stays in
-  // the DOM and `queryByText(...)` finds it either way — an earlier version of
-  // these tests asserted absence and failed for that reason. The real
-  // guarantee is the pair the component sets: aria-expanded on the header and
-  // aria-hidden on the panel. That is what assistive tech reads, and it is what
-  // is checked below.
-  const panelFor = (title: string) => {
-    const btn = headerFor(title)!;
-    return document.getElementById(btn.getAttribute('aria-controls')!)!;
-  };
-
-  it('Sign out is collapsed on arrival', () => {
-    // It used to be a permanently-visible red button in its own card, where a
-    // mis-tap could reach it.
-    renderSettings();
-    expect(headerFor('Sign out')!.getAttribute('aria-expanded')).toBe('false');
-    expect(panelFor('Sign out').getAttribute('aria-hidden')).toBe('true');
-  });
-
-  it('Password & recovery is collapsed on arrival', () => {
-    renderSettings();
-    expect(headerFor('Password & recovery')!.getAttribute('aria-expanded')).toBe('false');
-    expect(panelFor('Password & recovery').getAttribute('aria-hidden')).toBe('true');
-  });
-
-  it('but both are reachable in one tap — disclosed, not hidden', () => {
-    // "Behind an expand" must not become "buried". One deliberate tap each,
-    // and the panel becomes visible to assistive tech.
-    renderSettings();
-    fireEvent.click(headerFor('Sign out')!);
-    expect(headerFor('Sign out')!.getAttribute('aria-expanded')).toBe('true');
-    expect(panelFor('Sign out').getAttribute('aria-hidden')).toBe('false');
-    expect(screen.getByText('SIGNOUT_BODY')).toBeTruthy();
-
-    fireEvent.click(headerFor('Password & recovery')!);
-    expect(panelFor('Password & recovery').getAttribute('aria-hidden')).toBe('false');
-    expect(screen.getByText('PASSWORD_BODY')).toBeTruthy();
-  });
-});
-
-describe('default open state and deep links', () => {
-  it('Payment cards is the only section open on arrival', () => {
-    renderSettings();
-    expect(headerFor('Payment cards')!.getAttribute('aria-expanded')).toBe('true');
-    for (const title of SECTIONS.filter((t) => t !== 'Payment cards')) {
-      expect(headerFor(title)!.getAttribute('aria-expanded'), title).toBe('false');
+describe('destructive and rare actions still sit behind a deliberate tap', () => {
+  it('Sign out and Password & recovery are ordinary rows, not permanently-visible actions', () => {
+    // They used to be a flat red button / an inner sub-heading respectively.
+    // Now, like every other row, they are one tap away via their own screen
+    // rather than sitting inline on the index.
+    render(<AccountSettings />);
+    for (const title of ['Sign out', 'Password & recovery']) {
+      const link = screen.getByText(title).closest('a');
+      expect(link, title).toBeTruthy();
+      // A row, not an inline destructive control (e.g. no red button text
+      // like "Sign out of this device" rendered directly on the index).
+      expect(link!.textContent?.trim()).toBe(title);
     }
-  });
-
-  it('?section=salary opens the SALARY section, not Personal details', () => {
-    // The legacy alias retiring because its target now exists. The confirm
-    // screen's "set your salary date" CTA depends on this landing correctly.
-    sectionParam = 'salary';
-    renderSettings();
-    expect(headerFor('Salary date')!.getAttribute('aria-expanded')).toBe('true');
-    expect(headerFor('Personal details')!.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('?section=personal still opens Personal details, where phone lives', () => {
-    // The verify-phone CTA's target — it did not move.
-    sectionParam = 'personal';
-    renderSettings();
-    expect(headerFor('Personal details')!.getAttribute('aria-expanded')).toBe('true');
-  });
-
-  it('every section key is deep-linkable', () => {
-    for (const [key, title] of [
-      ['personal', 'Personal details'],
-      ['salary', 'Salary date'],
-      ['pay', 'Payment cards'],
-      ['passkeys', 'Passkeys'],
-      ['password', 'Password & recovery'],
-      ['notifications', 'Notifications'],
-      ['signout', 'Sign out'],
-    ] as const) {
-      cleanup();
-      sectionParam = key;
-      renderSettings();
-      expect(headerFor(title)!.getAttribute('aria-expanded'), key).toBe('true');
-    }
-  });
-
-  it('an unknown or absent ?section is ignored rather than throwing', () => {
-    expect(resolveSection(null)).toBeNull();
-    expect(resolveSection('')).toBeNull();
-    expect(resolveSection('nonsense')).toBeNull();
-    expect(resolveSection('salary')).toBe('salary');
   });
 });

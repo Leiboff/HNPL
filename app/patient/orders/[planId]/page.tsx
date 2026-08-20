@@ -250,7 +250,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
               </p>
               <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>Collected the day after your payday</p>
             </div>
-            <Link href="/patient/account" className="flex-none text-[13px] font-semibold" style={{ color: '#0F766E' }}>Change</Link>
+            <Link href="/patient/account/pay" className="flex-none text-[13px] font-semibold" style={{ color: '#0F766E' }}>Change</Link>
           </div>
           <a
             href="mailto:support@betternow.co.za?subject=Question about my bill"

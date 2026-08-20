@@ -23,6 +23,12 @@ const codeOf   = (p: string) => stripComments(read(p));
 
 const ACTIONS  = codeOf('app/patient/account/phoneChangeActions.ts');
 const PAGE     = codeOf('app/patient/account/page.tsx');
+// RE-POINTED (2026-08-20): phone editing moved off the account index onto
+// its own screen, app/patient/account/personal/page.tsx, as part of the
+// accordion→screens conversion. Everything about WHAT gets written and the
+// four actions being wired through now lives there — PAGE itself no longer
+// touches phone at all, which the first describe block below still pins.
+const PERSONAL = codeOf('app/patient/account/personal/page.tsx');
 const FIELD    = codeOf('app/patient/profile/PhoneField.tsx');
 const MIG      = read('supabase/migrations/0099_phone_change_reverification.sql');
 const MIG_0055 = read('supabase/migrations/0055_phone_otp_burn_caps.sql');
@@ -116,17 +122,17 @@ describe('the account page no longer writes a phone at all', () => {
     expect(PAGE).not.toMatch(/\.update\(\{ phone \}\)/);
   });
 
-  it('the page passes the four change actions through instead', () => {
+  it('Personal details passes the four change actions through instead', () => {
     for (const fn of [
       'startPhoneChange', 'requestPhoneChangeOtp', 'verifyPhoneChangeOtp', 'cancelPhoneChange',
     ]) {
-      expect(PAGE, fn).toMatch(new RegExp(`${fn}=\\{${fn}\\}`));
+      expect(PERSONAL, fn).toMatch(new RegExp(`${fn}=\\{${fn}\\}`));
     }
-    expect(PAGE).toMatch(/from '\.\/phoneChangeActions'/);
+    expect(PERSONAL).toMatch(/from '\.\.\/phoneChangeActions'/);
   });
 
-  it('the page reads the two columns the field needs to be honest', () => {
-    expect(PAGE).toMatch(/phone, phone_pending, phone_verified_at/);
+  it('Personal details reads the two columns the field needs to be honest', () => {
+    expect(PERSONAL).toMatch(/phone, phone_pending, phone_verified_at/);
   });
 
   it('the field surfaces verification state and a pending change', () => {

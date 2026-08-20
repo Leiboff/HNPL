@@ -9,7 +9,7 @@ const refresh = vi.fn();
 const replace = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter:       () => ({ refresh, replace }),
-  usePathname:     () => '/patient/account',
+  usePathname:     () => '/patient/account/pay',
   useSearchParams: () => new URLSearchParams(''),
 }));
 

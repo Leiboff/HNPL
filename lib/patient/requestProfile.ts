@@ -48,7 +48,7 @@ export const getPatientProfileForRequest = cache(async (userId: string) => {
     .select(`
       role, first_name, last_name, email, phone,
       login_count, passkey_prompt_next_show_at_login, passkey_prompt_permanent_dismiss,
-      phone_verified_at, sa_id_number, salary_day,
+      phone_verified_at, sa_id_number, salary_day, salary_amount,
       credit_check_status, liveness_verified_at, onboarding_completed,
       approved_credit_limit
     `)

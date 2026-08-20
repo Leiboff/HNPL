@@ -120,9 +120,12 @@ describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
   // renders or writes a salary_day must depend on the canonical set.
   const surfaces = [
     'app/patient/profile/SalaryDaySection.tsx',
-    // Salary-day capture moved onto the consolidated account page (the
-    // profile route is now an inert redirect).
-    'app/patient/account/page.tsx',
+    // The salary_day WRITE (validation + .update) moved out of the account
+    // page into its own actions module in the accordion→screens
+    // conversion — Personal details (app/patient/account/personal/page.tsx)
+    // only renders SalaryDaySection, which itself imports lib/salaryDates;
+    // app/patient/account/actions.ts is where the direct import now lives.
+    'app/patient/account/actions.ts',
     'app/onboarding/identity/IdentityStepClient.tsx',
     'lib/onboarding/actions.ts',
   ];
