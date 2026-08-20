@@ -37,10 +37,12 @@ function randLabel(n: number): string {
 export default function LandingPage() {
   const slotRef = useRef<HTMLSpanElement>(null);
 
-  // Bill-splitter state — presentational only (no fetch, no persistence).
-  // The arithmetic mirrors the FAQ: equal instalments, instalment 1
-  // absorbs the rounding remainder, total never exceeds the bill.
-  const [bill, setBill] = useState(3000);
+  // Bill-splitter — presentational only (no fetch, no persistence). The
+  // example bill is a fixed R3,000 (no slider); only the plan choice is
+  // interactive. The arithmetic mirrors the FAQ: equal instalments,
+  // instalment 1 absorbs the rounding remainder, total never exceeds the
+  // bill.
+  const bill = 3000;
   const [plan, setPlan] = useState<2 | 3>(3);
 
   const splitBase = Math.floor((bill / plan) * 100) / 100;
@@ -147,7 +149,12 @@ export default function LandingPage() {
           </p>
           <div className="ctas">
             <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
-            <Link className="btn btn-outline btn-lg" href="/#how">See how it works</Link>
+            {/* Plain <a>, not next/link's <Link> — same-page hash
+                navigation via Link is a documented App Router no-op
+                (see SiteHeader.tsx), so this silently failed to scroll
+                to #how while already on /. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+            <a className="btn btn-outline btn-lg" href="/#how">See how it works</a>
           </div>
         </div>
 
@@ -234,23 +241,12 @@ export default function LandingPage() {
               <div className="split-two-col">
                 <div className="split-intro">
                   <div className="kicker">Your bill, in doses</div>
-                  <p className="split-lead">Drag the bill and pick your plan. Equal, interest-free instalments timed to your salary dates.</p>
+                  <p className="split-lead">A R3,000 example bill, split into equal, interest-free instalments timed to your salary dates. Pick your plan.</p>
                   <div className="split-controls">
                     <div className="split-bill">
                       <span className="split-bill-label">Your bill</span>
                       <span className="split-bill-amt">{randLabel(bill)}</span>
                     </div>
-                    <input
-                      type="range"
-                      min={500}
-                      max={30000}
-                      step={500}
-                      value={bill}
-                      onChange={(e) => setBill(Number(e.target.value))}
-                      aria-label="Bill amount"
-                      className="split-range"
-                    />
-                    <div className="split-range-ends"><span>R500</span><span>R30,000</span></div>
                     <div className="split-plans">
                       <button type="button" className={`split-plan${plan === 2 ? ' on' : ''}`} onClick={() => setPlan(2)}>Pay in 2</button>
                       <button type="button" className={`split-plan${plan === 3 ? ' on' : ''}`} onClick={() => setPlan(3)}>Pay in 3</button>

@@ -215,8 +215,11 @@ describe('Hero CTAs — two-button pair (Get started + See how it works)', () =>
     expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup\/patient"[^>]*>Get started<\/Link>/);
     // Outlined secondary → the How-it-works anchor. v3 moves Sign in to
     // the header (still asserted in the SiteHeader block below) and makes
-    // the hero's secondary CTA "See how it works".
-    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-outline btn-lg"[^>]*href="\/#how"[^>]*>See how it works<\/Link>/);
+    // the hero's secondary CTA "See how it works". A plain <a>, not
+    // next/link's <Link> — Link's same-pathname hash navigation is a
+    // documented App Router no-op when the page doesn't change, which
+    // silently broke the scroll while already on /.
+    expect(heroScope).toMatch(/<a className="btn btn-outline btn-lg" href="\/#how">See how it works<\/a>/);
   });
 
   it('no practice CTA in the hero', () => {
@@ -566,10 +569,11 @@ describe('How it works — vertical timeline (Cherry pattern)', () => {
 describe('Mockups — live bill-splitter in How-it-works + device-approved in Getting-started band', () => {
   // Post-restructure (2026-08-20): the static plan-chooser.png mockup is
   // retired — the How-it-works right column now embeds the actual
-  // interactive bill-splitter widget (the "Your bill, in doses" demo,
-  // formerly its own top-level section between the hero and Why
-  // betternow) in its place, so a visitor tries the real slider instead
-  // of looking at a screenshot of one.
+  // bill-splitter widget (the "Your bill, in doses" demo, formerly its
+  // own top-level section between the hero and Why betternow) in its
+  // place, so a visitor sees the real thing instead of a screenshot of
+  // one. The bill amount itself is a fixed R3,000 example (no drag
+  // slider) — only the Pay in 2 / Pay in 3 plan choice is interactive.
   it('landing imports next/image', () => {
     expect(LANDING).toMatch(/from 'next\/image'/);
   });
@@ -579,14 +583,22 @@ describe('Mockups — live bill-splitter in How-it-works + device-approved in Ge
     expect(LANDING).not.toMatch(/className="plan-chooser"/);
   });
 
-  it('How-it-works right column carries the interactive bill-splitter widget', () => {
+  it('How-it-works right column carries the bill-splitter widget with a fixed R3,000 example, no slider', () => {
     const howIdx    = LANDING.indexOf('id="how"');
     const visualIdx = LANDING.indexOf('className="how-visual reveal"', howIdx);
     const widgetIdx = LANDING.indexOf('className="split-two-col"', howIdx);
     expect(visualIdx).toBeGreaterThan(howIdx);
     expect(widgetIdx).toBeGreaterThan(visualIdx);
     expect(LANDING).toMatch(/<div className="kicker">Your bill, in doses<\/div>/);
-    expect(LANDING).toMatch(/<input[\s\S]{0,400}className="split-range"/);
+    expect(LANDING).toMatch(/const bill = 3000;/);
+    expect(LANDING).not.toMatch(/<input/);
+    expect(LANDING).not.toMatch(/className="split-range"/);
+  });
+
+  it('the Pay in 2 / Pay in 3 toggle is still interactive', () => {
+    expect(LANDING).toMatch(/const \[plan, setPlan\] = useState<2 \| 3>\(3\);/);
+    expect(LANDING).toMatch(/onClick=\{\(\) => setPlan\(2\)\}>Pay in 2</);
+    expect(LANDING).toMatch(/onClick=\{\(\) => setPlan\(3\)\}>Pay in 3</);
   });
 
   it('the old standalone "Bill splitter" section (id="split") is gone — it now lives inside How-it-works', () => {

@@ -60,11 +60,22 @@ export default function SiteHeader() {
           <span className="lp-b">better</span><span className="lp-n">now</span>
         </Link>
 
+        {/* Why/How/FAQ are plain <a> tags, not next/link's <Link> — Link's
+            App Router same-pathname hash navigation is a documented no-op
+            when the page doesn't change (only the hash does), so clicking
+            "How it works" while already on / silently failed to scroll.
+            A native anchor lets the browser handle the fragment jump
+            itself, which works whether you're already on / or arriving
+            from another page. "For practices" is a real route change, so
+            it stays a Link. */}
         <nav className="nav-links" aria-label="Primary">
-          <Link href="/#why">Why betternow</Link>
-          <Link href="/#how">How it works</Link>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+          <a href="/#why">Why betternow</a>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+          <a href="/#how">How it works</a>
           <Link href="/practices">For practices</Link>
-          <Link href="/#faq">FAQ</Link>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+          <a href="/#faq">FAQ</a>
         </nav>
 
         <div className="nav-cta">
@@ -93,10 +104,13 @@ export default function SiteHeader() {
           className="mobile-menu"
           data-testid="site-header-mobile-menu"
         >
-          <Link href="/#why"      onClick={() => setMenuOpen(false)}>Why betternow</Link>
-          <Link href="/#how"      onClick={() => setMenuOpen(false)}>How it works</Link>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+          <a href="/#why"         onClick={() => setMenuOpen(false)}>Why betternow</a>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+          <a href="/#how"         onClick={() => setMenuOpen(false)}>How it works</a>
           <Link href="/practices" onClick={() => setMenuOpen(false)}>For practices</Link>
-          <Link href="/#faq"      onClick={() => setMenuOpen(false)}>FAQ</Link>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+          <a href="/#faq"         onClick={() => setMenuOpen(false)}>FAQ</a>
           <div className="mobile-cta">
             <Link className="m-get" href="/signup/patient" onClick={() => setMenuOpen(false)}>Get started</Link>
             <Link className="m-signin" href="/login" onClick={() => setMenuOpen(false)}>Sign in</Link>
