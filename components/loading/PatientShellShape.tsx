@@ -36,8 +36,93 @@ import {
  */
 const ON_NAVY = 'bg-white/15 motion-safe:animate-pulse';
 
-function NavyLine({ w = 'w-32', h = 'h-4' }: { w?: string; h?: string }) {
-  return <div aria-hidden className={`${h} ${w} rounded ${ON_NAVY}`} />;
+/**
+ * Exported too: several pages now render their real header immediately
+ * (see e.g. app/patient/orders/page.tsx) and only Suspend the data-bound
+ * piece INSIDE it — a subtitle count, a number — while the label around it
+ * is already real text. NavyLine is the fallback for just that piece, so
+ * it doesn't need reinventing per page.
+ */
+export function NavyLine({ w = 'w-32', h = 'h-4', className = '' }: { w?: string; h?: string; className?: string }) {
+  return <div aria-hidden className={`${h} ${w} rounded ${ON_NAVY} ${className}`} />;
+}
+
+/**
+ * ─── Body-only fragments ───────────────────────────────────────────────
+ *
+ * The *Shape components below are the route-level `loading.tsx` fallback:
+ * they stand in for a page that hasn't started rendering at all, so they
+ * need the full PatientScreen shell (a skeleton header included) to avoid
+ * a background-colour flash.
+ *
+ * Several pages now render their REAL header immediately and only Suspend
+ * the slower data-bound part of the body (see e.g. app/patient/account/
+ * page.tsx) — for that inner boundary the header is already real, so
+ * re-skeletoning it would be wrong (it'd cover real content that already
+ * painted). These *Body exports are the same inner content, without the
+ * PatientScreen/header wrapper, so both cases share one set of shapes
+ * instead of drifting into two.
+ */
+
+export function PatientHomeBody({ label = 'Loading your account' }: { label?: string }) {
+  return (
+    <SkeletonRegion label={label}>
+      <div className="space-y-4 px-[22px] py-6">
+        <SkeletonCard className="space-y-3">
+          <SkeletonLine w="w-28" h="h-3" />
+          <SkeletonLine w="w-40" h="h-6" />
+          <SkeletonBlock h="h-2" />
+          <SkeletonLine w="w-32" h="h-3" />
+        </SkeletonCard>
+        <SkeletonCard className="space-y-3">
+          <SkeletonLine w="w-24" h="h-3" />
+          <SkeletonLine w="w-36" h="h-6" />
+          <SkeletonBlock h="h-2" />
+        </SkeletonCard>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+export function PatientListBody({
+  label = 'Loading',
+  rows = 5,
+}: {
+  label?: string;
+  rows?: number;
+}) {
+  return (
+    <SkeletonRegion label={label}>
+      <div className="px-[22px] py-6">
+        <SkeletonCard>
+          <SkeletonRows rows={rows} />
+        </SkeletonCard>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+export function PatientDetailBody({
+  label = 'Loading details',
+  cards = 2,
+}: {
+  label?: string;
+  cards?: number;
+}) {
+  return (
+    <SkeletonRegion label={label}>
+      <div className="space-y-4 px-[22px] py-6">
+        {Array.from({ length: cards }).map((_, i) => (
+          <SkeletonCard key={i} className="space-y-3">
+            <SkeletonLine w="w-28" h="h-5" />
+            <SkeletonLine w="w-full" />
+            <SkeletonLine w="w-4/5" />
+            <SkeletonLine w="w-2/3" />
+          </SkeletonCard>
+        ))}
+      </div>
+    </SkeletonRegion>
+  );
 }
 
 /**
@@ -46,31 +131,17 @@ function NavyLine({ w = 'w-32', h = 'h-4' }: { w?: string; h?: string }) {
  */
 export function PatientHomeShape({ label = 'Loading your account' }: { label?: string }) {
   return (
-    <SkeletonRegion label={label}>
-      <PatientScreen
-        header={
-          <div className="space-y-3">
-            <NavyLine w="w-24" h="h-3" />
-            <NavyLine w="w-44" h="h-10" />
-            <NavyLine w="w-36" h="h-3" />
-          </div>
-        }
-      >
-        <div className="space-y-4 px-[22px] py-6">
-          <SkeletonCard className="space-y-3">
-            <SkeletonLine w="w-28" h="h-3" />
-            <SkeletonLine w="w-40" h="h-6" />
-            <SkeletonBlock h="h-2" />
-            <SkeletonLine w="w-32" h="h-3" />
-          </SkeletonCard>
-          <SkeletonCard className="space-y-3">
-            <SkeletonLine w="w-24" h="h-3" />
-            <SkeletonLine w="w-36" h="h-6" />
-            <SkeletonBlock h="h-2" />
-          </SkeletonCard>
+    <PatientScreen
+      header={
+        <div className="space-y-3">
+          <NavyLine w="w-24" h="h-3" />
+          <NavyLine w="w-44" h="h-10" />
+          <NavyLine w="w-36" h="h-3" />
         </div>
-      </PatientScreen>
-    </SkeletonRegion>
+      }
+    >
+      <PatientHomeBody label={label} />
+    </PatientScreen>
   );
 }
 
@@ -86,22 +157,16 @@ export function PatientListShape({
   rows?: number;
 }) {
   return (
-    <SkeletonRegion label={label}>
-      <PatientScreen
-        header={
-          <div className="space-y-2">
-            <NavyLine w="w-36" h="h-7" />
-            <NavyLine w="w-48" h="h-3" />
-          </div>
-        }
-      >
-        <div className="px-[22px] py-6">
-          <SkeletonCard>
-            <SkeletonRows rows={rows} />
-          </SkeletonCard>
+    <PatientScreen
+      header={
+        <div className="space-y-2">
+          <NavyLine w="w-36" h="h-7" />
+          <NavyLine w="w-48" h="h-3" />
         </div>
-      </PatientScreen>
-    </SkeletonRegion>
+      }
+    >
+      <PatientListBody label={label} rows={rows} />
+    </PatientScreen>
   );
 }
 
@@ -117,27 +182,16 @@ export function PatientDetailShape({
   cards?: number;
 }) {
   return (
-    <SkeletonRegion label={label}>
-      <PatientScreen
-        header={
-          <div className="space-y-3">
-            <NavyLine w="w-16" h="h-3" />
-            <NavyLine w="w-40" h="h-7" />
-            <NavyLine w="w-28" h="h-3" />
-          </div>
-        }
-      >
-        <div className="space-y-4 px-[22px] py-6">
-          {Array.from({ length: cards }).map((_, i) => (
-            <SkeletonCard key={i} className="space-y-3">
-              <SkeletonLine w="w-28" h="h-5" />
-              <SkeletonLine w="w-full" />
-              <SkeletonLine w="w-4/5" />
-              <SkeletonLine w="w-2/3" />
-            </SkeletonCard>
-          ))}
+    <PatientScreen
+      header={
+        <div className="space-y-3">
+          <NavyLine w="w-16" h="h-3" />
+          <NavyLine w="w-40" h="h-7" />
+          <NavyLine w="w-28" h="h-3" />
         </div>
-      </PatientScreen>
-    </SkeletonRegion>
+      }
+    >
+      <PatientDetailBody label={label} cards={cards} />
+    </PatientScreen>
   );
 }
