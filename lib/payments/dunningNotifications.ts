@@ -44,7 +44,7 @@ function formatRand(amount: number): string {
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
-function formatISODate(dateStr: string): string {
+export function formatISODate(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   return `${d} ${MONTHS[(m ?? 1) - 1]} ${y}`;
 }
@@ -109,6 +109,16 @@ export type AttemptFailedInput = {
   attemptedAmountCents:   number;
   /** Next attempt date (ISO) or null if the ladder terminated this attempt. */
   nextAttemptDate:        string | null;
+  /**
+   * ISO date the 24-hour self-pay grace expires, or null. Set ONLY on the
+   * immediate just-failed notice (the webhook's payment.failure handler),
+   * before the fee/ladder decision has even been made — feeAppliedCents
+   * is always 0 alongside this. The follow-up call from the assessment
+   * pass (lib/payments/assessDunningFee.ts), 24h later with the REAL
+   * outcome, leaves this null. Mutually exclusive with feeAppliedCents > 0
+   * in practice: a grace notice never also carries a fee.
+   */
+  feeGraceUntil?:          string | null;
 };
 
 export async function notifyAttemptFailed(
@@ -123,19 +133,29 @@ export async function notifyAttemptFailed(
       ? `<p style="margin:12px 0;">A <strong>${formatRandCents(input.feeAppliedCents)}</strong> default fee was added. Your outstanding balance for this instalment is now <strong>${formatRandCents(input.attemptedAmountCents + input.feeAppliedCents)}</strong>.</p>`
       : '';
 
-    const nextLine = input.nextAttemptDate
+    // The grace notice pre-empts both the fee line (there is none yet) and
+    // the next-attempt line (nothing is scheduled yet either — the whole
+    // ladder is on hold until the grace resolves).
+    const graceLine = input.feeGraceUntil
+      ? `<p style="margin:12px 0;">Pay by <strong>${formatISODate(input.feeGraceUntil)}</strong> and no default fee will apply.</p>`
+      : '';
+
+    const nextLine = (!input.feeGraceUntil && input.nextAttemptDate)
       ? `<p style="margin:12px 0;">We'll automatically try again on <strong>${formatISODate(input.nextAttemptDate)}</strong>.</p>`
       : '';
 
-    const subject = input.feeAppliedCents > 0
-      ? `BetterNow — payment didn't go through (${formatRandCents(input.feeAppliedCents)} fee added)`
-      : `BetterNow — payment didn't go through`;
+    const subject = input.feeGraceUntil
+      ? `BetterNow — payment didn't go through (pay by ${formatISODate(input.feeGraceUntil)} to avoid a fee)`
+      : input.feeAppliedCents > 0
+        ? `BetterNow — payment didn't go through (${formatRandCents(input.feeAppliedCents)} fee added)`
+        : `BetterNow — payment didn't go through`;
 
     const html = `
       <div style="font-family: system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif; color: #13294B; max-width: 560px;">
         <p>Hi ${ctx.firstName},</p>
         <p>We tried to collect <strong>${formatRandCents(input.attemptedAmountCents)}</strong> for your plan with ${ctx.practiceName} today, but the payment didn't go through.</p>
         ${feeLine}
+        ${graceLine}
         ${nextLine}
         <p style="margin:18px 0;">You can settle this now by logging in and tapping <strong>Pay now</strong> on your instalment. Settling immediately stops further attempts and avoids any additional fees.</p>
         <p style="font-size:12px; color:#6b7280; margin-top:22px;">Reply to this email if you need help.</p>
@@ -146,11 +166,13 @@ export async function notifyAttemptFailed(
 
     // SMS on EVERY failed attempt (channel parity — was Day-0 only).
     // Plain text, no URL — anti-smishing. Names the fee when one attached
-    // on this attempt.
+    // on this attempt, or the grace deadline when one hasn't yet.
     if (ctx.phone) {
-      const feeBit = input.feeAppliedCents > 0
-        ? ` A ${formatRandCents(input.feeAppliedCents)} fee was added.`
-        : '';
+      const feeBit = input.feeGraceUntil
+        ? ` Pay by ${formatISODate(input.feeGraceUntil)} to avoid a fee.`
+        : input.feeAppliedCents > 0
+          ? ` A ${formatRandCents(input.feeAppliedCents)} fee was added.`
+          : '';
       const body =
         `BetterNow: we couldn't collect ${formatRandCents(input.attemptedAmountCents)} ` +
         `for your plan with ${ctx.practiceName}.${feeBit} Log in to settle now and avoid further fees.`;

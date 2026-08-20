@@ -2,10 +2,12 @@
 //
 // All offsets are in days from "the original due date" (Day 0). Cadence,
 // per T&Cs clause 7.2: the due-date attempt IS the first collection try —
-// there is no separate fee-free grace retry the day after. If that attempt
-// fails, Default Fee #1 attaches immediately and we re-attempt weekly,
-// each failure carrying another fee, until the cap (3 fees) is reached →
-// terminal `defaulted`. Fee-bearing days on a normal bill: Day 0, 7, 14.
+// there is no separate fee-free RETRY the day after. If that attempt
+// fails, Default Fee #1 attaches — after a 24-hour self-pay grace period
+// (see below) — and we re-attempt weekly, each still-unpaid failure
+// carrying another fee after its own grace, until the cap (3 fees) is
+// reached → terminal `defaulted`. Fee-bearing days on a normal bill (grace
+// folded in): due date, +8, +15 — see FEE_GRACE_PERIOD_DAYS.
 //
 // Bounded a second way too: the ladder never schedules a retry that would
 // land on or after the PLAN'S NEXT instalment's own due date. Once that
@@ -18,11 +20,34 @@
 // (clause 2.4: as little as a few days) can default before ever reaching a
 // third fee.
 //
+// ─── THE 24-HOUR SELF-PAY GRACE — WHERE IT LIVES, AND WHY NOT HERE ──────
+//
+// Direct product decision: a failed attempt does not earn its fee (or
+// terminate the ladder) the instant it fails. The patient gets
+// FEE_GRACE_PERIOD_DAYS to settle manually (Pay now) before this module
+// is even consulted. T&Cs clause 7.5 covers this ("we may... waive or
+// defer any Default Fee") — it is a leniency layered ON TOP of the
+// disclosed worst case, not a change to it.
+//
+// That grace is deliberately NOT modelled as a parameter of
+// advanceLadderAfterFailure. The function stays pure schedule-and-fee
+// math over "today" — what changed is WHEN a caller is allowed to call
+// it: the Peach webhook's payment.failure handler no longer calls this
+// module at all. It just records the failure and stamps
+// payments.dunning_grace_until = today + FEE_GRACE_PERIOD_DAYS. A daily
+// cron pass (lib/payments/assessDunningFee.ts) is the ONLY caller of
+// advanceLadderAfterFailure now, and only for rows whose grace has
+// elapsed and are STILL unpaid — "today" passed in is the assessment
+// date, not the original failure date, so the weekly retry cadence below
+// is measured from whenever a failure actually got assessed, which
+// already has the grace day folded in.
+//
 // This module is PURE — no DB, no fetch, no I/O. The caller passes in
 // the pre-attempt state and "today" (plus the next instalment's due date,
 // if any), and gets back the post-attempt state to persist. That lets the
 // same engine drive:
-//   • the payment-failure webhook (advance on a real charge failure)
+//   • the daily grace-elapsed assessment pass (advance on a still-unpaid
+//     failure once its 24-hour self-pay window has closed)
 //   • tests (deterministic, no clock + no stub Supabase needed)
 //   • a future preauth/DebiCheck swap (the rail-agnostic guarantee:
 //     only "today + attempt failed?" + the per-row counters matter,
@@ -44,10 +69,18 @@ export const DUNNING_FEE_CAP_ABSOLUTE_CENTS  = DUNNING_FEE_CENTS * DUNNING_MAX_F
 export const DUNNING_FEE_CAP_PERCENT         = 0.5;     // OR 50% of original bill
 
 // Cadence: every failure — starting with the due-date attempt itself —
-// carries a fee (clamped to remaining cap headroom) and retries weekly.
-// There is no fee-free grace attempt; see the module banner for why (T&Cs
-// 7.2 ties the fee to the due-date attempt failing, not to a later retry).
-export const WEEKLY_RETRY_GAP_DAYS           = 7;       // Day 0 → 7 → 14 …
+// carries a fee (clamped to remaining cap headroom) once its self-pay
+// grace has elapsed, and retries weekly from THAT point. There is no
+// fee-free RETRY attempt; see the module banner for why (T&Cs 7.2 ties
+// the fee to the due-date attempt failing, not to a later retry).
+export const WEEKLY_RETRY_GAP_DAYS           = 7;       // grace-elapsed day 0 → 7 → 14 …
+
+// The 24-hour self-pay window between a failed attempt and its Default
+// Fee being assessed. Consulted by the webhook (to stamp
+// dunning_grace_until) and the assessment cron pass — NOT by
+// advanceLadderAfterFailure itself, which never sees "the day it failed",
+// only "the day we're assessing it". See the module banner.
+export const FEE_GRACE_PERIOD_DAYS           = 1;
 
 // ─── Fee gate (compliance) ──────────────────────────────────────────────
 //
