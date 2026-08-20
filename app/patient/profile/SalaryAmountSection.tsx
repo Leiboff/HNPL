@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { formatRand } from '@/app/patient/_format';
 import EmptyState from '@/components/EmptyState';
+import EditIconButton from '@/components/EditIconButton';
 
 // ─── Salary amount — profile-only, edit-toggle ────────────────────────
 //
@@ -110,20 +111,11 @@ export default function SalaryAmountSection({ current, saveSalaryAmount }: Props
           )}
         </div>
         {!editing ? (
-          <button
-            type="button"
+          <EditIconButton
+            label="Edit monthly income"
             onClick={() => setEditing(true)}
-            data-testid="profile-salary-amount-edit"
-            aria-label="Edit monthly income"
-            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-gray-50"
-            style={{ color: '#13294B' }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-              <path d="M12 20h9" strokeLinecap="round" />
-              <path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5z" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Edit
-          </button>
+            testId="profile-salary-amount-edit"
+          />
         ) : (
           <div className="flex items-center gap-2 shrink-0">
             <button

@@ -92,25 +92,18 @@ describe('sensitive values are masked consistently, and stay editable', () => {
 
 // ─── Locked fields ────────────────────────────────────────────────────────
 
-describe('a locked field is visibly locked and says why, per field — on Personal details', () => {
-  it('renders three locked fields, each with its own reason', () => {
-    // The reason used to be one footnote at the bottom of the section, so a
-    // field was read-only without looking locked and the explanation was
-    // somewhere else on the screen.
+describe('a locked field is quiet — no per-field reason, no lock icon', () => {
+  // Direct product decision (2026-08-20): the per-field lock icon and
+  // one-line reason under each of name/SA ID/email, plus the separate
+  // "Locked fields protect your account" footnote, read as the same fact
+  // stated four times. Reversed on purpose — LockedField now renders only
+  // a label and a value; the single footnote at the bottom of the card is
+  // the one place the "why" and the "how to fix it" live.
+  it('renders three locked fields, with no reason prop and no lock icon', () => {
     expect(PERSONAL.match(/<LockedField/g) ?? []).toHaveLength(3);
-    expect(PERSONAL.match(/reason="/g) ?? []).toHaveLength(3);
-  });
-
-  it('the lock is a visible icon with an accessible label', () => {
-    expect(PERSONAL).toMatch(/aria-label="Locked"/);
-    expect(PERSONAL).toMatch(/data-testid="locked-field-icon"/);
-  });
-
-  it('LockedField cannot be constructed without a reason', () => {
-    // Typed as required, so a fourth locked field added later must explain
-    // itself. The absence of `reason?:` is the assertion.
-    expect(PERSONAL).toMatch(/reason: string;/);
-    expect(PERSONAL).not.toMatch(/reason\?: string/);
+    expect(PERSONAL).not.toMatch(/reason=/);
+    expect(PERSONAL).not.toMatch(/aria-label="Locked"/);
+    expect(PERSONAL).not.toMatch(/data-testid="locked-field-icon"/);
   });
 
   it('the three locked fields are name, SA ID and email — not phone, not salary', () => {
@@ -132,6 +125,41 @@ describe('a locked field is visibly locked and says why, per field — on Person
     // The whole point of the move — LockedField now has exactly one home.
     expect(PAGE).not.toMatch(/<LockedField/);
     expect(PAGE).not.toMatch(/function LockedField/);
+  });
+});
+
+// ─── Edit affordance — one icon, not three labels ──────────────────────────
+
+describe('phone, salary date and salary amount share one edit affordance', () => {
+  // Used to be "Change" on phone, "Add" on phone-when-empty, and "Edit" on
+  // both salary fields — three hand-rolled buttons that drifted apart in
+  // wording even though they did the same thing. All three now render the
+  // same icon-only EditIconButton; the field-specific wording lives only in
+  // the aria-label.
+  it('phone, salary day and salary amount all use the shared EditIconButton', () => {
+    for (const [name, src] of [['phone', PHONE], ['salary day', SALARY], ['salary amount', AMOUNT]] as const) {
+      expect(src, name).toMatch(/<EditIconButton/);
+      expect(src, name).toMatch(/from '@\/components\/EditIconButton'/);
+    }
+  });
+
+  it('no field still hand-rolls its own pencil-and-label button', () => {
+    for (const [name, src] of [['phone', PHONE], ['salary day', SALARY], ['salary amount', AMOUNT]] as const) {
+      expect(src, name).not.toMatch(/m16\.5 3\.5 4 4L8 20/);
+    }
+  });
+});
+
+// ─── Salary date has a heading again ───────────────────────────────────────
+
+describe('salary date reads as its own field, not an unlabelled row', () => {
+  // With salary date and salary amount no longer their own accordion
+  // section, the section header that used to read "Salary date" is gone —
+  // so the field needs its own eyebrow label, the same way every other
+  // field on this screen (including salary amount's "Monthly income") has
+  // one.
+  it('SalaryDaySection renders a "Salary date" eyebrow label', () => {
+    expect(SALARY).toMatch(/Salary date/);
   });
 });
 
