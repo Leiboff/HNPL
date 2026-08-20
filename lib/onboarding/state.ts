@@ -48,7 +48,7 @@ export const STEP_PATH: Record<OnboardingStep, string> = {
 export const STEP_TITLE: Record<OnboardingStep, string> = {
   'verify-email': 'Verify your email',
   'phone':        'Add your cell number',
-  'identity':     'Your ID and salary date',
+  'identity':     'Your ID and salary details',
   'credit-check': 'Affordability check',
   'liveness':     'Verify it\'s really you',
 };
@@ -69,6 +69,7 @@ export type ProfileForOnboarding = {
   phone_verified_at:      string | null;
   sa_id_number:           string | null;
   salary_day:             number | null;
+  salary_amount:          number | null;
   credit_check_status:    string | null;
   liveness_verified_at:   string | null;
   onboarding_completed:   boolean;
@@ -127,7 +128,9 @@ function stepIsSatisfied(
     case 'phone':
       return !!profile.phone_verified_at;
     case 'identity':
-      return !!profile.sa_id_number && profile.salary_day !== null && profile.salary_day !== undefined;
+      return !!profile.sa_id_number
+        && profile.salary_day    !== null && profile.salary_day    !== undefined
+        && profile.salary_amount !== null && profile.salary_amount !== undefined;
     case 'credit-check':
       return profile.credit_check_status === 'passed';
     case 'liveness':

@@ -5,6 +5,7 @@ import SalaryDayPicker from '@/components/SalaryDayPicker';
 import { ShieldIcon } from '@/app/_landing/icons';
 import { saveIdAndSalaryDay } from '@/lib/onboarding/actions';
 import { validateSaId, saIdAge } from '@/lib/validation';
+import { isValidSalaryAmount } from '@/lib/salaryAmount';
 
 // ─── Identity step (client) ────────────────────────────────────────────
 //
@@ -21,10 +22,11 @@ const INPUT_CLS =
   'focus:border-[#15A89E] focus:bg-white focus:ring-4 focus:ring-[#15A89E]/15';
 
 export default function IdentityStepClient() {
-  const [saId,       setSaId]       = useState('');
-  const [salaryDay,  setSalaryDay]  = useState<number | null>(null);
-  const [error,      setError]      = useState<string | null>(null);
-  const [loading,    setLoading]    = useState(false);
+  const [saId,          setSaId]          = useState('');
+  const [salaryDay,     setSalaryDay]     = useState<number | null>(null);
+  const [salaryAmount,  setSalaryAmount]  = useState('');
+  const [error,         setError]         = useState<string | null>(null);
+  const [loading,       setLoading]       = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,8 +48,14 @@ export default function IdentityStepClient() {
       return;
     }
 
+    const amount = Number(salaryAmount);
+    if (!isValidSalaryAmount(amount)) {
+      setError('Please enter how much you earn a month.');
+      return;
+    }
+
     setLoading(true);
-    const result = await saveIdAndSalaryDay({ saIdNumber: cleaned, salaryDay });
+    const result = await saveIdAndSalaryDay({ saIdNumber: cleaned, salaryDay, salaryAmount: amount });
     setLoading(false);
 
     if (result.error) {
@@ -89,6 +97,37 @@ export default function IdentityStepClient() {
         value={salaryDay}
         onChange={(d) => setSalaryDay(d)}
       />
+
+      <div className="flex flex-col gap-2">
+        <label htmlFor="salary-amount" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
+          Monthly income
+        </label>
+        <div className="relative">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[16px]"
+            style={{ color: '#A8B4C2' }}
+          >
+            R
+          </span>
+          <input
+            id="salary-amount"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.01"
+            autoComplete="off"
+            value={salaryAmount}
+            onChange={(e) => setSalaryAmount(e.target.value)}
+            data-testid="onboarding-salary-amount"
+            placeholder="15,000"
+            className="h-[56px] w-full rounded-[14px] border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD] pl-8 pr-4 text-[16px] text-[#13294B] outline-none transition-colors placeholder:text-[#A8B4C2] focus:border-[#15A89E] focus:bg-white focus:ring-4 focus:ring-[#15A89E]/15"
+          />
+        </div>
+        <p className="text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
+          What you take home a month, before any instalments. Used for the affordability check.
+        </p>
+      </div>
 
       {error && (
         <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">

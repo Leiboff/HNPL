@@ -7,6 +7,7 @@ import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import { validateSaId, normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
+import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
@@ -40,7 +41,7 @@ function svc() {
 
 // Small helper — the shape of the profile columns computeOnboarding reads.
 const PROFILE_SELECT =
-  'phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed';
+  'phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed';
 
 async function loadUserAndProfile() {
   const supabase = await createClient();
@@ -67,6 +68,7 @@ async function loadUserAndProfile() {
       phone_verified_at:    profile.phone_verified_at    as string | null,
       sa_id_number:         profile.sa_id_number         as string | null,
       salary_day:           profile.salary_day           as number | null,
+      salary_amount:        profile.salary_amount        as number | null,
       credit_check_status:  profile.credit_check_status  as string | null,
       liveness_verified_at: profile.liveness_verified_at as string | null,
       onboarding_completed: profile.onboarding_completed as boolean,
@@ -126,8 +128,12 @@ export async function setPhoneForOnboarding(phoneRaw: string): Promise<ActionRes
 // ─── saveIdAndSalaryDay ────────────────────────────────────────────────
 //
 // The identity step. Validates the SA ID (Luhn + DOB + citizenship),
-// encrypts via idEncryption.encryptId (AES-256-GCM), writes both fields
-// to the profile. Never logs the raw ID.
+// encrypts via idEncryption.encryptId (AES-256-GCM), writes all three
+// fields (ID, salary day, salary amount) to the profile. Never logs the
+// raw ID. Kept its original name despite now also saving salary_amount —
+// renaming would ripple through the client + tests for no behavioural
+// gain; the step is still "identity", salary amount is just part of it
+// now, same as salary day already was.
 //
 // Credit-check seam: immediately after ID validation, if
 // ENABLE_CREDIT_CHECK is OFF, this action ALSO auto-passes the credit
@@ -137,8 +143,9 @@ export async function setPhoneForOnboarding(phoneRaw: string): Promise<ActionRes
 // to the actual bureau check.
 
 export type SaveIdInput = {
-  saIdNumber: string;
-  salaryDay:  number;
+  saIdNumber:   string;
+  salaryDay:    number;
+  salaryAmount: number;
 };
 
 export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResult> {
@@ -155,6 +162,10 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
 
   if (!Number.isInteger(input.salaryDay) || !isAllowedSalaryDay(input.salaryDay)) {
     return { error: 'Please choose when your salary is paid.' };
+  }
+
+  if (!isValidSalaryAmount(input.salaryAmount)) {
+    return { error: 'Please enter how much you earn a month.' };
   }
 
   // ── One SA ID = one patient account (migration 0097) ─────────────────
@@ -205,6 +216,7 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
     sa_id_number:      encrypted,
     sa_id_lookup_hash: lookupHash,
     salary_day:        input.salaryDay,
+    salary_amount:     input.salaryAmount,
   };
 
   // Credit-check seam. Flag-off auto-passes so the state model can
@@ -228,6 +240,7 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
     ...loaded.profile,
     sa_id_number:              encrypted,
     salary_day:                input.salaryDay,
+    salary_amount:             input.salaryAmount,
     credit_check_status:       flags.creditCheck ? loaded.profile.credit_check_status : 'passed',
     credit_check_completed_at: undefined as unknown as string | null,   // not read by state
   } as ProfileForOnboarding;

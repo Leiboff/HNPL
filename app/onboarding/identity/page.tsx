@@ -27,7 +27,7 @@ export default async function IdentityStep() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed')
+    .select('phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile) redirect('/dashboard');
@@ -50,8 +50,8 @@ export default async function IdentityStep() {
     <OnboardingShell
       steps={steps}
       currentStep="identity"
-      title="Your ID and salary date"
-      description="We use your SA ID to run a quick affordability check and time instalments to your salary."
+      title="Your ID and salary details"
+      description="We use your SA ID and monthly income to run a quick affordability check, and time instalments to your salary."
     >
       <IdentityStepClient />
     </OnboardingShell>

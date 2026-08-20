@@ -146,7 +146,7 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
         <p className="mt-6 text-center text-xs text-gray-400">
           Wrong number?{' '}
           <Link
-            href="/patient/account?section=personal"
+            href="/patient/account/personal"
             className="font-semibold hover:underline"
             style={{ color: '#13294B' }}
           >

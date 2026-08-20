@@ -88,8 +88,10 @@ describe('regression: card actions invoke the RULE-1 / RULE-2 seams', () => {
     expect(body).not.toMatch(/\.delete\(\)/);
   });
 
-  it('the Account surface wires changeDefaultCard, removeCard and lockedCardIds into PaymentMethods', () => {
-    const accountSrc = readFileSync(resolve(process.cwd(), 'app/patient/account/page.tsx'), 'utf8');
+  it('the Payment cards screen wires changeDefaultCard, removeCard and lockedCardIds into PaymentMethods', () => {
+    // Moved off the account index onto its own route (accordion→screens
+    // conversion) — see app/patient/account/pay/page.tsx.
+    const accountSrc = readFileSync(resolve(process.cwd(), 'app/patient/account/pay/page.tsx'), 'utf8');
     expect(accountSrc).toMatch(/changeDefaultCard=\{changeDefaultCard\}/);
     expect(accountSrc).toMatch(/removeCard=\{removeCard\}/);
     expect(accountSrc).toMatch(/lockedCardIds=\{lockedCardIds\}/);

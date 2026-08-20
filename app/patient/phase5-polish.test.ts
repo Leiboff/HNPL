@@ -41,29 +41,24 @@ describe('home next-payment CTA labels the two-step action', () => {
 });
 
 describe('salary-date deep-link', () => {
-  // Post-consolidation the old "Payday" row (→ /patient/profile) is gone;
-  // deep-linking is the account settings component honouring ?section.
+  // RE-DERIVED again for the accordion→screens conversion (2026-08-20).
+  // The ?section query-param resolver this block used to pin is gone
+  // entirely — deep-linking to "go edit your salary" is now just a plain
+  // route, /patient/account/personal, since salary date + salary amount
+  // both live on the Personal details screen rather than a `section` a
+  // query param had to disambiguate. There is nothing left to resolve.
   //
-  // RE-DERIVED, not merely re-pointed. AccountAccordion became
-  // AccountSettings, and salary date became its OWN section instead of a
-  // field nested inside Personal details. The old assertion pinned the
-  // legacy alias `if (value === 'salary') return 'personal'`, which existed
-  // only because there was no salary section to open. There is one now, so
-  // ?section=salary resolves to what it always said. Re-pointing that
-  // literal at the new file would have failed — correctly, because it
-  // describes behaviour that is gone.
-  //
-  // What survives is the property this test was actually about: the
-  // component reads the ?section param and resolves it through one
-  // function. The BEHAVIOUR (which section each value opens) is covered
-  // properly in app/patient/account/AccountSettings.test.tsx, which renders
-  // the component and asserts on aria-expanded — a stronger check than any
-  // source-text pin here, so this one deliberately does not duplicate it.
-  it('the account settings component honours the ?section deep-link', () => {
-    expect(ACCOUNT_SET).toContain("searchParams?.get('section')");
-    expect(ACCOUNT_SET).toContain('resolveSection(');
-    // The alias is gone, not relocated.
-    expect(ACCOUNT_SET).not.toContain("return 'personal'");
+  // What survives is the property this test was actually about: a patient
+  // can be deep-linked straight to where salary date lives. The BEHAVIOUR
+  // (that route renders SalaryDaySection) is covered properly in
+  // app/patient/account/account-hierarchy.test.ts and
+  // app/patient/account/account-consolidation.test.ts, so this one
+  // deliberately does not duplicate it — it just pins that AccountSettings
+  // still routes there via a real link, not query-param indirection.
+  it('the account settings menu links straight to Personal details, no ?section indirection', () => {
+    expect(ACCOUNT_SET).toMatch(/href=["']\/patient\/account\/personal["']/);
+    expect(ACCOUNT_SET).not.toContain("searchParams?.get('section')");
+    expect(ACCOUNT_SET).not.toContain('resolveSection(');
   });
 });
 

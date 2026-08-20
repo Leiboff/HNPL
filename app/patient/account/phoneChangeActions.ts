@@ -343,6 +343,7 @@ export async function verifyPhoneChangeOtp(enteredCode: string): Promise<PhoneCh
   }
 
   revalidatePath('/patient/account');
+  revalidatePath('/patient/account/personal');
   revalidatePath('/patient');
   return { ok: true };
 }
@@ -376,5 +377,6 @@ export async function cancelPhoneChange(): Promise<CancelPhoneChangeResult> {
   }
 
   revalidatePath('/patient/account');
+  revalidatePath('/patient/account/personal');
   return { ok: true };
 }

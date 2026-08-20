@@ -22,7 +22,7 @@ export default async function LivenessStep() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('phone_verified_at, sa_id_number, salary_day, credit_check_status, liveness_verified_at, onboarding_completed')
+    .select('phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile) redirect('/dashboard');

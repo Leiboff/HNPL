@@ -4,11 +4,15 @@ import { resolve } from 'node:path';
 
 // ─── Phase 3 — one card surface, add-card returns to origin ─────────────
 //
-// Card management must live in exactly ONE place (the Account tab). The
-// standalone /patient/payment-methods route must redirect there, not render
-// a duplicate. The add-card completion flow (success AND cancel) resolves
+// Card management must live in exactly ONE place. The standalone
+// /patient/payment-methods route must redirect there, not render a
+// duplicate. The add-card completion flow (success AND cancel) resolves
 // its redirect through cardReturn so the user always lands back on the card
 // surface — never a page they never opened.
+//
+// RE-POINTED (2026-08-20): that one place is now /patient/account/pay, its
+// own screen under the accordion→screens conversion, rather than a section
+// built inline on the account index (ACCOUNT below).
 
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
@@ -16,6 +20,7 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 const PM_PAGE    = read('app/patient/payment-methods/page.tsx');
 const PM_ACTIONS = read('app/patient/payment-methods/actions.ts');
 const ACCOUNT    = read('app/patient/account/page.tsx');
+const PAY        = read('app/patient/account/pay/page.tsx');
 const COMPLETE  = read('app/patient/payment-methods/complete/page.tsx');
 const POLLING   = read('app/patient/payment-methods/complete/PollingConfirmation.tsx');
 const PM_CLIENT = read('app/patient/payment-methods/PaymentMethods.tsx');
@@ -30,8 +35,9 @@ describe('single card surface', () => {
     expect(PM_PAGE).not.toContain('<PaymentMethods');
   });
 
-  it('Account is the one surface that hosts the card manager', () => {
-    expect(ACCOUNT).toContain('<PaymentMethods');
+  it('the Payment cards screen is the one surface that hosts the card manager — the index does not', () => {
+    expect(PAY).toContain('<PaymentMethods');
+    expect(ACCOUNT).not.toContain('<PaymentMethods');
   });
 });
 
@@ -50,9 +56,9 @@ describe('money-path card actions live in a neutral module, not the redirect pag
     expect(PM_ACTIONS).toMatch(/export async function removeCard\(/);
   });
 
-  it('Account imports the actions from the neutral module (not the page)', () => {
-    expect(ACCOUNT).toMatch(/from '\.\.\/payment-methods\/actions'/);
-    expect(ACCOUNT).not.toMatch(/from '\.\.\/payment-methods\/page'/);
+  it('the Payment cards screen imports the actions from the neutral module (not the page)', () => {
+    expect(PAY).toMatch(/from '@\/app\/patient\/payment-methods\/actions'/);
+    expect(PAY).not.toMatch(/from '\.\.\/payment-methods\/page'/);
   });
 });
 
