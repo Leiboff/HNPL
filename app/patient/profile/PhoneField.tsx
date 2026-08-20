@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { normalizePhoneZA } from '@/lib/validation';
 import { maskPhone } from '@/lib/patient/maskContact';
 import EmptyState from '@/components/EmptyState';
+import EditIconButton from '@/components/EditIconButton';
 import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
 
 // ─── Phone — masked, verified, and re-verified on change ───────────────
@@ -225,20 +226,11 @@ export default function PhoneField({
           )}
         </div>
         {mode === 'idle' ? (
-          <button
-            type="button"
+          <EditIconButton
+            label={current ? 'Change phone' : 'Add phone'}
             onClick={() => { setOkMsg(null); setMode('editing'); }}
-            data-testid="profile-phone-edit"
-            aria-label="Change phone"
-            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-gray-50"
-            style={{ color: '#13294B' }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-              <path d="M12 20h9" strokeLinecap="round" />
-              <path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5z" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            {current ? 'Change' : 'Add'}
-          </button>
+            testId="profile-phone-edit"
+          />
         ) : (
           <div className="flex items-center gap-2">
             <button

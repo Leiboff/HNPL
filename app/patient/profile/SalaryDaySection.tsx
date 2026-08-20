@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 import EmptyState from '@/components/EmptyState';
+import EditIconButton from '@/components/EditIconButton';
 
 // ─── Salary date — profile-only, edit-toggle ──────────────────────────
 //
@@ -99,9 +100,12 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          {/* No eyebrow label: this is its own accordion section now, and the
-              section header already reads "Salary date". Repeating it was the
-              duplication the Passkeys sub-heading had. */}
+          <p
+            className="text-[11px] font-semibold uppercase tracking-widest mb-1.5"
+            style={{ color: '#13294B', opacity: 0.45 }}
+          >
+            Salary date
+          </p>
           {editing ? (
             <select
               className={inputCls}
@@ -125,20 +129,11 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
           )}
         </div>
         {!editing ? (
-          <button
-            type="button"
+          <EditIconButton
+            label="Edit salary date"
             onClick={() => setEditing(true)}
-            data-testid="profile-salary-day-edit"
-            aria-label="Edit salary date"
-            className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-gray-50"
-            style={{ color: '#13294B' }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-              <path d="M12 20h9" strokeLinecap="round" />
-              <path d="m16.5 3.5 4 4L8 20l-4 1 1-4 11.5-13.5z" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Edit
-          </button>
+            testId="profile-salary-day-edit"
+          />
         ) : (
           <div className="flex items-center gap-2">
             <button

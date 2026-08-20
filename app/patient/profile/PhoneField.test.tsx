@@ -231,7 +231,7 @@ describe('masking', () => {
     renderField({ current: null, verifiedAt: null });
     expect(screen.getByTestId('empty-state')).toBeTruthy();
     expect(screen.getByTestId('profile-phone-value').textContent).toContain('No mobile number');
-    // And the affordance reads "Add", not "Change".
-    expect(screen.getByTestId('profile-phone-edit').textContent).toContain('Add');
+    // The button is icon-only; "Add" vs "Change" now lives in the aria-label.
+    expect(screen.getByTestId('profile-phone-edit').getAttribute('aria-label')).toBe('Add phone');
   });
 });

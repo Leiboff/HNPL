@@ -40,17 +40,11 @@ import { getRequestUser } from '@/lib/auth/requestUser';
 // param to disambiguate.
 
 /**
- * A field the patient cannot change, shown as visibly locked WITH its reason.
+ * A field the patient cannot change here. No lock icon and no per-field
+ * reason any more — the single "Contact support" line at the bottom of the
+ * card covers why, in one place instead of three times.
  */
-function LockedField({
-  label,
-  value,
-  reason,
-}: {
-  label:  string;
-  value:  string;
-  reason: string;
-}) {
+function LockedField({ label, value }: { label: string; value: string }) {
   return (
     <div data-testid="locked-field">
       <p
@@ -59,29 +53,7 @@ function LockedField({
       >
         {label}
       </p>
-      <div className="flex items-center gap-1.5">
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#8496AA"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="flex-none"
-          aria-label="Locked"
-          role="img"
-          data-testid="locked-field-icon"
-        >
-          <rect x="4" y="10.5" width="16" height="10" rx="2.5" />
-          <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
-        </svg>
-        <p className="text-sm font-medium text-gray-800 truncate">{value || '—'}</p>
-      </div>
-      <p className="mt-1 text-[11.5px] leading-[1.45]" style={{ color: '#A3B1C2' }}>
-        {reason}
-      </p>
+      <p className="text-sm font-medium text-gray-800 truncate">{value || '—'}</p>
     </div>
   );
 }
@@ -115,21 +87,9 @@ export default async function PersonalDetailsPage() {
         style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
-          <LockedField
-            label="Full name"
-            value={fullName}
-            reason="Must match your SA ID. Support can change it."
-          />
-          <LockedField
-            label="SA ID number"
-            value={saIdMasked || ''}
-            reason="Verified at signup and fixed for life."
-          />
-          <LockedField
-            label="Email"
-            value={emailMasked}
-            reason="Your sign-in address. Support can change it."
-          />
+          <LockedField label="Full name" value={fullName} />
+          <LockedField label="SA ID number" value={saIdMasked || ''} />
+          <LockedField label="Email" value={emailMasked} />
         </div>
 
         <div className="border-t border-gray-100 pt-4">
