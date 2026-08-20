@@ -46,11 +46,12 @@ import { logPeachRawResponse } from './peach/logRawResponse';
 //      reconciliation channel (same handlers, guarded by status
 //      preconditions).
 //
-// Retry cap: MAX_ATTEMPTS = 4 — the natural maximum of the dunning
-// schedule (Day 0 grace fail + 3 weekly fee-bearing attempts → cap at
-// the 3rd fee → defaulted). Also the attempt-count backstop the fee gate
-// uses to terminate while dunning_fees_cents is frozen (see the webhook).
-export const MAX_ATTEMPTS = 4;
+// Retry cap: MAX_ATTEMPTS = 3 — the natural maximum of the dunning
+// schedule (the due-date attempt + 2 further weekly fee-bearing retries
+// → the 3rd fee reaches the cap → defaulted; see lib/payments/dunning.ts).
+// Also the attempt-count backstop the fee gate uses to terminate while
+// dunning_fees_cents is frozen (see the webhook).
+export const MAX_ATTEMPTS = 3;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SvcClient = any;

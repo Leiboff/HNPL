@@ -31,8 +31,12 @@ describe('webhook push — rand formatting is correct (not a bug)', () => {
 });
 
 describe('webhook push — parity on the defaulted (terminal) attempt', () => {
-  it('has a capReached branch that conveys the freeze', () => {
-    expect(SRC).toMatch(/capReached\s*\?\s*'Account frozen/);
+  it('has an isTerminal branch that conveys the freeze', () => {
+    // Renamed from `capReached` when the ladder gained a second terminal
+    // signal (the next-instalment due-date boundary, alongside the fee
+    // cap) — see lib/payments/dunning.ts. The push copy is keyed off
+    // "is this attempt terminal", not specifically "was the fee cap hit".
+    expect(SRC).toMatch(/isTerminal\s*\?\s*'Account frozen/);
     expect(SRC).toMatch(/frozen from new plans until you settle/i);
   });
 

@@ -5,9 +5,11 @@ import { dunningFeesEnabled } from './dunning';
 
 // ─── Phase 1 — dunning fee gate (compliance) ────────────────────────────
 //
-// Charging a default fee requires disclosed + accepted T&Cs which are not
-// yet persisted. Until then ALL fee CHARGING is gated OFF via
-// DUNNING_FEES_ENABLED (default OFF). These tests pin:
+// Charging a default fee requires disclosed + accepted T&Cs — now live
+// (lib/legal/terms.ts / lib/legal/privacy.ts). The gate itself stays: it
+// is the single kill switch every charge point consults, defaulting OFF
+// until DUNNING_FEES_ENABLED=true is set deliberately (an env var, not a
+// code change — see lib/payments/dunning.ts). These tests pin:
 //   • the flag's parsing (only the literal 'true' enables it)
 //   • the three CHARGE-point gates in source (webhook accrual, the
 //     per-instalment debit, the settle-entire-bill RPC total)

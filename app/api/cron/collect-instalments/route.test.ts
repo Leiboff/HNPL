@@ -15,7 +15,7 @@ const attemptChargeInstalmentSpy = vi.fn();
 
 vi.mock('@/lib/payments/chargeInstalment', () => ({
   attemptChargeInstalment: (...args: unknown[]) => attemptChargeInstalmentSpy(...args),
-  MAX_ATTEMPTS:            4,
+  MAX_ATTEMPTS:            3,
 }));
 
 // Stub the service-role Supabase client. Each test sets up scheduledRows
