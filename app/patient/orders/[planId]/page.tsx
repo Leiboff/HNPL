@@ -5,6 +5,7 @@ import PatientScreen from '@/app/patient/PatientScreen';
 import InstalmentLadder, { ladderFromCounts } from '@/app/patient/InstalmentLadder';
 import PlanSettleAffordance from '../PlanSettleAffordance';
 import DeclinedPlanDetail from '../DeclinedPlanDetail';
+import PlanReceiptSheet from './PlanReceiptSheet';
 import { selfSettleInstalment, selfSettleEntirePlan } from '../settle-actions';
 import { computePlanProgress } from '@/lib/planProgress';
 import { isDeclinedPlan } from '@/lib/patient/planBucket';
@@ -14,7 +15,7 @@ import {
   type InstalmentStatus,
 } from '@/lib/patient/instalmentStatus';
 import { cardBrandLabel } from '@/lib/patient/cardBrand';
-import { formatRand, formatDate, relativeDay, todaySAST } from '@/app/patient/_format';
+import { formatRand, formatDate, todaySAST } from '@/app/patient/_format';
 import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Plan detail (v4 screen 03) ──────────────────────────────────────────
@@ -198,17 +199,20 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
             const overdue   = derived === 'overdue';
             const isNext    = !collected && p.instalment_number === nextDueNumber;
             const effDate   = p.next_attempt_date ?? p.due_date;
+            // One line, every row: "Paid 17 Jun 2026" / "Due 24 Aug 2026" /
+            // "Was due 25 Jul 2026" — never a second wrapped line, which is
+            // what made the overdue row taller than its neighbours.
             const rowDate   = collected
-              ? `Paid ${formatDate((p.collected_at ?? p.due_date).slice(0, 10))}`
+              ? formatDate((p.collected_at ?? p.due_date).slice(0, 10))
               : `${overdue ? 'Was due' : 'Due'} ${formatDate(effDate)}`;
             const emphasise = isNext || overdue;
             const ring      = overdue ? '#B42318' : isNext ? '#15A89E' : '#E2E8EE';
-            const dateColor = collected ? '#8496AA' : overdue ? '#B42318' : isNext ? '#13294B' : '#8496AA';
+            const dateColor = overdue ? '#B42318' : '#8496AA';
             const amtColor  = emphasise ? '#13294B' : '#8496AA';
             return (
               <div
                 key={p.id}
-                className="flex items-center gap-3 px-[18px] py-[14px]"
+                className="flex items-center gap-3 px-[18px] py-[13px]"
                 style={{ borderTop: '1px solid #EEF2F5', background: overdue ? '#FEF6F5' : isNext ? '#F5FCFB' : undefined }}
               >
                 {collected ? (
@@ -221,13 +225,12 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
                   <span className="flex-none w-6 h-6 rounded-full" style={{ border: `2px solid ${ring}` }} />
                 )}
                 <div className="flex-1 min-w-0">
-                  <p className="text-[14px]" style={{ color: dateColor, fontWeight: emphasise ? 600 : 400 }}>{rowDate}</p>
-                  {emphasise && (
-                    <p className="mt-0.5 text-[12px]" style={{ color: overdue ? '#B42318' : '#8496AA' }}>{relativeDay(effDate, today)}</p>
-                  )}
+                  <ScheduleBadge derived={derived} />
+                  <p className="mt-[3px] text-[13px] truncate" style={{ color: dateColor, fontWeight: emphasise ? 600 : 400 }}>
+                    {rowDate}
+                  </p>
                 </div>
-                <ScheduleBadge derived={derived} />
-                <span className="text-[14px] tabular-nums" style={{ color: amtColor, fontWeight: emphasise ? 600 : 400 }}>
+                <span className="flex-none text-[14px] tabular-nums" style={{ color: amtColor, fontWeight: emphasise ? 600 : 400 }}>
                   {formatRand(Number(p.amount))}
                 </span>
               </div>
@@ -235,7 +238,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
           })}
         </div>
 
-        {/* Card + dispute */}
+        {/* Card + receipt */}
         <div
           className="rounded-[22px] bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
@@ -248,20 +251,22 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
               <p className="text-[14px] font-semibold tabular-nums" style={{ color: '#13294B' }}>
                 {chargeCard?.last_four ? `···· ${chargeCard.last_four}` : 'No card on file'}
               </p>
-              <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>Collected the day after your payday</p>
+              {/* No "Change" here — this plan collects from the card it was set
+                  up with (its own bound peach_registration_id). Changing the
+                  default card on /patient/account/pay only applies to plans
+                  created afterwards, so a link here would promise something
+                  this screen can't do. */}
+              <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>Used to collect this plan&rsquo;s instalments</p>
             </div>
-            <Link href="/patient/account/pay" className="flex-none text-[13px] font-semibold" style={{ color: '#0F766E' }}>Change</Link>
           </div>
-          <a
-            href="mailto:support@betternow.co.za?subject=Question about my bill"
-            className="flex items-center justify-between gap-3 px-[18px] py-[16px]"
-            style={{ borderTop: '1px solid #EEF2F5' }}
-          >
-            <span className="text-[14px] font-semibold" style={{ color: '#13294B' }}>Something wrong with this bill?</span>
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#B6C1CD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
-              <path d="m9 6 6 6-6 6" />
-            </svg>
-          </a>
+          <PlanReceiptSheet
+            practiceName={practiceName}
+            amount={Number(rawPlan.total_amount)}
+            isPaidInFull={prog.isPaidInFull}
+            createdDate={(rawPlan.created_at as string).slice(0, 10)}
+            invoiceNumber={(rawPlan.invoice_number as string | null) ?? null}
+            practiceReference={(rawPlan.practice_reference as string | null) ?? null}
+          />
         </div>
 
         {refSegments.length > 0 && (
