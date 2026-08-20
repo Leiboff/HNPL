@@ -111,6 +111,20 @@
   .lp-root .nav-links { display: flex; }
 }
 
+/* Below 1080px the header only has room for the brand, the primary
+   "Get started" CTA, and the burger — three items (brand + Sign in +
+   Get started + burger) don't fit a phone viewport: Sign in's pill
+   wraps its text onto two lines (flex-shrink squeezing it below its
+   own content width) and pushes the burger off-screen, clipped by
+   .lp-root's overflow-x:hidden. Sign in is already duplicated in the
+   burger's own dropdown (.mobile-cta .m-signin), so hiding the header
+   copy here loses nothing. */
+.lp-root .signin { display: none; }
+
+@media(min-width: 1080px) {
+  .lp-root .signin { display: inline; }
+}
+
 /* ── Mobile burger + slide-down menu ───────────────────────────────────────── */
 
 .lp-root .burger {
@@ -853,6 +867,20 @@
   text-align: left;
 }
 
+/* Icon badge — was unsized (a bare block-level div), so it stretched to
+   the full card width with only a small SVG glyph inside, rendering as
+   an empty coloured strip rather than a badge. Same 48x48 flex-centred
+   pattern as .step .ic elsewhere on this page. */
+.lp-root .gs-band .gs-reqs .pillar .ic {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
 /* Full-width CTA row that lives BELOW the two-column grid (content
    left, phone right). Centered on both mobile and desktop so the
    button reads as the closing "act" step of the narrative. */
@@ -1331,18 +1359,25 @@
 }
 .lp-v3 .verb-marquee-track {
   display: flex;
-  width: 200%;
+  /* Intrinsic width (sum of both rows' natural content width), NOT a
+     forced 200% — on a narrow phone viewport the row's natural content
+     (7 words + dots at 44px gaps) is far wider than 50% of the
+     viewport, and a forced percentage here left the rows' own flex
+     children (default flex-shrink:1) squeezed below their content
+     size, overlapping text. translateX(-50%) below still slides by
+     exactly one row's width because both rows are identical content,
+     so the track's natural width is always exactly 2x one row. */
+  width: max-content;
   animation: v3Marquee 26s linear infinite;
 }
 .lp-v3 .verb-marquee-row {
   display: flex;
   align-items: center;
   gap: 44px;
-  width: 50%;
   flex: none;
   padding-right: 44px;
 }
-.lp-v3 .verb-marquee-row > span { display: inline-flex; align-items: center; gap: 44px; }
+.lp-v3 .verb-marquee-row > span { display: inline-flex; align-items: center; gap: 44px; flex-shrink: 0; }
 .lp-v3 .verb-marquee .vm-word { font-size: 19px; font-weight: 600; letter-spacing: .02em; color: rgba(255,255,255,.34); }
 .lp-v3 .verb-marquee .vm-dot { color: #5CD9CE; }
 @keyframes v3Marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
