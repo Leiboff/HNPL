@@ -210,35 +210,51 @@ export default function PaymentMethods({
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  // Once the patient hits "Add card", the Checkout V2 widget takes over
-  // the whole panel until they cancel or complete the flow. On success
-  // it navigates to shopperResultUrl?checkoutId=... →
+  // Once the patient hits "Add card", the Checkout V2 widget takes over.
+  //
+  // This used to render INLINE, inside the normal payment-methods panel —
+  // which sits inside PatientScreen's scrolling sheet, itself inside
+  // <main className="pb-28"> above the fixed bottom nav. The widget's iframe
+  // has a content-fitting min-height (globals.css `.peach-embed`) with no
+  // max-height, so on a short viewport the "Save card" button could end up
+  // below the fold, competing with the fixed nav bar for the same strip of
+  // screen. A full-viewport overlay (fixed, own scroll container, z-index
+  // above the bottom nav's z-30) sidesteps that entirely: the card form
+  // always gets the whole screen to grow into, and it scrolls independently
+  // of whatever the panel underneath happens to be doing.
+  //
+  // On success it navigates to shopperResultUrl?checkoutId=... →
   // /patient/payment-methods/complete which reads the status, saves the
   // card, and redirects here.
   if (addCardWidget) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="mb-3">
-            <h2 className="text-base font-semibold text-gray-900">Add a card</h2>
-            <p className="mt-1 text-xs text-gray-500">
-              We verify your card with your bank — no money is taken.
-            </p>
-          </div>
+      <div
+        className="fixed inset-0 z-50 overflow-y-auto bg-white"
+        style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+        data-testid="add-card-overlay"
+      >
+        <div className="mx-auto w-full max-w-md md:max-w-lg px-[18px] pt-5 pb-10">
+          <button
+            type="button"
+            onClick={() => setAddCardWidget(null)}
+            className="mb-4 inline-flex items-center gap-1 text-sm font-medium text-gray-500 hover:text-gray-700"
+            data-testid="payment-methods-widget-cancel"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+            Cancel
+          </button>
+          <h2 className="text-base font-semibold text-gray-900">Add a card</h2>
+          <p className="mt-1 mb-4 text-xs text-gray-500">
+            We verify your card with your bank — no money is taken.
+          </p>
           <PeachWidget
             mode="registration"
             checkoutId={addCardWidget.checkoutId}
             entityId={process.env.NEXT_PUBLIC_PEACH_CHECKOUT_ENTITY_ID ?? ''}
             shopperResultUrl={addCardWidget.shopperResultUrl}
           />
-          <button
-            type="button"
-            onClick={() => setAddCardWidget(null)}
-            className="mt-3 text-xs text-gray-500 underline hover:text-gray-700"
-            data-testid="payment-methods-widget-cancel"
-          >
-            Cancel and go back
-          </button>
         </div>
       </div>
     );

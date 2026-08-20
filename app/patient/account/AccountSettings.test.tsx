@@ -2,19 +2,25 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import AccountSettings from './AccountSettings';
 
-// ─── AccountSettings — ONE pattern, four groups, six navigable rows ──────
+// ─── AccountSettings — ONE pattern, four groups, five navigable rows ─────
 //
 // Replaces the accordion-era test suite. Direct product decision
 // (2026-08-20): tapping a settings row now opens a full screen with the
 // details, rather than expanding a panel in place — the accordion, its
 // open/closed state, and its `?section=` deep-link resolution are gone.
 // Salary date and salary amount are no longer their own row: they moved
-// into Personal details (see app/patient/account/personal/page.tsx), so
-// SECTIONS below has six rows where the accordion-era list had seven.
+// into Personal details (see app/patient/account/personal/page.tsx).
 //
-// The single most valuable thing to pin is still the uniformity: every row
-// is a plain link to its own route, none is a button/disclosure, and none
-// is styled differently from the others.
+// Sign out is no longer a row either (same date, separate decision):
+// ProfileLogoutSection renders directly at the bottom instead of behind
+// its own /patient/account/signout screen — one red button didn't need a
+// whole navigable screen in front of it. So ROWS below has five rows where
+// the accordion-era list had seven and the first screens-conversion pass
+// had six; Sign out is asserted separately, below, as a rendered button.
+//
+// The single most valuable thing to pin is still the uniformity of what's
+// left: every remaining row is a plain link to its own route, none is a
+// button/disclosure, and none is styled differently from the others.
 
 const ROWS = [
   ['Personal details',      '/patient/account/personal'],
@@ -22,7 +28,6 @@ const ROWS = [
   ['Passkeys',              '/patient/account/passkeys'],
   ['Password & recovery',   '/patient/account/password'],
   ['Notifications',         '/patient/account/notifications'],
-  ['Sign out',              '/patient/account/signout'],
 ] as const;
 
 const GROUPS = ['Your details', 'How you pay', 'Sign-in & security', 'This device'] as const;
@@ -80,17 +85,23 @@ describe('four groups carry the hierarchy', () => {
 });
 
 describe('destructive and rare actions still sit behind a deliberate tap', () => {
-  it('Sign out and Password & recovery are ordinary rows, not permanently-visible actions', () => {
-    // They used to be a flat red button / an inner sub-heading respectively.
-    // Now, like every other row, they are one tap away via their own screen
-    // rather than sitting inline on the index.
+  it('Password & recovery is an ordinary row, not a permanently-visible action', () => {
+    // Used to be an inner sub-heading. Now, like every other row, it is one
+    // tap away via its own screen rather than sitting inline on the index.
     render(<AccountSettings />);
-    for (const title of ['Sign out', 'Password & recovery']) {
-      const link = screen.getByText(title).closest('a');
-      expect(link, title).toBeTruthy();
-      // A row, not an inline destructive control (e.g. no red button text
-      // like "Sign out of this device" rendered directly on the index).
-      expect(link!.textContent?.trim()).toBe(title);
-    }
+    const link = screen.getByText('Password & recovery').closest('a');
+    expect(link).toBeTruthy();
+    expect(link!.textContent?.trim()).toBe('Password & recovery');
+  });
+
+  it('Sign out renders directly as a button, not a row behind its own screen', () => {
+    // The one row that got REMOVED rather than kept: a whole
+    // /patient/account/signout screen for one red button was ceremony, not
+    // real friction, so ProfileLogoutSection now renders inline instead.
+    render(<AccountSettings />);
+    expect(screen.getByText('Sign out').closest('a')).toBeNull();
+    const button = screen.getByTestId('profile-logout-button');
+    expect(button.tagName).toBe('BUTTON');
+    expect(button.textContent).toContain('Sign out');
   });
 });

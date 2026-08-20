@@ -40,7 +40,6 @@ function Chevron() {
 
 export default function HomeFailedState({
   firstName,
-  lastName,
   amount,
   practiceName,
   dueDate,
@@ -53,7 +52,6 @@ export default function HomeFailedState({
   frozen,
 }: {
   firstName:    string | null;
-  lastName:     string | null;
   amount:       number;
   practiceName: string;
   dueDate:      string;
@@ -65,24 +63,14 @@ export default function HomeFailedState({
   planId:       string | null;
   frozen:       boolean;
 }) {
-  const initials =
-    `${(firstName ?? '').charAt(0)}${(lastName ?? '').charAt(0)}`.toUpperCase() || 'ME';
   const cardLabel = cardBrand && cardLast4 ? `${cardBrand} ···· ${cardLast4}` : 'your card';
 
   const header = (
     <>
       <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-[11px]">
-          <span
-            className="w-[38px] h-[38px] rounded-full flex items-center justify-center text-[13px] font-semibold text-white"
-            style={{ background: 'rgba(255,255,255,.14)' }}
-          >
-            {initials}
-          </span>
-          <span className="text-[15.5px] font-semibold text-white">
-            Hi {firstName ?? 'there'}
-          </span>
-        </div>
+        <span className="text-[15.5px] font-semibold text-white">
+          Hi {firstName ?? 'there'}
+        </span>
         <ActionCentreBell onDark />
       </div>
 
