@@ -1,4 +1,3 @@
-import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
@@ -28,8 +27,6 @@ import { resolveAppVersion } from '@/lib/appVersion';
 import { todaySAST, formatDate } from '../_format';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import { getRequestUser } from '@/lib/auth/requestUser';
-import { getPatientProfileForRequest } from '@/lib/patient/requestProfile';
-import { PatientDetailBody } from '@/components/loading/PatientShellShape';
 import {
   changeDefaultCard,
   removeCard,
@@ -192,54 +189,16 @@ function Provenance({ children }: { children?: string | null }) {
 }
 
 export default async function AccountPage() {
+  const supabase = await createClient();
+
   const user = await getRequestUser();
   if (!user) redirect('/login');
-
-  // Fast path — the SAME cached profiles row the layout already read for
-  // its role gate (React cache(), see lib/patient/requestProfile.ts), so
-  // this costs no extra round trip. It carries exactly what the header
-  // needs (name, email), so the header renders for real immediately while
-  // AccountBody's heavier queries (cards, payment history, the full
-  // profile row) stream in below.
-  const fastProfile = await getPatientProfileForRequest(user.id);
-  const fastFirstName = (fastProfile?.first_name as string | null) ?? '';
-  const fastLastName  = (fastProfile?.last_name  as string | null) ?? '';
-  const fullName      = [fastFirstName, fastLastName].filter(Boolean).join(' ') || '—';
-  const initials       = [fastFirstName[0], fastLastName[0]].filter(Boolean).join('').toUpperCase() || '?';
-  const emailMasked    = maskEmail(fastProfile?.email as string | null | undefined);
-
-  const header = (
-    <div className="flex items-center gap-[14px]">
-      <span
-        className="flex-none w-[52px] h-[52px] rounded-full flex items-center justify-center text-[17px] font-semibold text-white"
-        style={{ background: 'rgba(255,255,255,.14)' }}
-      >
-        {initials}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[19px] font-semibold text-white truncate" style={{ letterSpacing: '-.02em' }}>{fullName}</p>
-        <p className="mt-0.5 text-[13px] truncate" style={{ color: 'rgba(255,255,255,.6)' }}>{emailMasked}</p>
-      </div>
-    </div>
-  );
-
-  return (
-    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
-      <Suspense fallback={<PatientDetailBody label="Loading your account" cards={3} />}>
-        <AccountBody userId={user.id} />
-      </Suspense>
-    </PatientScreen>
-  );
-}
-
-async function AccountBody({ userId }: { userId: string }) {
-  const supabase = await createClient();
 
   const [{ data: profile }, { data: rawCards }, { data: rawPayments }, { data: rawPlans }] = await Promise.all([
     supabase
       .from('profiles')
       .select('first_name, last_name, email, phone, phone_pending, phone_verified_at, sa_id_number, salary_day, created_at, terms_accepted_at, terms_version')
-      .eq('id', userId)
+      .eq('id', user.id)
       .single(),
     // Active cards only — archived (soft-deleted) cards drop off the list.
     // token is read server-side to compute the delete guard; it is NOT
@@ -247,19 +206,20 @@ async function AccountBody({ userId }: { userId: string }) {
     supabase
       .from('payment_methods')
       .select('id, card_brand, last_four, expiry_month, expiry_year, cardholder_name, is_default, created_at, token')
-      .eq('patient_id', userId)
+      .eq('patient_id', user.id)
       .is('archived_at', null)
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: false }),
-    supabase.from('payments').select('status, due_date, next_attempt_date').eq('patient_id', userId).eq('kind', 'instalment'),
+    supabase.from('payments').select('status, due_date, next_attempt_date').eq('patient_id', user.id).eq('kind', 'instalment'),
     // Which cards are currently collecting an active plan → those cards
     // cannot be removed. Determined here (and re-checked in archive_card).
-    supabase.from('plans').select('peach_registration_id').eq('patient_id', userId).in('status', ['active', 'pending_first_payment']),
+    supabase.from('plans').select('peach_registration_id').eq('patient_id', user.id).in('status', ['active', 'pending_first_payment']),
   ]);
 
   const firstName = (profile?.first_name as string | null) ?? '';
   const lastName  = (profile?.last_name  as string | null) ?? '';
   const fullName  = [firstName, lastName].filter(Boolean).join(' ') || '—';
+  const initials  = [firstName[0], lastName[0]].filter(Boolean).join('').toUpperCase() || '?';
   const salaryDay = (profile?.salary_day as number | null) ?? null;
 
   const decryptedSaId = decryptIdForDisplay(profile?.sa_id_number as string | null | undefined);
@@ -326,6 +286,21 @@ async function AccountBody({ userId }: { userId: string }) {
     madeCount === 0 ? 'No payments yet' :
     cleanRecord     ? `${madeCount} payment${madeCount === 1 ? '' : 's'}, all on time` :
                       `${madeCount} payment${madeCount === 1 ? '' : 's'} made`;
+
+  const header = (
+    <div className="flex items-center gap-[14px]">
+      <span
+        className="flex-none w-[52px] h-[52px] rounded-full flex items-center justify-center text-[17px] font-semibold text-white"
+        style={{ background: 'rgba(255,255,255,.14)' }}
+      >
+        {initials}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[19px] font-semibold text-white truncate" style={{ letterSpacing: '-.02em' }}>{fullName}</p>
+        <p className="mt-0.5 text-[13px] truncate" style={{ color: 'rgba(255,255,255,.6)' }}>{emailMasked}</p>
+      </div>
+    </div>
+  );
 
   // ── Personal details — locked identity + the one editable field ──────
   //
@@ -397,6 +372,7 @@ async function AccountBody({ userId }: { userId: string }) {
   );
 
   return (
+    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
 
         {/* Your record */}
@@ -485,5 +461,6 @@ async function AccountBody({ userId }: { userId: string }) {
         </div>
 
       </div>
+    </PatientScreen>
   );
 }
