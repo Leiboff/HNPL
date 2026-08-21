@@ -132,17 +132,38 @@ describe('ExploreView — landing is the default view', () => {
   });
   afterEach(() => { removeGeolocation(); });
 
-  it('renders the Landing screen (category picker + See all) when no query params are present', () => {
+  it('renders the Landing screen (category picker) when no query params are present', () => {
     const rows: DirectoryRow[] = [
       r({ member_id: 'm-dent',    hpcsa_group_key: 'd',  specialty: 'Dentistry',     first_name: 'D' }),
       r({ member_id: 'm-physio',  hpcsa_group_key: 'p',  specialty: 'Physiotherapy', first_name: 'P' }),
     ];
     render(<ExploreView rows={rows} />);
     expect(screen.getByTestId('landing-categories')).toBeTruthy();
-    expect(screen.getByTestId('landing-see-all')).toBeTruthy();
     // Neither the results-list "Filters" toggle nor a card header
     // should appear on landing.
     expect(screen.queryByTestId('filters-toggle')).toBeNull();
+  });
+
+  it('no "See all practitioners" tile — specialty is the only way in below the search box', () => {
+    render(<ExploreView rows={[r()]} />);
+    expect(screen.queryByTestId('landing-see-all')).toBeNull();
+    expect(screen.queryByText(/See all practitioners/)).toBeNull();
+  });
+
+  it('categories render alphabetically A→Z, not by how many practitioners each has', () => {
+    const rows: DirectoryRow[] = [
+      // Psychology has the most practitioners but must sort LAST.
+      r({ member_id: 'a', hpcsa_group_key: 'ha', specialty: 'Psychology', first_name: 'A' }),
+      r({ member_id: 'b', hpcsa_group_key: 'hb', specialty: 'Psychology', first_name: 'B' }),
+      r({ member_id: 'c', hpcsa_group_key: 'hc', specialty: 'Psychology', first_name: 'C' }),
+      r({ member_id: 'd', hpcsa_group_key: 'hd', specialty: 'Dentistry',  first_name: 'D' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    const tiles = screen.getAllByTestId(/^landing-category-/);
+    expect(tiles.map((t) => t.getAttribute('data-testid'))).toEqual([
+      'landing-category-Dentistry',
+      'landing-category-Psychology',
+    ]);
   });
 
   it('categories are data-driven — only specialties with ≥1 live practitioner appear', () => {
@@ -173,12 +194,6 @@ describe('ExploreView — landing is the default view', () => {
     const physio = screen.getByTestId('landing-category-Physiotherapy');
     expect(dent.textContent).toMatch(/2 practitioners/);
     expect(physio.textContent).toMatch(/1 practitioner\b/);
-  });
-
-  it('the See-all tile links to ?view=results (no specialty filter)', () => {
-    render(<ExploreView rows={[r()]} />);
-    const seeAll = screen.getByTestId('landing-see-all') as HTMLAnchorElement;
-    expect(seeAll.getAttribute('href')).toBe('/patient/explore?view=results');
   });
 
   it('a category tile links to ?view=results&specialty=<name>', () => {

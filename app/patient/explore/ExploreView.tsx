@@ -113,7 +113,6 @@ export default function ExploreView({ rows, hideHero = false }: Props) {
       <>
         <Landing
           categories={categories}
-          totalPractitioners={cards.length}
           hideHeading={hideHero}
           locationRow={
             <LocationRow

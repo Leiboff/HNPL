@@ -16,31 +16,32 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 //
 // Explicitly NOT here (per the brief):
 //   • No hard-coded Doctor / Dentist / Pharmacy / Hospital / Vet grid.
-//   • No A-Z alphabetical specialty screen.
 //   • No medical-aid-network language.
 //   • No "Use my location" pill / "Near your current location" caption —
 //     replaced by the LocationRow the parent renders below the search
 //     bar, which drives the shared ChangeLocationSheet.
+//   • No "See all practitioners" tile (removed 2026-08-21, direct
+//     product decision) — specialty is now the only way in below the
+//     search box, and the categories themselves sort A→Z
+//     (lib/practitioner/categories.ts) so the list is scannable without
+//     it.
 //
 // Interaction:
 //   • Tap a specialty tile → parent switches to results, filtered to
 //     that specialty (via a URL param the results view reads).
-//   • Tap "See all practitioners" → parent switches to results with
-//     no specialty filter (all).
 //   • Search input → typing anything switches to results with the
 //     search text pre-populated.
 
 type Props = {
-  categories:         CategoryCount[];
-  totalPractitioners: number;
+  categories:   CategoryCount[];
   /** LocationRow rendered by the orchestrator; sits directly under the search bar. */
-  locationRow:        React.ReactNode;
+  locationRow:  React.ReactNode;
   /** v4: hide the in-view "Find care" hero when the navy PatientScreen
    *  header already carries the title (avoids a duplicate heading). */
-  hideHeading?:       boolean;
+  hideHeading?: boolean;
 };
 
-export default function Landing({ categories, totalPractitioners, locationRow, hideHeading = false }: Props) {
+export default function Landing({ categories, locationRow, hideHeading = false }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
 
@@ -60,7 +61,7 @@ export default function Landing({ categories, totalPractitioners, locationRow, h
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Find care</h1>
           <p className="text-sm text-gray-500">
-            Pay-later at any of these practitioners. Browse by specialty, or see everyone.
+            Pay-later at any of these practitioners. Browse by specialty.
           </p>
         </header>
       )}
@@ -130,31 +131,6 @@ export default function Landing({ categories, totalPractitioners, locationRow, h
           </div>
         )}
       </section>
-
-      {/* See all */}
-      <Link
-        href="/patient/explore?view=results"
-        data-testid="landing-see-all"
-        className="block rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm hover:shadow-md transition-shadow px-5 py-4"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="font-semibold" style={{ color: '#13294B' }}>See all practitioners</p>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {totalPractitioners} practitioner{totalPractitioners === 1 ? '' : 's'} across every specialty.
-            </p>
-          </div>
-          <span
-            aria-hidden
-            className="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(19,41,75,.12)]"
-            style={{ color: '#13294B' }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
-              <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-        </div>
-      </Link>
     </div>
   );
 }
