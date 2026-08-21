@@ -76,6 +76,34 @@ export default function LoginPage() {
     }
   }, []);
 
+  // ── Already signed in? Skip the form ──────────────────────────────────
+  //
+  // Neither this page nor proxy.ts checked for an existing session before
+  // now, so a signed-in patient landing here — an old bookmark, the
+  // marketing header's "Sign in" link, which is itself session-unaware by
+  // design (see app/_landing/SiteHeader.tsx) — saw the login form again
+  // instead of being sent straight to their dashboard.
+  //
+  // getSession() reads the cookie the browser client already has, no
+  // network round trip: good enough to decide whether to bother showing a
+  // form, not the security boundary. A session that has actually gone
+  // stale gets bounced straight back here by nextPath's own server-side
+  // guard (requireConfirmedUser / getRequestUser), so this shortcut can
+  // only save a redundant form, never widen access.
+  //
+  // Reads ?next= itself rather than waiting on the nextPath state set
+  // above — that effect and this one both fire on mount and ordering
+  // between them is not guaranteed.
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams(window.location.search);
+    const next = safeNextParam(params.get('next'));
+    createClient().auth.getSession().then(({ data: { session } }) => {
+      if (!cancelled && session) window.location.href = next;
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // Surface passkey hook errors in the existing error region. user_cancelled
   // is filtered out by the hook before it sets state, so anything we see
   // here is worth showing.
