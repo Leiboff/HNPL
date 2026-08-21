@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import LastUsedPill from './LastUsedPill';
 
 // ─── Continue-with-Google button (patients only) ───────────────────────
 //
@@ -40,6 +41,23 @@ type Props = {
    * ?next= param). Default: '/dashboard' — same as before.
    */
   next?: string;
+  /**
+   * Called right before the browser navigates away to Google — not on
+   * confirmed success, because a full-page OAuth redirect has no
+   * client-side "it worked" callback to hook. /login uses this to record
+   * "last sign-in method: Google" (lib/auth/lastSignInMethod.ts); every
+   * other caller (signup) simply leaves it unset. Not called at all when
+   * signInWithOAuth itself errors before the redirect.
+   */
+  onSignInAttempt?: () => void;
+  /**
+   * True when this WAS the last method that succeeded on this browser —
+   * /login's own concern (lib/auth/lastSignInMethod.ts), threaded in as a
+   * prop rather than read here, so this component stays unaware of the
+   * "last used" feature entirely. Swaps the border for the same teal ring
+   * used on the highlighted passkey button and password form.
+   */
+  highlighted?: boolean;
 };
 
 // Origin-relative allow-list. Same posture as /auth/callback safeNext
@@ -56,6 +74,8 @@ export default function ContinueWithGoogleButton({
   label = 'Continue with Google',
   ariaLabel,
   next,
+  onSignInAttempt,
+  highlighted,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
@@ -63,6 +83,7 @@ export default function ContinueWithGoogleButton({
   async function handleClick() {
     setLoading(true);
     setError(null);
+    onSignInAttempt?.();
 
     const supabase = createClient();
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -92,13 +113,15 @@ export default function ContinueWithGoogleButton({
 
   return (
     <div className="w-full">
+      {highlighted && <LastUsedPill />}
       <button
         type="button"
         onClick={handleClick}
         disabled={loading}
         aria-label={ariaLabel ?? label}
         data-testid="continue-with-google"
-        className="flex h-[52px] w-full items-center justify-center gap-3 rounded-[14px] border-[1.5px] border-[#E2E8EE] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        className="flex h-[52px] w-full items-center justify-center gap-3 rounded-[14px] border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        style={highlighted ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#E2E8EE' }}
       >
         <GoogleGlyph />
         <span>{loading ? 'Opening Google…' : label}</span>

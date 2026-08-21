@@ -11,6 +11,8 @@ import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
 import { recordLoginLanding } from '@/app/patient/passkey-actions';
 import InstallCallout from '@/app/_pwa/InstallCallout';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
+import LastUsedPill from '@/app/_components/LastUsedPill';
+import { getLastSignInMethod, setLastSignInMethod, type LastSignInMethod } from '@/lib/auth/lastSignInMethod';
 
 // Validate ?next= from the URL — must be origin-relative and not
 // protocol-relative. Mirrors the /auth/callback safeNext posture so
@@ -43,12 +45,19 @@ export default function LoginPage() {
   // Defaults to /dashboard (the role dispatcher).
   const [nextPath, setNextPath] = useState<string>('/dashboard');
 
+  // Which method (if any) succeeded here last time — read once on mount,
+  // purely a UI hint. See lib/auth/lastSignInMethod.ts.
+  const [lastUsed, setLastUsed] = useState<LastSignInMethod | null>(null);
+
   // Conditional UI + modal passkey sign-in. The hook starts a hanging
   // navigator.credentials.get() with mediation:'conditional' on mount; the
   // input below carries autocomplete="username webauthn" so the browser
   // surfaces the saved passkey as an autofill suggestion. Tapping the
   // suggestion → Face ID / fingerprint → signed in, no button required.
-  const onPasskeySuccess = useCallback(() => { window.location.href = nextPath; }, [nextPath]);
+  const onPasskeySuccess = useCallback(() => {
+    setLastSignInMethod('passkey');
+    window.location.href = nextPath;
+  }, [nextPath]);
   const { supported: passkeySupport, signIn: signInWithPasskey, loading: passkeyLoading, error: passkeyError } =
     usePasskeySignIn({ onSuccess: onPasskeySuccess });
 
@@ -104,6 +113,15 @@ export default function LoginPage() {
     return () => { cancelled = true; };
   }, []);
 
+  // Which method to highlight, and — for password — the address to
+  // prefill. Read once; nothing here can change while the page is open.
+  useEffect(() => {
+    const { method, email: savedEmail } = getLastSignInMethod();
+    if (!method) return;
+    setLastUsed(method);
+    if (method === 'password' && savedEmail) setEmail(savedEmail);
+  }, []);
+
   // Surface passkey hook errors in the existing error region. user_cancelled
   // is filtered out by the hook before it sets state, so anything we see
   // here is worth showing.
@@ -146,6 +164,7 @@ export default function LoginPage() {
       // Swallow — prompt frequency capping is a nudge, not a gate.
     }
 
+    setLastSignInMethod('password', email);
     window.location.href = nextPath;
   }
 
@@ -215,11 +234,13 @@ export default function LoginPage() {
 
           {passkeySupport && (
             <div className="mb-3">
+              {lastUsed === 'passkey' && <LastUsedPill />}
               <button
                 type="button"
                 onClick={handlePasskeySignIn}
                 disabled={passkeyLoading || pending.disabled}
-                className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                className="w-full rounded-lg border bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#D1D5DB' }}
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <rect x="3" y="11" width="18" height="11" rx="2" />
@@ -239,7 +260,12 @@ export default function LoginPage() {
               via the dispatcher — see /auth/callback for the profile
               belt-and-braces + role-preservation logic. */}
           <div className="mb-5 space-y-2" data-testid="login-google-block">
-            <ContinueWithGoogleButton label="Sign in with Google" next={nextPath} />
+            <ContinueWithGoogleButton
+              label="Sign in with Google"
+              next={nextPath}
+              onSignInAttempt={() => setLastSignInMethod('google')}
+              highlighted={lastUsed === 'google'}
+            />
             <p className="text-center text-[11px] text-gray-400">
               For patients
             </p>
@@ -250,22 +276,35 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* The "For patients" caption above belongs to the GOOGLE button
-              (staff accounts are invite-provisioned and use email +
-              password). Sitting directly above this divider, though, it read
-              as labelling everything below it — leaving practice staff unsure
-              this password form was for them at all. This one line says the
-              form is shared; it deliberately does not touch the Google or
-              passkey options. */}
-          <p
-            data-testid="password-audience-cue"
-            className="mb-4 text-center text-xs text-gray-500"
+          {/* The password block gets the same teal-ring + pill treatment as
+              the passkey/Google options above when IT was the last method
+              to succeed — the one case that isn't a single button, so the
+              highlight wraps the cue + form together rather than sitting on
+              a single element. */}
+          <div
+            className="rounded-xl p-4 -mx-1"
+            style={lastUsed === 'password'
+              ? { border: '1.5px solid #15A89E', background: 'rgba(21,168,158,.045)' }
+              : undefined}
           >
-            For <span className="font-medium text-gray-700">patients and practices</span> — sign in
-            with the email you registered.
-          </p>
+            {lastUsed === 'password' && <LastUsedPill />}
 
-          <form onSubmit={handleSubmit} noValidate className="space-y-5">
+            {/* The "For patients" caption above belongs to the GOOGLE button
+                (staff accounts are invite-provisioned and use email +
+                password). Sitting directly above this divider, though, it read
+                as labelling everything below it — leaving practice staff unsure
+                this password form was for them at all. This one line says the
+                form is shared; it deliberately does not touch the Google or
+                passkey options. */}
+            <p
+              data-testid="password-audience-cue"
+              className="mb-4 text-center text-xs text-gray-500"
+            >
+              For <span className="font-medium text-gray-700">patients and practices</span> — sign in
+              with the email you registered.
+            </p>
+
+            <form onSubmit={handleSubmit} noValidate className="space-y-5">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
                 Email address
@@ -320,7 +359,8 @@ export default function LoginPage() {
             >
               {pending.showLabel ? 'Signing in…' : 'Sign in'}
             </button>
-          </form>
+            </form>
+          </div>
         </div>
 
         {/* ── Prominent signup CTAs ────────────────────────────────────
