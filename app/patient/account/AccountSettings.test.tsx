@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import AccountSettings from './AccountSettings';
 
-// ─── AccountSettings — ONE pattern, four groups, five navigable rows ─────
+// ─── AccountSettings — ONE pattern, five groups, eight navigable rows ────
 //
 // Replaces the accordion-era test suite. Direct product decision
 // (2026-08-20): tapping a settings row now opens a full screen with the
@@ -14,13 +14,21 @@ import AccountSettings from './AccountSettings';
 // Sign out is no longer a row either (same date, separate decision):
 // ProfileLogoutSection renders directly at the bottom instead of behind
 // its own /patient/account/signout screen — one red button didn't need a
-// whole navigable screen in front of it. So ROWS below has five rows where
-// the accordion-era list had seven and the first screens-conversion pass
-// had six; Sign out is asserted separately, below, as a rendered button.
+// whole navigable screen in front of it. So ROWS below has five in-app
+// rows where the accordion-era list had seven and the first
+// screens-conversion pass had six; Sign out is asserted separately, below,
+// as a rendered button.
+//
+// A fifth group, "Help & legal", was added 2026-08-20: Contact us (its own
+// in-app screen, same Link pattern) plus Terms & conditions / Privacy
+// policy, which are plain <a> rows — those two lead OUT of the app shell to
+// the existing marketing-chrome legal pages, same convention as the
+// footer's "Get help" link on app/patient/account/page.tsx.
 //
 // The single most valuable thing to pin is still the uniformity of what's
-// left: every remaining row is a plain link to its own route, none is a
-// button/disclosure, and none is styled differently from the others.
+// left: every remaining row is a link to its own route (in-app or not),
+// none is a button/disclosure, and none is styled differently from the
+// others.
 
 const ROWS = [
   ['Personal details',      '/patient/account/personal'],
@@ -28,12 +36,15 @@ const ROWS = [
   ['Passkeys',              '/patient/account/passkeys'],
   ['Password & recovery',   '/patient/account/password'],
   ['Notifications',         '/patient/account/notifications'],
+  ['Contact us',            '/patient/account/contact'],
+  ['Terms & conditions',    '/legal/terms'],
+  ['Privacy policy',        '/legal/privacy'],
 ] as const;
 
-const GROUPS = ['Your details', 'How you pay', 'Sign-in & security', 'This device'] as const;
+const GROUPS = ['Your details', 'How you pay', 'Sign-in & security', 'This device', 'Help & legal'] as const;
 
 describe('every row is a plain link to its own screen', () => {
-  it('renders exactly six rows, each a link to its expected route', () => {
+  it('renders exactly eight rows, each a link to its expected route', () => {
     render(<AccountSettings />);
     for (const [title, href] of ROWS) {
       const link = screen.getByText(title).closest('a');
@@ -42,7 +53,7 @@ describe('every row is a plain link to its own screen', () => {
     }
   });
 
-  it('renders no eighth surface — link count matches ROWS exactly', () => {
+  it('renders no extra surface — link count matches ROWS exactly', () => {
     render(<AccountSettings />);
     expect(screen.getAllByRole('link')).toHaveLength(ROWS.length);
   });

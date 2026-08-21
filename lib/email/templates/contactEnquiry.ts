@@ -52,18 +52,34 @@ export type ContactEnquiryInput = {
   email:   string;
   phone:   string;
   message: string;
+  /**
+   * True only for the signed-in patient contact screen
+   * (app/patient/account/contact/actions.ts), where name/email/phone are
+   * read server-side from the caller's OWN profile rather than typed —
+   * there is nothing for the submitter to spoof. Absent (public /contact
+   * form) means exactly what it always meant: unverified, whatever the
+   * visitor typed. Flips the footer note and unlocks the reference row.
+   */
+  verified?: boolean;
+  /**
+   * Masked SA ID number — a way for support to confirm they have the right
+   * account without a back-and-forth. Only ever set alongside
+   * verified: true; never rendered otherwise.
+   */
+  patientRef?: string | null;
 };
 
 export async function sendContactEnquiryEmail(
   input: ContactEnquiryInput,
 ): Promise<SendEmailResult> {
-  const { kind, name, email, phone, message } = input;
+  const { kind, name, email, phone, message, verified, patientRef } = input;
 
   const safeName    = escapeHtml(name);
   const safeEmail   = escapeHtml(email);
   const safePhone   = escapeHtml(phone);
   const safeMessage = escapeHtml(message);
   const safeKind    = escapeHtml(KIND_LABEL[kind] ?? 'Unspecified');
+  const safeRef     = escapeHtml(patientRef ?? '');
 
   // The subject carries the triage signal and the name, so the inbox list
   // is readable without opening anything.
@@ -79,7 +95,7 @@ export async function sendContactEnquiryEmail(
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #13294B; max-width: 620px;">
       <h2 style="margin: 0 0 4px; font-size: 18px;">New contact-form enquiry</h2>
       <p style="margin: 0 0 20px; color: #5b6b80; font-size: 13px;">
-        Submitted from the betternow website contact form. Reply directly to this
+        Submitted from the betternow ${verified ? 'app, by a signed-in patient' : 'website contact form'}. Reply directly to this
         email to answer ${safeName} &mdash; Reply-To is set to their address.
       </p>
 
@@ -88,14 +104,16 @@ export async function sendContactEnquiryEmail(
         ${row('Name', safeName)}
         ${row('Email', safeEmail)}
         ${row('Contact number', safePhone || '&mdash;')}
+        ${verified && patientRef ? row('Patient ID', safeRef) : ''}
       </table>
 
       <div style="color: #5b6b80; font-size: 13px; margin: 0 0 6px;">Message</div>
       <div style="border: 1px solid rgba(19,41,75,.12); border-radius: 10px; padding: 14px 16px; background: #f7fbfb; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${safeMessage}</div>
 
       <p style="margin: 20px 0 0; color: #6b7280; font-size: 12px;">
-        Sent by the betternow contact form. The sender's address is unverified &mdash;
-        it is whatever they typed, so treat it as a claim rather than an identity.
+        ${verified
+          ? 'Sent from the patient&rsquo;s own signed-in account &mdash; name, email, phone and ID are from their profile, not typed.'
+          : 'Sent by the betternow contact form. The sender&rsquo;s address is unverified &mdash; it is whatever they typed, so treat it as a claim rather than an identity.'}
       </p>
     </div>
   `;
