@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import AccountSettings from './AccountSettings';
 
-// ─── AccountSettings — ONE pattern, five groups, eight navigable rows ────
+// ─── AccountSettings — ONE pattern, three grouped cards, eight rows ──────
 //
 // Replaces the accordion-era test suite. Direct product decision
 // (2026-08-20): tapping a settings row now opens a full screen with the
@@ -14,34 +14,32 @@ import AccountSettings from './AccountSettings';
 // Sign out is no longer a row either (same date, separate decision):
 // ProfileLogoutSection renders directly at the bottom instead of behind
 // its own /patient/account/signout screen — one red button didn't need a
-// whole navigable screen in front of it. So ROWS below has five in-app
-// rows where the accordion-era list had seven and the first
-// screens-conversion pass had six; Sign out is asserted separately, below,
-// as a rendered button.
+// whole navigable screen in front of it.
 //
-// A fifth group, "Help & legal", was added 2026-08-20: Contact us (its own
-// in-app screen, same Link pattern) plus Terms & conditions / Privacy
-// policy, which are plain <a> rows — those two lead OUT of the app shell to
-// the existing marketing-chrome legal pages, same convention as the
-// footer's "Get help" link on app/patient/account/page.tsx.
-//
-// The single most valuable thing to pin is still the uniformity of what's
-// left: every remaining row is a link to its own route (in-app or not),
-// none is a button/disclosure, and none is styled differently from the
-// others.
+// REGROUPED 2026-08-21: five bare-text groups became three rounded CARDS
+// (GroupCard) — "How you pay" and "This device" each had exactly one row,
+// so both folded into General rather than staying as single-row groups.
+// Renamed to match: "Your details" → "General", "Sign-in & security" →
+// "Security", "Help & legal" → "Support". "Notifications" is relabelled
+// "Preferences" — same route, same screen, title only. None of this
+// changes the underlying invariant this file exists to pin: every row is
+// STILL a link to its own route (in-app or not), none is a
+// button/disclosure, and none is styled differently from the others —
+// only now they sit inside a shared card per group instead of each
+// carrying its own border/shadow.
 
 const ROWS = [
   ['Personal details',      '/patient/account/personal'],
   ['Payment cards',         '/patient/account/pay'],
+  ['Preferences',           '/patient/account/notifications'],
   ['Passkeys',              '/patient/account/passkeys'],
   ['Password & recovery',   '/patient/account/password'],
-  ['Notifications',         '/patient/account/notifications'],
   ['Contact us',            '/patient/account/contact'],
   ['Terms & conditions',    '/legal/terms'],
   ['Privacy policy',        '/legal/privacy'],
 ] as const;
 
-const GROUPS = ['Your details', 'How you pay', 'Sign-in & security', 'This device', 'Help & legal'] as const;
+const GROUPS = ['General', 'Security', 'Support'] as const;
 
 describe('every row is a plain link to its own screen', () => {
   it('renders exactly eight rows, each a link to its expected route', () => {
@@ -77,8 +75,8 @@ describe('every row is a plain link to its own screen', () => {
   });
 });
 
-describe('four groups carry the hierarchy', () => {
-  it('renders all four group headers', () => {
+describe('three grouped cards carry the hierarchy', () => {
+  it('renders all three group headers', () => {
     render(<AccountSettings />);
     for (const g of GROUPS) expect(screen.getAllByText(g), g).toHaveLength(1);
   });
