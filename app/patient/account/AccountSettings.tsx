@@ -50,30 +50,52 @@ function GroupHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
+const ROW_CLASS =
+  'w-full flex items-center gap-3 px-5 py-4 bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-inset transition-colors min-h-15';
+
+const ChevronRight = (
+  <svg
+    aria-hidden
+    viewBox="0 0 20 20"
+    className="w-4 h-4 shrink-0 text-gray-400 ml-auto"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M7.5 5l5 5-5 5" />
+  </svg>
+);
+
 /** One settings row: title + chevron, navigating to its own screen. Every
- *  row goes through here, so none can drift to another pattern. */
+ *  in-app row goes through here, so none can drift to another pattern. */
 function Row({ href, title }: { href: string; title: string }) {
   return (
-    <Link
-      href={href}
-      className="w-full flex items-center gap-3 px-5 py-4 bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-inset transition-colors min-h-15"
-    >
+    <Link href={href} className={ROW_CLASS}>
       <p className="text-sm font-semibold shrink-0" style={{ color: '#13294B' }}>
         {title}
       </p>
-      <svg
-        aria-hidden
-        viewBox="0 0 20 20"
-        className="w-4 h-4 shrink-0 text-gray-400 ml-auto"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M7.5 5l5 5-5 5" />
-      </svg>
+      {ChevronRight}
     </Link>
+  );
+}
+
+/**
+ * Same row, for a destination OUTSIDE the app shell — a plain <a>, not
+ * <Link>. /legal/terms and /legal/privacy are marketing-chrome pages
+ * (SiteHeader/SiteFooter, their own stylesheets), the same reason the
+ * footer's "Get help" link below leaves via a plain <a> rather than
+ * prefetching landing.css into the patient bundle.
+ */
+function ExternalRow({ href, title }: { href: string; title: string }) {
+  return (
+    <a href={href} className={ROW_CLASS}>
+      <p className="text-sm font-semibold shrink-0" style={{ color: '#13294B' }}>
+        {title}
+      </p>
+      {ChevronRight}
+    </a>
   );
 }
 
@@ -93,6 +115,11 @@ export default function AccountSettings() {
 
       <GroupHeader>This device</GroupHeader>
       <Row href="/patient/account/notifications" title="Notifications" />
+
+      <GroupHeader>Help &amp; legal</GroupHeader>
+      <Row href="/patient/account/contact" title="Contact us" />
+      <ExternalRow href="/legal/terms" title="Terms &amp; conditions" />
+      <ExternalRow href="/legal/privacy" title="Privacy policy" />
 
       <div className="px-1 pt-1">
         <ProfileLogoutSection />
