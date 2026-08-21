@@ -2,7 +2,9 @@
 //
 // Given the grouped-card set (one card per HPCSA-keyed practitioner),
 // count DISTINCT practitioners per specialty and return the list
-// sorted by count desc, then alphabetically by specialty.
+// sorted A→Z by specialty name — a fixed, predictable order a patient
+// can scan for a specific specialty, rather than one that reshuffles
+// as practitioner counts change week to week.
 //
 // Rules (from the brief):
 //   • Only specialties that have ≥1 live practitioner appear. Empty
@@ -34,8 +36,5 @@ export function categoryCounts(cards: PractitionerCard[]): CategoryCount[] {
   return Array.from(bySpecialty.entries())
     .filter(([, count]) => count > 0)         // never emit an empty category
     .map(([specialty, count]) => ({ specialty, count }))
-    .sort((a, b) =>
-      b.count - a.count                       // most-populated first...
-      || a.specialty.localeCompare(b.specialty), // ...then alphabetical tiebreak
-    );
+    .sort((a, b) => a.specialty.localeCompare(b.specialty));
 }

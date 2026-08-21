@@ -10,7 +10,7 @@ import type { PractitionerCard } from './grouping';
 //     bucket rendered on the landing).
 //   • Count is per DISTINCT practitioner (one card = one count),
 //     regardless of how many locations a practitioner has.
-//   • Sort: count desc, then alphabetical tiebreak.
+//   • Sort: A→Z by specialty name, always — never by count.
 
 function card(over: Partial<PractitionerCard> = {}): PractitionerCard {
   return {
@@ -49,11 +49,12 @@ describe('categoryCounts', () => {
       card({ id: 'e', specialty: 'Psychology' }),
       card({ id: 'f', specialty: 'Psychology' }),
     ]);
-    // Sort: count desc, then alphabetical.
+    // Sort: A→Z regardless of count — Psychology has the most
+    // practitioners but sorts last, Dentistry the fewest but sorts first.
     expect(cs).toEqual([
-      { specialty: 'Psychology',    count: 3 },
       { specialty: 'Dentistry',     count: 2 },
       { specialty: 'Physiotherapy', count: 1 },
+      { specialty: 'Psychology',    count: 3 },
     ]);
   });
 
@@ -75,13 +76,12 @@ describe('categoryCounts', () => {
     expect(cs).toEqual([{ specialty: 'Dentistry', count: 1 }]);
   });
 
-  it('breaks tied counts alphabetically by specialty', () => {
+  it('always sorts alphabetically, tied counts or not', () => {
     const cs = categoryCounts([
       card({ id: 'a', specialty: 'Zeta' }),
       card({ id: 'b', specialty: 'Alpha' }),
       card({ id: 'c', specialty: 'Mango' }),
     ]);
-    // All 1-count; alphabetical.
     expect(cs.map((c) => c.specialty)).toEqual(['Alpha', 'Mango', 'Zeta']);
   });
 });
