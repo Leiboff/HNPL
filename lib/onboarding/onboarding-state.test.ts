@@ -313,6 +313,7 @@ const ONB_PHONE      = read('app/onboarding/phone/page.tsx');
 const ONB_IDENTITY   = read('app/onboarding/identity/page.tsx');
 const ONB_CREDIT     = read('app/onboarding/credit-check/page.tsx');
 const ONB_LIVENESS   = read('app/onboarding/liveness/page.tsx');
+const DIDIT_WEBHOOK  = read('app/api/verification/didit/webhook/route.ts');
 
 describe('Migration 0066 — idempotent + backfill', () => {
   it('every ADD COLUMN uses IF NOT EXISTS', () => {
@@ -387,55 +388,72 @@ describe('Onboarding state module — cached-true short-circuit', () => {
   });
 });
 
-describe('Onboarding server actions — validation + encryption + no raw logging', () => {
+// SA ID validation + encryption moved from saveIdAndSalaryDay (manual
+// entry) to the Didit webhook's handleApproved (see
+// app/api/verification/didit/webhook/route.ts and the migration note in
+// supabase/migrations/0102_didit_identity_verification.sql) — same
+// functions, same rules, different trigger. These assertions moved with
+// it; saveSalaryDetails (the renamed remainder in actions.ts) never
+// touches the ID at all any more.
+describe('Didit webhook — validation + encryption + no raw logging', () => {
   it('imports the existing AES-256-GCM encryptId helper', () => {
     // Matched per-symbol rather than as a whole import list: the list grew
     // when the SA ID blind index (migration 0096) added hashIdForLookup,
     // and a pin on the exact braces breaks on every future addition while
     // testing nothing extra. What matters is WHERE encryptId comes from.
-    expect(ACTIONS_TS).toMatch(/from ['"]@\/lib\/idEncryption['"]/);
-    expect(ACTIONS_TS).toMatch(/import \{[^}]*\bencryptId\b[^}]*\} from ['"]@\/lib\/idEncryption['"]/);
+    expect(DIDIT_WEBHOOK).toMatch(/from ['"]@\/lib\/idEncryption['"]/);
+    expect(DIDIT_WEBHOOK).toMatch(/import \{[^}]*\bencryptId\b[^}]*\} from ['"]@\/lib\/idEncryption['"]/);
   });
 
   it('imports hashIdForLookup from the same module — the blind index is populated here too', () => {
     // This is the primary organic ID-capture path. If it stopped writing
     // sa_id_lookup_hash, most accounts would carry no value the duplicate
     // check can key on, and uniqueness would quietly stop being enforceable.
-    expect(ACTIONS_TS).toMatch(/import \{[^}]*\bhashIdForLookup\b[^}]*\} from ['"]@\/lib\/idEncryption['"]/);
-    expect(ACTIONS_TS).toMatch(/sa_id_lookup_hash:\s*lookupHash,/);
+    expect(DIDIT_WEBHOOK).toMatch(/import \{[^}]*\bhashIdForLookup\b[^}]*\} from ['"]@\/lib\/idEncryption['"]/);
+    expect(DIDIT_WEBHOOK).toMatch(/sa_id_lookup_hash:\s*lookupHash,/);
   });
 
-  it('imports validateSaId + isAllowedSalaryDay from the shared helpers', () => {
-    expect(ACTIONS_TS).toMatch(/from ['"]@\/lib\/validation['"]/);
+  it('imports validateSaId from the shared helpers, isAllowedSalaryDay stays in actions.ts', () => {
+    expect(DIDIT_WEBHOOK).toMatch(/from ['"]@\/lib\/validation['"]/);
     expect(ACTIONS_TS).toMatch(/from ['"]@\/lib\/salaryDates['"]/);
   });
 
-  it('saveIdAndSalaryDay validates BEFORE encrypting', () => {
-    const fnStart = ACTIONS_TS.indexOf('export async function saveIdAndSalaryDay');
-    const body = ACTIONS_TS.slice(fnStart);
+  it('handleApproved validates BEFORE encrypting', () => {
+    const fnStart = DIDIT_WEBHOOK.indexOf('async function handleApproved');
+    const body = DIDIT_WEBHOOK.slice(fnStart);
     const validateIdx = body.indexOf('validateSaId(');
     const encryptIdx  = body.indexOf('encryptId(');
     expect(validateIdx).toBeGreaterThan(0);
     expect(encryptIdx).toBeGreaterThan(validateIdx);
   });
 
-  it('never logs the raw SA ID (no console.log/console.error with cleanedId / saIdNumber)', () => {
+  it('never logs the raw SA ID (no console.log/console.error with cleanedId)', () => {
     const badPatterns = [
       /console\.log\([^)]*cleanedId/,
-      /console\.log\([^)]*saIdNumber/,
       /console\.error\([^)]*cleanedId/,
-      /console\.error\([^)]*saIdNumber/,
     ];
     for (const bad of badPatterns) {
-      expect(ACTIONS_TS).not.toMatch(bad);
+      expect(DIDIT_WEBHOOK).not.toMatch(bad);
     }
   });
 
-  it('credit-check seam — flag-off auto-passes inside saveIdAndSalaryDay', () => {
-    const fnStart = ACTIONS_TS.indexOf('export async function saveIdAndSalaryDay');
+  it('re-enforces the one-SA-ID-per-account invariant via findPatientBySaId', () => {
+    expect(DIDIT_WEBHOOK).toMatch(/from ['"]@\/lib\/patients\/findPatientBySaId['"]/);
+    expect(DIDIT_WEBHOOK).toMatch(/idOwner\.id !== userId/);
+  });
+});
+
+describe('saveSalaryDetails — credit-check seam, no ID handling', () => {
+  it('credit-check seam — flag-off auto-passes inside saveSalaryDetails', () => {
+    const fnStart = ACTIONS_TS.indexOf('export async function saveSalaryDetails');
     const body = ACTIONS_TS.slice(fnStart);
     expect(body).toMatch(/if \(!flags\.creditCheck\)/);
     expect(body).toMatch(/credit_check_status\s*=\s*'passed'/);
+  });
+
+  it('no longer imports the SA-ID encryption/validation/dedupe helpers directly', () => {
+    expect(ACTIONS_TS).not.toMatch(/from ['"]@\/lib\/idEncryption['"]/);
+    expect(ACTIONS_TS).not.toMatch(/from ['"]@\/lib\/patients\/findPatientBySaId['"]/);
   });
 
   it('maybeFinalize writes onboarding_completed=true when the state model is done', () => {

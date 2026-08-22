@@ -202,7 +202,11 @@ describe('the deliberate enumeration divergence is written down where it will be
   });
 
   it('the onboarding gate points at that explanation rather than repeating it', () => {
-    const raw = readFileSync(resolve(ROOT, 'lib/onboarding/actions.ts'), 'utf8');
+    // The organic-signup ID-capture path (and its "deliberate divergence"
+    // note) moved from saveIdAndSalaryDay (lib/onboarding/actions.ts) to
+    // the Didit webhook's handleApproved — see
+    // app/api/verification/didit/webhook/route.ts.
+    const raw = readFileSync(resolve(ROOT, 'app/api/verification/didit/webhook/route.ts'), 'utf8');
     expect(raw).toMatch(/deliberate divergence from\s*\/\/\s*findExistingAuthUser/);
   });
 

@@ -3,15 +3,14 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
-import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
-import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
-import { validateSaId, normalizePhoneZA } from '@/lib/validation';
+import { normalizePhoneZA } from '@/lib/validation';
 import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
 import { stubLivenessCheck } from '@/lib/onboarding/liveness/stubLivenessCheck';
+import { createDiditSession, diditAppBaseUrl } from '@/lib/didit/client';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -39,9 +38,12 @@ function svc() {
   );
 }
 
-// Small helper — the shape of the profile columns computeOnboarding reads.
+// Small helper — the shape of the profile columns computeOnboarding reads,
+// plus the Didit identity-verification columns (UI-display only — they
+// don't feed computeOnboarding; sa_id_number/liveness_verified_at do that).
 const PROFILE_SELECT =
-  'phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed';
+  'phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, ' +
+  'onboarding_completed, identity_verification_status, didit_session_id';
 
 async function loadUserAndProfile() {
   const supabase = await createClient();
@@ -73,6 +75,7 @@ async function loadUserAndProfile() {
       liveness_verified_at: profile.liveness_verified_at as string | null,
       onboarding_completed: profile.onboarding_completed as boolean,
     } satisfies ProfileForOnboarding,
+    identityVerificationStatus: profile.identity_verification_status as string | null,
   };
 }
 
@@ -125,40 +128,34 @@ export async function setPhoneForOnboarding(phoneRaw: string): Promise<ActionRes
   return { error: null, nextPath: '/onboarding/phone' };
 }
 
-// ─── saveIdAndSalaryDay ────────────────────────────────────────────────
+// ─── saveSalaryDetails ─────────────────────────────────────────────────
 //
-// The identity step. Validates the SA ID (Luhn + DOB + citizenship),
-// encrypts via idEncryption.encryptId (AES-256-GCM), writes all three
-// fields (ID, salary day, salary amount) to the profile. Never logs the
-// raw ID. Kept its original name despite now also saving salary_amount —
-// renaming would ripple through the client + tests for no behavioural
-// gain; the step is still "identity", salary amount is just part of it
-// now, same as salary day already was.
+// Half of the identity step — salary day + amount. The other half (the
+// SA ID number itself, plus liveness) now comes from a Didit-hosted
+// verification session — see startIdentityVerification below and
+// app/api/verification/didit/webhook/route.ts, which writes
+// sa_id_number/sa_id_lookup_hash once Didit approves. The two halves can
+// be completed in either order; the 'identity' step (lib/onboarding/
+// state.ts) is satisfied only once both have landed.
 //
-// Credit-check seam: immediately after ID validation, if
-// ENABLE_CREDIT_CHECK is OFF, this action ALSO auto-passes the credit
-// check (writes credit_check_status='passed'). If ON, credit_check_status
-// stays NULL and the state model routes the user to the credit-check
-// step next. The future integration will replace this line with a call
-// to the actual bureau check.
+// Formerly named saveIdAndSalaryDay and took saIdNumber too — renamed
+// because it genuinely no longer touches the ID; the SA-ID validation,
+// duplicate-account check, and encryption that used to live here moved
+// to the webhook handler (same rules, same functions, different trigger).
+//
+// Credit-check seam: if ENABLE_CREDIT_CHECK is OFF, this action ALSO
+// auto-passes the credit check (writes credit_check_status='passed'). If
+// ON, credit_check_status stays NULL and the state model routes the user
+// to the credit-check step next.
 
-export type SaveIdInput = {
-  saIdNumber:   string;
+export type SaveSalaryDetailsInput = {
   salaryDay:    number;
   salaryAmount: number;
 };
 
-export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResult> {
+export async function saveSalaryDetails(input: SaveSalaryDetailsInput): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
-
-  const cleanedId = input.saIdNumber.replace(/\s+/g, '');
-  const check = validateSaId(cleanedId);
-  if (!check.valid) {
-    // Deliberately generic surface — see the signup form's SA_ID
-    // rationale: never leak which sub-check failed.
-    return { error: 'Please enter a valid SA ID number.' };
-  }
 
   if (!Number.isInteger(input.salaryDay) || !isAllowedSalaryDay(input.salaryDay)) {
     return { error: 'Please choose when your salary is paid.' };
@@ -168,55 +165,11 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
     return { error: 'Please enter how much you earn a month.' };
   }
 
-  // ── One SA ID = one patient account (migration 0097) ─────────────────
-  //
-  // Server-side, and before the write — the unique index is the authority,
-  // but it would surface as a raw constraint error the patient cannot act
-  // on. Self-exclusion matters here too: this step is re-enterable, so a
-  // patient correcting a typo re-submits an ID that is already their own.
-  //
-  // The message names the situation ("an account already exists for this
-  // ID") rather than staying vague. That is a deliberate divergence from
-  // findExistingAuthUser's anti-enumeration posture on email — see the
-  // matching note in app/checkout/[token]/actions.ts for the full
-  // reasoning. Do not collapse the two for consistency.
-  {
-    let idOwner: Awaited<ReturnType<typeof findPatientBySaId>> = null;
-    try {
-      idOwner = await findPatientBySaId(svc(), cleanedId);
-    } catch (err) {
-      console.error('[onboarding] SA ID duplicate check failed:', err instanceof Error ? err.message : err);
-      return { error: 'We could not verify your ID number just now. Please try again.' };
-    }
-    if (idOwner && idOwner.id !== loaded.userId) {
-      return {
-        error:
-          'An account already exists for this ID number. Please log in to that account instead — ' +
-          'use "Forgot password" if you can\'t get in, or contact support if you think this is a mistake.',
-      };
-    }
-  }
-
-  let encrypted: string;
-  let lookupHash: string;
-  try {
-    encrypted  = encryptId(cleanedId);
-    // Deterministic blind index (migration 0096) — see hashIdForLookup in
-    // lib/idEncryption.ts. This is the primary organic-signup ID-capture
-    // path, so without it the majority of accounts would carry no value
-    // the duplicate check can key on.
-    lookupHash = hashIdForLookup(cleanedId);
-  } catch {
-    return { error: 'Encryption error — please contact support.' };
-  }
-
   const flags = currentFlags();
 
   const patch: Record<string, unknown> = {
-    sa_id_number:      encrypted,
-    sa_id_lookup_hash: lookupHash,
-    salary_day:        input.salaryDay,
-    salary_amount:     input.salaryAmount,
+    salary_day:    input.salaryDay,
+    salary_amount: input.salaryAmount,
   };
 
   // Credit-check seam. Flag-off auto-passes so the state model can
@@ -234,19 +187,63 @@ export async function saveIdAndSalaryDay(input: SaveIdInput): Promise<ActionResu
     .eq('id', loaded.userId);
   if (error) return { error: error.message };
 
-  // Re-read to compute the next step. Cheap; keeps the state derivation
-  // in one place (computeOnboarding).
   const nextProfile: ProfileForOnboarding = {
     ...loaded.profile,
-    sa_id_number:              encrypted,
-    salary_day:                input.salaryDay,
-    salary_amount:             input.salaryAmount,
-    credit_check_status:       flags.creditCheck ? loaded.profile.credit_check_status : 'passed',
-    credit_check_completed_at: undefined as unknown as string | null,   // not read by state
-  } as ProfileForOnboarding;
+    salary_day:          input.salaryDay,
+    salary_amount:        input.salaryAmount,
+    credit_check_status:  flags.creditCheck ? loaded.profile.credit_check_status : 'passed',
+  };
 
   const finalize = await maybeFinalize(loaded.userId, loaded.user, nextProfile);
   return { error: null, nextPath: finalize.nextPath };
+}
+
+// ─── startIdentityVerification ─────────────────────────────────────────
+//
+// Creates a Didit-hosted verification session (OCR document scan +
+// liveness + face match, per DIDIT_WORKFLOW_ID) and returns its hosted
+// URL for the client to redirect to. Didit's webhook
+// (app/api/verification/didit/webhook/route.ts) applies the eventual
+// decision — this action only kicks the session off and stamps
+// identity_verification_status='pending' so the UI has something to show
+// while the user is away on Didit's flow.
+//
+// vendor_data = our user id, echoed back on every webhook so the handler
+// knows which profile to update. Didit's create-session call is
+// idempotent per (workflow, vendor_data) for an unfinished session, so
+// calling this again before the user completes a prior attempt safely
+// returns the SAME session rather than creating a duplicate.
+
+export type StartVerificationResult =
+  | { error: null; url: string }
+  | { error: string };
+
+export async function startIdentityVerification(): Promise<StartVerificationResult> {
+  const loaded = await loadUserAndProfile();
+  if (!loaded.ok) return { error: loaded.error };
+
+  let session;
+  try {
+    session = await createDiditSession({
+      vendorData: loaded.userId,
+      callback:   `${diditAppBaseUrl()}/onboarding/identity?didit=callback`,
+    });
+  } catch (err) {
+    console.error('[onboarding] Didit session create failed:', err instanceof Error ? err.message : err);
+    return { error: 'Could not start identity verification. Please try again.' };
+  }
+
+  const { error } = await svc()
+    .from('profiles')
+    .update({
+      didit_session_id:                 session.session_id,
+      identity_verification_status:     'pending',
+      identity_verification_updated_at: new Date().toISOString(),
+    })
+    .eq('id', loaded.userId);
+  if (error) return { error: error.message };
+
+  return { error: null, url: session.url };
 }
 
 // ─── runCreditCheck (affordability step) ───────────────────────────────

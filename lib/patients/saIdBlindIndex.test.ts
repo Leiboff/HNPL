@@ -46,7 +46,12 @@ const SALES    = read('app/admin/sales-team/actions.ts');
 const STRIP    = read('scripts/strip-duplicate-sa-ids.ts');
 const ENCRYPT  = read('lib/idEncryption.ts');
 const CHECKOUT = read('app/checkout/[token]/actions.ts');
-const ONBOARD  = read('lib/onboarding/actions.ts');
+// The organic-signup ID-capture path moved from saveIdAndSalaryDay (manual
+// entry, lib/onboarding/actions.ts) to the Didit webhook's handleApproved
+// (app/api/verification/didit/webhook/route.ts) — same rules, same
+// functions, different trigger. See supabase/migrations/
+// 0102_didit_identity_verification.sql for the column-level note.
+const ONBOARD  = read('app/api/verification/didit/webhook/route.ts');
 const BACKFILL = read('scripts/backfill-sa-id-lookup-hash.ts');
 const AUDIT    = read('scripts/audit-sa-id-duplicates.ts');
 
@@ -263,7 +268,7 @@ describe('the server-side gate — the message, above the index that actually ho
 
   it('excludes the caller from their own ID — re-submitting your own is not a duplicate', () => {
     expect(CHECKOUT).toMatch(/idOwner\.id !== prospectiveUserId/);
-    expect(ONBOARD).toMatch(/idOwner\.id !== loaded\.userId/);
+    expect(ONBOARD).toMatch(/idOwner\.id !== userId/);
   });
 
   it('the checkout gate runs BEFORE the account is created, so a refusal leaves no orphan', () => {
