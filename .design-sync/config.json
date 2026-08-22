@@ -1,5 +1,5 @@
 {
-  "projectId": "e99ea6af-efeb-4800-b037-b06fbb385f1c",
+  "projectId": "b9bc2894-8ccf-4501-ab93-952d6a1ba51d",
   "shape": "package",
   "pkg": "hnpl",
   "globalName": "Betternow",
@@ -9,6 +9,16 @@
   "extraFonts": [".design-sync/fonts/poppins.css"],
   "readmeHeader": ".design-sync/conventions.md",
   "guidelinesGlob": [],
+  "overrides": {
+    "SiteHeader": { "viewport": "1200x120" }
+  },
+  "dtsPropsFor": {
+    "StatCard": "label: string; value: string; sublabel?: string; tone?: 'default' | 'good' | 'warn' | 'alert'; href?: string;",
+    "CollectionStatusBadge": "bucket: 'upcoming' | 'overdue' | 'processing' | 'failed' | 'collected' | 'written_off' | 'defaulted';",
+    "DefaultFreezeBanner": "frozen: boolean;",
+    "ApprovedBalanceCard": "limit: number | null; available: number;",
+    "PendingPlanCard": "planId: string; totalAmount: number; practiceName: string; invoiceNumber?: string | null; practiceReference?: string | null; declinePlan: (planId: string) => Promise<{ error: string | null }>; blocked?: boolean;"
+  },
   "componentSrcMap": {
     "SiteHeader": "app/_landing/SiteHeader.tsx",
     "SiteFooter": "app/_landing/SiteFooter.tsx",
