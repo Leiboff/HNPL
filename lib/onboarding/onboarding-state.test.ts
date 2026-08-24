@@ -451,9 +451,16 @@ describe('saveSalaryDetails — credit-check seam, no ID handling', () => {
     expect(body).toMatch(/credit_check_status\s*=\s*'passed'/);
   });
 
-  it('no longer imports the SA-ID encryption/validation/dedupe helpers directly', () => {
-    expect(ACTIONS_TS).not.toMatch(/from ['"]@\/lib\/idEncryption['"]/);
-    expect(ACTIONS_TS).not.toMatch(/from ['"]@\/lib\/patients\/findPatientBySaId['"]/);
+  it('saveSalaryDetails itself never touches ID encryption/lookup — only day + amount', () => {
+    // File-level scope, not function-level: actions.ts legitimately
+    // imports idEncryption again as of the DHA path (pending_sa_id_*,
+    // written by submitIdentityForVerification — see that describe
+    // block below). What must stay true is narrower: saveSalaryDetails
+    // ITSELF, function body only, never references the ID at all.
+    const fnStart = ACTIONS_TS.indexOf('export async function saveSalaryDetails');
+    const nextFnStart = ACTIONS_TS.indexOf('\nexport ', fnStart + 1);
+    const body = ACTIONS_TS.slice(fnStart, nextFnStart === -1 ? undefined : nextFnStart);
+    expect(body).not.toMatch(/encryptId|hashIdForLookup|findPatientBySaId|sa_id_number/);
   });
 
   it('maybeFinalize writes onboarding_completed=true when the state model is done', () => {

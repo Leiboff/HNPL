@@ -1,31 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import IdentityStepClient from './IdentityStepClient';
+import { VALID_SA_ID } from '@/lib/testing/saIdFixtures';
 
-// ─── Identity step client — salary form + Didit verification trigger ───
+// ─── Identity step client — SA ID + consent + salary form ──────────────
 //
-// SA ID capture moved out of this component entirely (it's a Didit-hosted
-// session now — see startIdentityVerification). This file covers the two
-// pieces that remain client-side: the salary form, and the button that
-// kicks off + redirects to a Didit session. The webhook's decision logic
-// is covered by app/api/verification/didit/webhook/route.test.ts, not here.
+// SA ID capture is BACK in this component (DHA-photo-first architecture
+// needs the ID typed locally before any Didit session exists), now
+// alongside a required consent checkbox. Submitting calls
+// submitIdentityForVerification, not startIdentityVerification — the
+// server decides DHA vs OCR-fallback vs synchronous decline/review.
 //
-// fireEvent.submit(form) rather than clicking submit — same convention as
-// CounterSessionForm.test.tsx: happy-dom doesn't reliably run implicit
-// form submission on a plain button click.
+// fireEvent.submit(form) rather than clicking submit — same convention
+// as CounterSessionForm.test.tsx: happy-dom does not reliably run the
+// implicit-submission algorithm for a plain button click.
 
-const { saveSalaryDetails, startIdentityVerification, refreshOnboardingState } = vi.hoisted(() => ({
-  saveSalaryDetails:         vi.fn(),
-  startIdentityVerification: vi.fn(),
-  refreshOnboardingState:    vi.fn(),
+const { saveSalaryDetails, submitIdentityForVerification, refreshOnboardingState } = vi.hoisted(() => ({
+  saveSalaryDetails:            vi.fn(),
+  submitIdentityForVerification: vi.fn(),
+  refreshOnboardingState:       vi.fn(),
 }));
-vi.mock('@/lib/onboarding/actions', () => ({ saveSalaryDetails, startIdentityVerification, refreshOnboardingState }));
+vi.mock('@/lib/onboarding/actions', () => ({ saveSalaryDetails, submitIdentityForVerification, refreshOnboardingState }));
 
 beforeEach(() => {
   saveSalaryDetails.mockReset();
   saveSalaryDetails.mockResolvedValue({ error: null, nextPath: '/onboarding/identity' });
-  startIdentityVerification.mockReset();
-  startIdentityVerification.mockResolvedValue({ error: null, url: 'https://verify.didit.me/session/abc123' });
+  submitIdentityForVerification.mockReset();
+  submitIdentityForVerification.mockResolvedValue({ error: null, outcome: 'redirect', url: 'https://verify.didit.me/session/abc123' });
   refreshOnboardingState.mockReset();
   refreshOnboardingState.mockResolvedValue({ error: null, nextPath: '/onboarding/identity' });
   Object.defineProperty(window, 'location', {
@@ -46,6 +47,10 @@ function baseProps() {
 
 function submitSalary() {
   fireEvent.submit(screen.getByTestId('onboarding-identity-submit').closest('form')!);
+}
+
+function submitVerify() {
+  fireEvent.submit(screen.getByTestId('onboarding-identity-verify-button').closest('form')!);
 }
 
 describe('IdentityStepClient — salary form', () => {
@@ -89,33 +94,67 @@ describe('IdentityStepClient — salary form', () => {
 
     await waitFor(() => expect(window.location.href).toBe('/onboarding/credit-check'));
   });
-
-  it('stays on the page (no navigation) when identity is still incomplete', async () => {
-    render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.click(screen.getByRole('radio', { name: /1st/ }));
-    fireEvent.change(screen.getByTestId('onboarding-salary-amount'), { target: { value: '15000' } });
-    submitSalary();
-
-    await waitFor(() => expect(saveSalaryDetails).toHaveBeenCalled());
-    expect(window.location.href).toBe('');
-  });
 });
 
-describe('IdentityStepClient — Didit verification', () => {
-  it('starts a session and redirects to Didit\'s hosted URL', async () => {
+describe('IdentityStepClient — identity verification (SA ID + consent)', () => {
+  it('blocks submit with a generic message for an invalid SA ID, no server call', async () => {
     render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.click(screen.getByTestId('onboarding-identity-verify-button'));
+    fireEvent.change(screen.getByTestId('onboarding-sa-id'), { target: { value: '0000000000000' } });
+    fireEvent.click(screen.getByTestId('onboarding-dha-consent'));
+    submitVerify();
 
-    await waitFor(() => expect(startIdentityVerification).toHaveBeenCalled());
+    expect(await screen.findByText('Please enter a valid SA ID number.')).toBeTruthy();
+    expect(submitIdentityForVerification).not.toHaveBeenCalled();
+  });
+
+  it('blocks submit when consent is not given, no server call', async () => {
+    render(<IdentityStepClient {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('onboarding-sa-id'), { target: { value: VALID_SA_ID } });
+    submitVerify();
+
+    expect(await screen.findByText('Please provide consent to continue.')).toBeTruthy();
+    expect(submitIdentityForVerification).not.toHaveBeenCalled();
+  });
+
+  it('submits SA ID + consent together once both are valid', async () => {
+    render(<IdentityStepClient {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('onboarding-sa-id'), { target: { value: VALID_SA_ID } });
+    fireEvent.click(screen.getByTestId('onboarding-dha-consent'));
+    submitVerify();
+
+    await waitFor(() => expect(submitIdentityForVerification).toHaveBeenCalledWith({
+      saIdNumber: VALID_SA_ID,
+      consent:    true,
+    }));
+  });
+
+  it('redirects to the Didit hosted URL on outcome:redirect', async () => {
+    render(<IdentityStepClient {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('onboarding-sa-id'), { target: { value: VALID_SA_ID } });
+    fireEvent.click(screen.getByTestId('onboarding-dha-consent'));
+    submitVerify();
+
     await waitFor(() => expect(window.location.href).toBe('https://verify.didit.me/session/abc123'));
   });
 
-  it('shows an inline error and does not navigate when session creation fails', async () => {
-    startIdentityVerification.mockResolvedValue({ error: 'Could not start identity verification. Please try again.' });
+  it('reloads the page on outcome:review (no url to redirect to)', async () => {
+    submitIdentityForVerification.mockResolvedValue({ error: null, outcome: 'review' });
     render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.click(screen.getByTestId('onboarding-identity-verify-button'));
+    fireEvent.change(screen.getByTestId('onboarding-sa-id'), { target: { value: VALID_SA_ID } });
+    fireEvent.click(screen.getByTestId('onboarding-dha-consent'));
+    submitVerify();
 
-    expect(await screen.findByText('Could not start identity verification. Please try again.')).toBeTruthy();
+    await waitFor(() => expect(window.location.href).toBe('/onboarding/identity'));
+  });
+
+  it('shows an inline error and does not navigate on a synchronous decline', async () => {
+    submitIdentityForVerification.mockResolvedValue({ error: 'We couldn\'t verify your identity. Please try again.' });
+    render(<IdentityStepClient {...baseProps()} />);
+    fireEvent.change(screen.getByTestId('onboarding-sa-id'), { target: { value: VALID_SA_ID } });
+    fireEvent.click(screen.getByTestId('onboarding-dha-consent'));
+    submitVerify();
+
+    expect(await screen.findByText('We couldn\'t verify your identity. Please try again.')).toBeTruthy();
     expect(window.location.href).toBe('');
   });
 
@@ -125,16 +164,30 @@ describe('IdentityStepClient — Didit verification', () => {
     expect(screen.getByTestId('onboarding-identity-verify-button').textContent).toBe('Try again');
   });
 
-  it('hides the verify button once approved', () => {
+  it('hides the SA ID form once approved', () => {
     render(<IdentityStepClient {...baseProps()} identityVerificationStatus="approved" />);
     expect(screen.getByTestId('onboarding-identity-verified')).toBeTruthy();
     expect(screen.queryByTestId('onboarding-identity-verify-button')).toBeNull();
+    expect(screen.queryByTestId('onboarding-sa-id')).toBeNull();
   });
 
-  it('shows the account-already-exists guidance (and no retry button) on a duplicate-ID decline', () => {
+  it('shows the account-already-exists guidance (and no form) on a duplicate-ID decline', () => {
     render(<IdentityStepClient {...baseProps()} identityVerificationStatus="declined" identityVerificationReason="id_already_registered" />);
     expect(screen.getByText(/An account already exists for this ID number/)).toBeTruthy();
     expect(screen.getByText(/Forgot password/)).toBeTruthy();
+    expect(screen.queryByTestId('onboarding-identity-verify-button')).toBeNull();
+    expect(screen.queryByTestId('onboarding-sa-id')).toBeNull();
+  });
+
+  it('shows contact-support copy (and no form) on a deceased decline — not user-actionable', () => {
+    render(<IdentityStepClient {...baseProps()} identityVerificationStatus="declined" identityVerificationReason="dha_deceased" />);
+    expect(screen.getByText(/contact support/)).toBeTruthy();
+    expect(screen.queryByTestId('onboarding-identity-verify-button')).toBeNull();
+  });
+
+  it('shows contact-support copy (and no form) on an id_blocked decline — not user-actionable', () => {
+    render(<IdentityStepClient {...baseProps()} identityVerificationStatus="declined" identityVerificationReason="dha_id_blocked" />);
+    expect(screen.getByText(/contact support/)).toBeTruthy();
     expect(screen.queryByTestId('onboarding-identity-verify-button')).toBeNull();
   });
 });

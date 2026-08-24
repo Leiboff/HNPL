@@ -45,6 +45,57 @@ export type DiditLivenessCheck = { node_id?: string; status?: string; score?: nu
 export type DiditFaceMatch     = { node_id?: string; status?: string; score?: number };
 export type DiditAmlScreening  = { node_id?: string; status?: string; score?: number; total_hits?: number };
 
+// ─── Standalone Database Validation API (DHA registry lookup) ──────────
+//
+// POST /v3/database-validation/ — request field names and encoding
+// (multipart/form-data, `national_id`) are UNVERIFIED against Didit's own
+// docs (network-blocked from this environment); see lib/didit/dha.ts and
+// the integration's final report for the full caveat. Every field below
+// is optional on purpose — the response shape is trusted only as far as
+// what's actually present (see lib/onboarding/dhaVerification.ts).
+
+/** One row of `validations[]` — locate by `service_id`, never by index. */
+export type DhaValidationRow = {
+  service_id?:     string;
+  service_name?:   string;
+  outcome_code?:   string;
+  outcome_detail?: string;
+  validation?:     unknown;
+  source_data?: {
+    photo_base64?:                    string;
+    deceased?:                        unknown;
+    id_blocked?:                      unknown;
+    on_national_population_register?: unknown;
+    on_hanis_biometric_register?:     unknown;
+    smart_card_issued?:               unknown;
+    first_name?:                      string;
+    last_name?:                       string;
+    identification_number?:           string;
+  };
+};
+
+export type DhaLookupResponse = {
+  request_id?:     string;
+  status?:         string;
+  issuing_state?:  string;
+  match_type?:     string;
+  validations?:    DhaValidationRow[];
+};
+
+// ─── Standalone AML screening API ───────────────────────────────────────
+//
+// POST /v3/aml/ — endpoint path is UNVERIFIED (taken from the module
+// catalogue description, not independently confirmed). Kept behind
+// lib/didit/aml.ts's screenAml() boundary so the shape can change
+// without touching call sites.
+
+export type AmlScreeningResult = {
+  status?:      string;
+  score?:       number;
+  total_hits?:  number;
+  hits?:        unknown[];
+};
+
 export type DiditDecision = {
   id_verifications?: DiditIdVerification[] | null;
   liveness_checks?:  DiditLivenessCheck[]  | null;

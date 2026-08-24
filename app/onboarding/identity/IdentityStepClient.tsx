@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import SalaryDayPicker from '@/components/SalaryDayPicker';
 import { ShieldIcon } from '@/app/_landing/icons';
-import { saveSalaryDetails, startIdentityVerification, refreshOnboardingState } from '@/lib/onboarding/actions';
+import { saveSalaryDetails, submitIdentityForVerification, refreshOnboardingState } from '@/lib/onboarding/actions';
+import { validateSaId, saIdAge } from '@/lib/validation';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
 
 // ─── Identity step (client) ────────────────────────────────────────────
@@ -11,12 +12,22 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 // Two independent pieces, each with its own submit:
 //
 //   1. Salary day + amount — plain form, saveSalaryDetails().
-//   2. Identity verification — a button that starts a Didit-hosted
-//      session (startIdentityVerification()) and redirects the whole
-//      page there. Didit's webhook applies the decision asynchronously,
-//      so when the user is redirected BACK here (?didit=callback) we
-//      don't yet know the outcome — we poll refreshOnboardingState()
-//      until the server says the step moved on, or a status lands.
+//   2. Identity verification — the patient types their SA ID and gives
+//      consent; submitIdentityForVerification() resolves DHA-photo-first
+//      routing SERVER-SIDE (validateSaId/saIdAge here are client-side
+//      convenience only, same generic-error rule the old manual-entry
+//      form used — the server re-validates for real) and either:
+//        outcome:'redirect' — a Didit session was created (DHA-photo
+//          face-match OR the OCR fallback); redirect to it. Its webhook
+//          applies the decision asynchronously, so when the user is
+//          redirected BACK here (?didit=callback) we poll
+//          refreshOnboardingState() until the server says the step
+//          moved on.
+//        outcome:'review'   — resolved without a session (e.g. DHA said
+//          "not on the register"). No redirect; reload so the server-
+//          rendered identityVerificationStatus prop picks up 'in_review'.
+//        error              — synchronous decline (e.g. DHA said
+//          NO_MATCH) or a transient failure; shown inline.
 //
 // The onboarding 'identity' step is satisfied only once BOTH have
 // landed — see lib/onboarding/state.ts. Either can be done first.
@@ -45,6 +56,9 @@ const DUPLICATE_ID_MESSAGE =
   'An account already exists for this ID number. Please log in to that account instead — ' +
   'use "Forgot password" if you can\'t get in, or contact support if you think this is a mistake.';
 
+const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
+const MIN_AGE = 18;
+
 export default function IdentityStepClient({
   salaryDay: initialSalaryDay,
   salaryAmount: initialSalaryAmount,
@@ -60,9 +74,11 @@ export default function IdentityStepClient({
   const [salarySaved,  setSalarySaved]  = useState(initialSalaryDay != null && initialSalaryAmount != null);
 
   // ── Identity verification ──
-  const [verifyError,   setVerifyError]   = useState<string | null>(null);
-  const [verifyLoading, setVerifyLoading] = useState(false);
-  const [polling,       setPolling]       = useState(returningFromDidit && identityVerificationStatus !== 'declined');
+  const [saId,           setSaId]           = useState('');
+  const [consent,        setConsent]        = useState(false);
+  const [verifyError,    setVerifyError]    = useState<string | null>(null);
+  const [verifyLoading,  setVerifyLoading]  = useState(false);
+  const [polling,        setPolling]        = useState(returningFromDidit && identityVerificationStatus !== 'declined');
   const pollAttempts = useRef(0);
 
   useEffect(() => {
@@ -111,16 +127,42 @@ export default function IdentityStepClient({
     }
   }
 
-  async function handleVerify() {
+  async function handleVerify(e: React.FormEvent) {
+    e.preventDefault();
     setVerifyError(null);
+
+    const cleaned = saId.replace(/\s+/g, '');
+    const check = validateSaId(cleaned);
+    if (!check.valid) {
+      setVerifyError(SA_ID_GENERIC_ERROR);
+      return;
+    }
+    const age = saIdAge(cleaned);
+    if (age === null || age < MIN_AGE) {
+      setVerifyError(`You must be ${MIN_AGE} or older to use BetterNow.`);
+      return;
+    }
+    if (!consent) {
+      setVerifyError('Please provide consent to continue.');
+      return;
+    }
+
     setVerifyLoading(true);
-    const result = await startIdentityVerification();
+    const result = await submitIdentityForVerification({ saIdNumber: cleaned, consent });
+    setVerifyLoading(false);
+
     if (result.error !== null) {
-      setVerifyLoading(false);
       setVerifyError(result.error);
       return;
     }
-    window.location.href = result.url;
+    if (result.outcome === 'redirect') {
+      window.location.href = result.url;
+      return;
+    }
+    // outcome === 'review' — no session, nothing to redirect to. Reload
+    // so the server-rendered identityVerificationStatus prop picks up
+    // 'in_review' and this component re-renders in that state.
+    window.location.href = '/onboarding/identity';
   }
 
   if (polling) {
@@ -141,9 +183,16 @@ export default function IdentityStepClient({
   const inReview = identityVerificationStatus === 'in_review';
   const verified = identityVerificationStatus === 'approved';
 
+  // Not user-actionable — retrying does not help, and inviting a retry
+  // on a deceased/blocked-ID decline is itself a probing surface. Same
+  // treatment as a duplicate-ID decline: no form, no button.
+  const notActionable = identityVerificationReason === 'id_already_registered'
+    || identityVerificationReason === 'dha_deceased'
+    || identityVerificationReason === 'dha_id_blocked';
+
   return (
     <div className="flex flex-1 flex-col gap-8">
-      <div className="flex flex-col gap-3" data-testid="onboarding-identity-verify">
+      <form onSubmit={handleVerify} className="flex flex-col gap-4" data-testid="onboarding-identity-verify">
         <div className="flex items-start gap-2">
           <span className="mt-px inline-flex shrink-0" style={{ color: '#15A89E' }} aria-hidden="true">
             <ShieldIcon size={16} />
@@ -169,32 +218,63 @@ export default function IdentityStepClient({
           <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
             {identityVerificationReason === 'id_already_registered'
               ? DUPLICATE_ID_MESSAGE
+              : identityVerificationReason === 'dha_deceased' || identityVerificationReason === 'dha_id_blocked'
+              ? 'We couldn\'t verify your identity. Please contact support.'
               : 'We couldn\'t verify your identity. Please try again.'}
           </p>
         )}
 
-        {verifyError && (
-          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
-            {verifyError}
-          </p>
-        )}
+        {!verified && !notActionable && (
+          <>
+            <div className="flex flex-col gap-2">
+              <label htmlFor="sa-id" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
+                South African ID number
+              </label>
+              <input
+                id="sa-id"
+                type="text"
+                inputMode="numeric"
+                maxLength={13}
+                autoComplete="off"
+                value={saId}
+                onChange={(e) => setSaId(e.target.value.replace(/\D/g, ''))}
+                data-testid="onboarding-sa-id"
+                placeholder="13-digit ID number"
+                className={INPUT_CLS}
+              />
+            </div>
 
-        {/* A duplicate-ID decline needs the patient to log in to their
-            EXISTING account, not retry verification on this one — the
-            copy above already points them there, so no button here. */}
-        {!verified && identityVerificationReason !== 'id_already_registered' && (
-          <button
-            type="button"
-            onClick={handleVerify}
-            disabled={verifyLoading}
-            data-testid="onboarding-identity-verify-button"
-            className={BUTTON_CLS}
-            style={{ background: '#15A89E', boxShadow: verifyLoading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
-          >
-            {verifyLoading ? 'Starting…' : declined || inReview ? 'Try again' : 'Verify my identity'}
-          </button>
+            {/* TODO: legal review — placeholder consent copy, not final. */}
+            <label className="flex items-start gap-2 text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                data-testid="onboarding-dha-consent"
+                className="mt-0.5 shrink-0"
+              />
+              I consent to BetterNow retrieving my identity photograph from the Department of
+              Home Affairs to verify my identity.
+            </label>
+
+            {verifyError && (
+              <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+                {verifyError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={verifyLoading}
+              data-testid="onboarding-identity-verify-button"
+              className={BUTTON_CLS}
+              style={{ background: '#15A89E', boxShadow: verifyLoading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
+            >
+              {verifyLoading ? 'Verifying…' : declined || inReview ? 'Try again' : 'Verify my identity'}
+            </button>
+          </>
         )}
-      </div>
+      </form>
 
       <form onSubmit={handleSalarySubmit} className="flex flex-col gap-6 border-t pt-6" style={{ borderColor: '#E2E8EE' }}>
         <SalaryDayPicker

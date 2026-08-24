@@ -6,38 +6,67 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { verifyDiditWebhookSignature } from '@/lib/didit/webhook';
 import { validateSaId, saIdAge } from '@/lib/validation';
-import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
+import { screenAml } from '@/lib/didit/aml';
 import type { DiditWebhookEvent } from '@/lib/didit/types';
 
 // ─── Didit webhook receiver — onboarding identity verification ─────────
 //
-// Backs the merged "identity + liveness" onboarding step
-// (lib/onboarding/actions.ts::startIdentityVerification creates the
-// session; this route applies the decision).
+// Backs the merged "identity + liveness" onboarding step. TWO paths feed
+// this route now (lib/onboarding/dhaVerification.ts decides which one a
+// given patient took, BEFORE any session exists):
 //
-// On `status.updated` with status "Approved":
-//   • Extract decision.id_verifications[0].personal_number — for a South
-//     African ID document this IS the 13-digit SA ID number.
-//   • Re-validate it with the SAME validateSaId/saIdAge rules the old
-//     manual-entry path used (Luhn + DOB + citizenship + 18+). Didit
-//     verified the document is genuine and matches the live face; it
-//     does not know our SA-ID-specific business rules.
-//   • Re-run the SAME "one SA ID = one account" duplicate check
-//     (findPatientBySaId) the manual path used — a Didit session can't
-//     bypass that invariant just because it arrived a different way.
-//   • On success, write sa_id_number + sa_id_lookup_hash (identity step)
-//     AND liveness_verified_at (liveness step) in one update — the
-//     state model (lib/onboarding/state.ts) needs no changes: both
-//     steps read those same columns regardless of how they got filled.
+//   OCR fallback — handleApprovedOcr. UNCHANGED from before the DHA path
+//   existed: extracts decision.id_verifications[0].personal_number,
+//   re-validates it (Luhn/DOB/citizenship/18+), re-runs the one-SA-ID-
+//   per-account check, writes sa_id_number + liveness_verified_at.
+//
+//   DHA — handleApprovedDha. The SA ID was already typed, DHA-matched
+//   and consent-gated BEFORE the session existed (see
+//   lib/onboarding/actions.ts::submitIdentityForVerification), so this
+//   handler has no id_verifications to read at all. What it DOES check,
+//   independently of Didit's own session status, is decision.face_
+//   matches[0].score — on this path the face match against the DHA
+//   registry photo IS the entire identity binding, so trusting the
+//   session's top-level status alone would mean approving without ever
+//   inspecting the one check that matters. Score persisted on every
+//   outcome (approve/review/decline), not just approvals — the
+//   approve/review thresholds are env-driven placeholders that need a
+//   real score distribution to tune; without persisting declines and
+//   reviews too, that distribution is unrecoverable.
+//
+// WHICH HANDLER RUNS is decided by the STORED identity_verification_path
+// column, never by comparing the envelope's workflow_id to an env var —
+// that comparison breaks on env var rotation, workflow republishing, or
+// any session in flight across a config change, and breaks SILENTLY (by
+// applying the wrong path's logic to the decision). workflow_id is used
+// only as a cross-check against the stored path; a disagreement between
+// the two is never resolved by guessing — it routes to review and logs
+// loudly (see resolveVerificationPath below).
+//
+// AML — moved out of the Didit workflow graph entirely (it requires OCR
+// or KYB_REGISTRY, which the DHA-path workflow has neither) and called
+// standalone on BOTH paths from handleApprovedOcr/Dha, using OCR-
+// extracted name/DOB on the OCR path and the DHA-registry name on the
+// DHA path. A hit — or the AML call itself failing — downgrades to
+// in_review; it is never grounds for auto-decline (AML matches need
+// human review) and never silently skipped (a failed compliance check
+// is not the same shape of problem as an unavailable registry, and gets
+// no fallback of its own).
 //
 // Every other status maps to identity_verification_status for UI
 // purposes only; it never blocks or advances onboarding by itself.
 //
 // Always returns 2xx once the signature verifies, even if the handler
 // throws — Didit retries 5xx/timeouts twice, and a real bug should not
-// turn into a retry storm. A bad/missing signature is the one case that
-// gets a non-2xx (401), since that delivery was never authenticated.
+// turn into a retry storm. The two exceptions: a bad/missing signature
+// (401, that delivery was never authenticated) and a TRANSIENT failure
+// in the duplicate-SA-ID lookup itself (500, see
+// TransientDuplicateCheckError below) — a genuine duplicate match is a
+// normal, non-throwing outcome (declined/200); the lookup ITSELF failing
+// (DB/network error) is the only thing that throws, and that is
+// transient by construction, not a decision about the applicant.
 
 function svc() {
   return createClient(
@@ -77,18 +106,38 @@ const DUPLICATE_ID_MESSAGE =
   'An account already exists for this ID number. Please log in to that account instead — ' +
   'use "Forgot password" if you can\'t get in, or contact support if you think this is a mistake.';
 
+/**
+ * Thrown ONLY when the duplicate-SA-ID lookup itself fails (a DB/network
+ * error inside findPatientBySaId) — NEVER for a genuine duplicate match,
+ * which is a normal non-throwing return (idOwner.id !== userId) handled
+ * as a declined/200 outcome. Caught in POST and mapped to 500 so Didit
+ * retries; every other thrown error in this file stays 200 (see the
+ * file banner) — this is the one deliberate exception.
+ */
+class TransientDuplicateCheckError extends Error {}
+
+function envelopeFields(event: DiditWebhookEvent) {
+  return {
+    identity_verification_workflow_id:      event.workflow_id      ?? null,
+    identity_verification_workflow_version: event.workflow_version ?? null,
+    identity_verification_environment:      event.environment      ?? null,
+  };
+}
+
 async function markStatus(
   supabase: SupabaseClient,
   userId:   string,
   status:   string,
-  reason?:  string,
+  reason:   string | null,
+  extra:    Record<string, unknown> = {},
 ): Promise<void> {
   const { error } = await supabase
     .from('profiles')
     .update({
       identity_verification_status:     status,
-      identity_verification_reason:     reason ?? null,
+      identity_verification_reason:     reason,
       identity_verification_updated_at: new Date().toISOString(),
+      ...extra,
     })
     .eq('id', userId);
   if (error) {
@@ -96,26 +145,33 @@ async function markStatus(
   }
 }
 
-async function handleApproved(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<void> {
+function faceMatchScore(event: DiditWebhookEvent): number | null {
+  const score = event.decision?.face_matches?.[0]?.score;
+  return typeof score === 'number' ? score : null;
+}
+
+// ── OCR fallback path — UNCHANGED behaviour from before the DHA path ──
+
+async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<void> {
   const cleanedId = event.decision?.id_verifications?.[0]?.personal_number?.replace(/\s+/g, '') ?? null;
 
   if (!cleanedId) {
     console.warn('[didit-webhook] Approved session carried no personal_number', { userId, sessionId: event.session_id });
-    await markStatus(supabase, userId, 'declined', 'no_id_extracted');
+    await markStatus(supabase, userId, 'declined', 'no_id_extracted', envelopeFields(event));
     return;
   }
 
   const check = validateSaId(cleanedId);
   if (!check.valid) {
     console.warn('[didit-webhook] extracted ID failed SA ID validation', { userId, sessionId: event.session_id, reason: check.reason });
-    await markStatus(supabase, userId, 'declined', 'invalid_id');
+    await markStatus(supabase, userId, 'declined', 'invalid_id', envelopeFields(event));
     return;
   }
 
   const age = saIdAge(cleanedId);
   if (age === null || age < 18) {
     console.warn('[didit-webhook] extracted ID indicates under-18', { userId, sessionId: event.session_id });
-    await markStatus(supabase, userId, 'declined', 'underage');
+    await markStatus(supabase, userId, 'declined', 'underage', envelopeFields(event));
     return;
   }
 
@@ -132,19 +188,14 @@ async function handleApproved(supabase: SupabaseClient, userId: string, event: D
   try {
     idOwner = await findPatientBySaId(supabase, cleanedId);
   } catch (err) {
-    // Lookup failure — do NOT write a possibly-duplicate ID. Leave the
-    // status as-is (pending); the delivery is not acknowledged as
-    // "handled" beyond the 2xx, so this is a case worth alerting on.
-    // (SA ID duplicate check failed — we could not verify your ID number
-    // just now, so we refuse rather than risk writing a duplicate.)
-    console.error('[didit-webhook] ALERT SA ID duplicate check failed — could not verify your ID number, approved session not persisted', {
+    console.error('[didit-webhook] ALERT SA ID duplicate check failed — could not verify your ID number just now (transient), retry expected', {
       userId, sessionId: event.session_id, error: err instanceof Error ? err.message : String(err),
     });
-    return;
+    throw new TransientDuplicateCheckError('OCR path duplicate-SA-ID lookup failed');
   }
   if (idOwner && idOwner.id !== userId) {
     console.warn(`[didit-webhook] ${DUPLICATE_ID_MESSAGE}`, { userId, ownerId: idOwner.id });
-    await markStatus(supabase, userId, 'declined', 'id_already_registered');
+    await markStatus(supabase, userId, 'declined', 'id_already_registered', envelopeFields(event));
     return;
   }
 
@@ -160,7 +211,30 @@ async function handleApproved(supabase: SupabaseClient, userId: string, event: D
     return;
   }
 
+  // Best-available name for AML on this path: Didit's own OCR extraction
+  // (id_verifications[0] carries first_name/last_name alongside personal_number).
+  const idv = event.decision?.id_verifications?.[0];
+  const amlOutcome = await screenAml({
+    vendorData: userId,
+    firstName:  idv?.first_name ?? undefined,
+    lastName:   idv?.last_name  ?? undefined,
+  });
+  const amlHit = amlOutcome.kind === 'success' && (amlOutcome.data.status === 'Declined' || (amlOutcome.data.total_hits ?? 0) > 0);
+  const amlUnavailable = amlOutcome.kind !== 'success';
+
   const now = new Date().toISOString();
+
+  if (amlHit || amlUnavailable) {
+    console.warn('[didit-webhook] OCR path: AML did not clear — routing to review', { userId, amlHit, amlUnavailable });
+    await markStatus(supabase, userId, 'in_review', 'aml_hit_or_unavailable', {
+      sa_id_number:      encrypted,
+      sa_id_lookup_hash: lookupHash,
+      liveness_verified_at: now,
+      ...envelopeFields(event),
+    });
+    return;
+  }
+
   const { error } = await supabase
     .from('profiles')
     .update({
@@ -170,11 +244,142 @@ async function handleApproved(supabase: SupabaseClient, userId: string, event: D
       identity_verification_status:     'approved',
       identity_verification_reason:     null,
       identity_verification_updated_at: now,
+      ...envelopeFields(event),
     })
     .eq('id', userId);
   if (error) {
     console.error('[didit-webhook] ALERT failed to persist approved identity verification', { userId, error: error.message });
   }
+}
+
+// ── DHA path ──
+
+async function handleApprovedDha(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<void> {
+  const score = faceMatchScore(event);
+  const approveMin = Number(process.env.DHA_FACE_MATCH_APPROVE_MIN ?? 70);
+  const reviewMin  = Number(process.env.DHA_FACE_MATCH_REVIEW_MIN  ?? 45);
+
+  const scoreFields = { dha_face_match_score: score, ...envelopeFields(event) };
+
+  if (score === null) {
+    console.warn('[didit-webhook] DHA path: Approved session carried no face_matches[0].score', { userId, sessionId: event.session_id });
+    await markStatus(supabase, userId, 'declined', 'face_match_below_threshold', scoreFields);
+    return;
+  }
+  if (score < reviewMin) {
+    await markStatus(supabase, userId, 'declined', 'face_match_below_threshold', scoreFields);
+    return;
+  }
+  if (score < approveMin) {
+    // Ambiguous zone — a human decides. NEVER routed to the OCR
+    // fallback: an impostor who deliberately fails the registry match
+    // would otherwise reach the weaker document-scan check on purpose.
+    await markStatus(supabase, userId, 'in_review', 'face_match_below_threshold', scoreFields);
+    return;
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('pending_sa_id_number, pending_sa_id_lookup_hash, dha_first_name, dha_last_name')
+    .eq('id', userId)
+    .maybeSingle();
+
+  const pendingEncrypted = profile?.pending_sa_id_number as string | null;
+  const pendingHash      = profile?.pending_sa_id_lookup_hash as string | null;
+
+  if (!pendingEncrypted || !pendingHash) {
+    console.error('[didit-webhook] ALERT DHA session Approved but no pending_sa_id_number on file', { userId, sessionId: event.session_id });
+    await markStatus(supabase, userId, 'declined', 'dha_unrecognised_outcome', scoreFields);
+    return;
+  }
+
+  let plaintext: string;
+  try {
+    plaintext = decryptId(pendingEncrypted);
+  } catch (err) {
+    console.error('[didit-webhook] ALERT failed to decrypt pending_sa_id_number — approved session not persisted', {
+      userId, error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  // Same invariant the OCR path enforces (see its comment above) — a
+  // DHA-matched ID can still already belong to another account.
+  let idOwner: Awaited<ReturnType<typeof findPatientBySaId>>;
+  try {
+    idOwner = await findPatientBySaId(supabase, plaintext);
+  } catch (err) {
+    console.error('[didit-webhook] ALERT SA ID duplicate check failed — could not verify your ID number just now (transient), retry expected', {
+      userId, sessionId: event.session_id, error: err instanceof Error ? err.message : String(err),
+    });
+    throw new TransientDuplicateCheckError('DHA path duplicate-SA-ID lookup failed');
+  }
+  if (idOwner && idOwner.id !== userId) {
+    console.warn(`[didit-webhook] ${DUPLICATE_ID_MESSAGE}`, { userId, ownerId: idOwner.id });
+    await markStatus(supabase, userId, 'declined', 'id_already_registered', scoreFields);
+    return;
+  }
+
+  const amlOutcome = await screenAml({
+    vendorData: userId,
+    firstName:  (profile?.dha_first_name as string | null) ?? undefined,
+    lastName:   (profile?.dha_last_name  as string | null) ?? undefined,
+  });
+  const amlHit = amlOutcome.kind === 'success' && (amlOutcome.data.status === 'Declined' || (amlOutcome.data.total_hits ?? 0) > 0);
+  const amlUnavailable = amlOutcome.kind !== 'success';
+
+  const now = new Date().toISOString();
+
+  if (amlHit || amlUnavailable) {
+    console.warn('[didit-webhook] DHA path: AML did not clear — routing to review', { userId, amlHit, amlUnavailable });
+    await markStatus(supabase, userId, 'in_review', 'aml_hit_or_unavailable', {
+      ...scoreFields,
+      pending_sa_id_number:      pendingEncrypted,
+      pending_sa_id_lookup_hash: pendingHash,
+    });
+    return;
+  }
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      sa_id_number:                     pendingEncrypted, // already AES-256-GCM encrypted, same format as OCR path
+      sa_id_lookup_hash:                pendingHash,
+      liveness_verified_at:             now, // the DHA-registry face match IS this path's liveness ceremony
+      identity_verification_status:     'approved',
+      identity_verification_reason:     null,
+      identity_verification_updated_at: now,
+      pending_sa_id_number:             null,
+      pending_sa_id_lookup_hash:        null,
+      ...scoreFields,
+    })
+    .eq('id', userId);
+  if (error) {
+    console.error('[didit-webhook] ALERT failed to persist approved DHA identity verification', { userId, error: error.message });
+  }
+}
+
+// ── Path resolution — stored column is authority, workflow_id is a cross-check only ──
+
+type ResolvedPath = { path: 'ocr' | 'dha' } | { path: 'unresolved'; reason: string };
+
+async function resolveVerificationPath(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<ResolvedPath> {
+  const { data } = await supabase.from('profiles').select('identity_verification_path').eq('id', userId).maybeSingle();
+  const stored = data?.identity_verification_path as 'dha' | 'ocr' | null | undefined;
+
+  if (!stored) {
+    return { path: 'unresolved', reason: 'no identity_verification_path stored for this profile' };
+  }
+
+  const expectedWorkflowId = stored === 'dha' ? process.env.DIDIT_DHA_WORKFLOW_ID : process.env.DIDIT_WORKFLOW_ID;
+  if (expectedWorkflowId && event.workflow_id && event.workflow_id !== expectedWorkflowId) {
+    return {
+      path: 'unresolved',
+      reason: `stored path '${stored}' expects workflow_id '${expectedWorkflowId}' but envelope carries '${event.workflow_id}'`,
+    };
+  }
+
+  return { path: stored };
 }
 
 export async function POST(request: NextRequest) {
@@ -199,6 +404,9 @@ export async function POST(request: NextRequest) {
     secret,
   });
   if (!valid) {
+    // A 4xx other than 404 is never retried by Didit's delivery policy —
+    // deliberate here: an unauthenticated delivery should NOT be retried
+    // as though it were a transient failure.
     console.warn('[didit-webhook] signature verification failed — 401');
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
@@ -221,16 +429,41 @@ export async function POST(request: NextRequest) {
   // else is acknowledged and ignored.
   if (parsed.webhook_type === 'status.updated' && parsed.vendor_data) {
     const userId = parsed.vendor_data;
+
+    const resolved = await resolveVerificationPath(supabase, userId, parsed);
+    if (resolved.path === 'unresolved') {
+      console.error('[didit-webhook] ALERT could not resolve identity_verification_path — routing to review', {
+        userId, sessionId: parsed.session_id, reason: resolved.reason,
+      });
+      await markStatus(supabase, userId, 'in_review', 'workflow_path_mismatch', envelopeFields(parsed));
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
     try {
       if (parsed.status === 'Approved') {
-        await handleApproved(supabase, userId, parsed);
+        if (resolved.path === 'dha') {
+          await handleApprovedDha(supabase, userId, parsed);
+        } else {
+          await handleApprovedOcr(supabase, userId, parsed);
+        }
       } else {
         const mapped = TERMINAL_STATUS[parsed.status];
-        if (mapped) await markStatus(supabase, userId, mapped);
+        if (mapped) {
+          const extra = resolved.path === 'dha'
+            ? { dha_face_match_score: faceMatchScore(parsed), ...envelopeFields(parsed) }
+            : envelopeFields(parsed);
+          await markStatus(supabase, userId, mapped, null, extra);
+        }
         // Not Started / In Progress / Awaiting User / Resubmitted —
         // nothing to persist; the user is mid-flow.
       }
     } catch (err) {
+      if (err instanceof TransientDuplicateCheckError) {
+        // The ONE deliberate non-2xx for a handler-thrown error — this
+        // is transient by construction (see the class comment), so
+        // Didit's retry (5xx IS retried) is exactly the right response.
+        return NextResponse.json({ error: 'Temporary failure, please retry' }, { status: 500 });
+      }
       console.error('[didit-webhook] ALERT handler threw', {
         userId, sessionId: parsed.session_id, status: parsed.status,
         error: err instanceof Error ? err.message : String(err),
