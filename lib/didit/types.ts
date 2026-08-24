@@ -47,12 +47,17 @@ export type DiditAmlScreening  = { node_id?: string; status?: string; score?: nu
 
 // ─── Standalone Database Validation API (DHA registry lookup) ──────────
 //
-// POST /v3/database-validation/ — request field names and encoding
-// (multipart/form-data, `national_id`) are UNVERIFIED against Didit's own
-// docs (network-blocked from this environment); see lib/didit/dha.ts and
-// the integration's final report for the full caveat. Every field below
-// is optional on purpose — the response shape is trusted only as far as
-// what's actually present (see lib/onboarding/dhaVerification.ts).
+// POST /v3/database-validation/ — VERIFIED against the live API on
+// 2026-08-24. Request is multipart/form-data with `national_id` (JSON
+// also works; `identification_number` is rejected with an explicit
+// "Missing required fields: national_id"). Response shape below is
+// copied from a real live response.
+//
+// NOTE: the sandbox environment returns a DIFFERENT, non-representative
+// shape — `validations` as an object of field-level match results, with
+// no source_data and no photo. Do NOT develop against sandbox responses
+// for this endpoint; they will mislead you. Every field is still
+// optional on purpose (see lib/onboarding/dhaVerification.ts).
 
 /** One row of `validations[]` — locate by `service_id`, never by index. */
 export type DhaValidationRow = {
@@ -68,18 +73,39 @@ export type DhaValidationRow = {
     on_national_population_register?: unknown;
     on_hanis_biometric_register?:     unknown;
     smart_card_issued?:               unknown;
+    marital_status?:                  string;
+    transaction_number?:              string;
+    birth_place_country_code?:        string;
     first_name?:                      string;
     last_name?:                       string;
     identification_number?:           string;
   };
 };
 
+/**
+ * The `database_validation` envelope. Everything except `request_id`,
+ * `vendor_data`, `metadata` and `created_at` lives in here — an earlier
+ * draft of this type read `validations` from the top level, which meant
+ * every lookup found no row and routed to review.
+ */
+export type DhaDatabaseValidation = {
+  status?:          string;
+  issuing_state?:   string;
+  validation_type?: string;
+  match_type?:      string;
+  match_score?:     number;
+  screened_data?:   Record<string, unknown>;
+  warnings?:        unknown[];
+  services_used?:   string[];
+  validations?:     DhaValidationRow[];
+};
+
 export type DhaLookupResponse = {
-  request_id?:     string;
-  status?:         string;
-  issuing_state?:  string;
-  match_type?:     string;
-  validations?:    DhaValidationRow[];
+  request_id?:          string;
+  vendor_data?:         string | null;
+  metadata?:            Record<string, unknown> | null;
+  created_at?:          string;
+  database_validation?: DhaDatabaseValidation;
 };
 
 // ─── Standalone AML screening API ───────────────────────────────────────

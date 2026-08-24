@@ -22,13 +22,17 @@ function success(overrides: {
     kind: 'success',
     data: {
       request_id: overrides.request_id ?? 'req-1',
-      validations: [
-        {
-          service_id:   overrides.service_id ?? 'zaf_dha_photo',
-          outcome_code: overrides.outcome_code,
-          source_data:  overrides.source_data,
-        },
-      ],
+      database_validation: {
+        status:     'Approved',
+        match_type: 'full_match',
+        validations: [
+          {
+            service_id:   overrides.service_id ?? 'zaf_dha_photo',
+            outcome_code: overrides.outcome_code,
+            source_data:  overrides.source_data,
+          },
+        ],
+      },
     },
   };
 }
@@ -88,7 +92,10 @@ describe('routing correctness — cases 1-8', () => {
   });
 
   it('unrecognised outcome also covers a missing validations row entirely', () => {
-    const outcome: DhaLookupOutcome = { kind: 'success', data: { request_id: 'req-1', validations: [] } };
+    const outcome: DhaLookupOutcome = {
+      kind: 'success',
+      data: { request_id: 'req-1', database_validation: { validations: [] } },
+    };
     const route = routeFromDhaOutcome(outcome, SUBMITTED_ID);
     expect(route).toEqual({ kind: 'review', reason: 'dha_unrecognised_outcome' });
   });
@@ -259,5 +266,72 @@ describe('the DHA route on a clean MATCH', () => {
       dhaFirstName: 'Jane',
       dhaLastName: 'Doe',
     });
+  });
+});
+
+describe('response envelope — validations live under database_validation, not top level', () => {
+  // Regression: an earlier draft read outcome.data.validations directly.
+  // Against the real API that finds nothing, so EVERY lookup — including
+  // clean approvals — routed to the (unstaffed) review queue. Verified
+  // against live on 2026-08-24. Sandbox returns a different shape and
+  // must not be used to develop this endpoint.
+
+  it('a MATCH nested correctly under database_validation reaches the dha route', () => {
+    const route = routeFromDhaOutcome(
+      {
+        kind: 'success',
+        data: {
+          request_id: 'req-live',
+          database_validation: {
+            status: 'Approved',
+            match_type: 'full_match',
+            validations: [
+              { service_id: 'zaf_dha_photo', outcome_code: 'MATCH', source_data: { ...MATCH_ROW_BASE } },
+            ],
+          },
+        },
+      },
+      SUBMITTED_ID,
+    );
+    expect(route.kind).toBe('dha');
+  });
+
+  it('the same payload placed at the TOP level is not read (guards the old bug)', () => {
+    const route = routeFromDhaOutcome(
+      {
+        kind: 'success',
+        // Deliberately the old, wrong shape — cast because the corrected
+        // type no longer permits it, which is itself the point.
+        data: {
+          request_id: 'req-old',
+          validations: [
+            { service_id: 'zaf_dha_photo', outcome_code: 'MATCH', source_data: { ...MATCH_ROW_BASE } },
+          ],
+        } as unknown as import('@/lib/didit/types').DhaLookupResponse,
+      },
+      SUBMITTED_ID,
+    );
+    // Must not crash, and must not approve — review is the safe answer.
+    expect(route).toEqual({ kind: 'review', reason: 'dha_unrecognised_outcome' });
+  });
+
+  it('real live source_data flags are plain booleans — parseFlag never sees unknown', () => {
+    const liveSourceData = {
+      deceased: false,
+      last_name: 'LEIBOFF',
+      first_name: 'JESS NATHAN',
+      id_blocked: false,
+      photo_base64: 'ZmFrZQ==',
+      marital_status: 'MARRIED',
+      smart_card_issued: true,
+      identification_number: SUBMITTED_ID,
+      on_hanis_biometric_register: true,
+      on_national_population_register: true,
+    };
+    const route = routeFromDhaOutcome(
+      success({ outcome_code: 'MATCH', source_data: liveSourceData }),
+      SUBMITTED_ID,
+    );
+    expect(route).toMatchObject({ kind: 'dha', dhaFirstName: 'JESS NATHAN', dhaLastName: 'LEIBOFF' });
   });
 });

@@ -71,11 +71,11 @@ describe('request shape', () => {
   });
 
   it('a successful 2xx is classified success and carries the parsed body', async () => {
-    global.fetch = vi.fn(async () => new Response(JSON.stringify({ request_id: 'r1', validations: [{ service_id: 'zaf_dha_photo', outcome_code: 'MATCH' }] }), { status: 200 })) as unknown as typeof fetch;
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({ request_id: 'r1', database_validation: { validations: [{ service_id: 'zaf_dha_photo', outcome_code: 'MATCH' }] } }), { status: 200 })) as unknown as typeof fetch;
     const outcome = await callDhaPhotoLookup({ nationalId: '9001015800088', vendorData: 'user-1' });
     expect(outcome.kind).toBe('success');
     if (outcome.kind === 'success') {
-      expect(outcome.data.validations?.[0].outcome_code).toBe('MATCH');
+      expect(outcome.data.database_validation?.validations?.[0].outcome_code).toBe('MATCH');
     }
   });
 });

@@ -103,7 +103,14 @@ export function routeFromDhaOutcome(outcome: DhaLookupOutcome, submittedNational
   }
 
   // outcome.kind === 'success'
-  const row = outcome.data.validations?.find((v) => v.service_id === 'zaf_dha_photo');
+  // VERIFIED live 2026-08-24: validations[] is nested under
+  // `database_validation`, NOT at the top level. request_id is the
+  // exception — it stays top-level. The sandbox environment returns a
+  // different shape entirely (validations as an object, no source_data,
+  // no photo), so this must be checked against live, never sandbox.
+  const row = outcome.data.database_validation?.validations?.find(
+    (v) => v.service_id === 'zaf_dha_photo',
+  );
   if (!row || !row.outcome_code) {
     return { kind: 'review', reason: 'dha_unrecognised_outcome' };
   }
