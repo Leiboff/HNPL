@@ -160,6 +160,55 @@ describe('adversarial — cases 9-12', () => {
   });
 });
 
+describe('unrecognised-by-default — a flag PRESENT but in an unknown vocabulary routes to review, never the safe value', () => {
+  // The flag vocabulary is unverified (see lib/didit/dha.ts). Didit's own
+  // sample response types `deceased` as a string, so 'Y'/'N' is plausible.
+  // A parser that defaults unrecognised input to false would approve a
+  // deceased or blocked ID — these cases pin that shut.
+
+  it('deceased: "Y" routes to review, does NOT approve', () => {
+    const route = routeFromDhaOutcome(
+      success({ outcome_code: 'MATCH', source_data: { ...MATCH_ROW_BASE, deceased: 'Y' } }),
+      SUBMITTED_ID,
+    );
+    expect(route).toEqual({ kind: 'review', reason: 'dha_unrecognised_outcome' });
+    expect(route.kind).not.toBe('dha');
+  });
+
+  it('id_blocked: "Y" routes to review, does NOT approve', () => {
+    const route = routeFromDhaOutcome(
+      success({ outcome_code: 'MATCH', source_data: { ...MATCH_ROW_BASE, id_blocked: 'Y' } }),
+      SUBMITTED_ID,
+    );
+    expect(route).toEqual({ kind: 'review', reason: 'dha_unrecognised_outcome' });
+    expect(route.kind).not.toBe('dha');
+  });
+
+  it('on_national_population_register: "N" routes to review, does NOT approve', () => {
+    const route = routeFromDhaOutcome(
+      success({
+        outcome_code: 'MATCH',
+        source_data: { ...MATCH_ROW_BASE, on_national_population_register: 'N' },
+      }),
+      SUBMITTED_ID,
+    );
+    expect(route).toEqual({ kind: 'review', reason: 'dha_unrecognised_outcome' });
+    expect(route.kind).not.toBe('dha');
+  });
+
+  it('an arbitrary unrecognised value on any critical flag never reaches the dha route', () => {
+    for (const field of ['deceased', 'id_blocked', 'on_national_population_register'] as const) {
+      for (const value of ['sample_value', 'UNKNOWN', '', '  ', 'maybe', NaN, {}]) {
+        const route = routeFromDhaOutcome(
+          success({ outcome_code: 'MATCH', source_data: { ...MATCH_ROW_BASE, [field]: value } }),
+          SUBMITTED_ID,
+        );
+        expect(route.kind, `${field}=${String(value)}`).toBe('review');
+      }
+    }
+  });
+});
+
 describe('absent-by-default — every DHA signal missing a field routes to review, never the safe value', () => {
   it('missing id_blocked routes to review', () => {
     const { id_blocked: _drop, ...rest } = MATCH_ROW_BASE;

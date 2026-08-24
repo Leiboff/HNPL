@@ -46,25 +46,39 @@ export type RouteDecision =
   // patient verification is temporarily unavailable.
   | { kind: 'error'; status: number; detail: string };
 
-/** Recognises explicit true/false in whatever shape DHA sends it (boolean or string). Never treats presence-but-unparsable as false. */
-function isTruthyFlag(value: unknown): boolean {
+/**
+ * Three-valued flag parser. Recognises explicit true/false in whatever
+ * shape DHA sends it (boolean, number, or string) and returns 'unknown'
+ * for anything present but unrecognised.
+ *
+ * The third value is the whole point. DHA's flag VOCABULARY is unverified
+ * (see lib/didit/dha.ts) — Didit's own sample response types `deceased`
+ * as a string, so 'Y'/'N' is entirely plausible. A two-valued parser has
+ * to pick a default for unrecognised input, and any default is wrong:
+ * defaulting false means a deceased or blocked ID quietly passes;
+ * defaulting true means live applicants get rejected. Returning 'unknown'
+ * lets each call site route to review, which is the only honest answer to
+ * "the registry said something we don't understand".
+ *
+ * Deliberately does NOT accept 'y'/'n' as true/false. We don't know that
+ * DHA uses them, and guessing a vocabulary is the exact failure this
+ * function exists to prevent — an unrecognised value must reach a human,
+ * not be interpreted. If 'Y'/'N' is confirmed against the live API, add
+ * it here explicitly and delete this paragraph.
+ */
+function parseFlag(value: unknown): boolean | 'unknown' {
   if (typeof value === 'boolean') return value;
-  if (typeof value === 'number')  return value !== 0;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 'unknown';
+    return value !== 0;
+  }
   if (typeof value === 'string') {
     const v = value.trim().toLowerCase();
-    return v === 'true' || v === '1' || v === 'yes';
+    if (v === 'true'  || v === '1' || v === 'yes') return true;
+    if (v === 'false' || v === '0' || v === 'no')  return false;
+    return 'unknown';
   }
-  return false;
-}
-
-function isFalsyFlag(value: unknown): boolean {
-  if (typeof value === 'boolean') return value === false;
-  if (typeof value === 'number')  return value === 0;
-  if (typeof value === 'string') {
-    const v = value.trim().toLowerCase();
-    return v === 'false' || v === '0' || v === 'no';
-  }
-  return false;
+  return 'unknown';
 }
 
 function normalizeId(id: string): string {
@@ -120,16 +134,27 @@ export function routeFromDhaOutcome(outcome: DhaLookupOutcome, submittedNational
         return { kind: 'reject', reason: 'dha_id_mismatch' };
       }
 
+      // Absent OR unrecognised both route to review — we must never
+      // infer "not blocked" / "not deceased" from a value we can't read.
       if (sd.id_blocked == null) return { kind: 'review', reason: 'dha_unrecognised_outcome' };
-      if (isTruthyFlag(sd.id_blocked)) return { kind: 'reject', reason: 'dha_id_blocked' };
+      const idBlocked = parseFlag(sd.id_blocked);
+      if (idBlocked === 'unknown') return { kind: 'review', reason: 'dha_unrecognised_outcome' };
+      if (idBlocked) return { kind: 'reject', reason: 'dha_id_blocked' };
 
       if (sd.deceased == null) return { kind: 'review', reason: 'dha_unrecognised_outcome' };
-      if (isTruthyFlag(sd.deceased)) return { kind: 'reject', reason: 'dha_deceased' };
+      const deceased = parseFlag(sd.deceased);
+      if (deceased === 'unknown') return { kind: 'review', reason: 'dha_unrecognised_outcome' };
+      if (deceased) return { kind: 'reject', reason: 'dha_deceased' };
 
-      // Falsy OR absent both route to review — same handling either way.
-      if (sd.on_national_population_register == null || isFalsyFlag(sd.on_national_population_register)) {
+      // Absent, explicitly false, and unrecognised all route to review.
+      // The reason differs only so the queue can tell "registry says not
+      // on the register" apart from "registry said something unreadable".
+      if (sd.on_national_population_register == null) {
         return { kind: 'review', reason: 'dha_not_on_register' };
       }
+      const onRegister = parseFlag(sd.on_national_population_register);
+      if (onRegister === 'unknown') return { kind: 'review', reason: 'dha_unrecognised_outcome' };
+      if (!onRegister) return { kind: 'review', reason: 'dha_not_on_register' };
 
       if (!sd.photo_base64) {
         // MATCH, identity confirmed, nothing disqualifying — but no
