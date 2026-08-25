@@ -49,6 +49,35 @@ export default defineConfig({
     // is well beyond the ~0.9s these scans actually need while still catching
     // a real hang.
     testTimeout: 30_000,
+    // Cap concurrent worker processes.
+    //
+    // Symptom this fixes: a full run on the 4-core box described above
+    // died before executing a single test — 9 files, every one
+    // "[vitest-pool]: Failed to start forks worker" / "Timeout waiting
+    // for worker to respond", and a summary of "Tests no tests". Nothing
+    // was wrong with the tests; vitest could not get its workers up.
+    //
+    // Root cause is the same contention the two timeouts above document,
+    // one level lower down. Vitest defaults to roughly one fork per core
+    // and each fork is a full Node process; on 4 cores, with PGlite WASM
+    // boots and whole-tree regex scans already saturating the CPU, newly
+    // spawned workers do not get scheduled soon enough to answer their
+    // startup handshake, so the pool times them out and gives up.
+    //
+    // Raising the handshake timeout would only postpone it. Spawning
+    // fewer, better-fed workers actually fixes it: 2 leaves headroom for
+    // the WASM compiles to finish instead of starving them.
+    //
+    // Wall-clock cost is smaller than it looks — the suite was never
+    // getting 4 workers' worth of throughput on 4 contended cores. If
+    // this moves to a machine with more cores, raise it.
+    //
+    // NOTE: this is the top-level `maxWorkers`, NOT the
+    // `poolOptions.forks.maxForks` form found in older docs and answers.
+    // Vitest 4 removed poolOptions, and there is no `minWorkers` — both
+    // are type errors here rather than silent no-ops, which is how this
+    // was caught.
+    maxWorkers: 2,
   },
   resolve: {
     alias: {

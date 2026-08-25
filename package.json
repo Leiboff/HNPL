@@ -7,13 +7,14 @@
     "build": "pnpm run typecheck && next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsx scripts/clean-next-types.mts && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts",
     "test:crm-conversion": "tsx --env-file=.env.local scripts/test-crm-conversion.ts",
     "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts",
-    "prepare": "simple-git-hooks || true"
+    "prepare": "simple-git-hooks || true",
+    "test:serial": "vitest run --no-file-parallelism"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm run typecheck"
