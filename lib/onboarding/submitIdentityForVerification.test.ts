@@ -165,3 +165,80 @@ describe('error route — integration bug, status left untouched', () => {
     expect(dbState.profiles[0].identity_verification_status).toBeUndefined();
   });
 });
+
+describe('dha_name_mismatch — a registry full-given-name is not a mismatch', () => {
+  // Found in production. Datanamix returned Names "Jess Nathan" for
+  // someone who signed up as "Jess", and the old exact-string comparison
+  // flagged it. Didit's DHA endpoint returned "JESS NATHAN" for the same
+  // person, so this was never provider-specific — it just went unnoticed
+  // because AML was declining every session before the flag mattered.
+  //
+  // Registries store the FULL set of given names; a signup form captures
+  // whatever the person goes by. Two or three given names is common in
+  // South Africa, so exact matching would flag a large share of
+  // legitimate applicants — and the registry value is the more correct
+  // one, which makes treating the difference as suspicious backwards.
+
+  async function runWith(claimed: { first: string | null; last: string | null },
+                         registry: { first?: string; last?: string }) {
+    dbState.profiles = [{ id: 'user-1', role: 'patient', first_name: claimed.first, last_name: claimed.last }];
+    resolveIdentityRoute.mockResolvedValue({
+      kind: 'dha', photoBase64: 'ZmFrZQ==', outcomeCode: 'MATCH',
+      dhaFirstName: registry.first, dhaLastName: registry.last,
+    });
+    createDhaFaceMatchSession.mockResolvedValue({
+      session_id: 's1', url: 'https://verify.test/s1', status: 'Not Started',
+      workflow_id: 'wf', workflow_version: 1,
+    });
+
+    const { submitIdentityForVerification } = await import('./actions');
+    await submitIdentityForVerification({ saIdNumber: VALID_SA_IDS[0], consent: true });
+    return dbState.profiles[0].dha_name_mismatch as boolean;
+  }
+
+  it('the real production case: claimed "Jess" vs registry "Jess Nathan" is NOT a mismatch', async () => {
+    expect(await runWith({ first: 'Jess', last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(false);
+  });
+
+  it('a middle name used as the everyday name is not a mismatch', async () => {
+    // People do go by their second given name.
+    expect(await runWith({ first: 'Nathan', last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(false);
+  });
+
+  it('the full given names matching exactly is not a mismatch', async () => {
+    expect(await runWith({ first: 'Jess Nathan', last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(false);
+  });
+
+  it('case and surrounding whitespace are ignored (Didit returns UPPERCASE)', async () => {
+    expect(await runWith({ first: '  jess ', last: 'leiboff' }, { first: 'JESS NATHAN', last: 'LEIBOFF' })).toBe(false);
+  });
+
+  it('an initial matches the name it abbreviates', async () => {
+    expect(await runWith({ first: 'J Nathan', last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(false);
+  });
+
+  it('hyphens and apostrophes normalise on surnames', async () => {
+    expect(await runWith({ first: 'Jess', last: "O'Brien" },   { first: 'Jess', last: 'O Brien' })).toBe(false);
+    expect(await runWith({ first: 'Jess', last: 'Smith-Jones' }, { first: 'Jess', last: 'Smith Jones' })).toBe(false);
+  });
+
+  it('a genuinely different given name IS a mismatch', async () => {
+    expect(await runWith({ first: 'Sipho', last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(true);
+  });
+
+  it('a claimed name the registry does not hold IS a mismatch, even alongside one it does', async () => {
+    // "More names than the registry has" is a real discrepancy, not a
+    // subset — this is the direction that must NOT be forgiven.
+    expect(await runWith({ first: 'Jess Sipho', last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(true);
+  });
+
+  it('a different surname IS a mismatch — surnames are compared exactly', async () => {
+    expect(await runWith({ first: 'Jess', last: 'Naidoo' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(true);
+  });
+
+  it('a missing value on either side is not treated as a mismatch', async () => {
+    // Only ever sets a review flag, so silence beats a false positive.
+    expect(await runWith({ first: null, last: 'Leiboff' }, { first: 'Jess Nathan', last: 'Leiboff' })).toBe(false);
+    expect(await runWith({ first: 'Jess', last: 'Leiboff' }, { first: undefined,   last: 'Leiboff' })).toBe(false);
+  });
+});

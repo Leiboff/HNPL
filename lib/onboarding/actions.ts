@@ -296,9 +296,69 @@ export async function startIdentityVerification(): Promise<StartVerificationResu
 
 const DHA_CONSENT_VERSION = 'v1-placeholder'; // TODO: legal review — bump when the consent copy changes.
 
-function nameMismatch(claimed: string | null, registry: string | undefined): boolean {
+/**
+ * Normalises a name for comparison: lowercase, collapse whitespace, and
+ * strip punctuation that differs between a form field and a registry
+ * record (hyphens, apostrophes, full stops in initials).
+ */
+function normalizeName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[.'’\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Do the applicant's claimed GIVEN names contradict the registry's?
+ *
+ * Not string equality. Identity registries store the full set of given
+ * names in one field, while a signup form captures whatever the person
+ * types — usually the one name they actually go by. Observed live:
+ * Datanamix returned Names "Jess Nathan" for someone who signed up as
+ * "Jess", and Didit's DHA endpoint returned "JESS NATHAN" for the same
+ * person. Exact comparison flagged both as mismatches.
+ *
+ * That is not a mismatch, it is a subset. In South Africa two or three
+ * given names is common, so exact matching would flag a large share of
+ * legitimate applicants — and the registry value is the MORE correct
+ * one, so treating the difference as suspicious is backwards.
+ *
+ * Rule: every token the applicant claimed must appear among the
+ * registry's tokens. So "Jess" matches "Jess Nathan", and so does
+ * "Nathan" (people do go by a middle name) and "Jess Nathan" itself.
+ * "Sipho" does not. A claimed name with MORE names than the registry
+ * holds still mismatches — that is a real discrepancy, not a subset.
+ *
+ * Single initials are matched as initials ("J" against "Jess") because a
+ * form that captured "J Nathan" is not evidence of a different person.
+ */
+function givenNamesMismatch(claimed: string | null, registry: string | undefined): boolean {
+  // Absent on either side is not evidence of a mismatch — same
+  // conservative stance as before. It only ever sets a review flag, so
+  // silence is better than a false positive.
   if (!claimed || !registry) return false;
-  return claimed.trim().toLowerCase() !== registry.trim().toLowerCase();
+
+  const claimedTokens  = normalizeName(claimed).split(' ').filter(Boolean);
+  const registryTokens = normalizeName(registry).split(' ').filter(Boolean);
+  if (claimedTokens.length === 0 || registryTokens.length === 0) return false;
+
+  return !claimedTokens.every((token) =>
+    registryTokens.some((r) => (token.length === 1 ? r.startsWith(token) : r === token)),
+  );
+}
+
+/**
+ * Surnames are compared exactly (after normalisation). Unlike given
+ * names there is no subset relationship to allow for — a surname is a
+ * single value on both sides, so a difference is a genuine discrepancy
+ * worth flagging. Normalisation still handles case, double-barrelled
+ * hyphens and apostrophes ("O'Brien" / "o brien").
+ */
+function surnameMismatch(claimed: string | null, registry: string | undefined): boolean {
+  if (!claimed || !registry) return false;
+  return normalizeName(claimed) !== normalizeName(registry);
 }
 
 // Declined reasons the applicant can plausibly do something about
@@ -387,8 +447,8 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
       return { error: 'Encryption error — please contact support.' };
     }
 
-    const mismatch = nameMismatch(loaded.claimedFirstName, route.dhaFirstName)
-      || nameMismatch(loaded.claimedLastName, route.dhaLastName);
+    const mismatch = givenNamesMismatch(loaded.claimedFirstName, route.dhaFirstName)
+      || surnameMismatch(loaded.claimedLastName, route.dhaLastName);
 
     const { error } = await svc()
       .from('profiles')
