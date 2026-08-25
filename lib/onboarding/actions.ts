@@ -9,14 +9,13 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
-import { stubLivenessCheck } from '@/lib/onboarding/liveness/stubLivenessCheck';
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
-// One action per step (plus a finalize + credit-check / liveness stubs).
+// One action per step (plus a finalize + a credit-check stub).
 // Each action:
 //   • Requires the caller to be an authenticated patient.
 //   • Validates its own input (client-side is convenience, this is authority).
@@ -537,41 +536,6 @@ export async function runCreditCheck(): Promise<ActionResult> {
   const nextProfile: ProfileForOnboarding = {
     ...loaded.profile,
     credit_check_status: 'passed',
-  };
-  const finalize = await maybeFinalize(loaded.userId, loaded.user, nextProfile);
-  return { error: null, nextPath: finalize.nextPath };
-}
-
-// ─── runLiveness ───────────────────────────────────────────────────────
-//
-// Integration seam. Today: with ENABLE_LIVENESS on, marks liveness as
-// verified via a stub. With the flag OFF, this route redirects the user
-// out; the state model excludes 'liveness' from their step list.
-
-export async function runLiveness(): Promise<ActionResult> {
-  const loaded = await loadUserAndProfile();
-  if (!loaded.ok) return { error: loaded.error };
-  if (!currentFlags().liveness) {
-    return { error: null, nextPath: '/onboarding' };
-  }
-
-  // Pass/fail decision comes from ONE isolated module — the current stub
-  // always returns 'pass' (no real check; see its banner). Gating on the
-  // result keeps it swappable: return 'fail' there and the step blocks.
-  if (stubLivenessCheck() !== 'pass') {
-    return { error: 'We could not verify it was you. Please try again.' };
-  }
-
-  const now = new Date().toISOString();
-  const { error } = await svc()
-    .from('profiles')
-    .update({ liveness_verified_at: now })
-    .eq('id', loaded.userId);
-  if (error) return { error: error.message };
-
-  const nextProfile: ProfileForOnboarding = {
-    ...loaded.profile,
-    liveness_verified_at: now,
   };
   const finalize = await maybeFinalize(loaded.userId, loaded.user, nextProfile);
   return { error: null, nextPath: finalize.nextPath };

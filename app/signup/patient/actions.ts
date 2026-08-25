@@ -28,7 +28,7 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 //   • phone capture (now in /onboarding/phone's phone-entry sub-stage)
 //   • SA-ID validation + encryption (now in /onboarding/identity, still
 //     the same lib/idEncryption + lib/validation/saId under the hood)
-//   • salary_day (now in /onboarding/identity)
+//   • salary_day (now in /onboarding/salary)
 
 export type PatientSignupInput = {
   firstName:     string;

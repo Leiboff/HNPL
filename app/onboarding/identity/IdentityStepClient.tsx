@@ -1,49 +1,35 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import SalaryDayPicker from '@/components/SalaryDayPicker';
 import { ShieldIcon } from '@/app/_landing/icons';
-import { saveSalaryDetails, submitIdentityForVerification, refreshOnboardingState } from '@/lib/onboarding/actions';
+import { submitIdentityForVerification, refreshOnboardingState } from '@/lib/onboarding/actions';
 import { validateSaId, saIdAge } from '@/lib/validation';
-import { isValidSalaryAmount } from '@/lib/salaryAmount';
+import { INPUT_CLS, BUTTON_CLS } from '@/app/onboarding/formStyles';
 
 // ─── Identity step (client) ────────────────────────────────────────────
 //
-// Two independent pieces, each with its own submit:
+// ONE job: take the SA ID and consent, and start verification. The
+// salary day/amount form that used to share this screen now lives at
+// /onboarding/salary and runs before this step — see
+// app/onboarding/salary/page.tsx for why that order.
 //
-//   1. Salary day + amount — plain form, saveSalaryDetails().
-//   2. Identity verification — the patient types their SA ID and gives
-//      consent; submitIdentityForVerification() resolves DHA-photo-first
-//      routing SERVER-SIDE (validateSaId/saIdAge here are client-side
-//      convenience only, same generic-error rule the old manual-entry
-//      form used — the server re-validates for real) and either:
-//        outcome:'redirect' — a Didit session was created (DHA-photo
-//          face-match OR the OCR fallback); redirect to it. Its webhook
-//          applies the decision asynchronously, so when the user is
-//          redirected BACK here (?didit=callback) we poll
-//          refreshOnboardingState() until the server says the step
-//          moved on.
-//        outcome:'review'   — resolved without a session (e.g. DHA said
-//          "not on the register"). No redirect; reload so the server-
-//          rendered identityVerificationStatus prop picks up 'in_review'.
-//        error              — synchronous decline (e.g. DHA said
-//          NO_MATCH) or a transient failure; shown inline.
+// submitIdentityForVerification() resolves registry-photo-first routing
+// SERVER-SIDE (validateSaId/saIdAge here are client-side convenience
+// only; the server re-validates for real) and returns one of:
 //
-// The onboarding 'identity' step is satisfied only once BOTH have
-// landed — see lib/onboarding/state.ts. Either can be done first.
-
-const INPUT_CLS =
-  'h-[56px] w-full rounded-[14px] border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD] px-4 text-[16px] tracking-[0.06em] ' +
-  'text-[#13294B] outline-none transition-colors placeholder:text-[#A8B4C2] ' +
-  'focus:border-[#15A89E] focus:bg-white focus:ring-4 focus:ring-[#15A89E]/15';
-
-const BUTTON_CLS =
-  'flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all ' +
-  'disabled:opacity-45 disabled:cursor-not-allowed';
+//   outcome:'redirect' — a Didit session was created for liveness +
+//     face match against the registry portrait. Its webhook applies the
+//     decision asynchronously, so when the patient is redirected BACK
+//     here (?didit=callback) we poll refreshOnboardingState() until the
+//     server says the step moved on.
+//   outcome:'review'   — resolved without a session (e.g. the registry
+//     could not be reached, or returned no usable portrait). No
+//     redirect; reload so the server-rendered
+//     identityVerificationStatus prop picks up 'in_review'.
+//   error              — synchronous decline (e.g. registry no-match) or
+//     a transient failure; shown inline.
 
 type Props = {
-  salaryDay:                   number | null;
-  salaryAmount:                number | null;
   identityVerificationStatus:  string | null;
   identityVerificationReason:  string | null;
   returningFromDidit:          boolean;
@@ -60,20 +46,10 @@ const SA_ID_GENERIC_ERROR = 'Please enter a valid SA ID number.';
 const MIN_AGE = 18;
 
 export default function IdentityStepClient({
-  salaryDay: initialSalaryDay,
-  salaryAmount: initialSalaryAmount,
   identityVerificationStatus,
   identityVerificationReason,
   returningFromDidit,
 }: Props) {
-  // ── Salary form ──
-  const [salaryDay,    setSalaryDay]    = useState<number | null>(initialSalaryDay);
-  const [salaryAmount, setSalaryAmount] = useState(initialSalaryAmount != null ? String(initialSalaryAmount) : '');
-  const [salaryError,  setSalaryError]  = useState<string | null>(null);
-  const [salarySaving, setSalarySaving] = useState(false);
-  const [salarySaved,  setSalarySaved]  = useState(initialSalaryDay != null && initialSalaryAmount != null);
-
-  // ── Identity verification ──
   const [saId,           setSaId]           = useState('');
   const [consent,        setConsent]        = useState(false);
   const [verifyError,    setVerifyError]    = useState<string | null>(null);
@@ -98,34 +74,6 @@ export default function IdentityStepClient({
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [polling]);
-
-  async function handleSalarySubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSalaryError(null);
-
-    if (salaryDay === null) {
-      setSalaryError('Please choose when your salary is paid.');
-      return;
-    }
-    const amount = Number(salaryAmount);
-    if (!isValidSalaryAmount(amount)) {
-      setSalaryError('Please enter how much you earn a month.');
-      return;
-    }
-
-    setSalarySaving(true);
-    const result = await saveSalaryDetails({ salaryDay, salaryAmount: amount });
-    setSalarySaving(false);
-
-    if (result.error !== null) {
-      setSalaryError(result.error);
-      return;
-    }
-    setSalarySaved(true);
-    if (result.nextPath !== '/onboarding/identity') {
-      window.location.href = result.nextPath;
-    }
-  }
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault();
@@ -198,7 +146,7 @@ export default function IdentityStepClient({
             <ShieldIcon size={16} />
           </span>
           <p className="text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
-            We use your SA ID and a quick selfie to confirm it&apos;s really you — handled securely by our verification partner, Didit.
+            We use your ID number and a quick selfie to confirm it&apos;s really you. Your selfie is checked against your official identity photo.
           </p>
         </div>
 
@@ -244,7 +192,22 @@ export default function IdentityStepClient({
               />
             </div>
 
-            {/* TODO: legal review — placeholder consent copy, not final. */}
+            {/*
+              TODO: LEGAL REVIEW — placeholder consent copy, NOT final.
+
+              The previous wording named "the Department of Home Affairs"
+              as the source. That is no longer accurate: with
+              IDENTITY_PHOTO_PROVIDER=datanamix the photo comes from a
+              registered credit bureau's copy of Home Affairs data (see
+              lib/onboarding/identityProvider.ts), which is a different
+              controller and a different POPIA disclosure.
+
+              The text below is deliberately source-neutral so it is not
+              actively WRONG, but "identity records" is vague and vague
+              consent is weak consent. A lawyer needs to decide whether
+              POPIA requires naming the specific third party, and if so
+              whether this copy must change when the provider does.
+            */}
             <label className="flex items-start gap-2 text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
               <input
                 type="checkbox"
@@ -253,8 +216,8 @@ export default function IdentityStepClient({
                 data-testid="onboarding-dha-consent"
                 className="mt-0.5 shrink-0"
               />
-              I consent to BetterNow retrieving my identity photograph from the Department of
-              Home Affairs to verify my identity.
+              I consent to BetterNow retrieving my identity photograph from official identity
+              records, via its verification partners, to confirm my identity.
             </label>
 
             {verifyError && (
@@ -276,62 +239,6 @@ export default function IdentityStepClient({
         )}
       </form>
 
-      <form onSubmit={handleSalarySubmit} className="flex flex-col gap-6 border-t pt-6" style={{ borderColor: '#E2E8EE' }}>
-        <SalaryDayPicker
-          value={salaryDay}
-          onChange={(d) => setSalaryDay(d)}
-        />
-
-        <div className="flex flex-col gap-2">
-          <label htmlFor="salary-amount" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
-            Monthly income
-          </label>
-          <div className="relative">
-            <span
-              aria-hidden
-              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[16px]"
-              style={{ color: '#A8B4C2' }}
-            >
-              R
-            </span>
-            <input
-              id="salary-amount"
-              type="number"
-              inputMode="decimal"
-              min={0}
-              step="0.01"
-              autoComplete="off"
-              value={salaryAmount}
-              onChange={(e) => setSalaryAmount(e.target.value)}
-              data-testid="onboarding-salary-amount"
-              placeholder="15,000"
-              className={INPUT_CLS + ' pl-8'}
-            />
-          </div>
-          <p className="text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
-            What you take home a month, before any instalments. Used for the affordability check.
-          </p>
-        </div>
-
-        {salaryError && (
-          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
-            {salaryError}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={salarySaving}
-          data-testid="onboarding-identity-submit"
-          className={BUTTON_CLS}
-          style={{
-            background: salarySaved ? '#41556F' : '#15A89E',
-            boxShadow: salarySaving ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)',
-          }}
-        >
-          {salarySaving ? 'Saving…' : salarySaved ? 'Saved — update' : 'Save'}
-        </button>
-      </form>
     </div>
   );
 }

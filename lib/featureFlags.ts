@@ -23,22 +23,18 @@ function readServerFlag(name: string): boolean {
 // patients — see profiles.onboarding_completed (write-once-true).
 export const ENABLE_CREDIT_CHECK = readServerFlag('ENABLE_CREDIT_CHECK');
 
-// Turn on to activate the liveness step in the patient onboarding flow
 // (final step before completion). OFF → the step doesn't render and
 // is treated as auto-pass. Same non-retro-lock semantics as above.
-export const ENABLE_LIVENESS = readServerFlag('ENABLE_LIVENESS');
 
 // Shape used by the onboarding state model + tests. Kept as a small
 // object so tests can inject a specific flag combination without
 // mocking process.env.
 export type OnboardingFlags = {
   creditCheck: boolean;
-  liveness:    boolean;
 };
 
 export function currentFlags(): OnboardingFlags {
   return {
     creditCheck: ENABLE_CREDIT_CHECK,
-    liveness:    ENABLE_LIVENESS,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
 // ─── Stub onboarding scaffolding — isolation + safety invariants ───────
@@ -15,10 +15,8 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n
 
 const ACTIONS  = read('lib/onboarding/actions.ts');
 const AFFORD   = read('lib/underwriting/stubAffordabilityPolicy.ts');
-const LIVENESS = read('lib/onboarding/liveness/stubLivenessCheck.ts');
 // Whitespace-collapsed views so phrase checks survive comment line-wraps.
 const AFFORD1  = AFFORD.replace(/\s+/g, ' ');
-const LIVENESS1 = LIVENESS.replace(/\s+/g, ' ');
 const HOME     = read('app/patient/page.tsx');
 const BAL_CARD = read('app/patient/ApprovedBalanceCard.tsx');
 const NOTICE   = read('app/patient/TestBalanceNotice.tsx');
@@ -42,16 +40,36 @@ describe('affordability — one isolated, clearly-marked stub', () => {
   });
 });
 
-describe('liveness — one isolated, clearly-marked stub', () => {
-  it('carries a prominent STUB / not-a-real-check warning', () => {
-    expect(LIVENESS).toMatch(/STUB/);
-    expect(LIVENESS).toMatch(/NOT a real liveness/i);
-    expect(LIVENESS1).toMatch(/replace this entire module.*before/i);
+describe('liveness — NOT a stub, and NOT a separate step', () => {
+  // There used to be a stubLivenessCheck() module here that always
+  // returned 'pass' without calling any provider, gated behind
+  // ENABLE_LIVENESS. Both are gone.
+  //
+  // Liveness is now proven for real, inside the identity step: the Didit
+  // session created there runs passive liveness and face-matches the
+  // selfie against the identity-registry portrait, and its webhook
+  // writes liveness_verified_at only on approval.
+  //
+  // Pinned as absent because a dormant always-passes liveness check in a
+  // lender's onboarding flow is a liability. If it were ever switched on
+  // it would stamp verified on anyone.
+
+  it('the stub module no longer exists', () => {
+    expect(existsSync(resolve(ROOT, 'lib/onboarding/liveness/stubLivenessCheck.ts'))).toBe(false);
   });
 
-  it('runLiveness gates on the stub result (swappable to fail)', () => {
-    expect(ACTIONS).toMatch(/from '@\/lib\/onboarding\/liveness\/stubLivenessCheck'/);
-    expect(ACTIONS).toMatch(/stubLivenessCheck\(\)\s*!==\s*'pass'/);
+  it('nothing imports it, and no runLiveness action remains', () => {
+    expect(ACTIONS).not.toMatch(/stubLivenessCheck/);
+    expect(ACTIONS).not.toMatch(/export async function runLiveness/);
+  });
+
+  it('liveness_verified_at is written by the webhook, not by an onboarding action', () => {
+    // The single place liveness is established. If an action starts
+    // writing this column again, liveness has stopped meaning "a face
+    // match passed" and started meaning "some code said so".
+    const WEBHOOK = read('app/api/verification/didit/webhook/route.ts');
+    expect(WEBHOOK).toMatch(/liveness_verified_at/);
+    expect(ACTIONS).not.toMatch(/liveness_verified_at:\s*now/);
   });
 });
 
@@ -74,9 +92,9 @@ describe('the R5,000 has exactly ONE source (grep proves no second)', () => {
   });
 });
 
-describe('adversarial — no real bureau / liveness / credit computation', () => {
-  it('the stub modules make no network / provider calls and take no inputs', () => {
-    for (const src of [AFFORD, LIVENESS]) {
+describe('adversarial — no real bureau / credit computation', () => {
+  it('the affordability stub makes no network / provider calls and takes no inputs', () => {
+    for (const src of [AFFORD]) {
       expect(src).not.toMatch(/\bfetch\s*\(/);
       expect(src).not.toMatch(/https?:\/\//);
       expect(src).not.toMatch(/\b(axios|XMLHttpRequest)\b/);

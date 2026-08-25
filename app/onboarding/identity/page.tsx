@@ -5,23 +5,20 @@ import { currentFlags } from '@/lib/featureFlags';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import IdentityStepClient from './IdentityStepClient';
 
-// ─── Step: identity (Didit verification) + salary details ─────────────
+// ─── Step: identity verification ───────────────────────────────────────
 //
-// Every patient sees this step. Two independent pieces, completable in
-// either order — the step is satisfied once both have landed:
+// Every patient sees this step. It does ONE thing: take the SA ID and
+// consent, then start verification. The salary day/amount form that used
+// to share this screen is now its own step at /onboarding/salary, which
+// runs first.
 //
-//   • Salary day + amount — captured directly here (saveSalaryDetails).
-//   • The SA ID itself, plus liveness — captured by a Didit-hosted
-//     session (OCR document scan + liveness + face match). This page
-//     only starts the session (startIdentityVerification) and redirects
-//     to Didit's hosted URL; the decision is applied asynchronously by
-//     app/api/verification/didit/webhook/route.ts, which is the ONLY
-//     place sa_id_number gets written now.
-//
-// Credit-check SEAM: saveSalaryDetails' server code auto-passes the
-// credit check when ENABLE_CREDIT_CHECK is off (writes
-// credit_check_status='passed'). When on, credit_check_status stays
-// NULL and the router forwards to /onboarding/credit-check next.
+// The patient types their SA ID; the server fetches their portrait from
+// the identity registry and creates a Didit session that proves liveness
+// and face-matches the selfie against that portrait. This page only
+// STARTS the session and redirects to Didit's hosted URL — the decision
+// is applied asynchronously by
+// app/api/verification/didit/webhook/route.ts, which is the ONLY place
+// sa_id_number gets written.
 
 export const dynamic = 'force-dynamic';
 
@@ -62,11 +59,13 @@ export default async function IdentityStep({ searchParams }: Props) {
       steps={steps}
       currentStep="identity"
       title="Verify your identity"
-      description="We'll scan your SA ID and take a quick selfie to confirm it's you, plus your monthly income to run a quick affordability check and time instalments to your salary."
+      // Copy deliberately describes what NOW happens: the patient enters
+      // their ID number and takes a selfie. There is no document scan —
+      // the reference photo comes from the identity registry, not from a
+      // photograph of an ID card.
+      description="Enter your SA ID number and take a quick selfie. We'll check it against your official identity photo to confirm it's really you."
     >
       <IdentityStepClient
-        salaryDay={p.salary_day}
-        salaryAmount={p.salary_amount}
         identityVerificationStatus={(profile as { identity_verification_status: string | null }).identity_verification_status}
         identityVerificationReason={(profile as { identity_verification_reason: string | null }).identity_verification_reason}
         returningFromDidit={params.didit === 'callback'}

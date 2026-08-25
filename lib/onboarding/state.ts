@@ -23,7 +23,7 @@ import type { OnboardingFlags } from '@/lib/featureFlags';
 // Cached-flag invariant: profiles.onboarding_completed is write-once-
 // TRUE. Once it's set, computeOnboarding short-circuits to `{done:
 // true}` without re-evaluating the underlying step conditions. That
-// stops a flag flip (ENABLE_CREDIT_CHECK / ENABLE_LIVENESS ON later)
+// stops a flag flip (ENABLE_CREDIT_CHECK ON later)
 // from retro-locking a patient who finished under the old flag set.
 //
 // Everything here is pure — no I/O, no side effects. Test with plain
@@ -32,25 +32,38 @@ import type { OnboardingFlags } from '@/lib/featureFlags';
 export type OnboardingStep =
   | 'verify-email'
   | 'phone'
+  | 'salary'
   | 'identity'
-  | 'credit-check'
-  | 'liveness';
+  | 'credit-check';
+// NOTE: there is no 'liveness' step. Liveness is not a separate stage of
+// onboarding — it happens INSIDE the identity step. The Didit session
+// created there proves liveness and face-matches the selfie against the
+// identity-registry portrait in one ceremony, and its webhook writes
+// liveness_verified_at on approval.
+//
+// A standalone step existed before that architecture landed, backed by
+// stubLivenessCheck() which always returned 'pass' without calling any
+// provider. Once the webhook started writing liveness_verified_at, the
+// step could only ever be already-satisfied on arrival — or, worse,
+// stamp a fake pass on someone the real face match had not cleared. It
+// has been removed rather than left flagged off, because a dormant
+// always-passes liveness check is a liability, not an option.
 
 export const STEP_PATH: Record<OnboardingStep, string> = {
   'verify-email': '/onboarding/verify-email',
   'phone':        '/onboarding/phone',
+  'salary':       '/onboarding/salary',
   'identity':     '/onboarding/identity',
   'credit-check': '/onboarding/credit-check',
-  'liveness':     '/onboarding/liveness',
 };
 
 // Display copy — shown in the shell above the current step.
 export const STEP_TITLE: Record<OnboardingStep, string> = {
   'verify-email': 'Verify your email',
   'phone':        'Add your cell number',
-  'identity':     'Your ID and salary details',
+  'salary':       'Your income',
+  'identity':     'Verify your identity',
   'credit-check': 'Affordability check',
-  'liveness':     'Verify it\'s really you',
 };
 
 export type UserForOnboarding = {
@@ -102,9 +115,15 @@ export function stepListFor(user: UserForOnboarding, flags: OnboardingFlags): On
   const steps: OnboardingStep[] = [];
   if (user.identity_providers.includes('email')) steps.push('verify-email');
   steps.push('phone');
+  // Salary comes BEFORE identity deliberately. The identity step ends by
+  // redirecting the patient off-site to Didit and resolves
+  // asynchronously via webhook; if salary came after it, they would have
+  // to come BACK and fill in a form after verifying. This way the only
+  // synchronous form work happens first and the flow can complete
+  // without returning to an input.
+  steps.push('salary');
   steps.push('identity');
   if (flags.creditCheck) steps.push('credit-check');
-  if (flags.liveness)    steps.push('liveness');
   return steps;
 }
 
@@ -127,14 +146,19 @@ function stepIsSatisfied(
       return !!user.email_confirmed_at;
     case 'phone':
       return !!profile.phone_verified_at;
+    case 'salary':
+      return profile.salary_day    !== null && profile.salary_day    !== undefined
+          && profile.salary_amount !== null && profile.salary_amount !== undefined;
     case 'identity':
-      return !!profile.sa_id_number
-        && profile.salary_day    !== null && profile.salary_day    !== undefined
-        && profile.salary_amount !== null && profile.salary_amount !== undefined;
+      // BOTH columns are written by the Didit webhook, on approval, in
+      // the same update — sa_id_number for the verified identity and
+      // liveness_verified_at for the face match that proved it. Checking
+      // both makes the identity step's meaning explicit: the patient is
+      // who they claim AND a live human. Neither can be set by the
+      // patient typing into a form.
+      return !!profile.sa_id_number && !!profile.liveness_verified_at;
     case 'credit-check':
       return profile.credit_check_status === 'passed';
-    case 'liveness':
-      return !!profile.liveness_verified_at;
   }
 }
 

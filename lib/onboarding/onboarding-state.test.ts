@@ -62,26 +62,26 @@ const BLANK_PROFILE: ProfileForOnboarding = {
   onboarding_completed: false,
 };
 
-const FLAGS_OFF: OnboardingFlags = { creditCheck: false, liveness: false };
-const FLAGS_ON:  OnboardingFlags = { creditCheck: true,  liveness: true };
+const FLAGS_OFF: OnboardingFlags = { creditCheck: false };
+const FLAGS_ON:  OnboardingFlags = { creditCheck: true };
 
 // ─── stepListFor — path-fixed step list ──────────────────────────────
 
 describe('stepListFor — path is stable across the journey; keyed on identity providers', () => {
-  it('email user (pre email-OTP) — 3 steps: [verify-email, phone, identity]', () => {
-    expect(stepListFor(EMAIL_USER, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'identity']);
+  it('email user (pre email-OTP) — 4 steps: [verify-email, phone, identity]', () => {
+    expect(stepListFor(EMAIL_USER, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'salary', 'identity']);
   });
 
-  it('email user AFTER email OTP — SAME 3 steps (verify-email still in list, now completed)', () => {
+  it('email user AFTER email OTP — SAME 4 steps (verify-email still in list, now completed)', () => {
     // The regression pin for the shrinking-total defect. Same account,
     // same identity_providers=['email'], only email_confirmed_at
     // changed. List length must NOT shrink.
-    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'identity']);
-    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF).length).toBe(3);
+    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF)).toEqual(['verify-email', 'phone', 'salary', 'identity']);
+    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF).length).toBe(4);
   });
 
-  it('Google-only user — 2 steps: [phone, identity]; verify-email never appears', () => {
-    expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).toEqual(['phone', 'identity']);
+  it('Google-only user — 3 steps: [phone, identity]; verify-email never appears', () => {
+    expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).toEqual(['phone', 'salary', 'identity']);
     expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).not.toContain('verify-email');
   });
 
@@ -91,8 +91,10 @@ describe('stepListFor — path is stable across the journey; keyed on identity p
     // heart of the fix.
     const emailPath  = stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF);
     const googlePath = stepListFor(GOOGLE_USER,          FLAGS_OFF);
-    expect(emailPath.length).toBe(3);
-    expect(googlePath.length).toBe(2);
+    // Asserted as a DIFFERENCE rather than two magic numbers: the point
+    // of this test is that the email path carries exactly one extra step
+    // (verify-email), which stays true as steps are added elsewhere.
+    expect(emailPath.length).toBe(googlePath.length + 1);
     expect(emailPath[0]).toBe('verify-email');
     expect(googlePath[0]).toBe('phone');
   });
@@ -107,13 +109,13 @@ describe('stepListFor — path is stable across the journey; keyed on identity p
 
   it('email user, flags on → 5 steps (all of them)', () => {
     expect(stepListFor(EMAIL_USER, FLAGS_ON)).toEqual([
-      'verify-email', 'phone', 'identity', 'credit-check', 'liveness',
+      'verify-email', 'phone', 'salary', 'identity', 'credit-check',
     ]);
   });
 
   it('Google user, flags on → 4 steps (no verify-email)', () => {
     expect(stepListFor(GOOGLE_USER, FLAGS_ON)).toEqual([
-      'phone', 'identity', 'credit-check', 'liveness',
+      'phone', 'salary', 'identity', 'credit-check',
     ]);
   });
 
@@ -126,75 +128,78 @@ describe('stepListFor — path is stable across the journey; keyed on identity p
 // ─── computeOnboarding — first unfinished step + progress index ──────
 
 describe('computeOnboarding — flags off (launch shape)', () => {
-  it('email user, blank profile → step=verify-email, 1 of 3', () => {
+  it('email user, blank profile → step=verify-email, 1 of 4', () => {
     const s = computeOnboarding(EMAIL_USER, BLANK_PROFILE, FLAGS_OFF);
     expect(s.done).toBe(false);
     if (!s.done) {
       expect(s.step).toBe('verify-email');
       expect(s.index).toBe(1);
-      expect(s.total).toBe(3);
+      expect(s.total).toBe(4);
       expect(s.path).toBe(STEP_PATH['verify-email']);
     }
   });
 
-  it('Google user, blank profile → step=phone, 1 of 2 (email OTP skipped)', () => {
+  it('Google user, blank profile → step=phone, 1 of 3 (email OTP skipped)', () => {
     const s = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
     expect(s.done).toBe(false);
     if (!s.done) {
       expect(s.step).toBe('phone');
       expect(s.index).toBe(1);
-      expect(s.total).toBe(2);
+      expect(s.total).toBe(3);
     }
   });
 
-  it('email user, email confirmed only → step=phone, 2 of 3 (list length stays 3)', () => {
+  it('email user, email confirmed only → step=phone, 2 of 4 (list length stays 4)', () => {
     // This is the key regression pin for the shrinking-total defect.
     // BEFORE the fix, this returned total=2 (verify-email dropped
     // because it was completed). AFTER the fix, the list is fixed
-    // per PATH — total stays 3, index advances to 2.
+    // per PATH — total stays 4, index advances to 2.
     const s = computeOnboarding(EMAIL_USER_CONFIRMED, BLANK_PROFILE, FLAGS_OFF);
     expect(s.done).toBe(false);
     if (!s.done) {
       expect(s.step).toBe('phone');
       expect(s.index).toBe(2);
-      expect(s.total).toBe(3);
+      expect(s.total).toBe(4);
     }
   });
 
-  it('email user, email+phone → step=identity, 3 of 3', () => {
+  it('email user, email+phone → step=salary, 3 of 4', () => {
     const p = { ...BLANK_PROFILE, phone_verified_at: '2026-07-06T10:00:00Z' };
     const s = computeOnboarding(EMAIL_USER_CONFIRMED, p, FLAGS_OFF);
     expect(s.done).toBe(false);
     if (!s.done) {
-      expect(s.step).toBe('identity');
+      expect(s.step).toBe('salary');
       expect(s.index).toBe(3);
-      expect(s.total).toBe(3);
+      expect(s.total).toBe(4);
     }
   });
 
-  it('Google user progression: blank → phone (1 of 2); phone verified → identity (2 of 2)', () => {
+  it('Google user progression: blank → phone (1 of 2); phone verified → salary (2 of 3)', () => {
     // Google-only user's list is length 2 at every stage — verify-email
     // is never in their path.
     const s1 = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
     if (!s1.done) {
-      expect(s1.total).toBe(2);
+      expect(s1.total).toBe(3);
       expect(s1.index).toBe(1);
       expect(s1.step).toBe('phone');
     }
     const p2 = { ...BLANK_PROFILE, phone_verified_at: '2026-07-06T10:00:00Z' };
     const s2 = computeOnboarding(GOOGLE_USER, p2, FLAGS_OFF);
     if (!s2.done) {
-      expect(s2.total).toBe(2);
+      expect(s2.total).toBe(3);
       expect(s2.index).toBe(2);
-      expect(s2.step).toBe('identity');
+      expect(s2.step).toBe('salary');
     }
   });
 
   it('everything satisfied, flags off → done', () => {
+    // liveness_verified_at is part of what makes identity satisfied now
+    // (webhook writes it with sa_id_number), not a separate step.
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
       phone_verified_at: '2026-07-06T10:00:00Z',
       sa_id_number:      'v1:iv:tag:ciphertext',
+      liveness_verified_at: '2026-07-06T10:00:00Z',
       salary_day:        25,
       salary_amount:     15000,
     };
@@ -203,12 +208,13 @@ describe('computeOnboarding — flags off (launch shape)', () => {
   });
 });
 
-describe('computeOnboarding — flags ON add credit-check + liveness to the flow', () => {
+describe('computeOnboarding — the credit-check flag adds one step', () => {
   it('phone + ID satisfied, flag on, credit_check_status null → step=credit-check', () => {
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
       phone_verified_at: '2026-07-06T10:00:00Z',
       sa_id_number:      'v1:iv:tag:ciphertext',
+      liveness_verified_at: '2026-07-06T10:00:00Z',
       salary_day:        25,
       salary_amount:     15000,
     };
@@ -216,43 +222,52 @@ describe('computeOnboarding — flags ON add credit-check + liveness to the flow
     expect(s.done).toBe(false);
     if (!s.done) {
       expect(s.step).toBe('credit-check');
-      expect(s.total).toBe(4);   // phone, id, credit, liveness
+      expect(s.total).toBe(4);   // phone, salary, id, credit
     }
   });
 
-  it('credit passed but liveness not yet → step=liveness', () => {
-    const p: ProfileForOnboarding = {
-      ...BLANK_PROFILE,
-      phone_verified_at:   '2026-07-06T10:00:00Z',
-      sa_id_number:        'v1:iv:tag:ciphertext',
-      salary_day:          25,
-      salary_amount:       15000,
-      credit_check_status: 'passed',
-    };
-    const s = computeOnboarding(GOOGLE_USER, p, FLAGS_ON);
-    expect(s.done).toBe(false);
-    if (!s.done) expect(s.step).toBe('liveness');
-  });
-
-  it('all satisfied incl. liveness → done', () => {
+  it('everything satisfied with the credit flag on → done; there is no further step', () => {
+    // Regression: a separate 'liveness' step used to sit after
+    // credit-check. Liveness is not a stage of onboarding — it happens
+    // inside the identity step's Didit session, and its webhook writes
+    // liveness_verified_at alongside sa_id_number in the same update.
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
       phone_verified_at:    '2026-07-06T10:00:00Z',
       sa_id_number:         'v1:iv:tag:ciphertext',
+      liveness_verified_at: '2026-07-06T10:00:00Z',
       salary_day:           25,
       salary_amount:        15000,
       credit_check_status:  'passed',
-      liveness_verified_at: '2026-07-06T10:00:00Z',
     };
     const s = computeOnboarding(GOOGLE_USER, p, FLAGS_ON);
     expect(s.done).toBe(true);
+  });
+
+  it('identity is NOT satisfied by an SA ID without the matching liveness stamp', () => {
+    // Both columns are written by the webhook, atomically, on approval.
+    // An SA ID present without liveness_verified_at means no approved
+    // face match — which must not count as a verified identity.
+    const p: ProfileForOnboarding = {
+      ...BLANK_PROFILE,
+      phone_verified_at:    '2026-07-06T10:00:00Z',
+      sa_id_number:         'v1:iv:tag:ciphertext',
+      liveness_verified_at: null,
+      salary_day:           25,
+      salary_amount:        15000,
+      credit_check_status:  'passed',
+    };
+    const s = computeOnboarding(GOOGLE_USER, p, FLAGS_ON);
+    expect(s.done).toBe(false);
+    if (!s.done) expect(s.step).toBe('identity');
   });
 });
 
 describe('cached onboarding_completed — write-once-true, no retro-lock', () => {
   it('onboarding_completed=true short-circuits to done, even if flags flip on and columns are empty', () => {
-    // Scenario: a patient completed under flags-OFF (no credit/liveness
-    // columns set). Later the flags flip ON. They must NOT be retro-locked.
+    // Scenario: a patient completed under the credit flag OFF (no
+    // credit_check_status set). Later it flips ON. They must NOT be
+    // retro-locked out of an account they already finished.
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
       phone_verified_at:    '2026-07-06T10:00:00Z',
@@ -260,7 +275,7 @@ describe('cached onboarding_completed — write-once-true, no retro-lock', () =>
       salary_day:           25,
       salary_amount:        15000,
       credit_check_status:  null,      // flag was OFF at completion
-      liveness_verified_at: null,      // flag was OFF at completion
+      liveness_verified_at: null,
       onboarding_completed: true,      // cached
     };
     const s = computeOnboarding(GOOGLE_USER, p, FLAGS_ON);
@@ -290,7 +305,7 @@ describe('resume behaviour — abandonment mid-flow returns them to the same ste
     if (!s.done) {
       expect(s.step).toBe('phone');
       expect(s.index).toBe(2);
-      expect(s.total).toBe(3);
+      expect(s.total).toBe(4);
     }
   });
 });
@@ -312,7 +327,6 @@ const ONB_EMAIL      = read('app/onboarding/verify-email/page.tsx');
 const ONB_PHONE      = read('app/onboarding/phone/page.tsx');
 const ONB_IDENTITY   = read('app/onboarding/identity/page.tsx');
 const ONB_CREDIT     = read('app/onboarding/credit-check/page.tsx');
-const ONB_LIVENESS   = read('app/onboarding/liveness/page.tsx');
 const DIDIT_WEBHOOK  = read('app/api/verification/didit/webhook/route.ts');
 
 describe('Migration 0066 — idempotent + backfill', () => {
@@ -351,16 +365,17 @@ describe('Migration 0066 — idempotent + backfill', () => {
 });
 
 describe('Feature flags — server-only env reads, default false', () => {
-  it('exports ENABLE_CREDIT_CHECK + ENABLE_LIVENESS + currentFlags', () => {
+  it('exports ENABLE_CREDIT_CHECK + currentFlags, and no liveness flag', () => {
     expect(FLAGS_TS).toMatch(/export const ENABLE_CREDIT_CHECK/);
-    expect(FLAGS_TS).toMatch(/export const ENABLE_LIVENESS/);
+    // ENABLE_LIVENESS is gone: the step it gated was removed, and a
+    // flag for an always-passes stub is a footgun, not a feature toggle.
+    expect(FLAGS_TS).not.toMatch(/ENABLE_LIVENESS/);
     expect(FLAGS_TS).toMatch(/export function currentFlags/);
   });
 
   it('reads process.env.ENABLE_* (server-only — not NEXT_PUBLIC_)', () => {
     expect(FLAGS_TS).toMatch(/process\.env\[name\]/);
     expect(FLAGS_TS).toMatch(/readServerFlag\('ENABLE_CREDIT_CHECK'\)/);
-    expect(FLAGS_TS).toMatch(/readServerFlag\('ENABLE_LIVENESS'\)/);
   });
 
   it('defaults to false when the env var is missing', () => {
@@ -382,7 +397,12 @@ describe('Onboarding state module — cached-true short-circuit', () => {
     // it; email-signup users see it throughout the journey.
     expect(STATE_TS).toMatch(/if \(user\.identity_providers\.includes\('email'\)\) steps\.push\('verify-email'\)/);
     expect(STATE_TS).toMatch(/if \(flags\.creditCheck\)\s*steps\.push\('credit-check'\)/);
-    expect(STATE_TS).toMatch(/if \(flags\.liveness\)\s*steps\.push\('liveness'\)/);
+    // There is deliberately NO liveness step to push. It was removed
+    // rather than left flagged off: its stub always returned 'pass'
+    // without calling any provider, and the identity webhook already
+    // writes liveness_verified_at.
+    expect(STATE_TS).not.toMatch(/steps\.push\('liveness'\)/);
+    expect(STATE_TS).not.toMatch(/flags\.liveness/);
     // Explicitly gone — the pre-fix implementation.
     expect(STATE_TS).not.toMatch(/if \(!user\.email_confirmed_at\) steps\.push\('verify-email'\)/);
   });
@@ -586,7 +606,11 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
     expect(existsSync(resolve(ROOT, 'app/onboarding/phone/page.tsx'))).toBe(true);
     expect(existsSync(resolve(ROOT, 'app/onboarding/identity/page.tsx'))).toBe(true);
     expect(existsSync(resolve(ROOT, 'app/onboarding/credit-check/page.tsx'))).toBe(true);
-    expect(existsSync(resolve(ROOT, 'app/onboarding/liveness/page.tsx'))).toBe(true);
+    // Removed with the liveness step. Pinned as ABSENT so a dormant
+    // always-passes liveness check cannot quietly reappear.
+    expect(existsSync(resolve(ROOT, 'app/onboarding/salary/page.tsx'))).toBe(true);
+    expect(existsSync(resolve(ROOT, 'app/onboarding/liveness/page.tsx'))).toBe(false);
+    expect(existsSync(resolve(ROOT, 'lib/onboarding/liveness/stubLivenessCheck.ts'))).toBe(false);
   });
 
   it('the shared onboarding shell lives at components/onboarding/OnboardingShell.tsx', () => {
@@ -597,7 +621,7 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
   });
 
   it('every step page imports the shared shell from components/onboarding', () => {
-    for (const step of ['verify-email', 'phone', 'identity', 'credit-check', 'liveness']) {
+    for (const step of ['verify-email', 'phone', 'salary', 'identity', 'credit-check']) {
       const src = readFileSync(resolve(ROOT, `app/onboarding/${step}/page.tsx`), 'utf8');
       expect(src).toMatch(/from ['"]@\/components\/onboarding\/OnboardingShell['"]/);
     }
@@ -631,9 +655,8 @@ describe('Onboarding routes — layout + router + 5 step pages', () => {
     }
   });
 
-  it('credit-check + liveness pages redirect out when their flag is off', () => {
+  it('the credit-check page redirects out when its flag is off', () => {
     expect(ONB_CREDIT).toMatch(/if \(!flags\.creditCheck\) redirect/);
-    expect(ONB_LIVENESS).toMatch(/if \(!flags\.liveness\) redirect/);
   });
 });
 
@@ -806,7 +829,7 @@ describe('OnboardingShell API — receives (steps, currentStep), computes positi
   });
 
   it('every step page passes steps + currentStep (not the old prop API)', () => {
-    for (const step of ['verify-email', 'phone', 'identity', 'credit-check', 'liveness']) {
+    for (const step of ['verify-email', 'phone', 'salary', 'identity', 'credit-check']) {
       const src = readFileSync(resolve(ROOT, `app/onboarding/${step}/page.tsx`), 'utf8');
       expect(src).toMatch(/steps=\{steps\}/);
       expect(src).toMatch(new RegExp(`currentStep="${step}"`));
@@ -846,7 +869,6 @@ describe('Consumers of computeOnboarding pass identity_providers', () => {
     'app/onboarding/phone/page.tsx',
     'app/onboarding/identity/page.tsx',
     'app/onboarding/credit-check/page.tsx',
-    'app/onboarding/liveness/page.tsx',
     'app/onboarding/verify-email/page.tsx',
     'lib/onboarding/actions.ts',
   ];
@@ -868,12 +890,10 @@ describe('No orphan imports of the pre-unification component locations', () => {
       'app/onboarding/phone/page.tsx',
       'app/onboarding/identity/page.tsx',
       'app/onboarding/credit-check/page.tsx',
-      'app/onboarding/liveness/page.tsx',
       'app/onboarding/verify-email/VerifyEmailStepClient.tsx',
       'app/onboarding/phone/PhoneStepClient.tsx',
       'app/onboarding/identity/IdentityStepClient.tsx',
       'app/onboarding/credit-check/CreditCheckStepClient.tsx',
-      'app/onboarding/liveness/LivenessStepClient.tsx',
     ];
     for (const p of paths) {
       const src = readFileSync(resolve(ROOT, p), 'utf8');

@@ -109,7 +109,7 @@ const NOT_YET_CONVERTED = [
   'app/forgot-password/ForgotPasswordForm.tsx',
   'app/onboarding/credit-check/CreditCheckStepClient.tsx',
   'app/onboarding/identity/IdentityStepClient.tsx',
-  'app/onboarding/liveness/LivenessStepClient.tsx',
+  'app/onboarding/salary/SalaryStepClient.tsx',
   'app/patient/PostLoginPasskeyPrompt.tsx',
   'app/patient/payment-methods/PaymentMethods.tsx',
   'app/patient/profile/NotificationsToggle.tsx',

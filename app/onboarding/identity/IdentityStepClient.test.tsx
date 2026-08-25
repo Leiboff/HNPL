@@ -3,28 +3,28 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import IdentityStepClient from './IdentityStepClient';
 import { VALID_SA_ID } from '@/lib/testing/saIdFixtures';
 
-// ─── Identity step client — SA ID + consent + salary form ──────────────
+// ─── Identity step client — SA ID + consent ONLY ───────────────────────
 //
-// SA ID capture is BACK in this component (DHA-photo-first architecture
-// needs the ID typed locally before any Didit session exists), now
-// alongside a required consent checkbox. Submitting calls
-// submitIdentityForVerification, not startIdentityVerification — the
-// server decides DHA vs OCR-fallback vs synchronous decline/review.
+// The salary form that used to share this component now lives in
+// app/onboarding/salary/SalaryStepClient.tsx, as its own onboarding
+// step. Its tests moved with it.
+//
+// SA ID capture stays here: the registry-photo-first architecture needs
+// the ID typed locally before any Didit session exists. Submitting calls
+// submitIdentityForVerification — the server decides approve vs
+// decline vs review.
 //
 // fireEvent.submit(form) rather than clicking submit — same convention
 // as CounterSessionForm.test.tsx: happy-dom does not reliably run the
 // implicit-submission algorithm for a plain button click.
 
-const { saveSalaryDetails, submitIdentityForVerification, refreshOnboardingState } = vi.hoisted(() => ({
-  saveSalaryDetails:            vi.fn(),
+const { submitIdentityForVerification, refreshOnboardingState } = vi.hoisted(() => ({
   submitIdentityForVerification: vi.fn(),
   refreshOnboardingState:       vi.fn(),
 }));
-vi.mock('@/lib/onboarding/actions', () => ({ saveSalaryDetails, submitIdentityForVerification, refreshOnboardingState }));
+vi.mock('@/lib/onboarding/actions', () => ({ submitIdentityForVerification, refreshOnboardingState }));
 
 beforeEach(() => {
-  saveSalaryDetails.mockReset();
-  saveSalaryDetails.mockResolvedValue({ error: null, nextPath: '/onboarding/identity' });
   submitIdentityForVerification.mockReset();
   submitIdentityForVerification.mockResolvedValue({ error: null, outcome: 'redirect', url: 'https://verify.didit.me/session/abc123' });
   refreshOnboardingState.mockReset();
@@ -37,64 +37,15 @@ beforeEach(() => {
 
 function baseProps() {
   return {
-    salaryDay: null,
-    salaryAmount: null,
     identityVerificationStatus: null,
     identityVerificationReason: null,
     returningFromDidit: false,
   };
 }
 
-function submitSalary() {
-  fireEvent.submit(screen.getByTestId('onboarding-identity-submit').closest('form')!);
-}
-
 function submitVerify() {
   fireEvent.submit(screen.getByTestId('onboarding-identity-verify-button').closest('form')!);
 }
-
-describe('IdentityStepClient — salary form', () => {
-  it('blocks submit with a generic message when salary day is missing', async () => {
-    render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.change(screen.getByTestId('onboarding-salary-amount'), { target: { value: '15000' } });
-    submitSalary();
-
-    expect(await screen.findByText('Please choose when your salary is paid.')).toBeTruthy();
-    expect(saveSalaryDetails).not.toHaveBeenCalled();
-  });
-
-  it('blocks submit for a zero/negative amount', async () => {
-    render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.click(screen.getByRole('radio', { name: /1st/ }));
-    fireEvent.change(screen.getByTestId('onboarding-salary-amount'), { target: { value: '0' } });
-    submitSalary();
-
-    expect(await screen.findByText('Please enter how much you earn a month.')).toBeTruthy();
-    expect(saveSalaryDetails).not.toHaveBeenCalled();
-  });
-
-  it('submits day + amount once both are valid', async () => {
-    render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.click(screen.getByRole('radio', { name: /1st/ }));
-    fireEvent.change(screen.getByTestId('onboarding-salary-amount'), { target: { value: '15000' } });
-    submitSalary();
-
-    await waitFor(() => expect(saveSalaryDetails).toHaveBeenCalledWith({
-      salaryDay:    1,
-      salaryAmount: 15000,
-    }));
-  });
-
-  it('navigates away once the server says the step moved on', async () => {
-    saveSalaryDetails.mockResolvedValue({ error: null, nextPath: '/onboarding/credit-check' });
-    render(<IdentityStepClient {...baseProps()} />);
-    fireEvent.click(screen.getByRole('radio', { name: /1st/ }));
-    fireEvent.change(screen.getByTestId('onboarding-salary-amount'), { target: { value: '15000' } });
-    submitSalary();
-
-    await waitFor(() => expect(window.location.href).toBe('/onboarding/credit-check'));
-  });
-});
 
 describe('IdentityStepClient — identity verification (SA ID + consent)', () => {
   it('blocks submit with a generic message for an invalid SA ID, no server call', async () => {
@@ -206,5 +157,35 @@ describe('IdentityStepClient — returning from Didit', () => {
 
     expect(window.location.href).toBe('/onboarding/credit-check');
     vi.useRealTimers();
+  });
+});
+
+describe('separation from salary', () => {
+  it('renders no salary day picker and no income field', () => {
+    // Pins the split. These belong to /onboarding/salary now; if they
+    // reappear here, one screen is again asking for a government ID,
+    // biometric consent, a pay date and an income figure at once.
+    render(<IdentityStepClient {...baseProps()} />);
+    expect(screen.queryByTestId('onboarding-salary-amount')).toBeNull();
+    expect(screen.queryByTestId('onboarding-identity-submit')).toBeNull();
+  });
+
+  it('does not describe scanning an ID document', () => {
+    // The old copy said "We'll scan your SA ID and take a quick selfie".
+    // There is no document scan on this path — the reference photo comes
+    // from the identity registry, not a photograph of a card. Copy that
+    // misdescribes what happens to a person's biometrics is a compliance
+    // problem, not just a wording one.
+    const { container } = render(<IdentityStepClient {...baseProps()} />);
+    expect(container.textContent).not.toMatch(/scan your SA ID/i);
+  });
+
+  it('does not name a specific government department in the consent copy', () => {
+    // With IDENTITY_PHOTO_PROVIDER=datanamix the photo comes from a
+    // credit bureau's copy of Home Affairs data — a different controller.
+    // Naming Home Affairs would be an inaccurate POPIA disclosure.
+    // NOTE: the replacement wording is still pending legal review.
+    const { container } = render(<IdentityStepClient {...baseProps()} />);
+    expect(container.textContent).not.toMatch(/Department of\s+Home Affairs/i);
   });
 });
