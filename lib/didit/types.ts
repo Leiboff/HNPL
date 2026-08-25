@@ -115,13 +115,10 @@ export type DhaLookupResponse = {
 // lib/didit/aml.ts's screenAml() boundary so the shape can change
 // without touching call sites.
 
-export type AmlScreeningResult = {
-  status?:      string;
-  score?:       number;
-  total_hits?:  number;
-  hits?:        unknown[];
-};
-
+// NOTE: `aml_screenings` is retained on the decision envelope because
+// Didit still SENDS it — the field exists in the webhook payload whether
+// or not we act on it. We no longer read it: standalone AML screening was
+// removed (see the note in app/api/verification/didit/webhook/route.ts).
 export type DiditDecision = {
   id_verifications?: DiditIdVerification[] | null;
   liveness_checks?:  DiditLivenessCheck[]  | null;

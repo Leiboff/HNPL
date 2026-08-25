@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { randomBytes } from 'crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { NextRequest } from 'next/server';
 import { signDiditWebhookForTesting } from '@/lib/didit/webhook';
 import { VALID_SA_IDS, INVALID_SA_IDS } from '@/lib/testing/saIdFixtures';
@@ -77,8 +79,6 @@ vi.mock('@supabase/supabase-js', () => ({
   })),
 }));
 
-const { screenAml } = vi.hoisted(() => ({ screenAml: vi.fn() }));
-vi.mock('@/lib/didit/aml', () => ({ screenAml }));
 
 const { findPatientBySaId } = vi.hoisted(() => ({ findPatientBySaId: vi.fn() }));
 vi.mock('@/lib/patients/findPatientBySaId', () => ({ findPatientBySaId }));
@@ -156,8 +156,6 @@ beforeEach(() => {
   dbState.profiles = [{ id: USER_ID, role: 'patient', email: 'a@test.com', identity_verification_path: 'ocr' }];
   dbState.webhookEventIds = new Set();
   dbState.profileUpdates.length = 0;
-  screenAml.mockReset();
-  screenAml.mockResolvedValue({ kind: 'success', data: { status: 'Approved', total_hits: 0 } });
 
   findPatientBySaId.mockReset();
   // Default: faithfully replicates the real function's query semantics
@@ -419,28 +417,44 @@ describe('path resolution (Change 3) — stored path is authority, workflow_id i
   });
 });
 
-describe('AML — standalone call on both paths, hit or unavailable downgrades to review, never auto-decline', () => {
-  it('an AML hit on the OCR path routes to in_review, not declined, and does not skip persisting the ID', async () => {
-    screenAml.mockResolvedValue({ kind: 'success', data: { status: 'Declined', total_hits: 1 } });
-    const res = await POST(buildRequest(ocrEvent()));
-    expect(res.status).toBe(200);
-    expect(dbState.profiles[0].identity_verification_status).toBe('in_review');
-    expect(dbState.profiles[0].identity_verification_reason).toBe('aml_hit_or_unavailable');
+describe('AML — removed, and must not silently gate approvals again', () => {
+  // The old behaviour: a standalone screenAml() call before approving,
+  // with a hit OR a failed call both routing to
+  // 'aml_hit_or_unavailable'. The endpoint was never verified, so the
+  // call always failed, so 100% of approved applicants went to an
+  // unstaffed review queue. Removed deliberately — see the note above
+  // handleApprovedDha in route.ts, including what restoring it requires.
+
+  it('the aml client module no longer exists', () => {
+    expect(existsSync(resolve(process.cwd(), 'lib/didit/aml.ts'))).toBe(false);
   });
 
-  it('AML being unavailable also routes to review, never a silent approve', async () => {
-    screenAml.mockResolvedValue({ kind: 'unavailable', detail: 'timeout' });
-    const res = await POST(buildRequest(ocrEvent()));
-    expect(res.status).toBe(200);
-    expect(dbState.profiles[0].identity_verification_status).toBe('in_review');
+  it('the webhook does not import or call any AML screening', () => {
+    const SRC = readFileSync(resolve(process.cwd(), 'app/api/verification/didit/webhook/route.ts'), 'utf8');
+    // Strip comments before matching — the removal note deliberately
+    // NAMES screenAml() when explaining what was taken out and what
+    // restoring it would require. That prose must not fail this test,
+    // and deleting it to satisfy a regex would lose the reasoning.
+    const code = SRC
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    expect(code).not.toMatch(/from '@\/lib\/didit\/aml'/);
+    expect(code).not.toMatch(/screenAml\s*\(/);
   });
 
-  it('a clean AML result on the DHA path still approves', async () => {
+  it('a clean approval on the DHA path is no longer gated by anything AML', async () => {
     dbState.profiles[0] = {
       ...dbState.profiles[0], identity_verification_path: 'dha',
       pending_sa_id_number: encryptId(VALID_SA_IDS[0]), pending_sa_id_lookup_hash: hashIdForLookup(VALID_SA_IDS[0]),
     };
     const res = await POST(buildRequest(dhaEvent()));
+    expect(res.status).toBe(200);
+    expect(dbState.profiles[0].identity_verification_status).toBe('approved');
+    expect(dbState.profiles[0].identity_verification_reason).not.toBe('aml_hit_or_unavailable');
+  });
+
+  it('an OCR-path approval likewise reaches approved, not review', async () => {
+    const res = await POST(buildRequest(ocrEvent()));
     expect(res.status).toBe(200);
     expect(dbState.profiles[0].identity_verification_status).toBe('approved');
   });

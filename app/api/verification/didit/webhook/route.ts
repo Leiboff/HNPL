@@ -8,7 +8,6 @@ import { verifyDiditWebhookSignature } from '@/lib/didit/webhook';
 import { validateSaId, saIdAge } from '@/lib/validation';
 import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
-import { screenAml } from '@/lib/didit/aml';
 import type { DiditWebhookEvent } from '@/lib/didit/types';
 
 // ─── Didit webhook receiver — onboarding identity verification ─────────
@@ -211,29 +210,7 @@ async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event
     return;
   }
 
-  // Best-available name for AML on this path: Didit's own OCR extraction
-  // (id_verifications[0] carries first_name/last_name alongside personal_number).
-  const idv = event.decision?.id_verifications?.[0];
-  const amlOutcome = await screenAml({
-    vendorData: userId,
-    firstName:  idv?.first_name ?? undefined,
-    lastName:   idv?.last_name  ?? undefined,
-  });
-  const amlHit = amlOutcome.kind === 'success' && (amlOutcome.data.status === 'Declined' || (amlOutcome.data.total_hits ?? 0) > 0);
-  const amlUnavailable = amlOutcome.kind !== 'success';
-
   const now = new Date().toISOString();
-
-  if (amlHit || amlUnavailable) {
-    console.warn('[didit-webhook] OCR path: AML did not clear — routing to review', { userId, amlHit, amlUnavailable });
-    await markStatus(supabase, userId, 'in_review', 'aml_hit_or_unavailable', {
-      sa_id_number:      encrypted,
-      sa_id_lookup_hash: lookupHash,
-      liveness_verified_at: now,
-      ...envelopeFields(event),
-    });
-    return;
-  }
 
   const { error } = await supabase
     .from('profiles')
@@ -253,6 +230,40 @@ async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event
 }
 
 // ── DHA path ──
+
+// ─── AML screening: REMOVED, deliberately ──────────────────────────────
+//
+// Both paths used to call a standalone screenAml() before approving, and
+// route to 'aml_hit_or_unavailable' on a hit OR on the call failing.
+//
+// Why it went: the /v3/aml/ endpoint it used was never confirmed against
+// the live API (it came from a catalogue description while docs were
+// unreachable). In production every call failed, and because the webhook
+// collapsed any non-success into `amlUnavailable`, that meant 100% of
+// otherwise-approved applicants were routed to review — a queue that is
+// not staffed. Gating every approval on a call that always fails is worse
+// than either screening properly or not screening at all.
+//
+// ── IF THIS NEEDS TO COME BACK ──────────────────────────────────────
+// This was a deliberate product decision, not an oversight. AML and
+// sanctions screening is a FICA obligation for accountable institutions
+// in South Africa, and whether a credit provider falls in scope is a
+// question for legal counsel rather than for this file. If the answer is
+// yes, restoring this needs THREE things the previous version lacked:
+//
+//   1. A VERIFIED endpoint and response shape. The old code read
+//      `status` and `total_hits`; if a 2xx arrived without them it would
+//      have read as "no hits" — a silent false clear, which is worse
+//      than no screening because it looks like screening.
+//   2. A distinction between "hit" and "call failed". Collapsing them
+//      made an outage indistinguishable from a sanctions match, and hid
+//      the endpoint bug for the whole of its life.
+//   3. A staffed review queue, since a real hit must reach a human.
+//
+// The 'aml_hit_or_unavailable' value is intentionally LEFT IN the reason
+// CHECK constraint (migrations 0103-0105). Existing rows carry it, so
+// removing it would fail the migration — and keeping it means a restored
+// implementation needs no schema change.
 
 async function handleApprovedDha(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<void> {
   const score = faceMatchScore(event);
@@ -320,25 +331,7 @@ async function handleApprovedDha(supabase: SupabaseClient, userId: string, event
     return;
   }
 
-  const amlOutcome = await screenAml({
-    vendorData: userId,
-    firstName:  (profile?.dha_first_name as string | null) ?? undefined,
-    lastName:   (profile?.dha_last_name  as string | null) ?? undefined,
-  });
-  const amlHit = amlOutcome.kind === 'success' && (amlOutcome.data.status === 'Declined' || (amlOutcome.data.total_hits ?? 0) > 0);
-  const amlUnavailable = amlOutcome.kind !== 'success';
-
   const now = new Date().toISOString();
-
-  if (amlHit || amlUnavailable) {
-    console.warn('[didit-webhook] DHA path: AML did not clear — routing to review', { userId, amlHit, amlUnavailable });
-    await markStatus(supabase, userId, 'in_review', 'aml_hit_or_unavailable', {
-      ...scoreFields,
-      pending_sa_id_number:      pendingEncrypted,
-      pending_sa_id_lookup_hash: pendingHash,
-    });
-    return;
-  }
 
   const { error } = await supabase
     .from('profiles')
