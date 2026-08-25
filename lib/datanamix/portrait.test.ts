@@ -69,13 +69,35 @@ describe('downscalePortrait', () => {
     expect(result!.width).toBe(300);
   }, 30_000);
 
-  it('returns null — not the original buffer — for undecodable input', async () => {
-    // Returning the original would push a 1.9MB payload into
-    // createDhaFaceMatchSession's size guard, failing later and more
-    // obscurely. null routes to ocr_fallback instead.
-    for (const bad of ['', 'not-base64-at-all!!!', Buffer.from('plain text').toString('base64')]) {
+  it('returns null for input that is not decodable as an image at all', async () => {
+    // null is now reserved for "there is no image here" — the one case
+    // that genuinely means no usable biometric.
+    for (const bad of ['', '   ']) {
       expect(await downscalePortrait(bad)).toBeNull();
     }
+  }, 30_000);
+
+  it('passes the ORIGINAL through with resized:false when the resize cannot run', async () => {
+    // Regression: an earlier version returned null on any resize failure,
+    // and callers read null as "no usable biometric". sharp is a native
+    // module, so it can be missing or ABI-incompatible on the deploy
+    // platform while working perfectly in dev — that failed 100% of
+    // production applicants invisibly. A failed OPTIMISATION must never
+    // fail the verification.
+    const notAnImage = Buffer.from('plain text, definitely not an image');
+    const result = await downscalePortrait(notAnImage.toString('base64'));
+
+    expect(result).not.toBeNull();
+    expect(result!.resized).toBe(false);
+    expect(Buffer.from(result!.base64, 'base64')).toEqual(notAnImage);
+  }, 30_000);
+
+  it('reports resized:true on the happy path', async () => {
+    const src = await sharp({
+      create: { width: 900, height: 900, channels: 3, background: '#abc' },
+    }).png().toBuffer();
+    const result = await downscalePortrait(src.toString('base64'));
+    expect(result!.resized).toBe(true);
   }, 30_000);
 
   it('reports both original and final size so the shrink is auditable', async () => {

@@ -40,7 +40,25 @@ export type IdentityReviewReason =
   | 'dha_unrecognised_outcome'
   | 'dha_not_on_register'
   | 'dnx_unrecognised_outcome'
-  | 'dnx_hanis_not_matched';
+  | 'dnx_hanis_not_matched'
+  // ── Formerly routed to an OCR document-scan fallback, now reviewed.
+  //
+  // Both describe a LEGITIMATE applicant we could not biometrically
+  // verify right now — the registry did not refuse them, it failed to
+  // answer or returned no usable portrait. Declining them would punish
+  // someone for a vendor outage, so they go to a human.
+  //
+  // The OCR path they used to fall back to has been removed: it verified
+  // a selfie against a photograph of a plastic card, which is forgeable,
+  // so it was strictly weaker evidence than the registry path it was
+  // standing in for. Silently downgrading to weaker evidence on a vendor
+  // timeout is not a safe default for a lender.
+  //
+  // OPERATIONAL CONSEQUENCE: a registry outage now sends every applicant
+  // to the review queue instead of quietly completing via OCR. That
+  // queue must be staffed for this to be an acceptable trade.
+  | 'registry_unavailable'
+  | 'biometric_image_unusable';
 
 export type RouteDecision =
   | {
@@ -59,7 +77,6 @@ export type RouteDecision =
       sourceOffline?:     boolean;
       sourceLastUpdated?: string;
     }
-  | { kind: 'ocr_fallback'; reason: string }
   | { kind: 'reject';       reason: IdentityRejectReason }
   | { kind: 'review';       reason: IdentityReviewReason }
   // Our own request was malformed/rejected (non-timeout, non-5xx 4xx).
@@ -118,7 +135,7 @@ function normalizeId(id: string): string {
 export function routeFromDhaOutcome(outcome: DhaLookupOutcome, submittedNationalId: string): RouteDecision {
   // ── Transport layer — see lib/didit/dha.ts for the full reasoning ──
   if (outcome.kind === 'unavailable') {
-    return { kind: 'ocr_fallback', reason: 'registry_unavailable' };
+    return { kind: 'review', reason: 'registry_unavailable' };
   }
   if (outcome.kind === 'request_error') {
     // Our own request was rejected — an integration bug, not a
@@ -147,10 +164,10 @@ export function routeFromDhaOutcome(outcome: DhaLookupOutcome, submittedNational
       return { kind: 'reject', reason: 'dha_document_not_found' };
 
     case 'REGISTRY_UNAVAILABLE':
-      return { kind: 'ocr_fallback', reason: 'registry_unavailable' };
+      return { kind: 'review', reason: 'registry_unavailable' };
 
     case 'BIOMETRIC_IMAGE_UNUSABLE':
-      return { kind: 'ocr_fallback', reason: 'biometric_image_unusable' };
+      return { kind: 'review', reason: 'biometric_image_unusable' };
 
     case 'MATCH': {
       const sd = row.source_data ?? {};
@@ -193,7 +210,7 @@ export function routeFromDhaOutcome(outcome: DhaLookupOutcome, submittedNational
         // this is the SAME bucket as BIOMETRIC_IMAGE_UNUSABLE, not a
         // decline: the person is real and on the register, we just
         // can't run the biometric check against them right now.
-        return { kind: 'ocr_fallback', reason: 'biometric_image_unusable' };
+        return { kind: 'review', reason: 'biometric_image_unusable' };
       }
 
       return {

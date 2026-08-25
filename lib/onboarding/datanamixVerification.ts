@@ -88,7 +88,7 @@ export function routeFromDatanamixOutcome(
 ): RouteDecision {
   // ── Transport layer ──
   if (outcome.kind === 'unavailable') {
-    return { kind: 'ocr_fallback', reason: 'registry_unavailable' };
+    return { kind: 'review', reason: 'registry_unavailable' };
   }
   if (outcome.kind === 'request_error') {
     return { kind: 'error', status: outcome.status, detail: outcome.detail };
@@ -110,7 +110,7 @@ export function routeFromDatanamixOutcome(
       return { kind: 'reject', reason: 'dnx_not_found' };
 
     case 5:
-      return { kind: 'ocr_fallback', reason: 'registry_unavailable' };
+      return { kind: 'review', reason: 'registry_unavailable' };
 
     case 6:
       // Validation error on the SUBMITTED ID — a decline, not an
@@ -119,7 +119,7 @@ export function routeFromDatanamixOutcome(
       return { kind: 'reject', reason: 'invalid_id' };
 
     case 7:
-      return { kind: 'ocr_fallback', reason: 'registry_unavailable' };
+      return { kind: 'review', reason: 'registry_unavailable' };
 
     case 8:
       // Minor. submitIdentityForVerification already blocks under-18s
@@ -182,7 +182,7 @@ export function routeFromDatanamixOutcome(
     // to face-match against. Same bucket as the DHA path's
     // BIOMETRIC_IMAGE_UNUSABLE — not a decline. The person is real; we
     // just cannot run the biometric check on them right now.
-    return { kind: 'ocr_fallback', reason: 'biometric_image_unusable' };
+    return { kind: 'review', reason: 'biometric_image_unusable' };
   }
 
   return {
@@ -222,12 +222,21 @@ export async function resolveDatanamixRoute(
   if (route.kind !== 'dha') return route;
 
   const shrunk = await downscalePortrait(route.photoBase64);
+
+  if (shrunk && !shrunk.resized) {
+    // The resize could not run (usually sharp missing or incompatible on
+    // the deploy platform) so the ORIGINAL portrait is being sent. Not a
+    // failure — verification proceeds — but it is a config smell worth
+    // seeing, and it means a larger payload goes to Didit than intended.
+    console.warn('[datanamix] portrait sent un-resized', { bytes: shrunk.finalBytes });
+  }
+
   if (!shrunk) {
     // Undecodable image. NOT an approval on the original oversized
     // buffer — that would only fail later inside
     // createDhaFaceMatchSession's size guard, where the cause is far
     // harder to diagnose.
-    return { kind: 'ocr_fallback', reason: 'biometric_image_unusable' };
+    return { kind: 'review', reason: 'biometric_image_unusable' };
   }
 
   return { ...route, photoBase64: shrunk.base64 };

@@ -18,13 +18,28 @@
 // ocr_fallback (biometric_image_unusable) — the person is real and on
 // the register, we just cannot run the biometric check on this image.
 
-// sharp is imported DYNAMICALLY, inside the function. It is a native
-// module and (currently) only a transitive Next.js dependency, so a
-// top-level import makes every test file that touches this module's
-// import graph fail to resolve — including the pure routing tests, which
-// never downscale anything. Add it as an explicit dependency
-// (`pnpm add sharp`) before relying on this in production; a transitive
-// dep can vanish on any Next.js upgrade.
+// ── Why this is BEST-EFFORT, not fatal ─────────────────────────────────
+//
+// An earlier version of this module returned null whenever the resize
+// failed, and callers treated null as "no usable biometric". That was
+// wrong, and it broke production while passing every local test:
+//
+// sharp is a NATIVE module. The binary installed on a developer's
+// Windows machine is not the one Vercel's linux-x64 serverless runtime
+// needs, so `import('sharp')` can throw in production while working
+// perfectly in dev — meaning 100% of applicants failed, invisibly.
+//
+// The deeper mistake was making an OPTIMISATION fatal. Resizing exists
+// because Datanamix's portrait is larger than Didit's (~502KB observed
+// live, versus ~40KB from Didit's DHA endpoint) and we would rather send
+// less over the wire. But 502KB is already inside DHA_PORTRAIT_MAX_BYTES,
+// so a failed resize is not a failed verification — the original image is
+// still a perfectly good portrait to face-match against.
+//
+// So: if sharp cannot load or cannot re-encode, fall back to the ORIGINAL
+// image and report it via `resized: false`. null is now reserved for the
+// one case that genuinely means "no usable biometric": input that cannot
+// be decoded into any image at all.
 
 /** Long-edge pixels. 800px is comfortably enough for face matching. */
 const DEFAULT_MAX_EDGE = 800;
@@ -37,12 +52,22 @@ export type DownscaleResult = {
   finalBytes:     number;
   width?:         number;
   height?:        number;
+  /**
+   * False when the resize could not run (sharp unavailable on this
+   * platform, or an encode failure) and `base64` is therefore the
+   * ORIGINAL image passed straight through. Verification still proceeds
+   * — callers should log this, not reject on it.
+   */
+  resized:        boolean;
 };
 
 /**
  * Decode, downscale and re-encode a base64 portrait as JPEG.
- * Returns null if the image is unusable — callers must treat null as
- * "no usable biometric", never as "skip the check".
+ *
+ * Returns null ONLY when the input cannot be decoded into an image at
+ * all — that genuinely means "no usable biometric". A resize that fails
+ * for any other reason returns the original image with resized: false,
+ * because a large portrait is still a valid portrait.
  */
 export async function downscalePortrait(
   imageBase64: string,
@@ -79,10 +104,25 @@ export async function downscalePortrait(
       finalBytes:    output.data.length,
       width:         output.info.width,
       height:        output.info.height,
+      resized:       true,
     };
-  } catch {
-    // Corrupt, truncated, or an unsupported format. Explicitly not a
-    // fallback to the original buffer — see the header comment.
-    return null;
+  } catch (err) {
+    // Could not resize. Two very different causes, same safe answer:
+    //   - sharp missing/incompatible on this platform (config problem)
+    //   - the bytes are not a decodable image (genuinely unusable)
+    // We cannot reliably distinguish them here, and getting it wrong in
+    // the strict direction fails real applicants. So pass the original
+    // through and let the size guard in createDhaFaceMatchSession be the
+    // one thing that actually rejects on size.
+    console.warn('[datanamix] portrait resize failed — passing original through', {
+      bytes:  input.length,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      base64:        input.toString('base64'),
+      originalBytes: input.length,
+      finalBytes:    input.length,
+      resized:       false,
+    };
   }
 }

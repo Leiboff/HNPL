@@ -58,32 +58,32 @@ describe('routing correctness — cases 1-8', () => {
     expect(route).toEqual({ kind: 'reject', reason: 'dha_document_not_found' });
   });
 
-  it('3. registry_unavailable_outcome_code_falls_back', () => {
+  it('3. registry_unavailable_outcome_code_routes_to_review', () => {
     const route = routeFromDhaOutcome(success({ outcome_code: 'REGISTRY_UNAVAILABLE' }), SUBMITTED_ID);
-    expect(route.kind).toBe('ocr_fallback');
+    expect(route.kind).toBe('review');
   });
 
-  it('4. transport_unavailable_falls_back (timeout/connection error at the outcome layer)', () => {
+  it('4. transport_unavailable_routes_to_review (timeout/connection error at the outcome layer)', () => {
     const route = routeFromDhaOutcome({ kind: 'unavailable', detail: 'timeout' }, SUBMITTED_ID);
-    expect(route.kind).toBe('ocr_fallback');
+    expect(route.kind).toBe('review');
   });
 
-  it('5. transport_5xx_falls_back (HTTP 500 at the outcome layer)', () => {
+  it('5. transport_5xx_routes_to_review (HTTP 500 at the outcome layer)', () => {
     const route = routeFromDhaOutcome({ kind: 'unavailable', detail: 'HTTP 500: boom' }, SUBMITTED_ID);
-    expect(route.kind).toBe('ocr_fallback');
+    expect(route.kind).toBe('review');
   });
 
-  it('6. match_with_biometric_image_unusable_falls_back', () => {
+  it('6. match_with_biometric_image_unusable_routes_to_review', () => {
     const route = routeFromDhaOutcome(success({ outcome_code: 'BIOMETRIC_IMAGE_UNUSABLE' }), SUBMITTED_ID);
-    expect(route.kind).toBe('ocr_fallback');
+    expect(route.kind).toBe('review');
   });
 
-  it('7. match_with_empty_photo_falls_back_not_crash', () => {
+  it('7. match_with_empty_photo_routes_to_review_not_crash', () => {
     const route = routeFromDhaOutcome(
       success({ outcome_code: 'MATCH', source_data: { ...MATCH_ROW_BASE, photo_base64: '' } }),
       SUBMITTED_ID,
     );
-    expect(route.kind).toBe('ocr_fallback');
+    expect(route.kind).toBe('review');
   });
 
   it('8. unrecognised_outcome_code_routes_to_review_not_fallback', () => {

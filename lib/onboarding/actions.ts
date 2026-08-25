@@ -415,20 +415,21 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
     return { error: null, outcome: 'redirect', url: session.url };
   }
 
-  if (route.kind === 'ocr_fallback') {
-    const started = await startIdentityVerification();
-    if (started.error !== null) return started;
-
-    await svc()
-      .from('profiles')
-      .update({
-        identity_verification_path: 'ocr',
-        dha_lookup_outcome_code:    route.reason,
-      })
-      .eq('id', loaded.userId);
-
-    return { error: null, outcome: 'redirect', url: started.url };
-  }
+  // The 'ocr_fallback' branch that used to sit here has been REMOVED.
+  //
+  // It called startIdentityVerification() to spin up a document-scan
+  // session whenever the registry failed to answer. That silently
+  // substituted weaker evidence (a selfie matched against a photo of a
+  // plastic card) for stronger evidence (a selfie matched against the
+  // registry's own biometric) — on a vendor timeout, without telling
+  // anyone. Those cases are now { kind: 'review' } with reason
+  // 'registry_unavailable' or 'biometric_image_unusable' and fall
+  // through to the review handler below.
+  //
+  // It also masked bugs: a failure inside the fallback threw over
+  // whatever caused the fallback in the first place, which is exactly
+  // how a missing DIDIT_WORKFLOW_ID came to hide a portrait-resize
+  // failure in production.
 
   if (route.kind === 'reject') {
     const now = new Date().toISOString();
@@ -449,6 +450,16 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
 
   if (route.kind === 'review') {
     const now = new Date().toISOString();
+
+    // Logged at WARN because two of these reasons — registry_unavailable
+    // and biometric_image_unusable — used to complete silently via the
+    // OCR fallback. Now they park a real applicant in a queue, so a rise
+    // in either is an OUTAGE signal, not routine business. Without this
+    // line a provider going down looks like a quiet drop in signups.
+    console.warn('[onboarding] identity routed to review', {
+      userId: loaded.userId, provider, reason: route.reason,
+    });
+
     await svc()
       .from('profiles')
       .update({
@@ -456,6 +467,10 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
         identity_verification_reason:     route.reason,
         identity_verification_updated_at: now,
         identity_verification_provider:   provider,
+        // Record the path even on review: the webhook resolves its
+        // handler from this column, and leaving it NULL would make any
+        // later event for this profile unresolvable.
+        identity_verification_path:       'dha',
       })
       .eq('id', loaded.userId);
     return { error: null, outcome: 'review' };

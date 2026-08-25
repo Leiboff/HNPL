@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { routeFromDatanamixOutcome } from './datanamixVerification';
 import type { DatanamixLookupOutcome } from '@/lib/datanamix/client';
 import type { DatanamixProfilePlusResponse } from '@/lib/datanamix/types';
@@ -105,7 +105,7 @@ describe('envelope routing — ResponseCode only, never HTTP status', () => {
         kind: 'success', data: { ResponseCode: code }, httpStatus: 200,
       };
       expect(routeFromDatanamixOutcome(outcome, SUBMITTED_ID)).toEqual({
-        kind: 'ocr_fallback', reason: 'registry_unavailable',
+        kind: 'review', reason: 'registry_unavailable',
       });
     }
   });
@@ -226,14 +226,14 @@ describe('biometric provenance and availability', () => {
       .toEqual({ kind: 'review', reason: 'dnx_hanis_not_matched' });
   });
 
-  it('HasImage "False" falls back — real person, no usable biometric', () => {
+  it('HasImage "False" routes to review — real person, no usable biometric', () => {
     expect(routeFromDatanamixOutcome(ok({ bio: { HasImage: 'False' } }), SUBMITTED_ID))
-      .toEqual({ kind: 'ocr_fallback', reason: 'biometric_image_unusable' });
+      .toEqual({ kind: 'review', reason: 'biometric_image_unusable' });
   });
 
-  it('HasImage "True" but an empty ImageBase64 also falls back, not approves', () => {
+  it('HasImage "True" but an empty ImageBase64 also reviews, not approves', () => {
     expect(routeFromDatanamixOutcome(ok({ bio: { ImageBase64: '' } }), SUBMITTED_ID))
-      .toEqual({ kind: 'ocr_fallback', reason: 'biometric_image_unusable' });
+      .toEqual({ kind: 'review', reason: 'biometric_image_unusable' });
   });
 
   it('a missing biometric block entirely reviews rather than approving', () => {
@@ -247,10 +247,10 @@ describe('biometric provenance and availability', () => {
 });
 
 describe('transport layer', () => {
-  it('unavailable falls back', () => {
+  it('unavailable routes to review, never approves', () => {
     expect(routeFromDatanamixOutcome(
       { kind: 'unavailable', detail: 'datanamix_transport: timeout' }, SUBMITTED_ID,
-    )).toEqual({ kind: 'ocr_fallback', reason: 'registry_unavailable' });
+    )).toEqual({ kind: 'review', reason: 'registry_unavailable' });
   });
 
   it('request_error errors — never falls back, never approves', () => {
@@ -258,7 +258,7 @@ describe('transport layer', () => {
       { kind: 'request_error', status: 401, detail: 'bad token' }, SUBMITTED_ID,
     );
     expect(route.kind).toBe('error');
-    expect(['dha', 'ocr_fallback', 'reject', 'review']).not.toContain(route.kind);
+    expect(['dha', 'review', 'reject', 'review']).not.toContain(route.kind);
   });
 
   it('a null Result with ResponseCode 0 reviews rather than crashing', () => {
@@ -267,5 +267,60 @@ describe('transport layer', () => {
     };
     expect(routeFromDatanamixOutcome(outcome, SUBMITTED_ID))
       .toEqual({ kind: 'review', reason: 'dnx_unrecognised_outcome' });
+  });
+});
+
+describe('resolveDatanamixRoute — a failed resize must not fail the applicant', () => {
+  // THE PRODUCTION BUG, pinned. sharp is a native module: the binary
+  // installed on a dev machine is not the one a linux-x64 serverless
+  // runtime needs, so import('sharp') can throw in production while
+  // every local test passes. The original code turned that into null and
+  // read null as "no usable biometric", so 100% of real applicants were
+  // blocked — and because the old OCR fallback then threw on a missing
+  // DIDIT_WORKFLOW_ID, the logs showed only the SECOND error.
+  //
+  // Contract: a resize failure degrades to the original portrait.
+
+  it('still approves when the portrait cannot be resized', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/datanamix/portrait', () => ({
+      downscalePortrait: vi.fn(async (b64: string) => ({
+        base64:        b64,          // original, un-resized
+        originalBytes: 502_000,
+        finalBytes:    502_000,
+        resized:       false,
+      })),
+    }));
+    vi.doMock('@/lib/datanamix/client', () => ({
+      callDatanamixProfilePlus: vi.fn(async () => ok()),
+      datanamixIsLive: () => true,
+    }));
+
+    const { resolveDatanamixRoute } = await import('./datanamixVerification');
+    const route = await resolveDatanamixRoute(SUBMITTED_ID, 'user-1');
+
+    expect(route.kind).toBe('dha');
+    vi.doUnmock('@/lib/datanamix/portrait');
+    vi.doUnmock('@/lib/datanamix/client');
+    vi.resetModules();
+  });
+
+  it('reviews only when there is genuinely no decodable image', async () => {
+    vi.resetModules();
+    vi.doMock('@/lib/datanamix/portrait', () => ({
+      downscalePortrait: vi.fn(async () => null),
+    }));
+    vi.doMock('@/lib/datanamix/client', () => ({
+      callDatanamixProfilePlus: vi.fn(async () => ok()),
+      datanamixIsLive: () => true,
+    }));
+
+    const { resolveDatanamixRoute } = await import('./datanamixVerification');
+    const route = await resolveDatanamixRoute(SUBMITTED_ID, 'user-1');
+
+    expect(route).toEqual({ kind: 'review', reason: 'biometric_image_unusable' });
+    vi.doUnmock('@/lib/datanamix/portrait');
+    vi.doUnmock('@/lib/datanamix/client');
+    vi.resetModules();
   });
 });
