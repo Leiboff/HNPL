@@ -25,14 +25,17 @@
 //      that gap in code; we record it (see the staleness fields on the
 //      'dha' decision) so it is auditable per-decision.
 //
-//   3. PHOTO SIZE. ~1.9MB versus Didit's ~40KB, so the portrait is
-//      downscaled before it can be handed to a Didit session.
+//   3. PHOTO SIZE. Larger than Didit's ~40KB, but not as large as first
+//      thought: ~502KB live, comfortably inside DHA_PORTRAIT_MAX_BYTES.
+//      The 1.9MB figure an earlier version resized against came from
+//      Datanamix's SANDBOX, which returns a fabricated oversized PNG.
+//      The portrait is now passed through untouched — see the note on
+//      resolveDatanamixRoute for why the resize was removed.
 
 import {
   callDatanamixProfilePlus,
   type DatanamixLookupOutcome,
 } from '@/lib/datanamix/client';
-import { downscalePortrait } from '@/lib/datanamix/portrait';
 import type { RouteDecision } from './dhaVerification';
 
 /** Three-valued, like parseFlag — 'unknown' must reach a human. */
@@ -221,23 +224,19 @@ export async function resolveDatanamixRoute(
 
   if (route.kind !== 'dha') return route;
 
-  const shrunk = await downscalePortrait(route.photoBase64);
-
-  if (shrunk && !shrunk.resized) {
-    // The resize could not run (usually sharp missing or incompatible on
-    // the deploy platform) so the ORIGINAL portrait is being sent. Not a
-    // failure — verification proceeds — but it is a config smell worth
-    // seeing, and it means a larger payload goes to Didit than intended.
-    console.warn('[datanamix] portrait sent un-resized', { bytes: shrunk.finalBytes });
+  // Logged on every approve so the real-world size distribution is
+  // observable. This is the early warning for "a portrait is getting
+  // close to DHA_PORTRAIT_MAX_BYTES" — the only condition that would
+  // justify bringing resizing back.
+  const approxBytes = Math.floor(route.photoBase64.length * 0.75);
+  const capBytes = Number(process.env.DHA_PORTRAIT_MAX_BYTES ?? 1_000_000);
+  if (approxBytes > capBytes * 0.8) {
+    console.warn('[datanamix] portrait within 20% of DHA_PORTRAIT_MAX_BYTES', {
+      approxBytes, capBytes,
+    });
+  } else {
+    console.info('[datanamix] portrait size', { approxBytes, capBytes });
   }
 
-  if (!shrunk) {
-    // Undecodable image. NOT an approval on the original oversized
-    // buffer — that would only fail later inside
-    // createDhaFaceMatchSession's size guard, where the cause is far
-    // harder to diagnose.
-    return { kind: 'review', reason: 'biometric_image_unusable' };
-  }
-
-  return { ...route, photoBase64: shrunk.base64 };
+  return route;
 }

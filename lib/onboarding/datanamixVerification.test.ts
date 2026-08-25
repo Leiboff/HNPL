@@ -270,29 +270,20 @@ describe('transport layer', () => {
   });
 });
 
-describe('resolveDatanamixRoute — a failed resize must not fail the applicant', () => {
-  // THE PRODUCTION BUG, pinned. sharp is a native module: the binary
-  // installed on a dev machine is not the one a linux-x64 serverless
-  // runtime needs, so import('sharp') can throw in production while
-  // every local test passes. The original code turned that into null and
-  // read null as "no usable biometric", so 100% of real applicants were
-  // blocked — and because the old OCR fallback then threw on a missing
-  // DIDIT_WORKFLOW_ID, the logs showed only the SECOND error.
-  //
-  // Contract: a resize failure degrades to the original portrait.
+describe('resolveDatanamixRoute — the portrait is passed through untouched', () => {
+  // Regression: resizing with sharp used to sit here. sharp is a native
+  // module and failed in production with ERR_DLOPEN_FAILED (missing
+  // libvips) while passing every local test, because the binary
+  // installed on a dev machine is not the one linux-x64 serverless
+  // needs. It was also solving a problem that did not exist: the ~1.9MB
+  // portrait it was sized against came from Datanamix's SANDBOX, and the
+  // live portrait is ~502KB — already inside the cap.
 
-  it('still approves when the portrait cannot be resized', async () => {
+  it('hands Didit the exact bytes the bureau returned', async () => {
     vi.resetModules();
-    vi.doMock('@/lib/datanamix/portrait', () => ({
-      downscalePortrait: vi.fn(async (b64: string) => ({
-        base64:        b64,          // original, un-resized
-        originalBytes: 502_000,
-        finalBytes:    502_000,
-        resized:       false,
-      })),
-    }));
+    const portrait = 'ZmFrZS1wb3J0cmFpdC1ieXRlcw==';
     vi.doMock('@/lib/datanamix/client', () => ({
-      callDatanamixProfilePlus: vi.fn(async () => ok()),
+      callDatanamixProfilePlus: vi.fn(async () => ok({ bio: { ImageBase64: portrait } })),
       datanamixIsLive: () => true,
     }));
 
@@ -300,27 +291,19 @@ describe('resolveDatanamixRoute — a failed resize must not fail the applicant'
     const route = await resolveDatanamixRoute(SUBMITTED_ID, 'user-1');
 
     expect(route.kind).toBe('dha');
-    vi.doUnmock('@/lib/datanamix/portrait');
+    if (route.kind === 'dha') expect(route.photoBase64).toBe(portrait);
+
     vi.doUnmock('@/lib/datanamix/client');
     vi.resetModules();
   });
 
-  it('reviews only when there is genuinely no decodable image', async () => {
-    vi.resetModules();
-    vi.doMock('@/lib/datanamix/portrait', () => ({
-      downscalePortrait: vi.fn(async () => null),
-    }));
-    vi.doMock('@/lib/datanamix/client', () => ({
-      callDatanamixProfilePlus: vi.fn(async () => ok()),
-      datanamixIsLive: () => true,
-    }));
-
-    const { resolveDatanamixRoute } = await import('./datanamixVerification');
-    const route = await resolveDatanamixRoute(SUBMITTED_ID, 'user-1');
-
-    expect(route).toEqual({ kind: 'review', reason: 'biometric_image_unusable' });
-    vi.doUnmock('@/lib/datanamix/portrait');
-    vi.doUnmock('@/lib/datanamix/client');
-    vi.resetModules();
+  it('does not import sharp, or any native module, anywhere in this path', async () => {
+    // Pins the actual production failure shut. If a resize is ever
+    // reintroduced it must use a pure-JS encoder — a native .so
+    // dependency fails silently at runtime in this environment.
+    const { readFileSync } = await import('node:fs');
+    for (const f of ['lib/onboarding/datanamixVerification.ts', 'lib/datanamix/client.ts']) {
+      expect(readFileSync(f, 'utf8')).not.toContain('sharp');
+    }
   });
 });
