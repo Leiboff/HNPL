@@ -11,7 +11,7 @@ import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } 
 import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
 import { stubLivenessCheck } from '@/lib/onboarding/liveness/stubLivenessCheck';
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
-import { resolveIdentityRoute } from '@/lib/onboarding/dhaVerification';
+import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
@@ -311,6 +311,15 @@ const DECLINE_MESSAGE_BY_REASON: Record<string, string> = {
   dha_id_mismatch:        'We couldn\'t verify your identity. Please try again.',
   dha_deceased:            'We couldn\'t verify your identity. Please contact support.',
   dha_id_blocked:          'We couldn\'t verify your identity. Please contact support.',
+  // Datanamix equivalents. Same user-facing wording as the DHA path —
+  // the applicant does not need to know which registry we queried — but
+  // the retryable/not-retryable split must be preserved, or we tell
+  // someone with a blocked ID to "try again" and pay for the retry.
+  dnx_no_match:            'We couldn\'t verify your identity. Please try again.',
+  dnx_not_found:           'We couldn\'t verify your identity. Please try again.',
+  dnx_id_mismatch:         'We couldn\'t verify your identity. Please try again.',
+  dnx_deceased:            'We couldn\'t verify your identity. Please contact support.',
+  dnx_id_blocked:          'We couldn\'t verify your identity. Please contact support.',
 };
 
 export type SubmitIdentityInput = {
@@ -355,7 +364,7 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
     })
     .eq('id', loaded.userId);
 
-  const route = await resolveIdentityRoute(cleanedId, loaded.userId);
+  const { provider, route } = await resolveIdentityRouteForProvider(cleanedId, loaded.userId);
 
   if (route.kind === 'dha') {
     let session;
@@ -394,6 +403,9 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
         dha_first_name:                   route.dhaFirstName ?? null,
         dha_last_name:                    route.dhaLastName  ?? null,
         dha_name_mismatch:                mismatch,
+        identity_verification_provider:   provider,
+        identity_source_offline:          route.sourceOffline ?? null,
+        identity_source_last_updated:     route.sourceLastUpdated ?? null,
         pending_sa_id_number:             encrypted,
         pending_sa_id_lookup_hash:        lookupHash,
       })
@@ -426,6 +438,10 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
         identity_verification_status:     'declined',
         identity_verification_reason:     route.reason,
         identity_verification_updated_at: now,
+        // Provenance matters most on a DECLINE: "which source refused
+        // this person, and how current was it" is the first question in
+        // any dispute or complaint.
+        identity_verification_provider:   provider,
       })
       .eq('id', loaded.userId);
     return { error: DECLINE_MESSAGE_BY_REASON[route.reason] ?? 'We couldn\'t verify your identity. Please try again.' };
@@ -439,6 +455,7 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
         identity_verification_status:     'in_review',
         identity_verification_reason:     route.reason,
         identity_verification_updated_at: now,
+        identity_verification_provider:   provider,
       })
       .eq('id', loaded.userId);
     return { error: null, outcome: 'review' };

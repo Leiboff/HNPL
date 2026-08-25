@@ -50,6 +50,14 @@ export type RouteDecision =
       dhaLastName?:  string;
       requestId?:    string;
       outcomeCode:   string;
+      // ── Source provenance. Populated by the Datanamix path only; the
+      // Didit path is a live registry query with no lag to declare, so
+      // both stay undefined there (persisted as NULL — see migration
+      // 0104). Recorded so a decision made against a stale bureau copy
+      // is auditable AS SUCH rather than indistinguishable from a live
+      // one. Observed live: offline true, "Less than 90 days".
+      sourceOffline?:     boolean;
+      sourceLastUpdated?: string;
     }
   | { kind: 'ocr_fallback'; reason: string }
   | { kind: 'reject';       reason: IdentityRejectReason }

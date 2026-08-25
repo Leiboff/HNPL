@@ -192,6 +192,15 @@ export function routeFromDatanamixOutcome(
     dhaLastName:  idv.Surname,
     requestId:    data.Header?.ReportReference,
     outcomeCode:  'DNX_MATCH',
+    // What the bureau itself declared about its own currency, verbatim.
+    // OfflineIndicator "Yes" means served from the bureau copy rather
+    // than a live DHA query. Anything unrecognised becomes undefined
+    // rather than a guessed boolean — an unreadable provenance claim is
+    // recorded as unknown, not as "live".
+    sourceOffline:     mapHasImage(idv.OfflineIndicator) === 'unknown'
+                         ? undefined
+                         : mapHasImage(idv.OfflineIndicator) as boolean,
+    sourceLastUpdated: idv.LastUpdated?.trim() || undefined,
   };
 }
 
