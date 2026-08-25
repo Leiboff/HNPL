@@ -20,11 +20,27 @@ export type IdentityRejectReason =
   | 'dha_document_not_found'
   | 'dha_deceased'
   | 'dha_id_blocked'
-  | 'dha_id_mismatch';
+  | 'dha_id_mismatch'
+  // ── Datanamix (bureau-sourced) equivalents. Deliberately NOT reusing
+  // the dha_* values: those assert "Home Affairs said so", while these
+  // mean "a credit bureau's copy of Home Affairs data, up to ~30 days
+  // stale, said so". In a lending dispute that distinction is the whole
+  // question, so the audit trail records which source made each call.
+  // See lib/onboarding/datanamixVerification.ts.
+  | 'dnx_no_match'
+  | 'dnx_not_found'
+  | 'dnx_deceased'
+  | 'dnx_id_blocked'
+  | 'dnx_id_mismatch'
+  // Shared, source-agnostic — both providers can produce these.
+  | 'invalid_id'
+  | 'underage';
 
 export type IdentityReviewReason =
   | 'dha_unrecognised_outcome'
-  | 'dha_not_on_register';
+  | 'dha_not_on_register'
+  | 'dnx_unrecognised_outcome'
+  | 'dnx_hanis_not_matched';
 
 export type RouteDecision =
   | {
