@@ -71,6 +71,7 @@ export default async function LeadsListPage({
   let query = supabase
     .from('crm_leads')
     .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, next_follow_up_at, updated_at, created_at')
+    .is('archived_at', null)
     .limit(500);
 
   if (q) {

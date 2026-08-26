@@ -25,6 +25,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const { count: overdueFollowups } = await supabase
     .from('crm_leads')
     .select('id', { count: 'exact', head: true })
+    .is('archived_at', null)
     .lt('next_follow_up_at', todayStartUtc.toISOString())
     .not('next_follow_up_at', 'is', null)
     .not('stage', 'in', '(signed,onboarded,lost)');
