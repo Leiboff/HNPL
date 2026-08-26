@@ -62,6 +62,20 @@ declare global {
 // Local shortcut — resolved at runtime after the script loads.
 type GNS = NonNullable<Window['google']>;
 
+// Sized up from Google's default marker scale and given a heavier white
+// stroke so pins read clearly against the basemap — small/thin pins were
+// getting lost among Google's own road and POI icon clutter.
+function pinIcon(g: GNS, color: string, selected: boolean) {
+  return {
+    path: g.maps.SymbolPath.CIRCLE,
+    scale: selected ? 13 : 9,
+    fillColor: color,
+    fillOpacity: 1,
+    strokeColor: '#ffffff',
+    strokeWeight: 2.5,
+  };
+}
+
 export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -132,6 +146,15 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
       zoom:   9,
       mapTypeControl: false,
       streetViewControl: false,
+      // Quiet the default basemap furniture (POI icons/labels, transit,
+      // highway shields) so the stage-coloured lead pins stand out —
+      // otherwise they get lost among Google's own icon clutter.
+      styles: [
+        { featureType: 'poi',      elementType: 'labels', stylers: [{ visibility: 'off' }] },
+        { featureType: 'poi',      elementType: 'geometry', stylers: [{ visibility: 'off' }] },
+        { featureType: 'transit',  stylers: [{ visibility: 'off' }] },
+        { featureType: 'road',     elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+      ],
     });
     if (visiblePins.length > 0) {
       const bounds = new g.maps.LatLngBounds();
@@ -154,31 +177,19 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
       if (p.lat == null || p.lng == null) continue;
       let m = markers.current.get(p.id);
       const color = pinColourForStage(p.stage);
+      const icon = pinIcon(g, color, routeIds.includes(p.id));
       if (!m) {
         m = new g.maps.Marker({
           position: { lat: p.lat, lng: p.lng },
           map:      mapInst.current,
           title:    p.practiceName,
-          icon: {
-            path: g.maps.SymbolPath.CIRCLE,
-            scale: routeIds.includes(p.id) ? 10 : 7,
-            fillColor: color,
-            fillOpacity: 0.9,
-            strokeColor: '#ffffff',
-            strokeWeight: 2,
-          },
+          icon,
+          zIndex: routeIds.includes(p.id) ? 999 : undefined,
         });
         m.addListener('click', () => setSelectedId(p.id));
         markers.current.set(p.id, m);
       } else {
-        m.setIcon({
-          path: g.maps.SymbolPath.CIRCLE,
-          scale: routeIds.includes(p.id) ? 10 : 7,
-          fillColor: color,
-          fillOpacity: 0.9,
-          strokeColor: '#ffffff',
-          strokeWeight: 2,
-        });
+        m.setIcon(icon);
       }
     }
   }, [visiblePins, routeIds, mapReady]);
