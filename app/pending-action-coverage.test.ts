@@ -100,6 +100,7 @@ const NOT_YET_CONVERTED = [
   'app/crm/board/BoardClient.tsx',
   'app/crm/import/ImportClient.tsx',
   'app/crm/import/QuickImportClient.tsx',
+  'app/crm/leads/LeadsResultsList.tsx',
   'app/crm/leads/[id]/ComposeEmailSheet.tsx',
   'app/crm/leads/[id]/InviteSheet.tsx',
   'app/crm/leads/[id]/LeadDetailClient.tsx',
