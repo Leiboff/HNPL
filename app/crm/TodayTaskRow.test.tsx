@@ -2,8 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import TodayTaskRow, { type TodayTask } from './TodayTaskRow';
 
-const completeTask = vi.fn(async (_taskId: string, _outcome: string) => ({}));
-vi.mock('./leads/tasksActions', () => ({ completeTask: (taskId: string, outcome: string) => completeTask(taskId, outcome) }));
+const completeTask = vi.fn<(taskId: string, outcome: string) => Promise<{ error?: string }>>(async () => ({}));
+vi.mock('./leads/tasksActions', () => ({
+  completeTask: (taskId: string, outcome: string) => completeTask(taskId, outcome),
+}));
 
 const TASK: TodayTask = {
   id: 'task-1', lead_id: 'lead-1', practice_name: 'Acme Dental',
