@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { buildTemplateCsv, CSV_TEMPLATE_HEADERS, type CsvLeadDraft, type RowError } from '@/lib/crm/csv';
+import { xlsxToCsv, isExcelFile } from '@/lib/crm/xlsxToCsv';
 import { previewImport, commitImport } from './actions';
 
 export default function ImportClient() {
@@ -20,6 +21,10 @@ export default function ImportClient() {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   function onFile(f: File) {
+    if (isExcelFile(f)) {
+      f.arrayBuffer().then(buf => setCsvText(xlsxToCsv(buf)));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => setCsvText(String(reader.result ?? ''));
     reader.readAsText(f);
@@ -86,7 +91,9 @@ export default function ImportClient() {
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-gray-900">Upload</h2>
-            <p className="text-xs text-gray-500 mt-1">Expected columns: {CSV_TEMPLATE_HEADERS.join(', ')}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Expected columns: {CSV_TEMPLATE_HEADERS.join(', ')}. Accepts .csv or .xlsx/.xls (only the first sheet of a workbook is read).
+            </p>
           </div>
           <button
             type="button"
@@ -99,7 +106,7 @@ export default function ImportClient() {
 
         <input
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
           onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }}
           className="block text-xs text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#13294B] file:text-white file:px-3 file:py-2 file:text-xs file:font-medium file:cursor-pointer"
         />
