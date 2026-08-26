@@ -3,8 +3,12 @@ import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LeadsSearchForm from './LeadsSearchForm';
 import LeadsResultsList from './LeadsResultsList';
+import LeadsViewSwitcher from './LeadsViewSwitcher';
+import SavedViewsBar from './SavedViewsBar';
+import type { LeadScore } from '@/lib/crm/priorityScore';
 import { SPECIALTIES } from '@/lib/specialties';
 import { sastDayWindows } from '@/lib/crm/timezone';
+import { computeLeadScore } from '@/lib/crm/priorityScore';
 
 // ─── /crm/leads — searchable lead list ────────────────────────────────
 //
@@ -14,13 +18,14 @@ import { sastDayWindows } from '@/lib/crm/timezone';
 
 const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
-type SortKey = 'follow-up' | 'updated' | 'created-desc' | 'value';
-const SORTS: SortKey[] = ['follow-up', 'updated', 'created-desc', 'value'];
+type SortKey = 'follow-up' | 'updated' | 'created-desc' | 'value' | 'priority';
+const SORTS: SortKey[] = ['follow-up', 'updated', 'created-desc', 'value', 'priority'];
 const SORT_LABEL: Record<SortKey, string> = {
   'follow-up':   'Next follow-up',
   'updated':     'Recently updated',
   'created-desc':'Newest first',
   'value':       'Value',
+  'priority':    'Priority',
 };
 
 type SearchParams = {
@@ -31,6 +36,7 @@ type SearchParams = {
   owner?: string;
   overdue?: string;
   sort?: string;
+  city?: string;
 };
 
 function sanitizeQ(raw: string | undefined): string {
@@ -74,6 +80,7 @@ export default async function LeadsListPage({
   // admin tool for viewing one salesperson's book; ?owner=me still
   // works for admin as "show only what I personally own".
   const owner     = isAdmin ? (params.owner ?? '') : '';
+  const city      = (params.city ?? '').trim().slice(0, 60);
 
   let query = supabase
     .from('crm_leads')
@@ -114,6 +121,7 @@ export default async function LeadsListPage({
   if (stage)     query = query.eq('stage',     stage);
   if (source)    query = query.eq('source',    source);
   if (specialty) query = query.eq('specialty', specialty);
+  if (city)      query = query.eq('city',      city);
   if (overdue) {
     const { todayStartUtc } = sastDayWindows(new Date());
     query = query.lt('next_follow_up_at', todayStartUtc.toISOString())
@@ -130,6 +138,23 @@ export default async function LeadsListPage({
     .order('first_name');
   const owners = (ownerRows ?? []).map(o => ({ id: o.id, name: `${o.first_name} ${o.last_name}`.trim() }));
 
+  const { data: cityRows } = await supabase.from('crm_leads').select('city').is('archived_at', null).not('city', 'is', null).limit(2000);
+  const cities = Array.from(new Set((cityRows ?? []).map(r => r.city).filter(Boolean) as string[])).sort();
+
+  const now = new Date();
+  const scoresById = new Map((rows ?? []).map(r => [r.id, computeLeadScore({
+    stage: r.stage,
+    estimatedMonthlyBillings: r.estimated_monthly_billings,
+    nextFollowUpAt: r.next_follow_up_at,
+    // updated_at is the closest available proxy for "last stage change"
+    // without an extra crm_activities join — a real per-lead stage-change
+    // timestamp is a reasonable future upgrade, not required by Phase 3.
+    lastStageChangeAt: r.updated_at,
+    lastActivityAt: r.updated_at,
+    hasUnansweredReply: false,
+    distanceKm: null,
+  }, now)]));
+
   const sorted = [...(rows ?? [])].sort((a, b) => {
     switch (sort) {
       case 'follow-up':
@@ -144,12 +169,14 @@ export default async function LeadsListPage({
         return b.created_at.localeCompare(a.created_at);
       case 'value':
         return (b.estimated_monthly_billings ?? 0) - (a.estimated_monthly_billings ?? 0);
+      case 'priority':
+        return (scoresById.get(b.id)?.score ?? 0) - (scoresById.get(a.id)?.score ?? 0);
     }
   });
 
   function chipUrl(patch: Partial<SearchParams>) {
     const u = new URLSearchParams();
-    const merged: SearchParams = { q, stage, source, specialty, sort, owner, ...patch };
+    const merged: SearchParams = { q, stage, source, specialty, sort, owner, city, ...patch };
     if (merged.q)         u.set('q', merged.q);
     if (merged.stage)     u.set('stage', merged.stage);
     if (merged.source)    u.set('source', merged.source);
@@ -157,6 +184,7 @@ export default async function LeadsListPage({
     if (merged.overdue)   u.set('overdue', 'true');
     if (merged.sort)      u.set('sort', merged.sort);
     if (merged.owner)     u.set('owner', merged.owner);
+    if (merged.city)      u.set('city', merged.city);
     return `/crm/leads?${u.toString()}`;
   }
 
@@ -169,13 +197,20 @@ export default async function LeadsListPage({
             Practices in the pipeline. Click a row to open its detail record.
           </p>
         </div>
-        <Link href="/crm/leads/new" className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium">
-          + New lead
-        </Link>
+        <div className="flex items-center gap-2">
+          <LeadsViewSwitcher />
+          <Link href="/crm/leads/new" className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium">
+            + New lead
+          </Link>
+        </div>
       </div>
+      <p className="text-xs text-gray-500" data-testid="leads-result-count">
+        {sorted.length} lead{sorted.length === 1 ? '' : 's'}
+      </p>
 
       <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
         <LeadsSearchForm initialQ={q} />
+        <SavedViewsBar params={params} />
 
         {/* Sort chips */}
         <div className="flex gap-2 flex-wrap items-center">
@@ -199,41 +234,65 @@ export default async function LeadsListPage({
           })}
         </div>
 
-        {/* Stage / source / specialty / overdue chips */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <span className="text-xs text-gray-500 uppercase tracking-wide">Stage:</span>
-          <ChipLink href={chipUrl({ stage: '' })}       active={!stage}          label="All" />
-          {STAGES.map(s => (
-            <ChipLink key={s} href={chipUrl({ stage: s })} active={stage === s} label={s.replace(/_/g, ' ')} capitalize />
-          ))}
-        </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <span className="text-xs text-gray-500 uppercase tracking-wide">Source:</span>
-          <ChipLink href={chipUrl({ source: '' })}      active={!source}         label="All" />
-          {SOURCES.map(s => (
-            <ChipLink key={s} href={chipUrl({ source: s })} active={source === s} label={s.replace('_', ' ')} capitalize />
-          ))}
-        </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <span className="text-xs text-gray-500 uppercase tracking-wide">Specialty:</span>
-          <ChipLink href={chipUrl({ specialty: '' })}   active={!specialty}      label="All" />
-          {SPECIALTIES.map(s => (
-            <ChipLink key={s} href={chipUrl({ specialty: s })} active={specialty === s} label={s} />
-          ))}
-        </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <ChipLink href={chipUrl({ overdue: overdue ? undefined : 'true' })} active={overdue} label="Overdue only" tone="danger" />
-        </div>
-        {isAdmin && owners.length > 0 && (
-          <div className="flex gap-2 flex-wrap items-center">
-            <span className="text-xs text-gray-500 uppercase tracking-wide">Owner:</span>
-            <ChipLink href={chipUrl({ owner: '' })}   active={!owner}        label="All" />
-            <ChipLink href={chipUrl({ owner: 'me' })} active={owner === 'me'} label="My leads" />
-            {owners.filter(o => o.id !== user.id).map(o => (
-              <ChipLink key={o.id} href={chipUrl({ owner: o.id })} active={owner === o.id} label={o.name} />
-            ))}
+        {/* Everything else lives behind Filters — the pill wall used to be
+            ~250px above the fold across four rows; this collapses it to one
+            row plus a single disclosure toggle. */}
+        <details className="group" data-testid="leads-filters-disclosure">
+          <summary className="cursor-pointer text-xs font-medium text-[#15A89E] list-none inline-flex items-center gap-1">
+            Filters
+            {(stage || source || specialty || overdue || owner || city) && (
+              <span className="inline-flex items-center justify-center rounded-full bg-[#15A89E]/15 text-[#0F766E] text-[10px] font-bold px-1.5 py-0.5 min-w-[1.1rem]">
+                {[stage, source, specialty, overdue ? '1' : '', owner, city].filter(Boolean).length}
+              </span>
+            )}
+            <span className="text-gray-400 group-open:rotate-180 transition-transform">▾</span>
+          </summary>
+          <div className="mt-3 space-y-3">
+            <div className="flex gap-2 flex-wrap items-center">
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Stage:</span>
+              <ChipLink href={chipUrl({ stage: '' })}       active={!stage}          label="All" />
+              {STAGES.map(s => (
+                <ChipLink key={s} href={chipUrl({ stage: s })} active={stage === s} label={s.replace(/_/g, ' ')} capitalize />
+              ))}
+            </div>
+            <div className="flex gap-2 flex-wrap items-center">
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Source:</span>
+              <ChipLink href={chipUrl({ source: '' })}      active={!source}         label="All" />
+              {SOURCES.map(s => (
+                <ChipLink key={s} href={chipUrl({ source: s })} active={source === s} label={s.replace('_', ' ')} capitalize />
+              ))}
+            </div>
+            <div className="flex gap-2 flex-wrap items-center">
+              <span className="text-xs text-gray-500 uppercase tracking-wide">Specialty:</span>
+              <ChipLink href={chipUrl({ specialty: '' })}   active={!specialty}      label="All" />
+              {SPECIALTIES.map(s => (
+                <ChipLink key={s} href={chipUrl({ specialty: s })} active={specialty === s} label={s} />
+              ))}
+            </div>
+            <div className="flex gap-2 flex-wrap items-center">
+              <ChipLink href={chipUrl({ overdue: overdue ? undefined : 'true' })} active={overdue} label="Overdue only" tone="danger" />
+            </div>
+            {cities.length > 0 && (
+              <div className="flex gap-2 flex-wrap items-center">
+                <span className="text-xs text-gray-500 uppercase tracking-wide">City:</span>
+                <ChipLink href={chipUrl({ city: '' })} active={!city} label="All" />
+                {cities.map(c => (
+                  <ChipLink key={c} href={chipUrl({ city: c })} active={city === c} label={c} />
+                ))}
+              </div>
+            )}
+            {isAdmin && owners.length > 0 && (
+              <div className="flex gap-2 flex-wrap items-center">
+                <span className="text-xs text-gray-500 uppercase tracking-wide">Owner:</span>
+                <ChipLink href={chipUrl({ owner: '' })}   active={!owner}        label="All" />
+                <ChipLink href={chipUrl({ owner: 'me' })} active={owner === 'me'} label="My leads" />
+                {owners.filter(o => o.id !== user.id).map(o => (
+                  <ChipLink key={o.id} href={chipUrl({ owner: o.id })} active={owner === o.id} label={o.name} />
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </details>
       </div>
 
       {/* Empty */}
@@ -242,7 +301,11 @@ export default async function LeadsListPage({
           <p className="text-gray-500">No leads match. Try clearing filters or creating a new lead.</p>
         </div>
       ) : (
-        <LeadsResultsList rows={sorted} owners={owners} />
+        <LeadsResultsList
+          rows={sorted}
+          owners={owners}
+          scores={Object.fromEntries(scoresById) as Record<string, LeadScore>}
+        />
       )}
     </div>
   );

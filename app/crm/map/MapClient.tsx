@@ -6,6 +6,7 @@ import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
 import { updateLead } from '../leads/actions';
+import LeadsViewSwitcher from '../leads/LeadsViewSwitcher';
 import {
   buildGoogleMapsDirUrl,
   nearestNeighbourOrder,
@@ -27,6 +28,11 @@ import { SPECIALTIES } from '@/lib/specialties';
 // for the actual routing.
 
 const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
+
+// Saved base address (route-planner start, alternative to live location) —
+// per-browser via localStorage. No schema change: this is a client-side
+// convenience, not CRM data.
+const BASE_ADDRESS_KEY = 'crm-map-base-address';
 
 type Props = {
   withCoords: MapLeadRow[];
@@ -79,6 +85,45 @@ function pinIcon(g: GNS, color: string, selected: boolean) {
   };
 }
 
+// Cluster bubbles must use the SAME stage colour palette as the pins
+// and legend below — the default MarkerClusterer renderer paints
+// every bubble Google's stock red/blue, which visually contradicts a
+// legend where red specifically means "Agreement sent".
+function dominantStageColor(clusterMarkers: unknown[]): string {
+  const counts = new Map<string, number>();
+  for (const m of clusterMarkers as Array<{ get: (k: string) => unknown }>) {
+    const stage = String(m.get('stage') ?? '');
+    counts.set(stage, (counts.get(stage) ?? 0) + 1);
+  }
+  let best = '';
+  let bestCount = -1;
+  for (const [stage, count] of counts) {
+    if (count > bestCount) { best = stage; bestCount = count; }
+  }
+  return pinColourForStage(best);
+}
+
+function buildClusterRenderer(g: GNS) {
+  return {
+    render({ count, position, markers: clusterMarkers }: { count: number; position: LatLngLiteral; markers: unknown[] }) {
+      const color = dominantStageColor(clusterMarkers);
+      return new g.maps.Marker({
+        position,
+        icon: {
+          path: g.maps.SymbolPath.CIRCLE,
+          scale: Math.min(24, 12 + Math.sqrt(count) * 3),
+          fillColor: color,
+          fillOpacity: 0.85,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+        },
+        label: { text: String(count), color: '#ffffff', fontSize: '11px', fontWeight: '700' },
+        zIndex: 1000 + count,
+      });
+    },
+  };
+}
+
 export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -87,6 +132,18 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
   const [routeIds,   setRouteIds]   = useState<string[]>([]);
   const [start,      setStart]      = useState<{ lat: number; lng: number } | null>(null);
   const [locErr,     setLocErr]     = useState<string | null>(null);
+  // Lazy initializer (not an effect) — reading localStorage once at
+  // mount is a synchronous, one-time read of external state, not a
+  // reaction to a prop/state change, so it belongs in useState's
+  // initializer rather than a useEffect + setState.
+  const [savedBase,  setSavedBase]  = useState<{ lat: number; lng: number; label: string } | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = window.localStorage.getItem(BASE_ADDRESS_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  const [editingBase, setEditingBase] = useState(false);
   const [noCoordRows, setNoCoordRows] = useState<MapLeadRow[]>(noCoords);
   const [pinRows,     setPinRows]     = useState<MapLeadRow[]>(withCoords);
 
@@ -170,7 +227,7 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
     // are handed to the clusterer instead of `map:` directly (below); it
     // decides per-zoom whether each one renders solo or inside a cluster.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- our GMap is a narrowed local type; the clusterer only needs the real google.maps.Map instance it wraps at runtime.
-    clusterer.current = new MarkerClusterer({ map: mapInst.current as any });
+    clusterer.current = new MarkerClusterer({ map: mapInst.current as any, renderer: buildClusterRenderer(g) as any });
     // We intentionally build markers in a separate effect below.
   }, [mapReady, visiblePins]);
 
@@ -202,6 +259,10 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
           zIndex: routeIds.includes(p.id) ? 999 : undefined,
         });
         m.addListener('click', () => setSelectedId(p.id));
+        // Stashed on the MVCObject so the cluster renderer (which only
+        // sees the raw markers folded into a bubble) can read each
+        // member's stage and colour the bubble by the dominant one.
+        (m as unknown as { set: (k: string, v: unknown) => void }).set('stage', p.stage);
         markers.current.set(p.id, m);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see clusterer construction above
         clusterer.current?.addMarker(m as any);
@@ -295,9 +356,14 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
 
       {/* Side panel */}
       <aside className="md:w-96 flex-shrink-0 border-l border-gray-200 bg-white overflow-y-auto p-4 space-y-4">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-900">Map</h1>
-          <p className="text-xs text-gray-500">Territory-planning view — {visiblePins.length} plotted, {noCoordRows.length} without coords.</p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h1 className="text-lg font-semibold text-gray-900">Map</h1>
+            <p className="text-xs text-gray-500" data-testid="map-result-count">
+              Territory-planning view — {visiblePins.length} plotted, {noCoordRows.length} without coords.
+            </p>
+          </div>
+          <LeadsViewSwitcher />
         </div>
 
         {/* Filters — shared shape with /crm/leads */}
@@ -388,12 +454,45 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
               })}
             </ol>
           )}
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button type="button" onClick={useMyLocation} className="rounded-lg border border-gray-200 bg-white text-gray-700 px-2 py-1.5 text-xs">
               Start from my location
             </button>
+            {savedBase && (
+              <button
+                type="button"
+                onClick={() => setStart({ lat: savedBase.lat, lng: savedBase.lng })}
+                className="rounded-lg border border-gray-200 bg-white text-gray-700 px-2 py-1.5 text-xs"
+                data-testid="map-use-base-address"
+              >
+                Start from {savedBase.label.split(',')[0]}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditingBase(v => !v)}
+              className="rounded-lg border border-gray-200 bg-white text-gray-500 px-2 py-1.5 text-xs"
+            >
+              {savedBase ? 'Change base address' : 'Set a base address'}
+            </button>
             {start && <button type="button" onClick={() => setStart(null)} className="rounded-lg border border-gray-200 bg-white text-gray-500 px-2 py-1.5 text-xs">Clear start</button>}
           </div>
+          {editingBase && (
+            <div data-testid="map-base-address-editor">
+              <PlacesAutocomplete
+                variant="address"
+                inputId="map-base-address"
+                placeholder="Search your usual starting point…"
+                onSelect={(place) => {
+                  const base = { lat: place.latitude, lng: place.longitude, label: place.formattedAddress };
+                  setSavedBase(base);
+                  setStart({ lat: base.lat, lng: base.lng });
+                  setEditingBase(false);
+                  try { window.localStorage.setItem(BASE_ADDRESS_KEY, JSON.stringify(base)); } catch { /* ignore */ }
+                }}
+              />
+            </div>
+          )}
           {locErr && <p role="alert" className="text-xs text-red-700">{locErr}</p>}
           {routeUrl ? (
             <a

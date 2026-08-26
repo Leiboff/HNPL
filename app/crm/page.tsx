@@ -5,6 +5,7 @@ import { bucketFollowups } from '@/lib/crm/followups';
 import { sastDayWindows } from '@/lib/crm/timezone';
 import { weightedPipelineValue, hasEnoughData } from '@/lib/crm/pipeline';
 import { formatRand } from '@/app/admin/_lib/format';
+import TodayCallsToLog from './TodayCallsToLog';
 
 // ─── /crm — My Day (default landing) ─────────────────────────────────
 //
@@ -38,6 +39,31 @@ export default async function CrmHomePage() {
 
   const now = new Date();
   const { upcomingEndUtc } = sastDayWindows(now);
+
+  // Today, built on crm_tasks: open call tasks due today or overdue,
+  // owned by the current user — the two-tap "log call with an outcome"
+  // flow lives here (TodayCallsToLog), separate from the existing
+  // next_follow_up_at buckets below (which stay as the broader
+  // "what's next per lead" view).
+  const { data: rawTasks } = await supabase
+    .from('crm_tasks')
+    .select('id, lead_id, type, title, due_at, crm_leads(practice_name)')
+    .eq('owner_user_id', user.id)
+    .eq('type', 'call')
+    .is('completed_at', null)
+    .lt('due_at', upcomingEndUtc.toISOString())
+    .order('due_at', { ascending: true })
+    .limit(50);
+  const { todayStartUtc: taskTodayStart } = sastDayWindows(now);
+  const callTasks = (rawTasks ?? []).map(t => ({
+    id: t.id,
+    lead_id: t.lead_id,
+    practice_name: (t.crm_leads as unknown as { practice_name: string } | null)?.practice_name ?? null,
+    type: t.type,
+    title: t.title,
+    due_at: t.due_at,
+    overdue: new Date(t.due_at) < taskTodayStart,
+  }));
 
   const { data: rawLeads } = await supabase
     .from('crm_leads')
@@ -103,7 +129,7 @@ export default async function CrmHomePage() {
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">My Day</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Today</h1>
           <p className="mt-1 text-sm text-gray-500">
             Follow-ups queued for you. Work top to bottom — nothing under &lsquo;overdue&rsquo; is optional.
           </p>
@@ -115,6 +141,8 @@ export default async function CrmHomePage() {
           + New lead
         </Link>
       </div>
+
+      {callTasks.length > 0 && <TodayCallsToLog tasks={callTasks} />}
 
       {/* ── Metrics strip ────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
