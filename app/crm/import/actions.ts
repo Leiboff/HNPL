@@ -86,7 +86,7 @@ export async function commitImport(
   drafts: (CsvLeadDraft | null)[],
   errors: RowError[],
   includeDupeIdxs: number[],
-): Promise<{ error?: string; created?: number; skipped?: number }> {
+): Promise<{ error?: string; created?: number; skipped?: number; rowErrors?: RowError[] }> {
   const g = await guard();
   if (!g.ok) return { error: g.error };
 
@@ -96,7 +96,7 @@ export async function commitImport(
   const errorRowNums = new Set(errors.filter(e => e.rowNumber > 0).map(e => e.rowNumber));
   const includeDupe = new Set(includeDupeIdxs);
 
-  const toInsert: Array<Record<string, unknown>> = [];
+  const toInsert: Array<{ rowNumber: number; row: Record<string, unknown> }> = [];
   let skipped = 0;
   drafts.forEach((d, i) => {
     if (!d) return;
@@ -107,20 +107,23 @@ export async function commitImport(
     // If a row was not flagged, includeDupe won't contain it — we don't skip.
     // (We can't detect dupes here without another query; the client tells us via includeDupeIdxs.)
     toInsert.push({
-      practice_name:      d.practice_name,
-      contact_first_name: d.contact_first_name,
-      contact_last_name:  d.contact_last_name,
-      role_at_practice:   d.role_at_practice,
-      specialty:          d.specialty,
-      phone:              d.phone,
-      email:              d.email,
-      street_address:     d.street_address,
-      suburb:             d.suburb,
-      city:               d.city,
-      province:           d.province,
-      source:             d.source,
-      owner_user_id:      g.userId,
-      created_by:         g.userId,
+      rowNumber: rowNum,
+      row: {
+        practice_name:      d.practice_name,
+        contact_first_name: d.contact_first_name,
+        contact_last_name:  d.contact_last_name,
+        role_at_practice:   d.role_at_practice,
+        specialty:          d.specialty,
+        phone:              d.phone,
+        email:              d.email,
+        street_address:     d.street_address,
+        suburb:             d.suburb,
+        city:               d.city,
+        province:           d.province,
+        source:             d.source,
+        owner_user_id:      g.userId,
+        created_by:         g.userId,
+      },
     });
     // Note: the client filters out dupes it doesn't want to include before calling us,
     // so `includeDupe` isn't consulted here. Suppress the unused warning.
@@ -129,11 +132,33 @@ export async function commitImport(
 
   if (toInsert.length === 0) return { created: 0, skipped };
 
-  const { error } = await supabase.from('crm_leads').insert(toInsert);
-  if (error) return { error: error.message };
+  // One row per request rather than a single batch insert: a batch
+  // insert is all-or-nothing, so ONE row tripping the
+  // crm_leads_practice_suburb_uidx unique index (duplicate practice
+  // in the same suburb) would 500 the whole import instead of
+  // surfacing a clean, row-level error and letting the rest commit.
+  let created = 0;
+  const rowErrors: RowError[] = [];
+  for (const { rowNumber, row } of toInsert) {
+    const { error } = await supabase.from('crm_leads').insert(row);
+    if (error) {
+      if (error.code === '23505' && error.message.includes('crm_leads_practice_suburb_uidx')) {
+        rowErrors.push({
+          rowNumber,
+          field: 'practice_name',
+          message: 'Duplicate practice: a lead for this practice + suburb already exists.',
+        });
+      } else {
+        rowErrors.push({ rowNumber, field: 'practice_name', message: error.message });
+      }
+      skipped++;
+      continue;
+    }
+    created++;
+  }
 
   revalidatePath('/crm/leads');
   revalidatePath('/crm/board');
   revalidatePath('/crm');
-  return { created: toInsert.length, skipped };
+  return { created, skipped, rowErrors: rowErrors.length ? rowErrors : undefined };
 }

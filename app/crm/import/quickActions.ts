@@ -94,52 +94,82 @@ export async function previewQuickImport(csvText: string): Promise<QuickPreviewR
 export async function commitQuickImport(
   rows:   (QuickPreviewRow | null)[],
   errors: QuickRowError[],
-): Promise<{ error?: string; created?: number; skipped?: number }> {
+): Promise<{ error?: string; created?: number; skipped?: number; rowErrors?: QuickRowError[] }> {
   const g = await guard();
   if (!g.ok) return { error: g.error };
 
   const supabase = await createClient();
   const errorRowNums = new Set(errors.filter(e => e.rowNumber > 0).map(e => e.rowNumber));
 
-  const toInsert: Array<Record<string, unknown>> = [];
+  const toInsert: Array<{ rowNumber: number; row: Record<string, unknown> }> = [];
   let skipped = 0;
   rows.forEach((r, i) => {
     if (!r) return;
     const rowNum = i + 1;
     if (errorRowNums.has(rowNum)) { skipped++; return; }
     toInsert.push({
-      practice_name:      r.practiceName,
-      contact_first_name: r.contactFirstName,
-      contact_last_name:  r.contactLastName,
-      specialty:          r.specialty,
-      suburb:             r.suburb,
-      city:               r.city,
-      province:           r.province,
-      latitude:           r.latitude,
-      longitude:          r.longitude,
-      source:             'other',
-      owner_user_id:      g.userId,
-      created_by:         g.userId,
+      rowNumber: rowNum,
+      row: {
+        practice_name:      r.practiceName,
+        contact_first_name: r.contactFirstName,
+        contact_last_name:  r.contactLastName,
+        specialty:          r.specialty,
+        suburb:             r.suburb,
+        city:               r.city,
+        province:           r.province,
+        latitude:           r.latitude,
+        longitude:          r.longitude,
+        source:             'other',
+        owner_user_id:      g.userId,
+        created_by:         g.userId,
+      },
     });
   });
 
   if (toInsert.length === 0) return { created: 0, skipped };
 
+  function duplicateRowError(rowNumber: number): QuickRowError {
+    return {
+      rowNumber,
+      field: 'practiceName',
+      message: 'Duplicate practice: a lead for this practice + suburb already exists.',
+    };
+  }
+
   // Chunk the insert — a single request carrying thousands of rows
   // risks the payload/statement-timeout limits of one Postgres round
-  // trip; each chunk fails or succeeds independently.
+  // trip. A whole chunk is all-or-nothing, so when a chunk fails we
+  // fall back to inserting that chunk one row at a time so a single
+  // duplicate-practice row doesn't take the rest of the chunk down
+  // with it — the caller gets a row-level error instead of a 500.
   const CHUNK = 500;
   let created = 0;
+  const rowErrors: QuickRowError[] = [];
   for (let i = 0; i < toInsert.length; i += CHUNK) {
     const chunk = toInsert.slice(i, i + CHUNK);
-    const { error } = await supabase.from('crm_leads').insert(chunk);
-    if (error) return { error: error.message, created, skipped };
-    created += chunk.length;
+    const { error } = await supabase.from('crm_leads').insert(chunk.map(c => c.row));
+    if (!error) {
+      created += chunk.length;
+      continue;
+    }
+    for (const { rowNumber, row } of chunk) {
+      const { error: rowError } = await supabase.from('crm_leads').insert(row);
+      if (rowError) {
+        rowErrors.push(
+          rowError.code === '23505' && rowError.message.includes('crm_leads_practice_suburb_uidx')
+            ? duplicateRowError(rowNumber)
+            : { rowNumber, field: 'practiceName', message: rowError.message },
+        );
+        skipped++;
+        continue;
+      }
+      created++;
+    }
   }
 
   revalidatePath('/crm/leads');
   revalidatePath('/crm/map');
   revalidatePath('/crm/board');
   revalidatePath('/crm');
-  return { created, skipped };
+  return { created, skipped, rowErrors: rowErrors.length ? rowErrors : undefined };
 }

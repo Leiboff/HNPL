@@ -24,6 +24,7 @@ export default async function CrmMapPage() {
   const { data: rows } = await supabase
     .from('crm_leads')
     .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, specialty, owner_user_id, latitude, longitude, next_follow_up_at, suburb, city, province, formatted_address')
+    .is('archived_at', null)
     .order('updated_at', { ascending: false })
     .limit(2000);
 

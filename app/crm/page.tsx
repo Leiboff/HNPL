@@ -40,6 +40,7 @@ export default async function CrmHomePage() {
   const { data: rawLeads } = await supabase
     .from('crm_leads')
     .select('id, practice_name, stage, next_follow_up_at, owner_user_id')
+    .is('archived_at', null)
     .not('next_follow_up_at', 'is', null)
     .lt('next_follow_up_at', upcomingEndUtc.toISOString())
     .order('next_follow_up_at', { ascending: true })
@@ -56,7 +57,7 @@ export default async function CrmHomePage() {
   );
 
   // Metrics strip
-  const { data: allStages } = await supabase.from('crm_leads').select('id, stage').limit(5000);
+  const { data: allStages } = await supabase.from('crm_leads').select('id, stage').is('archived_at', null).limit(5000);
   const byStage: Record<string, { count: number }> = {};
   for (const s of STAGES) byStage[s] = { count: 0 };
   for (const l of allStages ?? []) {
@@ -83,6 +84,7 @@ export default async function CrmHomePage() {
   const { data: inboundRows } = await supabase
     .from('crm_leads')
     .select('id, practice_name, contact_first_name, contact_last_name, suburb, city, created_at')
+    .is('archived_at', null)
     .eq('source', 'inbound')
     .is('owner_user_id', null)
     .order('created_at', { ascending: false })
