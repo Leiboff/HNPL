@@ -11,7 +11,7 @@ import {
 import { splitFullName } from '@/lib/crm/nameSplit';
 import { parseNeighbourhoodLocation } from '@/lib/crm/parseLocation';
 import { normaliseSpecialty } from '@/lib/specialties';
-import { geocodeLocalities, normaliseLocalityQuery } from '@/lib/crm/localityGeocode';
+import { resolveLocalitiesWithCache, normaliseLocalityQuery } from '@/lib/crm/localityGeocode';
 
 // ─── Server-side guard: sales OR admin (same rule as actions.ts) ─────
 
@@ -59,10 +59,12 @@ export async function previewQuickImport(csvText: string): Promise<QuickPreviewR
     return { rowCount: parsed.rowCount, errors, rows: [] };
   }
 
-  // One Google call per DISTINCT neighbourhood string, not per row —
-  // thousands of leads sharing a handful of suburbs share the lookup.
+  // One Google call per DISTINCT neighbourhood string EVER, not per row
+  // and not per import batch — crm_locality_geocode_cache remembers
+  // every suburb this or any earlier import already resolved.
+  const supabase  = await createClient();
   const locations = drafts.filter((d): d is QuickImportDraft => !!d).map(d => d.locationRaw);
-  const geocoded  = await geocodeLocalities(locations);
+  const geocoded  = await resolveLocalitiesWithCache(supabase, locations);
 
   const rows: (QuickPreviewRow | null)[] = drafts.map(d => {
     if (!d) return null;
