@@ -101,7 +101,9 @@ describe('7. Mark signed → invite reconciliation', () => {
     await q(`insert into practice_invitations (token, lead_id) values ('tok-a', $1)`, [leadA]);
     await q(`insert into practice_invitations (token, lead_id) values ('tok-b', $1)`, [leadB]);
 
-    const practiceA = (await q<{ id: string }>(`insert into practices (name) values ('Same Name Dental') returning id`)).rows[0].id;
+    // Only practiceB is ever referenced by an insert below — practiceA's
+    // existence alone (never linked to) is the point of the assertion.
+    await q(`insert into practices (name) values ('Same Name Dental')`);
     const practiceB = (await q<{ id: string }>(`insert into practices (name) values ('Same Name Dental') returning id`)).rows[0].id;
 
     // Only token-B redeems, against practiceB — linkage is keyed on the
