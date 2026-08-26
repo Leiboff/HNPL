@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import ImportClient from './ImportClient';
+import ImportTabs from './ImportTabs';
 
 export default async function ImportPage() {
   const { user, supabase } = await requireConfirmedUser({ next: '/crm/import' });
@@ -23,10 +23,12 @@ export default async function ImportPage() {
       <div>
         <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Import leads (CSV)</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Upload a CSV of leads. We show you a preview with row-by-row errors and duplicate warnings before anything is written. Cap: 500 rows per file.
+          Upload a CSV of leads. We show you a preview with row-by-row errors and duplicate warnings before anything is written.
+          &quot;Full detail&quot; caps at 500 rows and expects a resolved address; &quot;Quick import&quot; caps at 5,000 rows, needs only a
+          name, specialty, and rough neighbourhood, and geocodes the neighbourhood to an approximate map position automatically.
         </p>
       </div>
-      <ImportClient />
+      <ImportTabs />
     </div>
   );
 }

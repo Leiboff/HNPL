@@ -149,6 +149,11 @@ describe('Places API (New) — wired in the right places, no server-side key lea
       'lib/maps/places.ts',
       'lib/maps/places.test.ts',
       'lib/maps/reverseGeocode.test.ts',
+      // Server-only locality Text Search for the bulk quick-import path
+      // (app/crm/import/quickActions.ts) — a SEPARATE, server-only key
+      // (GOOGLE_PLACES_SERVER_KEY), never the browser one.
+      'lib/crm/localityGeocode.ts',
+      'lib/crm/localityGeocode.test.ts',
     ]);
     for (const f of files) {
       expect(ALLOWED.has(f)).toBe(true);

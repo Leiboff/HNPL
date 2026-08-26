@@ -209,9 +209,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...       # sensitive — server only
 NEXT_PUBLIC_GOOGLE_PLACES_KEY=...   # browser — Places API (New) — MUST be HTTP-referrer-restricted
 GOOGLE_GEOCODING_SERVER_KEY=...     # server only — Geocoding API — MUST NOT be referrer-restricted; used ONLY by /api/reverse-geocode
+GOOGLE_PLACES_SERVER_KEY=...        # server only — Places API (New) Text Search — MUST NOT be referrer-restricted; used ONLY by lib/crm/localityGeocode.ts (bulk lead-import neighbourhood geocoding)
 ```
 
-The two Google keys are separate on purpose: the browser Places (New) key can be safely referrer-restricted; the legacy Geocoding REST endpoint (used server-side to turn a coord into a "Suburb, City" label) REJECTS referrer-restricted keys. Never mix them.
+The Google keys are separate on purpose: the browser Places (New) key can be safely referrer-restricted; the legacy Geocoding REST endpoint (used server-side to turn a coord into a "Suburb, City" label) and the server-side locality Text Search (used to turn a neighbourhood name into an approximate lat/lng for bulk import) both run with no Origin/Referer header, so a referrer-restricted key 403s them. Never mix these keys up.
 
 ### Test accounts used during development
 - Patient: `test1@test.com` / `test1234`
