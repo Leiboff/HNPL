@@ -29,11 +29,15 @@ describe('normaliseSpecialty', () => {
     expect(normaliseSpecialty('Pharmacist')).toBe('Pharmacy');
   });
 
-  it('maps medical-specialist labels to Specialist Medicine, keeping psychiatry distinct from psychology', () => {
-    expect(normaliseSpecialty('Cardiologist')).toBe('Specialist Medicine');
-    expect(normaliseSpecialty('Orthopaedic Surgeon')).toBe('Specialist Medicine');
-    expect(normaliseSpecialty('Psychiatrist')).toBe('Specialist Medicine');
-    expect(normaliseSpecialty('Psychologist')).toBe('Psychology');
+  it('keeps distinct medical specialties verbatim rather than bucketing them under Specialist Medicine', () => {
+    // A dermatologist and a cardiologist are not the same specialty —
+    // collapsing them into one generic label loses exactly the detail
+    // a lead list needs, so none of these get remapped.
+    expect(normaliseSpecialty('Dermatologist')).toBe('Dermatologist');
+    expect(normaliseSpecialty('Cardiologist')).toBe('Cardiologist');
+    expect(normaliseSpecialty('Orthopaedic Surgeon')).toBe('Orthopaedic Surgeon');
+    expect(normaliseSpecialty('Psychiatrist')).toBe('Psychiatrist');
+    expect(normaliseSpecialty('Psychologist')).toBe('Psychology'); // still a real synonym
   });
 
   it('keeps an unrecognised label verbatim rather than forcing it to Other', () => {
