@@ -56,6 +56,7 @@ declare global {
         SymbolPath:         { CIRCLE: unknown };
       };
     };
+    gm_authFailure?: () => void;
   }
 }
 // Local shortcut — resolved at runtime after the script loads.
@@ -89,6 +90,13 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
     if (!apiKey) { setMapError('missing_key'); return; }
     if (typeof window === 'undefined') return;
     if (window.google?.maps) { setMapReady(true); return; }
+
+    // Google calls this global (rather than the <script> 'error' event) when
+    // the key loads but is rejected at runtime — wrong referrer restriction,
+    // Maps JS API not enabled on the key, quota exceeded, etc. Without this,
+    // the script's 'load' event still fires and the map silently stays a
+    // blank/grey box with only a console error to explain why.
+    window.gm_authFailure = () => setMapError('auth_failure');
 
     const existing = document.querySelector<HTMLScriptElement>('script[data-crm-maps-loader="1"]');
     if (existing) {
@@ -240,6 +248,8 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
             <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm max-w-md text-center" data-testid="crm-map-error">
               {mapError === 'missing_key'
                 ? 'Google Maps API key not set (NEXT_PUBLIC_GOOGLE_PLACES_KEY). Ask the admin to configure it.'
+                : mapError === 'auth_failure'
+                ? "Google Maps rejected the API key at runtime. In GCP Console, check that the key's API restrictions include \"Maps JavaScript API\" (not just Places API) and that its HTTP referrer allow-list covers this domain."
                 : 'The Google Maps JS API failed to load. If this persists, the key may not be restricted to include the Maps JavaScript API.'
               }
             </div>
