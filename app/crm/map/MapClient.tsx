@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
 import { updateLead } from '../leads/actions';
@@ -17,11 +18,13 @@ import { SPECIALTIES } from '@/lib/specialties';
 // ─── /crm/map client ─────────────────────────────────────────────────
 //
 // Loads the Google Maps JS API from the existing NEXT_PUBLIC key when
-// the component mounts. Renders pins colour-coded by stage. Tap → mini
-// card. "Plan route" panel: select 2-8 leads, order them nearest-
-// neighbour from a chosen start (or default to the first selection),
-// build a /maps/dir/ deep link. No Directions-API calls — the URL
-// hands off to Google Maps for the actual routing.
+// the component mounts. Renders pins colour-coded by stage, grouped into
+// count bubbles via @googlemaps/markerclusterer wherever leads are dense
+// enough to overlap. Tap a solo pin → mini card; tap a cluster → zoom in.
+// "Plan route" panel: select 2-8 leads, order them nearest-neighbour from
+// a chosen start (or default to the first selection), build a /maps/dir/
+// deep link. No Directions-API calls — the URL hands off to Google Maps
+// for the actual routing.
 
 const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 
@@ -87,9 +90,10 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
   const [noCoordRows, setNoCoordRows] = useState<MapLeadRow[]>(noCoords);
   const [pinRows,     setPinRows]     = useState<MapLeadRow[]>(withCoords);
 
-  const mapRef  = useRef<HTMLDivElement>(null);
-  const mapInst = useRef<GMap | null>(null);
-  const markers = useRef<Map<string, GMarker>>(new Map());
+  const mapRef      = useRef<HTMLDivElement>(null);
+  const mapInst     = useRef<GMap | null>(null);
+  const markers     = useRef<Map<string, GMarker>>(new Map());
+  const clusterer   = useRef<MarkerClusterer | null>(null);
 
   // ── Filtered set — shared logic with the list view (client-side) ──
   const visiblePins = pinRows.filter(r => {
@@ -161,6 +165,12 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
       for (const p of visiblePins) if (p.lat != null && p.lng != null) bounds.extend({ lat: p.lat, lng: p.lng });
       mapInst.current.fitBounds(bounds, 48);
     }
+    // Groups nearby pins into a count bubble at low zoom — with thousands
+    // of leads, ungrouped pins overlap into an unreadable smear. Markers
+    // are handed to the clusterer instead of `map:` directly (below); it
+    // decides per-zoom whether each one renders solo or inside a cluster.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- our GMap is a narrowed local type; the clusterer only needs the real google.maps.Map instance it wraps at runtime.
+    clusterer.current = new MarkerClusterer({ map: mapInst.current as any });
     // We intentionally build markers in a separate effect below.
   }, [mapReady, visiblePins]);
 
@@ -171,7 +181,11 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
     if (!g) return;
     const wanted = new Set(visiblePins.map(p => p.id));
     for (const [id, marker] of markers.current) {
-      if (!wanted.has(id)) { marker.setMap(null); markers.current.delete(id); }
+      if (!wanted.has(id)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see clusterer construction above
+        clusterer.current?.removeMarker(marker as any);
+        markers.current.delete(id);
+      }
     }
     for (const p of visiblePins) {
       if (p.lat == null || p.lng == null) continue;
@@ -179,15 +193,18 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
       const color = pinColourForStage(p.stage);
       const icon = pinIcon(g, color, routeIds.includes(p.id));
       if (!m) {
+        // No `map:` here — the clusterer owns attaching markers to the map
+        // (solo or folded into a cluster bubble) once addMarker() runs.
         m = new g.maps.Marker({
           position: { lat: p.lat, lng: p.lng },
-          map:      mapInst.current,
           title:    p.practiceName,
           icon,
           zIndex: routeIds.includes(p.id) ? 999 : undefined,
         });
         m.addListener('click', () => setSelectedId(p.id));
         markers.current.set(p.id, m);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see clusterer construction above
+        clusterer.current?.addMarker(m as any);
       } else {
         m.setIcon(icon);
       }
