@@ -9,7 +9,13 @@ import { createLead } from '../actions';
 
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
 
-export default function NewLeadForm() {
+export default function NewLeadForm({
+  currentUserId, isAdmin, owners,
+}: {
+  currentUserId: string;
+  isAdmin: boolean;
+  owners: Array<{ id: string; name: string }>;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -29,6 +35,8 @@ export default function NewLeadForm() {
     longitude:                  null as number | null,
     formatted_address:          '',
     source:                     'other' as (typeof SOURCES)[number],
+    estimated_monthly_billings: '',
+    owner_user_id:              currentUserId,
   });
 
   const [dupes, setDupes]     = useState<Array<{ id: string; practice_name: string }>>([]);
@@ -57,6 +65,8 @@ export default function NewLeadForm() {
         longitude:          f.longitude,
         formatted_address:  f.formatted_address || null,
         source:             f.source,
+        estimated_monthly_billings: f.estimated_monthly_billings ? Number(f.estimated_monthly_billings) : null,
+        owner_user_id:      f.owner_user_id || null,
         confirmDupe,
       });
 
@@ -133,6 +143,26 @@ export default function NewLeadForm() {
             {SOURCES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
           </select>
         </Field>
+        <Field label="Estimated monthly billings" hint="ZAR">
+          <input
+            type="number" min="0" step="1"
+            value={f.estimated_monthly_billings}
+            onChange={e => upd('estimated_monthly_billings', e.target.value)}
+            className={inp}
+            placeholder="e.g. 45000"
+          />
+        </Field>
+        {isAdmin ? (
+          <Field label="Owner">
+            <select value={f.owner_user_id} onChange={e => upd('owner_user_id', e.target.value)} className={inp}>
+              {owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </Field>
+        ) : (
+          <Field label="Owner">
+            <p className="text-sm text-gray-500 px-3 py-2">You</p>
+          </Field>
+        )}
       </div>
 
       {dupes.length > 0 && (

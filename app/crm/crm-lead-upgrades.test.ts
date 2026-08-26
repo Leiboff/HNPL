@@ -122,9 +122,18 @@ describe('PART A — Places autocomplete on lead detail + write-through to stree
   });
 });
 
-// ─── Part B — deal-size removed ────────────────────────────────────
+// ─── Part B — deal-size re-added (CRM Phase 2, supersedes the below) ─
+//
+// This block originally pinned "Est. R/mo removed from every UI
+// surface" — a deliberate product decision at the time. CRM Phase 2
+// explicitly reverses that decision: estimated_monthly_billings is
+// "the qualification variable" and is required on the new-lead form,
+// lead detail, leads list (+ sort), board cards/totals, and My Day's
+// weighted-pipeline figure. The CSV importer was NOT asked to bring
+// the column back (Phase 2 doesn't mention it), so those two
+// assertions are left as they were.
 
-describe('PART B — Est. R/mo removed from every UI surface', () => {
+describe('PART B — Est. R/mo (estimated_monthly_billings) wired back in, Phase 2', () => {
   const CRM   = read('app/crm/page.tsx');
   const LIST  = read('app/crm/leads/page.tsx');
   const BOARD = read('app/crm/board/BoardClient.tsx');
@@ -133,40 +142,36 @@ describe('PART B — Est. R/mo removed from every UI surface', () => {
   const CSV   = read('lib/crm/csv.ts');
   const IMP   = read('app/crm/import/actions.ts');
 
-  it('CRM home no longer selects or displays estimated_monthly_billings', () => {
-    expect(CRM).not.toMatch(/estimated_monthly_billings/);
-    expect(CRM).not.toMatch(/formatRand/);
+  it('CRM home computes a weighted pipeline figure from estimated_monthly_billings', () => {
+    expect(CRM).toMatch(/estimated_monthly_billings/);
+    expect(CRM).toMatch(/weightedPipelineValue/);
   });
 
-  it('leads list no longer displays Est. R/mo', () => {
-    expect(LIST).not.toMatch(/estimated_monthly_billings/);
-    expect(LIST).not.toMatch(/Est\. R\/mo/);
+  it('leads list displays + sorts by value', () => {
+    expect(LIST).toMatch(/estimated_monthly_billings/);
+    expect(LIST).toMatch(/'value'/);
   });
 
-  it('pipeline board columns show count only (no R sum)', () => {
-    expect(BOARD).not.toMatch(/estimated_monthly_billings/);
-    expect(BOARD).not.toMatch(/formatRand/);
-    // Explicit test-id for column count.
+  it('pipeline board columns show a per-stage R total, in addition to the count', () => {
+    expect(BOARD).toMatch(/estimated_monthly_billings/);
+    expect(BOARD).toMatch(/formatRand/);
     expect(BOARD).toMatch(/data-testid=\{`crm-board-column-count:/);
+    expect(BOARD).toMatch(/data-testid=\{`crm-board-column-value:/);
   });
 
-  it('create-lead form drops the deal-size input', () => {
-    expect(NEW).not.toMatch(/estimated_monthly_billings/);
+  it('create-lead form has the deal-size input', () => {
+    expect(NEW).toMatch(/estimated_monthly_billings/);
   });
 
-  it('lead detail drops the Est. R/mo field + footer proxy', () => {
-    expect(LDC).not.toMatch(/estimated_monthly_billings/);
-    expect(LDC).not.toMatch(/deal-size proxy/);
+  it('lead detail has the Est. monthly billings field', () => {
+    expect(LDC).toMatch(/estimated_monthly_billings/);
   });
 
-  it('CSV parser drops estimated_monthly_billings from headers, drafts, and validation', () => {
+  it('CSV parser still does not carry estimated_monthly_billings (unchanged by Phase 2 — not asked for)', () => {
     expect(CSV).not.toMatch(/estimated_monthly_billings:\s*number/);
-    // Header list no longer includes it.
-    expect(CSV).toMatch(/CSV_TEMPLATE_HEADERS[\s\S]*?street_address[\s\S]*?notes/);
-    expect(CSV.split('CSV_TEMPLATE_HEADERS')[1]?.slice(0, 400)).not.toMatch(/estimated_monthly_billings/);
   });
 
-  it('CSV commit no longer writes estimated_monthly_billings', () => {
+  it('CSV commit still does not write estimated_monthly_billings (unchanged by Phase 2 — not asked for)', () => {
     expect(IMP).not.toMatch(/estimated_monthly_billings/);
   });
 });

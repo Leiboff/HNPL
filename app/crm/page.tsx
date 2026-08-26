@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { bucketFollowups } from '@/lib/crm/followups';
 import { sastDayWindows } from '@/lib/crm/timezone';
+import { weightedPipelineValue, hasEnoughData } from '@/lib/crm/pipeline';
+import { formatRand } from '@/app/admin/_lib/format';
 
 // ─── /crm — My Day (default landing) ─────────────────────────────────
 //
@@ -57,7 +59,11 @@ export default async function CrmHomePage() {
   );
 
   // Metrics strip
-  const { data: allStages } = await supabase.from('crm_leads').select('id, stage').is('archived_at', null).limit(5000);
+  const { data: allStages } = await supabase
+    .from('crm_leads')
+    .select('id, stage, estimated_monthly_billings')
+    .is('archived_at', null)
+    .limit(5000);
   const byStage: Record<string, { count: number }> = {};
   for (const s of STAGES) byStage[s] = { count: 0 };
   for (const l of allStages ?? []) {
@@ -65,9 +71,8 @@ export default async function CrmHomePage() {
       byStage[l.stage].count++;
     }
   }
-  const nonNew = (allStages ?? []).filter(l => l.stage !== 'new').length;
-  const signedOrOnboarded = (allStages ?? []).filter(l => l.stage === 'signed' || l.stage === 'onboarded').length;
-  const conversionRate = nonNew > 0 ? Math.round((signedOrOnboarded / nonNew) * 100) : 0;
+  const weightedPipeline = weightedPipelineValue(allStages ?? []);
+  const pipelineSampleSize = (allStages ?? []).filter(l => l.stage !== 'lost').length;
 
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const { count: activitiesThisWeek } = await supabase
@@ -114,7 +119,12 @@ export default async function CrmHomePage() {
       {/* ── Metrics strip ────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MetricCard label="Overdue"          value={String(buckets.overdue.length)} tone={buckets.overdue.length ? 'danger' : 'neutral'} />
-        <MetricCard label="Conversion"       value={`${conversionRate}%`}           tone="neutral" hint="signed+onboarded / non-new" />
+        <MetricCard
+          label="Weighted pipeline"
+          value={hasEnoughData(pipelineSampleSize) ? formatRand(weightedPipeline) : 'Not enough data yet'}
+          tone="neutral"
+          hint="value × stage close-probability"
+        />
         <MetricCard label="Activities (7d)"  value={String(activitiesThisWeek ?? 0)} tone="neutral" />
         <MetricCard label="Total leads"      value={String(allStages?.length ?? 0)} tone="neutral" />
       </div>

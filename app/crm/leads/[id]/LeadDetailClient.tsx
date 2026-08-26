@@ -15,6 +15,7 @@ import ContactsCard from './ContactsCard';
 import InviteSheet from './InviteSheet';
 import { groupTimeline, type TimelineActivity } from './conversationGrouper';
 import type { LeadContact } from './contactsActions';
+import { LOST_REASONS, LOST_REASON_LABELS } from '@/lib/crm/lostReasons';
 
 // ─── Lead detail — fields (editable) + activity timeline + quick actions
 
@@ -38,6 +39,7 @@ type Lead = {
   stage: string;
   lost_reason: string | null;
   owner_user_id: string | null;
+  estimated_monthly_billings: number | null;
   next_follow_up_at: string | null;
   converted_practice_id: string | null;
   updated_at: string;
@@ -70,15 +72,24 @@ type PendingInvite = {
 
 const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
+const SOURCE_LABELS: Record<string, string> = {
+  referral: 'Referral', cold_outreach: 'Cold outreach', inbound: 'Inbound',
+  event: 'Event', other: 'Other',
+};
+const ACTIVITY_ICONS: Record<string, string> = {
+  call: '📞', meeting: '🤝', whatsapp: '💬', email: '✉️', email_reply: '↩️',
+  note: '📝', stage_change: '➡️',
+};
 
 export default function LeadDetailClient({
-  lead: initialLead, activities: initialActivities, contacts: initialContacts, actorsById, pendingInvite,
+  lead: initialLead, activities: initialActivities, contacts: initialContacts, actorsById, pendingInvite, owners,
 }: {
   lead: Lead;
   activities: Activity[];
   contacts: LeadContact[];
   actorsById: ActorsById;
   pendingInvite: PendingInvite;
+  owners: Array<{ id: string; name: string }>;
 }) {
   const [lead, setLead]           = useState(initialLead);
   const [activities, setActs]     = useState(initialActivities);
@@ -264,6 +275,7 @@ export default function LeadDetailClient({
       <div className="flex flex-wrap gap-2">
         <QuickBtn onClick={() => setShowLog({ type: 'call' })}     label="Log call" />
         <QuickBtn onClick={() => setShowLog({ type: 'meeting' })}  label="Log meeting" />
+        <QuickBtn onClick={() => setShowLog({ type: 'whatsapp' })} label="Log WhatsApp" />
         <QuickBtn onClick={() => setShowLog({ type: 'note' })}     label="Add note" />
         <QuickBtn onClick={() => { setReplyToActivityId(null); setShowCompose(true); }} label="Email lead" />
         <QuickBtn onClick={() => setSchedule({ open: true, type: 'call' })}    label="Schedule call" />
@@ -280,7 +292,22 @@ export default function LeadDetailClient({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <FieldText label="Practice name"     value={lead.practice_name}            onSave={v => saveField('practice_name', v)}      pending={pending} required />
           <FieldSelect label="Specialty"       value={lead.specialty ?? ''}          options={['', ...SPECIALTIES]} onSave={v => saveField('specialty', v || null)} pending={pending} />
-          <FieldSelect label="Source"          value={lead.source}                   options={[...SOURCES]}                            onSave={v => saveField('source', v)} pending={pending} />
+          <FieldSelect label="Source"          value={lead.source}                   options={[...SOURCES]} labels={SOURCE_LABELS}     onSave={v => saveField('source', v)} pending={pending} />
+          <FieldText
+            label="Estimated monthly billings"
+            value={lead.estimated_monthly_billings != null ? String(lead.estimated_monthly_billings) : ''}
+            onSave={v => saveField('estimated_monthly_billings', v ? Number(v) : null)}
+            pending={pending}
+            inputMode="numeric"
+          />
+          <FieldSelect
+            label="Owner"
+            value={lead.owner_user_id ?? ''}
+            options={['', ...owners.map(o => o.id)]}
+            labels={Object.fromEntries(owners.map(o => [o.id, o.name]))}
+            onSave={v => saveField('owner_user_id', v || null)}
+            pending={pending}
+          />
         </div>
 
         {/* Address — Places autocomplete writes street + parsed structured fields + coords in one shot. */}
@@ -366,7 +393,11 @@ export default function LeadDetailClient({
             ) : (
               <li key={item.key} className="px-4 py-3" data-testid={`crm-activity:${item.activity.type}`}>
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-600">
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-600"
+                    data-testid={`crm-activity-type:${item.activity.type}`}
+                  >
+                    <span aria-hidden="true">{ACTIVITY_ICONS[item.activity.type] ?? '•'}</span>
                     {item.activity.type.replace(/_/g, ' ')}
                   </span>
                   <span className="text-xs text-gray-500">{timeAgo(item.activity.occurred_at)}</span>
@@ -531,9 +562,10 @@ function FieldText({
 }
 
 function FieldSelect({
-  label, value, options, onSave, pending,
+  label, value, options, labels, onSave, pending,
 }: {
-  label: string; value: string; options: readonly string[]; onSave: (v: string) => void; pending: boolean;
+  label: string; value: string; options: readonly string[]; labels?: Record<string, string>;
+  onSave: (v: string) => void; pending: boolean;
 }) {
   return (
     <label className="text-xs">
@@ -544,7 +576,7 @@ function FieldSelect({
         disabled={pending}
         className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#15A89E]/40 focus:border-[#15A89E] disabled:opacity-60"
       >
-        {options.map(o => <option key={o || '(none)'} value={o}>{o || '(none)'}</option>)}
+        {options.map(o => <option key={o || '(none)'} value={o}>{o ? (labels?.[o] ?? o) : '(none)'}</option>)}
       </select>
     </label>
   );
@@ -661,7 +693,16 @@ function MoveStageSheet({ current, onSubmit, onCancel, pending }: {
         {requireReason && (
           <label className="text-xs text-gray-700 block">
             Lost reason <span className="text-red-500">*</span>
-            <input value={reason} onChange={e => setReason(e.target.value)} required className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm" />
+            <select
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              required
+              className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+              data-testid="lead-lost-reason-picker"
+            >
+              <option value="">Select a reason…</option>
+              {LOST_REASONS.map(r => <option key={r} value={r}>{LOST_REASON_LABELS[r]}</option>)}
+            </select>
           </label>
         )}
         <label className="text-xs text-gray-700 block">
