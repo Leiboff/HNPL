@@ -104,8 +104,13 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
       existing.addEventListener('error', () => setMapError('script_error'));
       return;
     }
+    // NOTE: deliberately no `loading=async` — with it, google.maps.Map /
+    // Marker / LatLngBounds / SymbolPath are only populated via an explicit
+    // google.maps.importLibrary() call, not synchronously on script 'load'.
+    // Every access below (e.g. `new g.maps.Map(...)`) assumes synchronous
+    // population, so we use the classic loading mode that guarantees it.
     const s = document.createElement('script');
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&loading=async`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly`;
     s.async = true;
     s.defer = true;
     s.setAttribute('data-crm-maps-loader', '1');
