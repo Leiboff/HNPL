@@ -3,6 +3,8 @@
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { moveLeadStage, markSigned } from '../leads/actions';
+import { LOST_REASONS, LOST_REASON_LABELS } from '@/lib/crm/lostReasons';
+import { formatRand } from '@/app/admin/_lib/format';
 
 type BoardRow = {
   id: string;
@@ -12,6 +14,7 @@ type BoardRow = {
   contact_last_name: string;
   next_follow_up_at: string | null;
   specialty: string | null;
+  estimated_monthly_billings: number | null;
 };
 
 const STAGES = [
@@ -103,6 +106,7 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
         {STAGES.map(stage => {
           const stageRows = rows.filter(r => r.stage === stage.key);
+          const stageValue = stageRows.reduce((sum, r) => sum + (r.estimated_monthly_billings ?? 0), 0);
           return (
             <div
               key={stage.key}
@@ -121,6 +125,11 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
                     {stageRows.length}
                   </span>
                 </div>
+                {stageValue > 0 && (
+                  <p className="mt-0.5 text-[11px] text-gray-400 tabular-nums" data-testid={`crm-board-column-value:${stage.key}`}>
+                    {formatRand(stageValue)}
+                  </p>
+                )}
               </div>
               <ul className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[65vh]">
                 {stageRows.map(r => (
@@ -136,6 +145,11 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
                         {r.contact_first_name} {r.contact_last_name}
                       </p>
                       {r.specialty && <p className="text-[10px] text-gray-400 truncate">{r.specialty}</p>}
+                      {r.estimated_monthly_billings != null && (
+                        <p className="text-[10px] text-gray-500 tabular-nums" data-testid={`crm-board-card-value:${r.id}`}>
+                          {formatRand(r.estimated_monthly_billings)}
+                        </p>
+                      )}
                       {r.next_follow_up_at && (
                         <p className="text-[10px] text-gray-400 mt-1">
                           {new Date(r.next_follow_up_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg' })}
@@ -174,13 +188,16 @@ function LostReasonSheet({ onConfirm, onCancel, pending }: {
     <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <div className="bg-white rounded-2xl border border-gray-200 shadow-lg w-full max-w-md p-4 space-y-3">
         <h3 className="text-sm font-semibold text-gray-900">Why did this lead go lost?</h3>
-        <p className="text-xs text-gray-500">A lost reason is required so we can spot patterns (price, timing, competitor, no-show, etc.).</p>
-        <input
+        <p className="text-xs text-gray-500">A lost reason is required so we can spot patterns.</p>
+        <select
           value={reason}
           onChange={e => setReason(e.target.value)}
-          placeholder="e.g. Competitor pricing, No response after 3 attempts"
           className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#15A89E]/40 focus:border-[#15A89E]"
-        />
+          data-testid="board-lost-reason-picker"
+        >
+          <option value="">Select a reason…</option>
+          {LOST_REASONS.map(r => <option key={r} value={r}>{LOST_REASON_LABELS[r]}</option>)}
+        </select>
         <div className="flex gap-2 justify-end">
           <button type="button" onClick={onCancel} disabled={pending} className="rounded-lg border border-gray-200 bg-white text-gray-700 px-3 py-2 text-sm">Cancel</button>
           <button type="button" onClick={() => onConfirm(reason)} disabled={pending || !reason.trim()} className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium disabled:opacity-60">Move to lost</button>

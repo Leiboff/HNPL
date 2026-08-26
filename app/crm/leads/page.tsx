@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { formatDateTime } from '@/app/admin/_lib/format';
 import LeadsSearchForm from './LeadsSearchForm';
+import LeadsResultsList from './LeadsResultsList';
 import { SPECIALTIES } from '@/lib/specialties';
 import { sastDayWindows } from '@/lib/crm/timezone';
 
@@ -14,12 +14,13 @@ import { sastDayWindows } from '@/lib/crm/timezone';
 
 const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
-type SortKey = 'follow-up' | 'updated' | 'created-desc';
-const SORTS: SortKey[] = ['follow-up', 'updated', 'created-desc'];
+type SortKey = 'follow-up' | 'updated' | 'created-desc' | 'value';
+const SORTS: SortKey[] = ['follow-up', 'updated', 'created-desc', 'value'];
 const SORT_LABEL: Record<SortKey, string> = {
   'follow-up':   'Next follow-up',
   'updated':     'Recently updated',
   'created-desc':'Newest first',
+  'value':       'Value',
 };
 
 type SearchParams = {
@@ -67,12 +68,20 @@ export default async function LeadsListPage({
   const specialty = (SPECIALTIES as readonly string[]).includes(params.specialty ?? '') ? params.specialty : '';
   const overdue   = params.overdue === 'true';
   const sort      = parseSort(params.sort);
+  const isAdmin   = profile?.role === 'admin';
+  // "My leads" is trivially true for sales under owner-scoped RLS — they
+  // can only ever see their own rows. The owner filter is really an
+  // admin tool for viewing one salesperson's book; ?owner=me still
+  // works for admin as "show only what I personally own".
+  const owner     = isAdmin ? (params.owner ?? '') : '';
 
   let query = supabase
     .from('crm_leads')
-    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, next_follow_up_at, updated_at, created_at')
+    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, next_follow_up_at, updated_at, created_at, estimated_monthly_billings, owner_user_id')
     .is('archived_at', null)
     .limit(500);
+  if (owner === 'me') query = query.eq('owner_user_id', user.id);
+  else if (owner)     query = query.eq('owner_user_id', owner);
 
   if (q) {
     const like = `%${q}%`;
@@ -114,6 +123,13 @@ export default async function LeadsListPage({
 
   const { data: rows } = await query;
 
+  const { data: ownerRows } = await supabase
+    .from('profiles')
+    .select('id, first_name, last_name')
+    .in('role', ['admin', 'sales'])
+    .order('first_name');
+  const owners = (ownerRows ?? []).map(o => ({ id: o.id, name: `${o.first_name} ${o.last_name}`.trim() }));
+
   const sorted = [...(rows ?? [])].sort((a, b) => {
     switch (sort) {
       case 'follow-up':
@@ -126,18 +142,21 @@ export default async function LeadsListPage({
         return b.updated_at.localeCompare(a.updated_at);
       case 'created-desc':
         return b.created_at.localeCompare(a.created_at);
+      case 'value':
+        return (b.estimated_monthly_billings ?? 0) - (a.estimated_monthly_billings ?? 0);
     }
   });
 
   function chipUrl(patch: Partial<SearchParams>) {
     const u = new URLSearchParams();
-    const merged: SearchParams = { q, stage, source, specialty, sort, ...patch };
+    const merged: SearchParams = { q, stage, source, specialty, sort, owner, ...patch };
     if (merged.q)         u.set('q', merged.q);
     if (merged.stage)     u.set('stage', merged.stage);
     if (merged.source)    u.set('source', merged.source);
     if (merged.specialty) u.set('specialty', merged.specialty);
     if (merged.overdue)   u.set('overdue', 'true');
     if (merged.sort)      u.set('sort', merged.sort);
+    if (merged.owner)     u.set('owner', merged.owner);
     return `/crm/leads?${u.toString()}`;
   }
 
@@ -205,6 +224,16 @@ export default async function LeadsListPage({
         <div className="flex gap-2 flex-wrap items-center">
           <ChipLink href={chipUrl({ overdue: overdue ? undefined : 'true' })} active={overdue} label="Overdue only" tone="danger" />
         </div>
+        {isAdmin && owners.length > 0 && (
+          <div className="flex gap-2 flex-wrap items-center">
+            <span className="text-xs text-gray-500 uppercase tracking-wide">Owner:</span>
+            <ChipLink href={chipUrl({ owner: '' })}   active={!owner}        label="All" />
+            <ChipLink href={chipUrl({ owner: 'me' })} active={owner === 'me'} label="My leads" />
+            {owners.filter(o => o.id !== user.id).map(o => (
+              <ChipLink key={o.id} href={chipUrl({ owner: o.id })} active={owner === o.id} label={o.name} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Empty */}
@@ -213,90 +242,7 @@ export default async function LeadsListPage({
           <p className="text-gray-500">No leads match. Try clearing filters or creating a new lead.</p>
         </div>
       ) : (
-        <>
-          {/* Desktop table */}
-          <div className="hidden md:block bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    {['Practice', 'Contact', 'Stage', 'Specialty', 'Next follow-up', 'Updated'].map(h => (
-                      <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {sorted.map(r => (
-                    <tr key={r.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
-                        <Link href={`/crm/leads/${r.id}`} className="text-gray-900 font-medium hover:underline">
-                          {r.practice_name}
-                        </Link>
-                        {r.suburb && <div className="text-xs text-gray-500">{[r.suburb, r.city].filter(Boolean).join(', ')}</div>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-600">
-                        <div>{r.contact_first_name} {r.contact_last_name}</div>
-                        {r.email && <div className="text-gray-500 truncate max-w-[220px]">{r.email}</div>}
-                        {r.phone && <div className="text-gray-500">{r.phone}</div>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs capitalize">
-                          {r.stage.replace(/_/g, ' ')}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-600">{r.specialty ?? '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                        {r.next_follow_up_at
-                          ? new Date(r.next_follow_up_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'short' })
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
-                        {formatDateTime(r.updated_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="md:hidden space-y-3">
-            {sorted.map(r => (
-              <Link
-                key={r.id}
-                href={`/crm/leads/${r.id}`}
-                className="block bg-white rounded-2xl border border-gray-200 shadow-sm p-4 hover:border-gray-300"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{r.practice_name}</p>
-                    <p className="text-xs text-gray-500 truncate">{r.contact_first_name} {r.contact_last_name}</p>
-                  </div>
-                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs capitalize shrink-0">
-                    {r.stage.replace(/_/g, ' ')}
-                  </span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <p className="text-gray-400 uppercase tracking-wide text-[10px]">Specialty</p>
-                    <p className="text-gray-900 truncate">{r.specialty ?? '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 uppercase tracking-wide text-[10px]">Next</p>
-                    <p className="text-gray-900 tabular-nums">
-                      {r.next_follow_up_at
-                        ? new Date(r.next_follow_up_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'short' })
-                        : '—'}
-                    </p>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </>
+        <LeadsResultsList rows={sorted} owners={owners} />
       )}
     </div>
   );

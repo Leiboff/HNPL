@@ -55,6 +55,7 @@ export type CreateLeadInput = {
   source?:                    string;
   owner_user_id?:             string | null;
   next_follow_up_at?:         string | null;   // ISO
+  estimated_monthly_billings?: number | null;
   confirmDupe?:               boolean;         // set to true to bypass the dedupe warning
 };
 
@@ -128,6 +129,7 @@ export async function createLead(input: CreateLeadInput): Promise<CreateLeadResu
     owner_user_id:              input.owner_user_id ?? guard.userId,
     created_by:                 guard.userId,
     next_follow_up_at:          input.next_follow_up_at ?? null,
+    estimated_monthly_billings: input.estimated_monthly_billings ?? null,
   };
 
   const { data: lead, error } = await supabase
@@ -160,7 +162,7 @@ export async function updateLead(id: string, fields: UpdateLeadFields): Promise<
     'practice_name', 'contact_first_name', 'contact_last_name', 'role_at_practice',
     'specialty', 'phone', 'email', 'street_address', 'suburb', 'city', 'province',
     'latitude', 'longitude', 'formatted_address',
-    'owner_user_id', 'next_follow_up_at', 'lost_reason',
+    'owner_user_id', 'next_follow_up_at', 'lost_reason', 'estimated_monthly_billings',
   ] as const;
   for (const key of passthrough) {
     if (key in fields) patch[key] = (fields as Record<string, unknown>)[key] ?? null;
@@ -186,7 +188,44 @@ export async function updateLead(id: string, fields: UpdateLeadFields): Promise<
   return {};
 }
 
+// ─── bulkAssignOwner — reassign a batch of leads from the leads list ──
+//
+// RLS is the real enforcement: a sales caller's UPDATE only touches
+// rows they already own (USING), and can set the new owner to anyone
+// (WITH CHECK doesn't re-require the new owner be them — see
+// 0113_crm_leads_owner_scoped_rls.sql). So a sales rep can hand off
+// leads they own; they cannot touch a teammate's row even if it's
+// included in leadIds — that row is silently skipped by RLS, which is
+// why `updated` can be less than leadIds.length without an error.
+
+export async function bulkAssignOwner(
+  leadIds: string[],
+  ownerId: string,
+): Promise<{ error?: string; updated?: number }> {
+  const guard = await guardSalesOrAdmin();
+  if (!guard.ok) return { error: guard.error };
+  if (leadIds.length === 0) return { updated: 0 };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('crm_leads')
+    .update({ owner_user_id: ownerId })
+    .in('id', leadIds)
+    .select('id');
+  if (error) return { error: error.message };
+
+  revalidatePath('/crm/leads');
+  revalidatePath('/crm/board');
+  revalidatePath('/crm');
+  return { updated: data?.length ?? 0 };
+}
+
 // ─── moveLeadStage — used by the board drag and by detail buttons ────
+
+const LOST_REASONS = new Set([
+  'price', 'uses_competitor', 'no_need', 'no_decision_maker',
+  'unresponsive', 'not_eligible', 'other',
+]);
 
 export async function moveLeadStage(
   id:          string,
@@ -197,14 +236,17 @@ export async function moveLeadStage(
   const guard = await guardSalesOrAdmin();
   if (!guard.ok) return { error: guard.error };
   if (!STAGES.has(toStage)) return { error: `Invalid stage: ${toStage}` };
-  if (toStage === 'lost' && (!lostReason || !lostReason.trim())) {
+  if (toStage === 'lost' && (!lostReason || !LOST_REASONS.has(lostReason))) {
     return { error: 'A lost reason is required when moving a lead to lost.' };
   }
 
   const supabase = await createClient();
 
   const patch: Record<string, unknown> = { stage: toStage };
-  if (toStage === 'lost') patch.lost_reason = lostReason?.trim() || null;
+  if (toStage === 'lost') {
+    patch.lost_reason = lostReason;
+    patch.lost_note   = note?.trim() || null;
+  }
 
   const { error } = await supabase.from('crm_leads').update(patch).eq('id', id);
   if (error) return { error: error.message };

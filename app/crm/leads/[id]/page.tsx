@@ -74,6 +74,13 @@ export default async function LeadDetailPage({
     .order('is_primary', { ascending: false })
     .order('created_at', { ascending: true });
 
+  const { data: ownerRows } = await supabase
+    .from('profiles')
+    .select('id, first_name, last_name')
+    .in('role', ['admin', 'sales'])
+    .order('first_name');
+  const owners = (ownerRows ?? []).map(o => ({ id: o.id, name: `${o.first_name} ${o.last_name}`.trim() }));
+
   return (
     <LeadDetailClient
       lead={lead}
@@ -81,6 +88,7 @@ export default async function LeadDetailPage({
       contacts={(contacts ?? []) as never}
       actorsById={actorsById}
       pendingInvite={pendingInvite ?? null}
+      owners={owners}
     />
   );
 }

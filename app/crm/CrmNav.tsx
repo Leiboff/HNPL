@@ -18,6 +18,7 @@ const NAV_LINKS: NavLink[] = [
   { href: '/crm/leads',                  label: 'Leads'                                   },
   { href: '/crm/board',                  label: 'Pipeline'                                },
   { href: '/crm/map',                    label: 'Map'                                     },
+  { href: '/crm/accounts',               label: 'Accounts'                                },
   { href: '/crm/import',                 label: 'Import'                                  },
   { href: '/crm/settings',               label: 'Settings'                                },
   { href: '/crm/admin/gmail-accounts',   label: 'Gmail (admin)', adminOnly: true          },

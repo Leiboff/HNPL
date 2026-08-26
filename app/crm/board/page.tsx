@@ -26,7 +26,7 @@ export default async function BoardPage() {
 
   const { data: rows } = await supabase
     .from('crm_leads')
-    .select('id, practice_name, stage, contact_first_name, contact_last_name, next_follow_up_at, specialty')
+    .select('id, practice_name, stage, contact_first_name, contact_last_name, next_follow_up_at, specialty, estimated_monthly_billings')
     .is('archived_at', null)
     .order('updated_at', { ascending: false })
     .limit(2000);
