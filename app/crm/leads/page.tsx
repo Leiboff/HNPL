@@ -2,10 +2,9 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LeadsSearchForm from './LeadsSearchForm';
-import LeadsResultsList from './LeadsResultsList';
+import LeadsListSection from './LeadsListSection';
 import LeadsViewSwitcher from './LeadsViewSwitcher';
 import SavedViewsBar from './SavedViewsBar';
-import LeadsFilterDropdowns from './LeadsFilterDropdowns';
 import type { LeadScore } from '@/lib/crm/priorityScore';
 import { SPECIALTIES } from '@/lib/specialties';
 import { sastDayWindows } from '@/lib/crm/timezone';
@@ -14,20 +13,14 @@ import { computeLeadScore } from '@/lib/crm/priorityScore';
 // ─── /crm/leads — searchable lead list ────────────────────────────────
 //
 // House pattern: server-side search (ilike over practice_name / contact
-// names / email / phone), sort chips (in-memory), stage/source/specialty
-// filter chips. hidden md:block table + mobile card list.
+// names / email / phone), server-side sort, stage/source/specialty
+// filters. Sort + Filter controls live in LeadsListSection's toolbar
+// sheets — hidden md:block table + mobile card list underneath.
 
 const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
 type SortKey = 'follow-up' | 'updated' | 'created-desc' | 'value' | 'priority';
 const SORTS: SortKey[] = ['follow-up', 'updated', 'created-desc', 'value', 'priority'];
-const SORT_LABEL: Record<SortKey, string> = {
-  'follow-up':   'Next follow-up',
-  'updated':     'Recently updated',
-  'created-desc':'Newest first',
-  'value':       'Value',
-  'priority':    'Priority',
-};
 
 type SearchParams = {
   q?: string;
@@ -175,20 +168,6 @@ export default async function LeadsListPage({
     }
   });
 
-  function chipUrl(patch: Partial<SearchParams>) {
-    const u = new URLSearchParams();
-    const merged: SearchParams = { q, stage, source, specialty, sort, owner, city, ...patch };
-    if (merged.q)         u.set('q', merged.q);
-    if (merged.stage)     u.set('stage', merged.stage);
-    if (merged.source)    u.set('source', merged.source);
-    if (merged.specialty) u.set('specialty', merged.specialty);
-    if (merged.overdue)   u.set('overdue', 'true');
-    if (merged.sort)      u.set('sort', merged.sort);
-    if (merged.owner)     u.set('owner', merged.owner);
-    if (merged.city)      u.set('city', merged.city);
-    return `/crm/leads?${u.toString()}`;
-  }
-
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -212,53 +191,17 @@ export default async function LeadsListPage({
       <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
         <LeadsSearchForm initialQ={q} />
         <SavedViewsBar params={params} />
-
-        {/* Sort chips */}
-        <div className="flex gap-2 flex-wrap items-center">
-          <span className="text-xs text-gray-500 uppercase tracking-wide">Sort:</span>
-          {SORTS.map(s => {
-            const active = s === sort;
-            return (
-              <Link
-                key={s}
-                href={chipUrl({ sort: s })}
-                className={
-                  'rounded-full px-3 py-1 text-xs font-medium border transition-colors '
-                  + (active
-                    ? 'border-[#15A89E] bg-[#15A89E]/10 text-[#15A89E]'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300')
-                }
-              >
-                {SORT_LABEL[s]}
-              </Link>
-            );
-          })}
-        </div>
-
-        {/* Stage / Source / Specialty / City / Owner — plain dropdowns
-            instead of a pill wall; one compact row instead of ~250px
-            across four rows of chips. */}
-        <LeadsFilterDropdowns
-          specialties={SPECIALTIES}
-          cities={cities}
-          owners={owners}
-          isAdmin={isAdmin}
-          currentUserId={user.id}
-        />
       </div>
 
-      {/* Empty */}
-      {sorted.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
-          <p className="text-gray-500">No leads match. Try clearing filters or creating a new lead.</p>
-        </div>
-      ) : (
-        <LeadsResultsList
-          rows={sorted}
-          owners={owners}
-          scores={Object.fromEntries(scoresById) as Record<string, LeadScore>}
-        />
-      )}
+      <LeadsListSection
+        rows={sorted}
+        owners={owners}
+        scores={Object.fromEntries(scoresById) as Record<string, LeadScore>}
+        specialties={SPECIALTIES}
+        cities={cities}
+        isAdmin={isAdmin}
+        currentUserId={user.id}
+      />
     </div>
   );
 }

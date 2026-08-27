@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import LeadsResultsList, { type LeadRow } from './LeadsResultsList';
 
 vi.mock('./actions', () => ({ bulkAssignOwner: vi.fn() }));
@@ -59,43 +59,33 @@ describe('bulk assign bar', () => {
   });
 });
 
-describe('distance-from-me column and ascending sort', () => {
-  const FAR:  LeadRow = { ...BASE_ROW, id: 'far',  practice_name: 'Far Practice',  latitude: -33.9, longitude: 25.6 };  // ~Gqeberha
-  const NEAR: LeadRow = { ...BASE_ROW, id: 'near', practice_name: 'Near Practice', latitude: -26.21, longitude: 28.05 }; // ~Joburg CBD
-  const NO_COORDS: LeadRow = { ...BASE_ROW, id: 'no-coords', practice_name: 'No Coords Practice', latitude: null, longitude: null };
+describe('distance column — purely presentational, driven by the distanceById prop', () => {
+  // LeadsResultsList no longer owns geolocation (that moved to
+  // LeadsListSection, see LeadsListSection.test.tsx) — it just renders
+  // whatever distanceById + row order it's handed.
+  const FAR:  LeadRow = { ...BASE_ROW, id: 'far',  practice_name: 'Far Practice',  latitude: -33.9, longitude: 25.6 };
+  const NEAR: LeadRow = { ...BASE_ROW, id: 'near', practice_name: 'Near Practice', latitude: -26.21, longitude: 28.05 };
 
-  // User is right at the "near" lead's coordinates.
-  const USER_POS = { coords: { latitude: -26.2041, longitude: 28.0473 } };
-
-  beforeEach(() => {
-    Object.defineProperty(global.navigator, 'geolocation', {
-      configurable: true,
-      value: { getCurrentPosition: vi.fn((success) => success(USER_POS)) },
-    });
-  });
-
-  it('shows a Distance column with "—" before location is available', () => {
+  it('renders no Distance column when distanceById is not passed', () => {
     render(<LeadsResultsList rows={[NEAR, FAR]} owners={[]} />);
-    expect(screen.getByTestId('lead-distance:near').textContent).toBe('—');
-    expect(screen.getByTestId('lead-distance:far').textContent).toBe('—');
+    expect(screen.queryByTestId('lead-distance:near')).toBeNull();
+    expect(screen.queryByTestId('lead-distance:far')).toBeNull();
+    expect(screen.queryByText('Distance')).toBeNull();
   });
 
-  it('clicking the Distance header requests location and orders leads ascending by distance', async () => {
-    render(<LeadsResultsList rows={[FAR, NEAR, NO_COORDS]} owners={[]} />);
-    fireEvent.click(screen.getByTestId('sort-by-distance'));
+  it('renders a Distance column with the supplied km, "—" for unknown rows, in the given row order', () => {
+    render(<LeadsResultsList rows={[NEAR, FAR]} owners={[]} distanceById={{ near: 0.1, far: 850.4 }} />);
+    expect(screen.getByTestId('lead-distance:near').textContent).toBe('0.1 km');
+    expect(screen.getByTestId('lead-distance:far').textContent).toBe('850.4 km');
 
-    await waitFor(() => expect(screen.getByTestId('lead-distance:near').textContent).not.toBe('—'));
-
-    const rowsInOrder = screen.getAllByRole('row').slice(1); // drop the header row
+    const rowsInOrder = screen.getAllByRole('row').slice(1);
     const namesInOrder = rowsInOrder.map(r => r.textContent);
-    const nearIdx = namesInOrder.findIndex(t => t?.includes('Near Practice'));
-    const farIdx  = namesInOrder.findIndex(t => t?.includes('Far Practice'));
-    const noCoordsIdx = namesInOrder.findIndex(t => t?.includes('No Coords Practice'));
+    expect(namesInOrder.findIndex(t => t?.includes('Near Practice')))
+      .toBeLessThan(namesInOrder.findIndex(t => t?.includes('Far Practice')));
+  });
 
-    expect(nearIdx).toBeLessThan(farIdx); // ascending — nearest first
-    expect(noCoordsIdx).toBeGreaterThan(farIdx); // no-coords leads sink to the bottom, never crash the sort
-    expect(screen.getByTestId('lead-distance:near').textContent).toMatch(/^\d+\.\d km$/);
-    expect(parseFloat(screen.getByTestId('lead-distance:near').textContent!))
-      .toBeLessThan(parseFloat(screen.getByTestId('lead-distance:far').textContent!));
+  it('shows "—" for a row missing from distanceById (no coords)', () => {
+    render(<LeadsResultsList rows={[FAR]} owners={[]} distanceById={{ far: null }} />);
+    expect(screen.getByTestId('lead-distance:far').textContent).toBe('—');
   });
 });
