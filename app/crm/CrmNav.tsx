@@ -138,8 +138,8 @@ export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: 
               href={href}
               title={collapsed ? label : undefined}
               className={[
-                'flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors',
-                collapsed ? 'justify-center' : 'justify-between',
+                'relative flex items-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors',
+                collapsed ? 'justify-center px-1' : 'justify-between px-3',
                 active
                   ? 'bg-[#13294B]/10 text-[#13294B]'
                   : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
@@ -151,7 +151,7 @@ export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: 
               </span>
               {count > 0 && (
                 collapsed ? (
-                  <span className="absolute translate-x-3 -translate-y-3 inline-flex items-center justify-center rounded-full text-[9px] font-bold px-1 py-0.5 min-w-[1rem] tabular-nums bg-red-100 text-red-800">
+                  <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center rounded-full text-[9px] font-bold px-1 py-0.5 min-w-[1rem] tabular-nums bg-red-100 text-red-800">
                     {count}
                   </span>
                 ) : (
