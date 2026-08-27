@@ -28,9 +28,9 @@ export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: 
 
   function isActive(href: string) {
     if (href === '/crm') return pathname === '/crm';
-    // /crm/board and /crm/map are the Board/Map faces of the same Leads
-    // surface (the switcher lives on the page, not in top-level nav).
-    if (href === '/crm/leads') return pathname.startsWith('/crm/leads') || pathname.startsWith('/crm/board') || pathname.startsWith('/crm/map');
+    // /crm/map is the Map face of the same Leads surface (the switcher
+    // lives on the page, not in top-level nav).
+    if (href === '/crm/leads') return pathname.startsWith('/crm/leads') || pathname.startsWith('/crm/map');
     return pathname.startsWith(href);
   }
 

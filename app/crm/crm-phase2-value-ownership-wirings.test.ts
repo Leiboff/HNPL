@@ -8,9 +8,9 @@ import { resolve } from 'node:path';
 // (crm-lead-upgrades.test.ts, crm-migrations.test.ts). Covers the
 // parts of Phase 2 that are cheapest and most reliable to pin at the
 // source level rather than through a full component render — the
-// dependency surface of LeadDetailClient/BoardClient (Places
-// autocomplete, Gmail compose, etc.) makes full rendering brittle for
-// what are really "is this wired the way the spec says" checks.
+// dependency surface of LeadDetailClient (Places autocomplete, Gmail
+// compose, etc.) makes full rendering brittle for what are really
+// "is this wired the way the spec says" checks.
 
 function read(p: string): string { return readFileSync(resolve(process.cwd(), p), 'utf8'); }
 
@@ -20,11 +20,9 @@ describe('11. Move stage to lost without a reason is blocked in the UI before th
     expect(SRC).toMatch(/const canSubmit = stage !== current && \(!requireReason \|\| reason\.trim\(\)\.length > 0\)/);
     expect(SRC).toMatch(/disabled={pending \|\| !canSubmit}/);
   });
-
-  it('BoardClient — the "Move to lost" button is disabled while reason is empty', () => {
-    const SRC = read('app/crm/board/BoardClient.tsx');
-    expect(SRC).toMatch(/disabled={pending \|\| !reason\.trim\(\)}/);
-  });
+  // The board's own "Move to lost" gating (BoardClient) went with it
+  // when the Kanban board was removed — Move stage now lives only on
+  // the lead detail page, covered above.
 });
 
 describe('Lost-reason picker uses the Phase 1 enum, not free text', () => {
@@ -34,12 +32,6 @@ describe('Lost-reason picker uses the Phase 1 enum, not free text', () => {
     expect(SRC).toMatch(/data-testid="lead-lost-reason-picker"/);
     expect(SRC).toMatch(/\{LOST_REASONS\.map\(r => <option key={r} value={r}>\{LOST_REASON_LABELS\[r\]\}<\/option>\)\}/);
     expect(SRC).not.toMatch(/Lost reason[\s\S]{0,80}<input/);
-  });
-
-  it('BoardClient renders a <select> bound to LOST_REASONS', () => {
-    const SRC = read('app/crm/board/BoardClient.tsx');
-    expect(SRC).toMatch(/data-testid="board-lost-reason-picker"/);
-    expect(SRC).toMatch(/\{LOST_REASONS\.map\(r => <option key={r} value={r}>\{LOST_REASON_LABELS\[r\]\}<\/option>\)\}/);
   });
 
   it('moveLeadStage validates lostReason against the enum server-side too', () => {
@@ -100,13 +92,6 @@ describe('2.1 — value wired onto every screen', () => {
     const SRC = read('app/crm/leads/page.tsx');
     expect(SRC).toMatch(/estimated_monthly_billings/);
     expect(SRC).toMatch(/'value'/);
-  });
-
-  it('board selects estimated_monthly_billings and shows a per-stage total', () => {
-    const PAGE = read('app/crm/board/page.tsx');
-    expect(PAGE).toMatch(/estimated_monthly_billings/);
-    const CLIENT = read('app/crm/board/BoardClient.tsx');
-    expect(CLIENT).toMatch(/stageValue = stageRows\.reduce/);
   });
 
   it('My Day replaces the conversion-rate tile with a not-enough-data-guarded weighted pipeline figure', () => {

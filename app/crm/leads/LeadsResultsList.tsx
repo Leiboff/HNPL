@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatDateTime, formatRand } from '@/app/admin/_lib/format';
 import { bulkAssignOwner } from './actions';
 import type { LeadScore } from '@/lib/crm/priorityScore';
+import { haversineKm } from '@/lib/crm/mapPlanner';
 
 export type LeadRow = {
   id: string;
@@ -20,6 +21,8 @@ export type LeadRow = {
   next_follow_up_at: string | null;
   updated_at: string;
   estimated_monthly_billings: number | null;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 // ─── Results table + mobile cards + bulk "assign to" ──────────────────
@@ -41,6 +44,53 @@ export default function LeadsResultsList({
   const [assignTo, setAssignTo] = useState('');
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+
+  // ── Distance from me — client-only, since only the browser knows the
+  // viewer's live location. Ordering leads ascending by distance is a
+  // local re-sort of the current page's rows, not a server round trip.
+  const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
+  const [locErr, setLocErr] = useState<string | null>(null);
+  const [sortByDistance, setSortByDistance] = useState(false);
+  const [locating, setLocating] = useState(false);
+
+  function distanceKm(r: LeadRow): number | null {
+    if (!userLoc || r.latitude == null || r.longitude == null) return null;
+    return haversineKm(userLoc, { lat: r.latitude, lng: r.longitude });
+  }
+
+  function toggleDistanceSort() {
+    if (sortByDistance) { setSortByDistance(false); return; }
+    if (userLoc) { setSortByDistance(true); return; }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocErr("Your browser doesn't support location.");
+      return;
+    }
+    setLocating(true);
+    setLocErr(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setSortByDistance(true);
+        setLocating(false);
+      },
+      (err) => {
+        setLocErr(err.message || 'Could not get your location.');
+        setLocating(false);
+      },
+      { enableHighAccuracy: false, maximumAge: 60_000, timeout: 8_000 },
+    );
+  }
+
+  const displayRows = sortByDistance
+    ? [...rows].sort((a, b) => {
+        const da = distanceKm(a);
+        const db = distanceKm(b);
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;   // no coords — sinks to the bottom
+        if (db == null) return -1;
+        return da - db;
+      })
+    : rows;
 
   function toggle(id: string) {
     setSelected(prev => {
@@ -97,6 +147,21 @@ export default function LeadsResultsList({
         </div>
       )}
       {msg && <div role="status" className="text-xs rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-gray-700">{msg}</div>}
+      {locErr && <div role="alert" className="text-xs rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">{locErr}</div>}
+
+      {/* Mobile-only distance-sort control (desktop has it in the table header) */}
+      <button
+        type="button"
+        onClick={toggleDistanceSort}
+        disabled={locating}
+        className={
+          'md:hidden inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-medium disabled:opacity-60 '
+          + (sortByDistance ? 'border-[#15A89E] bg-[#15A89E]/10 text-[#15A89E]' : 'border-gray-200 bg-white text-gray-600')
+        }
+        data-testid="sort-by-distance-mobile"
+      >
+        {locating ? 'Locating…' : sortByDistance ? 'Sorted by distance ↑' : 'Sort by distance from me'}
+      </button>
 
       {/* Desktop table */}
       <div className="hidden md:block bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
@@ -117,10 +182,22 @@ export default function LeadsResultsList({
                     {h}
                   </th>
                 ))}
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
+                  <button
+                    type="button"
+                    onClick={toggleDistanceSort}
+                    disabled={locating}
+                    className={'inline-flex items-center gap-1 hover:text-gray-700 disabled:opacity-60 ' + (sortByDistance ? 'text-[#15A89E]' : '')}
+                    data-testid="sort-by-distance"
+                    title="Sort by distance from me"
+                  >
+                    Distance {sortByDistance ? '↑' : locating ? '…' : ''}
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {rows.map(r => (
+              {displayRows.map(r => (
                 <tr key={r.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <input
@@ -171,6 +248,9 @@ export default function LeadsResultsList({
                   <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
                     {formatDateTime(r.updated_at)}
                   </td>
+                  <td className="px-4 py-3 text-xs text-gray-600 tabular-nums whitespace-nowrap" data-testid={`lead-distance:${r.id}`}>
+                    {distanceKm(r) != null ? `${distanceKm(r)!.toFixed(1)} km` : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -180,7 +260,7 @@ export default function LeadsResultsList({
 
       {/* Mobile cards */}
       <div className="md:hidden space-y-3">
-        {rows.map(r => (
+        {displayRows.map(r => (
           <div key={r.id} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 hover:border-gray-300">
             <div className="flex items-start gap-3">
               <input
@@ -219,6 +299,14 @@ export default function LeadsResultsList({
                       {r.estimated_monthly_billings != null ? formatRand(r.estimated_monthly_billings) : '—'}
                     </p>
                   </div>
+                  {sortByDistance && (
+                    <div data-testid={`lead-distance-mobile:${r.id}`}>
+                      <p className="text-gray-400 uppercase tracking-wide text-[10px]">Distance</p>
+                      <p className="text-gray-900 tabular-nums">
+                        {distanceKm(r) != null ? `${distanceKm(r)!.toFixed(1)} km` : '—'}
+                      </p>
+                    </div>
+                  )}
                   {scores?.[r.id] && (
                     <div className="col-span-2" data-testid={`lead-priority-mobile:${r.id}`}>
                       <p className="text-gray-400 uppercase tracking-wide text-[10px]">Priority</p>

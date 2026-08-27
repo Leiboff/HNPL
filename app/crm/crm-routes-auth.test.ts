@@ -21,7 +21,6 @@ const CRM_PAGES = [
   'app/crm/leads/page.tsx',
   'app/crm/leads/[id]/page.tsx',
   'app/crm/leads/new/page.tsx',
-  'app/crm/board/page.tsx',
   'app/crm/import/page.tsx',
 ];
 

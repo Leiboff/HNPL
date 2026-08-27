@@ -3,18 +3,18 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 
-// ─── List · Board · Map switcher ───────────────────────────────────────
+// ─── List · Map switcher ────────────────────────────────────────────
 //
-// The whole filter querystring travels verbatim between the three
+// The whole filter querystring travels verbatim between the two
 // routes — that's what makes "single filter state that survives
-// switching" true without requiring the three pages to be merged into
-// one component. Board/Map decode the same params via
-// lib/crm/leadsFilterState.ts and apply them server-side.
+// switching" true without requiring the pages to be merged into one
+// component. Map decodes the same params via lib/crm/leadsFilterState.ts
+// and applies them server-side. (Kanban board removed per user request —
+// list vs. map covers the two ways people actually work this.)
 
 const TABS = [
-  { view: 'list',  href: '/crm/leads', label: 'List' },
-  { view: 'board', href: '/crm/board', label: 'Board' },
-  { view: 'map',   href: '/crm/map',   label: 'Map' },
+  { view: 'list', href: '/crm/leads', label: 'List' },
+  { view: 'map',  href: '/crm/map',   label: 'Map' },
 ] as const;
 
 export default function LeadsViewSwitcher() {

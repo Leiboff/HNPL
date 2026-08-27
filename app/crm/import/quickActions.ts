@@ -169,7 +169,6 @@ export async function commitQuickImport(
 
   revalidatePath('/crm/leads');
   revalidatePath('/crm/map');
-  revalidatePath('/crm/board');
   revalidatePath('/crm');
   return { created, skipped, rowErrors: rowErrors.length ? rowErrors : undefined };
 }
