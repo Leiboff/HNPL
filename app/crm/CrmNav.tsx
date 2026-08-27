@@ -116,7 +116,19 @@ export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: 
       data-testid="crm-nav"
       data-collapsed={collapsed}
     >
-      <div className={'flex flex-col p-3 space-y-0.5 flex-1'}>
+      <div className={collapsed ? 'flex justify-center p-3 pb-1' : 'flex justify-end p-3 pb-1'}>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          className="flex items-center justify-center rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          data-testid="crm-nav-collapse-toggle"
+          aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          title={collapsed ? 'Expand' : 'Collapse'}
+        >
+          <CollapseIcon collapsed={collapsed} />
+        </button>
+      </div>
+      <div className={'flex flex-col p-3 pt-0 space-y-0.5 flex-1'}>
         {NAV_LINKS.filter(l => !l.adminOnly || isAdmin).map(({ href, label, countKey, Icon }) => {
           const active = isActive(href);
           const count  = countKey ? counts[countKey] : 0;
@@ -151,19 +163,6 @@ export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: 
             </Link>
           );
         })}
-      </div>
-      <div className="p-3 border-t border-gray-100">
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          className="flex items-center justify-center gap-2 w-full rounded-lg px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-          data-testid="crm-nav-collapse-toggle"
-          aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-          title={collapsed ? 'Expand' : 'Collapse'}
-        >
-          <CollapseIcon collapsed={collapsed} />
-          {!collapsed && <span>Collapse</span>}
-        </button>
       </div>
     </nav>
   );
