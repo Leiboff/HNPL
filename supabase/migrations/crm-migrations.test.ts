@@ -159,3 +159,113 @@ describe('0070 — conversion hardening', () => {
     expect(SRC).toMatch(/OLD\.status\s+IS\s+DISTINCT\s+FROM\s+'approved'/);
   });
 });
+
+describe('0115 — contact interest + decision-maker', () => {
+  const SRC = read('supabase/migrations/0115_crm_contact_interest_and_decision_maker.sql');
+
+  it('adds interest with the four-value CHECK vocabulary, defaulting to unknown', () => {
+    expect(SRC).toMatch(/ADD COLUMN IF NOT EXISTS interest TEXT NOT NULL DEFAULT 'unknown'/);
+    for (const v of ['unknown', 'cold', 'warm', 'hot']) {
+      expect(SRC).toMatch(new RegExp(`['"]${v}['"]`));
+    }
+  });
+
+  it('adds is_decision_maker as a plain boolean with no uniqueness constraint', () => {
+    expect(SRC).toMatch(/ADD COLUMN IF NOT EXISTS is_decision_maker BOOLEAN NOT NULL DEFAULT FALSE/);
+    expect(SRC).not.toMatch(/UNIQUE INDEX[\s\S]*is_decision_maker/);
+  });
+
+  it('backfills is_decision_maker from is_primary, not from scratch', () => {
+    expect(SRC).toMatch(/UPDATE crm_lead_contacts SET is_decision_maker = TRUE WHERE is_primary IS TRUE/);
+  });
+
+  it('does not touch crm_leads — interest is never mirrored', () => {
+    expect(SRC).not.toMatch(/ALTER TABLE crm_leads\b/);
+    expect(SRC).not.toMatch(/UPDATE crm_leads\b/);
+  });
+
+  it('the pre-existing 0075 mirror triggers do not reference interest/is_decision_maker', () => {
+    const mirrorSrc = read('supabase/migrations/0075_crm_lead_contacts_and_street.sql');
+    expect(mirrorSrc).not.toMatch(/interest/i);
+    expect(mirrorSrc).not.toMatch(/is_decision_maker/i);
+  });
+});
+
+describe('0116 — nurture stage + wake date', () => {
+  const SRC = read('supabase/migrations/0116_crm_nurture_stage.sql');
+
+  it('adds nurture to crm_leads.stage, and to both from_stage/to_stage on crm_activities', () => {
+    expect(SRC).toMatch(/crm_leads_stage_check[\s\S]*?CHECK \(stage IN \([\s\S]*?'nurture'/);
+    expect(SRC).toMatch(/crm_activities_from_stage_check[\s\S]*?'nurture'/);
+    expect(SRC).toMatch(/crm_activities_to_stage_check[\s\S]*?'nurture'/);
+  });
+
+  it('adds nurture_wake_at as a plain nullable timestamptz', () => {
+    expect(SRC).toMatch(/ADD COLUMN IF NOT EXISTS nurture_wake_at TIMESTAMPTZ/);
+  });
+
+  it('enforces nurture requires nurture_wake_at via trigger AND a table-level CHECK (mirrors lost_reason)', () => {
+    expect(SRC).toMatch(/NEW\.stage = 'nurture' AND NEW\.nurture_wake_at IS NULL/);
+    expect(SRC).toMatch(/nurture_wake_at is required/i);
+    expect(SRC).toMatch(/crm_leads_nurture_wake_at_required[\s\S]*?CHECK[\s\S]*?stage <> 'nurture' OR nurture_wake_at IS NOT NULL/);
+  });
+});
+
+describe('0117 — address dedupe fields + suggestion dismissals', () => {
+  const SRC = read('supabase/migrations/0117_crm_address_dedupe.sql');
+
+  it('adds building_name/unit/landline/address_match_key to crm_leads', () => {
+    for (const col of ['building_name', 'unit', 'landline', 'address_match_key']) {
+      expect(SRC).toMatch(new RegExp(`ADD COLUMN IF NOT EXISTS ${col}\\s+TEXT`));
+    }
+  });
+
+  it('populates address_match_key via a BEFORE INSERT/UPDATE trigger, not a mirror trigger on crm_lead_contacts', () => {
+    expect(SRC).toMatch(/BEFORE INSERT OR UPDATE ON crm_leads/);
+    expect(SRC).toMatch(/crm_leads_set_address_match_key/);
+  });
+
+  it('creates crm_suggestion_dismissals with the lower-UUID-first ordering enforced by a CHECK', () => {
+    expect(SRC).toMatch(/CREATE TABLE IF NOT EXISTS crm_suggestion_dismissals/);
+    expect(SRC).toMatch(/CHECK \(lead_a_id < lead_b_id\)/);
+    expect(SRC).toMatch(/UNIQUE INDEX[\s\S]*?crm_suggestion_dismissals\(lead_a_id, lead_b_id, kind\)/);
+  });
+
+  it('crm_suggestion_dismissals has RLS with the standard admin/sales predicate, and no UPDATE policy', () => {
+    expect(SRC).toMatch(/ALTER TABLE crm_suggestion_dismissals ENABLE ROW LEVEL SECURITY/);
+    expect(SRC).toMatch(/crm_suggestion_dismissals_admin_sales_select/);
+    expect(SRC).toMatch(/crm_suggestion_dismissals_admin_sales_insert/);
+    expect(SRC).not.toMatch(/crm_suggestion_dismissals_admin_sales_update/);
+  });
+
+  it('does not drop or alter crm_leads_practice_suburb_uidx (0111) — that constraint is reported on, not silently changed', () => {
+    expect(SRC).not.toMatch(/DROP.*crm_leads_practice_suburb_uidx/i);
+  });
+});
+
+describe('0118 — practitioner HPCSA grouping', () => {
+  const SRC = read('supabase/migrations/0118_crm_practitioner_hpcsa_grouping.sql');
+
+  it('adds hpcsa_number + hpcsa_group_key to crm_lead_contacts', () => {
+    expect(SRC).toMatch(/ADD COLUMN IF NOT EXISTS hpcsa_number\s+TEXT/);
+    expect(SRC).toMatch(/ADD COLUMN IF NOT EXISTS hpcsa_group_key\s+TEXT/);
+  });
+
+  it('matches the 0064 precedent\'s exact normalisation: NULL/empty-after-trim -> NULL, else md5(lower(trim(x)))', () => {
+    // Deliberately does NOT read 0064's file by name here — doing so
+    // would trip app/patient/explore/practitioners-directory.test.ts's
+    // single-callsite scanner for that view's identifier. The shape is
+    // pinned directly against this migration's own SQL instead.
+    expect(SRC).toMatch(/LENGTH\(TRIM\(NEW\.hpcsa_number\)\)\s*=\s*0/);
+    expect(SRC).toMatch(/md5\(LOWER\(TRIM\(NEW\.hpcsa_number\)\)\)/);
+  });
+
+  it('does not introduce a separate people table', () => {
+    expect(SRC).not.toMatch(/CREATE TABLE/i);
+  });
+
+  it('does not touch any patient-facing view — raw HPCSA stays internal to the CRM', () => {
+    expect(SRC).not.toMatch(/CREATE\s+(OR\s+REPLACE\s+)?VIEW/i);
+    expect(SRC).not.toMatch(/GRANT\s+SELECT\s+ON/i);
+  });
+});
