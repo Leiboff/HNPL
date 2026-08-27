@@ -153,7 +153,11 @@ describe('crm-reply-poll cron — safety-net + watch renewal (since 0072)', () =
   });
 
   it('shared ingester skips closed-stage leads (signed / onboarded / lost)', () => {
-    expect(INGEST).toMatch(/CLOSED_STAGES\s*=\s*new Set\s*\(\s*\[[\s\S]*?'signed'[\s\S]*?'onboarded'[\s\S]*?'lost'/);
+    // Since Step 0's stage-vocabulary extraction, CLOSED_STAGES is
+    // TERMINAL_STAGES imported from lib/crm/stages.ts rather than its
+    // own literal Set — assert the import + re-export, not a literal.
+    expect(INGEST).toMatch(/from\s+['"]@\/lib\/crm\/stages['"]/);
+    expect(INGEST).toMatch(/CLOSED_STAGES\s*=\s*TERMINAL_STAGES/);
   });
 
   it('is registered in vercel.json crons with a daily safety-net cadence', () => {

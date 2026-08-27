@@ -15,6 +15,7 @@ import {
 } from '@/lib/crm/mapPlanner';
 import type { MapLeadRow } from './page';
 import { SPECIALTIES } from '@/lib/specialties';
+import { STAGES } from '@/lib/crm/stages';
 
 // ─── /crm/map client ─────────────────────────────────────────────────
 //
@@ -26,8 +27,6 @@ import { SPECIALTIES } from '@/lib/specialties';
 // a chosen start (or default to the first selection), build a /maps/dir/
 // deep link. No Directions-API calls — the URL hands off to Google Maps
 // for the actual routing.
-
-const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 
 // Saved base address (route-planner start, alternative to live location) —
 // per-browser via localStorage. No schema change: this is a client-side
