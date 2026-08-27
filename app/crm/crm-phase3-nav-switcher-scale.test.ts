@@ -74,11 +74,16 @@ describe('stage/source/specialty/city/owner are dropdown filters, not pill chips
     expect(SRC).toMatch(/<select/);
   });
 
-  it('the leads list page uses the dropdown component, not the old pill wall', () => {
-    const SRC = read('app/crm/leads/page.tsx');
-    expect(SRC).toMatch(/LeadsFilterDropdowns/);
-    expect(SRC).not.toMatch(/leads-filters-disclosure/);
-    expect(SRC).not.toMatch(/function ChipLink/);
+  it('the leads list page reaches the dropdown component (via LeadsListSection > LeadsToolbar), not the old pill wall', () => {
+    // The retail-style Sort/Filter buttons wrap LeadsFilterDropdowns inside
+    // LeadsToolbar's Filter sheet, so page.tsx no longer imports it directly.
+    const PAGE = read('app/crm/leads/page.tsx');
+    expect(PAGE).toMatch(/LeadsListSection/);
+    expect(PAGE).not.toMatch(/leads-filters-disclosure/);
+    expect(PAGE).not.toMatch(/function ChipLink/);
+
+    expect(read('app/crm/leads/LeadsListSection.tsx')).toMatch(/LeadsToolbar/);
+    expect(read('app/crm/leads/LeadsToolbar.tsx')).toMatch(/LeadsFilterDropdowns/);
   });
 });
 
