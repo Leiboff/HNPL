@@ -38,3 +38,10 @@ export function currentFlags(): OnboardingFlags {
     creditCheck: ENABLE_CREDIT_CHECK,
   };
 }
+
+// Address/duplicate-practice suggestion banner on the CRM lead detail
+// page (lib/crm/addressMatch.ts). OFF by default — the engine is
+// useless below a few hundred leads and would look broken on sparse
+// data. Server-only: the suggestions are computed and rendered from a
+// server component, so a browser-visible flag isn't needed.
+export const ENABLE_CRM_ADDRESS_SUGGESTIONS = readServerFlag('ENABLE_CRM_ADDRESS_SUGGESTIONS');
