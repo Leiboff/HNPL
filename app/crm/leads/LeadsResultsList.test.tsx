@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import LeadsResultsList, { type LeadRow } from './LeadsResultsList';
 
 vi.mock('./actions', () => ({ bulkAssignOwner: vi.fn() }));
@@ -18,6 +18,8 @@ const BASE_ROW: LeadRow = {
   next_follow_up_at: null,
   updated_at: '2026-08-01T00:00:00Z',
   estimated_monthly_billings: null,
+  latitude: null,
+  longitude: null,
 };
 
 describe('1. a lead with no estimated_monthly_billings renders an empty cell', () => {
@@ -54,5 +56,46 @@ describe('bulk assign bar', () => {
     expect(screen.queryByTestId('bulk-assign-bar')).toBeNull();
     screen.getByTestId('lead-select:lead-1').click();
     expect(screen.getByTestId('bulk-assign-bar')).toBeTruthy();
+  });
+});
+
+describe('distance-from-me column and ascending sort', () => {
+  const FAR:  LeadRow = { ...BASE_ROW, id: 'far',  practice_name: 'Far Practice',  latitude: -33.9, longitude: 25.6 };  // ~Gqeberha
+  const NEAR: LeadRow = { ...BASE_ROW, id: 'near', practice_name: 'Near Practice', latitude: -26.21, longitude: 28.05 }; // ~Joburg CBD
+  const NO_COORDS: LeadRow = { ...BASE_ROW, id: 'no-coords', practice_name: 'No Coords Practice', latitude: null, longitude: null };
+
+  // User is right at the "near" lead's coordinates.
+  const USER_POS = { coords: { latitude: -26.2041, longitude: 28.0473 } };
+
+  beforeEach(() => {
+    Object.defineProperty(global.navigator, 'geolocation', {
+      configurable: true,
+      value: { getCurrentPosition: vi.fn((success) => success(USER_POS)) },
+    });
+  });
+
+  it('shows a Distance column with "—" before location is available', () => {
+    render(<LeadsResultsList rows={[NEAR, FAR]} owners={[]} />);
+    expect(screen.getByTestId('lead-distance:near').textContent).toBe('—');
+    expect(screen.getByTestId('lead-distance:far').textContent).toBe('—');
+  });
+
+  it('clicking the Distance header requests location and orders leads ascending by distance', async () => {
+    render(<LeadsResultsList rows={[FAR, NEAR, NO_COORDS]} owners={[]} />);
+    fireEvent.click(screen.getByTestId('sort-by-distance'));
+
+    await waitFor(() => expect(screen.getByTestId('lead-distance:near').textContent).not.toBe('—'));
+
+    const rowsInOrder = screen.getAllByRole('row').slice(1); // drop the header row
+    const namesInOrder = rowsInOrder.map(r => r.textContent);
+    const nearIdx = namesInOrder.findIndex(t => t?.includes('Near Practice'));
+    const farIdx  = namesInOrder.findIndex(t => t?.includes('Far Practice'));
+    const noCoordsIdx = namesInOrder.findIndex(t => t?.includes('No Coords Practice'));
+
+    expect(nearIdx).toBeLessThan(farIdx); // ascending — nearest first
+    expect(noCoordsIdx).toBeGreaterThan(farIdx); // no-coords leads sink to the bottom, never crash the sort
+    expect(screen.getByTestId('lead-distance:near').textContent).toMatch(/^\d+\.\d km$/);
+    expect(parseFloat(screen.getByTestId('lead-distance:near').textContent!))
+      .toBeLessThan(parseFloat(screen.getByTestId('lead-distance:far').textContent!));
   });
 });

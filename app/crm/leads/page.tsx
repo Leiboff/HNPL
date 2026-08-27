@@ -5,6 +5,7 @@ import LeadsSearchForm from './LeadsSearchForm';
 import LeadsResultsList from './LeadsResultsList';
 import LeadsViewSwitcher from './LeadsViewSwitcher';
 import SavedViewsBar from './SavedViewsBar';
+import LeadsFilterDropdowns from './LeadsFilterDropdowns';
 import type { LeadScore } from '@/lib/crm/priorityScore';
 import { SPECIALTIES } from '@/lib/specialties';
 import { sastDayWindows } from '@/lib/crm/timezone';
@@ -84,7 +85,7 @@ export default async function LeadsListPage({
 
   let query = supabase
     .from('crm_leads')
-    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, next_follow_up_at, updated_at, created_at, estimated_monthly_billings, owner_user_id')
+    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, suburb, city, next_follow_up_at, updated_at, created_at, estimated_monthly_billings, owner_user_id, latitude, longitude')
     .is('archived_at', null)
     .limit(500);
   if (owner === 'me') query = query.eq('owner_user_id', user.id);
@@ -234,65 +235,16 @@ export default async function LeadsListPage({
           })}
         </div>
 
-        {/* Everything else lives behind Filters — the pill wall used to be
-            ~250px above the fold across four rows; this collapses it to one
-            row plus a single disclosure toggle. */}
-        <details className="group" data-testid="leads-filters-disclosure">
-          <summary className="cursor-pointer text-xs font-medium text-[#15A89E] list-none inline-flex items-center gap-1">
-            Filters
-            {(stage || source || specialty || overdue || owner || city) && (
-              <span className="inline-flex items-center justify-center rounded-full bg-[#15A89E]/15 text-[#0F766E] text-[10px] font-bold px-1.5 py-0.5 min-w-[1.1rem]">
-                {[stage, source, specialty, overdue ? '1' : '', owner, city].filter(Boolean).length}
-              </span>
-            )}
-            <span className="text-gray-400 group-open:rotate-180 transition-transform">▾</span>
-          </summary>
-          <div className="mt-3 space-y-3">
-            <div className="flex gap-2 flex-wrap items-center">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">Stage:</span>
-              <ChipLink href={chipUrl({ stage: '' })}       active={!stage}          label="All" />
-              {STAGES.map(s => (
-                <ChipLink key={s} href={chipUrl({ stage: s })} active={stage === s} label={s.replace(/_/g, ' ')} capitalize />
-              ))}
-            </div>
-            <div className="flex gap-2 flex-wrap items-center">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">Source:</span>
-              <ChipLink href={chipUrl({ source: '' })}      active={!source}         label="All" />
-              {SOURCES.map(s => (
-                <ChipLink key={s} href={chipUrl({ source: s })} active={source === s} label={s.replace('_', ' ')} capitalize />
-              ))}
-            </div>
-            <div className="flex gap-2 flex-wrap items-center">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">Specialty:</span>
-              <ChipLink href={chipUrl({ specialty: '' })}   active={!specialty}      label="All" />
-              {SPECIALTIES.map(s => (
-                <ChipLink key={s} href={chipUrl({ specialty: s })} active={specialty === s} label={s} />
-              ))}
-            </div>
-            <div className="flex gap-2 flex-wrap items-center">
-              <ChipLink href={chipUrl({ overdue: overdue ? undefined : 'true' })} active={overdue} label="Overdue only" tone="danger" />
-            </div>
-            {cities.length > 0 && (
-              <div className="flex gap-2 flex-wrap items-center">
-                <span className="text-xs text-gray-500 uppercase tracking-wide">City:</span>
-                <ChipLink href={chipUrl({ city: '' })} active={!city} label="All" />
-                {cities.map(c => (
-                  <ChipLink key={c} href={chipUrl({ city: c })} active={city === c} label={c} />
-                ))}
-              </div>
-            )}
-            {isAdmin && owners.length > 0 && (
-              <div className="flex gap-2 flex-wrap items-center">
-                <span className="text-xs text-gray-500 uppercase tracking-wide">Owner:</span>
-                <ChipLink href={chipUrl({ owner: '' })}   active={!owner}        label="All" />
-                <ChipLink href={chipUrl({ owner: 'me' })} active={owner === 'me'} label="My leads" />
-                {owners.filter(o => o.id !== user.id).map(o => (
-                  <ChipLink key={o.id} href={chipUrl({ owner: o.id })} active={owner === o.id} label={o.name} />
-                ))}
-              </div>
-            )}
-          </div>
-        </details>
+        {/* Stage / Source / Specialty / City / Owner — plain dropdowns
+            instead of a pill wall; one compact row instead of ~250px
+            across four rows of chips. */}
+        <LeadsFilterDropdowns
+          specialties={SPECIALTIES}
+          cities={cities}
+          owners={owners}
+          isAdmin={isAdmin}
+          currentUserId={user.id}
+        />
       </div>
 
       {/* Empty */}
@@ -308,24 +260,5 @@ export default async function LeadsListPage({
         />
       )}
     </div>
-  );
-}
-
-function ChipLink({ href, active, label, capitalize, tone }: {
-  href: string; active: boolean; label: string; capitalize?: boolean; tone?: 'danger';
-}) {
-  const activeCls =
-    tone === 'danger' ? 'border-red-200 bg-red-50 text-red-800' : 'border-[#15A89E] bg-[#15A89E]/10 text-[#15A89E]';
-  return (
-    <Link
-      href={href}
-      className={
-        'rounded-full px-3 py-1 text-xs font-medium border transition-colors '
-        + (active ? activeCls : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300')
-        + (capitalize ? ' capitalize' : '')
-      }
-    >
-      {label}
-    </Link>
   );
 }

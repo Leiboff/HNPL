@@ -1,14 +1,13 @@
 // ─── Leads filter state — single source of truth, URL-serializable ────
 //
-// List, Board, and Map all share ONE filter shape. It round-trips
-// through the URL so a filtered view is linkable and survives
-// switching between the three — that's the whole point of the
-// switcher (Phase 3, 3.1/3.2). Encode/decode are pure and tolerant:
-// decode NEVER throws on garbage input (a stale bookmark, a saved
-// view referencing a deleted tag) — it just falls back to the default
-// for whatever field is malformed.
+// List and Map share ONE filter shape. It round-trips through the URL
+// so a filtered view is linkable and survives switching between the
+// two — that's the whole point of the switcher (Phase 3, 3.1/3.2).
+// Encode/decode are pure and tolerant: decode NEVER throws on garbage
+// input (a stale bookmark, a saved view referencing a deleted tag) —
+// it just falls back to the default for whatever field is malformed.
 
-export type LeadsView = 'list' | 'board' | 'map';
+export type LeadsView = 'list' | 'map';
 
 export type LeadsFilters = {
   q: string;
@@ -30,9 +29,9 @@ export const DEFAULT_FILTERS: LeadsFilters = {
   sort: 'follow-up', view: 'list',
 };
 
-const VALID_VIEWS: readonly LeadsView[] = ['list', 'board', 'map'];
+const VALID_VIEWS: readonly LeadsView[] = ['list', 'map'];
 const VIEW_PATH: Record<LeadsView, string> = {
-  list: '/crm/leads', board: '/crm/board', map: '/crm/map',
+  list: '/crm/leads', map: '/crm/map',
 };
 
 function str(v: unknown): string {

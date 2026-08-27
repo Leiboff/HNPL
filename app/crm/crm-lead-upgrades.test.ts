@@ -128,15 +128,16 @@ describe('PART A — Places autocomplete on lead detail + write-through to stree
 // surface" — a deliberate product decision at the time. CRM Phase 2
 // explicitly reverses that decision: estimated_monthly_billings is
 // "the qualification variable" and is required on the new-lead form,
-// lead detail, leads list (+ sort), board cards/totals, and My Day's
-// weighted-pipeline figure. The CSV importer was NOT asked to bring
-// the column back (Phase 2 doesn't mention it), so those two
-// assertions are left as they were.
+// lead detail, leads list (+ sort), and My Day's weighted-pipeline
+// figure. The CSV importer was NOT asked to bring the column back
+// (Phase 2 doesn't mention it), so those two assertions are left as
+// they were. The Kanban board (which also showed per-stage R totals)
+// was removed after Phase 3, per a follow-up request — its assertion
+// is gone with it rather than pointing at a deleted file.
 
 describe('PART B — Est. R/mo (estimated_monthly_billings) wired back in, Phase 2', () => {
   const CRM   = read('app/crm/page.tsx');
   const LIST  = read('app/crm/leads/page.tsx');
-  const BOARD = read('app/crm/board/BoardClient.tsx');
   const NEW   = read('app/crm/leads/new/NewLeadForm.tsx');
   const LDC   = read('app/crm/leads/[id]/LeadDetailClient.tsx');
   const CSV   = read('lib/crm/csv.ts');
@@ -150,13 +151,6 @@ describe('PART B — Est. R/mo (estimated_monthly_billings) wired back in, Phase
   it('leads list displays + sorts by value', () => {
     expect(LIST).toMatch(/estimated_monthly_billings/);
     expect(LIST).toMatch(/'value'/);
-  });
-
-  it('pipeline board columns show a per-stage R total, in addition to the count', () => {
-    expect(BOARD).toMatch(/estimated_monthly_billings/);
-    expect(BOARD).toMatch(/formatRand/);
-    expect(BOARD).toMatch(/data-testid=\{`crm-board-column-count:/);
-    expect(BOARD).toMatch(/data-testid=\{`crm-board-column-value:/);
   });
 
   it('create-lead form has the deal-size input', () => {

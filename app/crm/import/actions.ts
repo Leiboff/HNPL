@@ -158,7 +158,6 @@ export async function commitImport(
   }
 
   revalidatePath('/crm/leads');
-  revalidatePath('/crm/board');
   revalidatePath('/crm');
   return { created, skipped, rowErrors: rowErrors.length ? rowErrors : undefined };
 }

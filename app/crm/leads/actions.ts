@@ -142,7 +142,6 @@ export async function createLead(input: CreateLeadInput): Promise<CreateLeadResu
 
   revalidatePath('/crm');
   revalidatePath('/crm/leads');
-  revalidatePath('/crm/board');
   return { leadId: lead.id };
 }
 
@@ -183,7 +182,6 @@ export async function updateLead(id: string, fields: UpdateLeadFields): Promise<
 
   revalidatePath(`/crm/leads/${id}`);
   revalidatePath('/crm/leads');
-  revalidatePath('/crm/board');
   revalidatePath('/crm');
   return {};
 }
@@ -215,12 +213,11 @@ export async function bulkAssignOwner(
   if (error) return { error: error.message };
 
   revalidatePath('/crm/leads');
-  revalidatePath('/crm/board');
   revalidatePath('/crm');
   return { updated: data?.length ?? 0 };
 }
 
-// ─── moveLeadStage — used by the board drag and by detail buttons ────
+// ─── moveLeadStage — used by the lead detail "Move stage" button ─────
 
 const LOST_REASONS = new Set([
   'price', 'uses_competitor', 'no_need', 'no_decision_maker',
@@ -263,7 +260,6 @@ export async function moveLeadStage(
   }
 
   revalidatePath(`/crm/leads/${id}`);
-  revalidatePath('/crm/board');
   revalidatePath('/crm/leads');
   revalidatePath('/crm');
   return {};
@@ -525,7 +521,6 @@ export async function markSigned(leadId: string, opts?: { contactId?: string | n
   const inviteUrl = `${base}/signup/practice?token=${token}`;
 
   revalidatePath(`/crm/leads/${leadId}`);
-  revalidatePath('/crm/board');
   return {
     inviteUrl,
     recipientEmail: recipient.email,

@@ -37,9 +37,10 @@ describe('CRM shell — sales-and-admin gate + own nav', () => {
   it('CrmNav + CrmBottomNav point to the four Phase 3 sections (Today / Leads / Accounts / Settings)', () => {
     // Superseded from the four Phase 1 sections (/crm, /crm/leads,
     // /crm/board, /crm/import) — Phase 3 explicitly collapses the nav
-    // to Today/Leads/Accounts/Settings; Board and Map become faces of
-    // the Leads surface (a switcher on the page, not separate nav
-    // items), and Import moves under Settings.
+    // to Today/Leads/Accounts/Settings; Map becomes a face of the Leads
+    // surface (a switcher on the page, not a separate nav item), and
+    // Import moves under Settings. The Kanban board itself was later
+    // removed outright (list + map covers how the team actually works).
     const nav  = read('app/crm/CrmNav.tsx');
     const bnav = read('app/crm/CrmBottomNav.tsx');
     for (const href of ['/crm', '/crm/leads', '/crm/accounts', '/crm/settings']) {

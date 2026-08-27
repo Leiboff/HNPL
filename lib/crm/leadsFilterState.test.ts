@@ -8,19 +8,15 @@ function paramsToRecord(params: URLSearchParams): Record<string, string> {
   return Object.fromEntries(params.entries());
 }
 
-describe('1. filter state survives List → Board → Map → List with no loss', () => {
-  it('round-trips every field through switchViewHref across all three views', () => {
+describe('1. filter state survives List → Map → List with no loss', () => {
+  it('round-trips every field through switchViewHref across both views', () => {
     const f: LeadsFilters = {
       q: 'dental', stage: 'contacted', source: 'referral', specialty: 'Dentistry',
       tags: ['hot', 'follow-up'], city: 'Cape Town', suburb: 'Rondebosch',
       owner: 'me', overdue: true, sort: 'value', view: 'list',
     };
-    const toBoard = switchViewHref(f, 'board');
-    expect(toBoard).toContain('/crm/board?');
-    const boardParams = new URLSearchParams(toBoard.split('?')[1]);
-    const afterBoard = decodeFilters(paramsToRecord(boardParams));
-
-    const toMap = switchViewHref(afterBoard, 'map');
+    const toMap = switchViewHref(f, 'map');
+    expect(toMap).toContain('/crm/map?');
     const mapParams = new URLSearchParams(toMap.split('?')[1]);
     const afterMap = decodeFilters(paramsToRecord(mapParams));
 
@@ -38,7 +34,7 @@ describe('2. a filtered URL opened cold in a new session reproduces it exactly',
     const f: LeadsFilters = {
       q: 'acme', stage: 'demo_done', source: 'event', specialty: '',
       tags: ['vip'], city: '', suburb: 'Sandton', owner: 'user-123',
-      overdue: false, sort: 'updated', view: 'board',
+      overdue: false, sort: 'updated', view: 'map',
     };
     const decoded = decodeFilters(paramsToRecord(encodeFilters(f)));
     expect(decoded).toEqual(f);

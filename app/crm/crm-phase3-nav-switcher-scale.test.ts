@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 function read(p: string): string { return readFileSync(resolve(process.cwd(), p), 'utf8'); }
@@ -29,26 +29,56 @@ describe('3.1 — nav collapsed to four sections', () => {
   });
 });
 
-describe('3.1 — List · Board · Map switcher shares one filter state', () => {
-  it('LeadsViewSwitcher preserves the current querystring across all three routes', () => {
+describe('the Kanban board is removed', () => {
+  it('app/crm/board no longer exists', () => {
+    expect(existsSync(resolve(process.cwd(), 'app/crm/board'))).toBe(false);
+  });
+
+  it('nothing links to /crm/board any more', () => {
+    for (const f of [
+      'app/crm/CrmNav.tsx', 'app/crm/CrmBottomNav.tsx', 'app/crm/leads/LeadsViewSwitcher.tsx',
+      'app/crm/leads/actions.ts', 'app/crm/import/actions.ts', 'app/crm/import/quickActions.ts',
+    ]) {
+      expect(read(f)).not.toMatch(/\/crm\/board/);
+    }
+  });
+});
+
+describe('3.1 — List · Map switcher shares one filter state', () => {
+  it('LeadsViewSwitcher preserves the current querystring across both routes', () => {
     const SRC = read('app/crm/leads/LeadsViewSwitcher.tsx');
     expect(SRC).toMatch(/useSearchParams/);
     expect(SRC).toMatch(/qs \? `\$\{href\}\?\$\{qs\}` : href/);
+    expect(SRC).toMatch(/{ view: 'list', href: '\/crm\/leads', label: 'List' }/);
+    expect(SRC).toMatch(/{ view: 'map',  href: '\/crm\/map',   label: 'Map' }/);
   });
 
-  it('leads list, board, and map pages all import the same switcher', () => {
+  it('leads list and map pages both import the same switcher', () => {
     expect(read('app/crm/leads/page.tsx')).toMatch(/LeadsViewSwitcher/);
-    expect(read('app/crm/board/BoardClient.tsx')).toMatch(/LeadsViewSwitcher/);
     expect(read('app/crm/map/MapClient.tsx')).toMatch(/LeadsViewSwitcher/);
   });
 
-  it('board and map pages decode filters from searchParams and apply them via the shared pure function', () => {
-    const BOARD = read('app/crm/board/page.tsx');
-    expect(BOARD).toMatch(/decodeFilters\(await searchParams\)/);
-    expect(BOARD).toMatch(/applyLeadFilters\(/);
+  it('map page decodes filters from searchParams and applies them via the shared pure function', () => {
     const MAP = read('app/crm/map/page.tsx');
     expect(MAP).toMatch(/decodeFilters\(await searchParams\)/);
     expect(MAP).toMatch(/applyLeadFilters\(/);
+  });
+});
+
+describe('stage/source/specialty/city/owner are dropdown filters, not pill chips', () => {
+  it('LeadsFilterDropdowns renders a <select> per dimension', () => {
+    const SRC = read('app/crm/leads/LeadsFilterDropdowns.tsx');
+    for (const testId of ['filter-stage', 'filter-source', 'filter-specialty', 'filter-city', 'filter-owner']) {
+      expect(SRC).toMatch(new RegExp(`data-testid="${testId}"`));
+    }
+    expect(SRC).toMatch(/<select/);
+  });
+
+  it('the leads list page uses the dropdown component, not the old pill wall', () => {
+    const SRC = read('app/crm/leads/page.tsx');
+    expect(SRC).toMatch(/LeadsFilterDropdowns/);
+    expect(SRC).not.toMatch(/leads-filters-disclosure/);
+    expect(SRC).not.toMatch(/function ChipLink/);
   });
 });
 
@@ -56,23 +86,8 @@ describe('3.4 — scale', () => {
   it('leads list shows a result count', () => {
     expect(read('app/crm/leads/page.tsx')).toMatch(/data-testid="leads-result-count"/);
   });
-  it('board shows a result count', () => {
-    expect(read('app/crm/board/BoardClient.tsx')).toMatch(/data-testid="board-result-count"/);
-  });
   it('map shows a result count', () => {
     expect(read('app/crm/map/MapClient.tsx')).toMatch(/data-testid="map-result-count"/);
-  });
-
-  it('7. adversarial — board columns cap and offer "show more"', () => {
-    const SRC = read('app/crm/board/BoardClient.tsx');
-    expect(SRC).toMatch(/const COLUMN_PAGE_SIZE = 50/);
-    expect(SRC).toMatch(/expanded\.has\(stage\.key\) \? stageRows : stageRows\.slice\(0, COLUMN_PAGE_SIZE\)/);
-    expect(SRC).toMatch(/data-testid=\{`crm-board-column-show-more:/);
-  });
-
-  it('board cards show full practice names — no truncate class on the name', () => {
-    const SRC = read('app/crm/board/BoardClient.tsx');
-    expect(SRC).toMatch(/text-xs font-semibold text-gray-900 break-words">\{r\.practice_name\}/);
   });
 
   it('10. map cluster bubbles are coloured via the SAME palette function as the pins and legend', () => {

@@ -50,7 +50,7 @@ export default function CrmBottomNav({ counts }: { counts: Counts }) {
   const pathname = usePathname();
   function isActive(href: string) {
     if (href === '/crm') return pathname === '/crm';
-    if (href === '/crm/leads') return pathname.startsWith('/crm/leads') || pathname.startsWith('/crm/board') || pathname.startsWith('/crm/map');
+    if (href === '/crm/leads') return pathname.startsWith('/crm/leads') || pathname.startsWith('/crm/map');
     return pathname.startsWith(href);
   }
 

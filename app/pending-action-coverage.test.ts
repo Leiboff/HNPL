@@ -97,7 +97,6 @@ const NOT_YET_CONVERTED = [
   'app/brand/branch/[practiceId]/TeamSection.tsx',
   'app/brand/group/GroupEditForm.tsx',
   'app/crm/admin/gmail-accounts/GmailAccountsAdminTable.tsx',
-  'app/crm/board/BoardClient.tsx',
   'app/crm/import/ImportClient.tsx',
   'app/crm/import/QuickImportClient.tsx',
   'app/crm/leads/LeadsResultsList.tsx',
