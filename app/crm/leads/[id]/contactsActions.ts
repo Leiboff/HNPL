@@ -12,18 +12,24 @@ import { createClient } from '@/lib/supabase/server';
 // reading from crm_leads unchanged.
 
 export type LeadContact = {
-  id:               string;
-  lead_id:          string;
-  first_name:       string;
-  last_name:        string;
-  role_at_practice: string | null;
-  phone:            string | null;
-  email:            string | null;
-  is_primary:       boolean;
-  notes:            string | null;
-  created_at:       string;
-  updated_at:       string;
+  id:                 string;
+  lead_id:            string;
+  first_name:         string;
+  last_name:          string;
+  role_at_practice:   string | null;
+  phone:              string | null;
+  email:              string | null;
+  is_primary:         boolean;
+  interest:           'unknown' | 'cold' | 'warm' | 'hot';
+  is_decision_maker:  boolean;
+  hpcsa_number:       string | null;
+  hpcsa_group_key:    string | null;
+  notes:              string | null;
+  created_at:         string;
+  updated_at:         string;
 };
+
+const CONTACT_SELECT = 'id, lead_id, first_name, last_name, role_at_practice, phone, email, is_primary, interest, is_decision_maker, hpcsa_number, hpcsa_group_key, notes, created_at, updated_at';
 
 type Guard =
   | { ok: true;  userId: string; role: 'sales' | 'admin' }
@@ -47,14 +53,17 @@ function trimOrNull(v: string | null | undefined): string | null {
 // ── addContact ──────────────────────────────────────────────────────
 
 export type AddContactInput = {
-  lead_id:          string;
-  first_name:       string;
-  last_name:        string;
-  role_at_practice?: string | null;
-  phone?:            string | null;
-  email?:            string | null;
-  notes?:            string | null;
-  is_primary?:       boolean;
+  lead_id:            string;
+  first_name:         string;
+  last_name:          string;
+  role_at_practice?:  string | null;
+  phone?:             string | null;
+  email?:             string | null;
+  notes?:             string | null;
+  is_primary?:        boolean;
+  interest?:          'unknown' | 'cold' | 'warm' | 'hot';
+  is_decision_maker?: boolean;
+  hpcsa_number?:      string | null;
 };
 
 export async function addContact(input: AddContactInput): Promise<{ error?: string; contact?: LeadContact }> {
@@ -77,21 +86,24 @@ export async function addContact(input: AddContactInput): Promise<{ error?: stri
   }
 
   const row = {
-    lead_id:          input.lead_id,
-    first_name:       input.first_name.trim(),
-    last_name:        input.last_name.trim(),
-    role_at_practice: trimOrNull(input.role_at_practice ?? null),
-    phone:            trimOrNull(input.phone ?? null),
-    email:            trimOrNull(input.email ?? null)?.toLowerCase() ?? null,
-    notes:            trimOrNull(input.notes ?? null),
-    is_primary:       !!input.is_primary,
-    created_by:       g.userId,
+    lead_id:            input.lead_id,
+    first_name:         input.first_name.trim(),
+    last_name:          input.last_name.trim(),
+    role_at_practice:   trimOrNull(input.role_at_practice ?? null),
+    phone:              trimOrNull(input.phone ?? null),
+    email:              trimOrNull(input.email ?? null)?.toLowerCase() ?? null,
+    notes:              trimOrNull(input.notes ?? null),
+    is_primary:         !!input.is_primary,
+    interest:           input.interest ?? 'unknown',
+    is_decision_maker:  !!input.is_decision_maker,
+    hpcsa_number:       trimOrNull(input.hpcsa_number ?? null),
+    created_by:         g.userId,
   };
 
   const { data, error } = await supabase
     .from('crm_lead_contacts')
     .insert(row)
-    .select('id, lead_id, first_name, last_name, role_at_practice, phone, email, is_primary, notes, created_at, updated_at')
+    .select(CONTACT_SELECT)
     .single();
   if (error) return { error: error.message };
 
@@ -102,14 +114,17 @@ export async function addContact(input: AddContactInput): Promise<{ error?: stri
 // ── updateContact ───────────────────────────────────────────────────
 
 export type UpdateContactInput = {
-  id:                string;
-  lead_id:           string;
-  first_name?:       string;
-  last_name?:        string;
-  role_at_practice?: string | null;
-  phone?:            string | null;
-  email?:            string | null;
-  notes?:            string | null;
+  id:                 string;
+  lead_id:            string;
+  first_name?:        string;
+  last_name?:         string;
+  role_at_practice?:  string | null;
+  phone?:             string | null;
+  email?:             string | null;
+  notes?:             string | null;
+  interest?:          'unknown' | 'cold' | 'warm' | 'hot';
+  is_decision_maker?: boolean;
+  hpcsa_number?:      string | null;
 };
 
 export async function updateContact(input: UpdateContactInput): Promise<{ error?: string; contact?: LeadContact }> {
@@ -132,6 +147,9 @@ export async function updateContact(input: UpdateContactInput): Promise<{ error?
     patch.email = e ? e.toLowerCase() : null;
   }
   if (input.notes !== undefined)            patch.notes            = trimOrNull(input.notes);
+  if (input.interest !== undefined)         patch.interest         = input.interest;
+  if (input.is_decision_maker !== undefined) patch.is_decision_maker = input.is_decision_maker;
+  if (input.hpcsa_number !== undefined)     patch.hpcsa_number      = trimOrNull(input.hpcsa_number);
 
   if (Object.keys(patch).length === 0) return { error: 'No changes to save.' };
 
@@ -141,7 +159,7 @@ export async function updateContact(input: UpdateContactInput): Promise<{ error?
     .update(patch)
     .eq('id', input.id)
     .eq('lead_id', input.lead_id)
-    .select('id, lead_id, first_name, last_name, role_at_practice, phone, email, is_primary, notes, created_at, updated_at')
+    .select(CONTACT_SELECT)
     .single();
   if (error) return { error: error.message };
 

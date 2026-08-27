@@ -5,6 +5,7 @@ import {
   addContact, updateContact, promotePrimary, removeContact,
   type LeadContact,
 } from './contactsActions';
+import { INTERESTS, INTEREST_LABELS, type Interest } from '@/lib/crm/interest';
 
 // ─── Contacts card — primary badged, add/edit/remove per contact ────
 //
@@ -59,6 +60,22 @@ export default function ContactsCard({
       if (res.error) return onError(res.error);
       onChange(contacts.map(c => ({ ...c, is_primary: c.id === id })));
       onOk('Primary updated.');
+    });
+  }
+
+  function setInterest(id: string, interest: Interest) {
+    run(async () => {
+      const res = await updateContact({ id, lead_id: leadId, interest });
+      if (res.error || !res.contact) return onError(res.error ?? 'Save failed.');
+      onChange(contacts.map(c => c.id === id ? res.contact! : c));
+    });
+  }
+
+  function toggleDecisionMaker(id: string, next: boolean) {
+    run(async () => {
+      const res = await updateContact({ id, lead_id: leadId, is_decision_maker: next });
+      if (res.error || !res.contact) return onError(res.error ?? 'Save failed.');
+      onChange(contacts.map(c => c.id === id ? res.contact! : c));
     });
   }
 
@@ -130,6 +147,37 @@ export default function ContactsCard({
                   {c.role_at_practice && (
                     <span className="text-[11px] text-gray-500">· {c.role_at_practice}</span>
                   )}
+                  {c.is_decision_maker && (
+                    <span
+                      className="inline-flex items-center rounded-full bg-[#13294B]/10 text-[#13294B] px-2 py-0.5 text-[10px] font-medium"
+                      data-testid={`contact-decision-maker-badge:${c.id}`}
+                    >
+                      DECISION MAKER
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="text-[11px] text-gray-500">
+                    Interest{' '}
+                    <select
+                      value={c.interest}
+                      onChange={e => setInterest(c.id, e.target.value as Interest)}
+                      disabled={pending}
+                      className="rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[11px]"
+                      data-testid={`contact-interest:${c.id}`}
+                    >
+                      {INTERESTS.map(i => <option key={i} value={i}>{INTEREST_LABELS[i]}</option>)}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => toggleDecisionMaker(c.id, !c.is_decision_maker)}
+                    disabled={pending}
+                    className="text-[11px] text-gray-600 hover:underline"
+                    data-testid={`contact-toggle-decision-maker:${c.id}`}
+                  >
+                    {c.is_decision_maker ? 'Unmark decision maker' : 'Mark decision maker'}
+                  </button>
                 </div>
                 <div className="text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
                   {c.phone && (
@@ -255,6 +303,7 @@ type ContactFormValues = {
   email:            string | null;
   notes:            string | null;
   is_primary?:      boolean;
+  hpcsa_number?:    string | null;
 };
 
 function ContactForm({
@@ -272,6 +321,7 @@ function ContactForm({
   const [phone,     setPhone]     = useState(initial?.phone ?? '');
   const [email,     setEmail]     = useState(initial?.email ?? '');
   const [notes,     setNotes]     = useState(initial?.notes ?? '');
+  const [hpcsa,     setHpcsa]     = useState(initial?.hpcsa_number ?? '');
   const [isPrimary, setIsPrimary] = useState(false);
 
   return (
@@ -282,6 +332,7 @@ function ContactForm({
         <FieldInput label="Role"       value={role}      onChange={setRole}      placeholder="Receptionist, Practice manager, Doctor…" />
         <FieldInput label="Phone"      value={phone}     onChange={setPhone}     placeholder="+27 …" />
         <FieldInput label="Email"      value={email}     onChange={setEmail}     type="email" />
+        <FieldInput label="HPCSA number" value={hpcsa}   onChange={setHpcsa}     placeholder="e.g. MP1234567" data-testid="contact-form-hpcsa" />
       </div>
       <label className="text-xs block">
         <span className="block font-medium text-gray-700 mb-1">Notes</span>
@@ -315,6 +366,7 @@ function ContactForm({
             email:            email.trim() || null,
             notes:            notes.trim() || null,
             is_primary:       allowIsPrimary && isPrimary,
+            hpcsa_number:     hpcsa.trim() || null,
           })}
           disabled={pending || !firstName.trim() || !lastName.trim()}
           className="rounded-lg bg-[#13294B] text-white px-3 py-1.5 text-xs font-medium disabled:opacity-60"

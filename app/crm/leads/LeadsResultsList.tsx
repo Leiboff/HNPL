@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatDateTime, formatRand } from '@/app/admin/_lib/format';
 import { bulkAssignOwner } from './actions';
 import type { LeadScore } from '@/lib/crm/priorityScore';
+import { INTEREST_LABELS, type Interest } from '@/lib/crm/interest';
 
 export type LeadRow = {
   id: string;
@@ -22,6 +23,7 @@ export type LeadRow = {
   estimated_monthly_billings: number | null;
   latitude: number | null;
   longitude: number | null;
+  interest?: Interest;
 };
 
 // ─── Results table + mobile cards + bulk "assign to" ──────────────────
@@ -123,7 +125,7 @@ export default function LeadsResultsList({
                     aria-label="Select all"
                   />
                 </th>
-                {['Practice', 'Contact', 'Stage', 'Specialty', 'Value', 'Priority', 'Next follow-up', 'Updated'].map(h => (
+                {['Practice', 'Contact', 'Stage', 'Interest', 'Specialty', 'Value', 'Priority', 'Next follow-up', 'Updated'].map(h => (
                   <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -161,6 +163,11 @@ export default function LeadsResultsList({
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs capitalize">
                       {r.stage.replace(/_/g, ' ')}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3" data-testid={`lead-interest:${r.id}`}>
+                    <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs">
+                      {INTEREST_LABELS[r.interest ?? 'unknown']}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-600">{r.specialty ?? '—'}</td>
@@ -225,6 +232,10 @@ export default function LeadsResultsList({
                   <div>
                     <p className="text-gray-400 uppercase tracking-wide text-[10px]">Specialty</p>
                     <p className="text-gray-900 truncate">{r.specialty ?? '—'}</p>
+                  </div>
+                  <div data-testid={`lead-interest-mobile:${r.id}`}>
+                    <p className="text-gray-400 uppercase tracking-wide text-[10px]">Interest</p>
+                    <p className="text-gray-900">{INTEREST_LABELS[r.interest ?? 'unknown']}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 uppercase tracking-wide text-[10px]">Next</p>

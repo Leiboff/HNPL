@@ -1,6 +1,8 @@
 'use client';
 
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { STAGES } from '@/lib/crm/stages';
+import { INTERESTS, INTEREST_LABELS } from '@/lib/crm/interest';
 
 // ─── Filter dropdowns — Stage / Source / Specialty / City / Owner ─────
 //
@@ -11,7 +13,6 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 // to also render as a compact inline row (layout="row", the default)
 // if some other surface wants it that way.
 
-const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
 
 function Field({ label, stacked, children }: { label: string; stacked: boolean; children: React.ReactNode }) {
@@ -88,6 +89,19 @@ export default function LeadsFilterDropdowns({
         >
           <option value="">All specialties</option>
           {specialties.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
+
+      <Field label="Interest" stacked={stacked}>
+        <select
+          className={selectCls}
+          value={searchParams.get('interest') ?? ''}
+          onChange={e => setParam('interest', e.target.value)}
+          data-testid="filter-interest"
+          aria-label="Filter by interest"
+        >
+          <option value="">All interest levels</option>
+          {INTERESTS.map(i => <option key={i} value={i}>{INTEREST_LABELS[i]}</option>)}
         </select>
       </Field>
 
