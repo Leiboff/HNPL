@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { findLeadCollisions, normaliseEmail, normalisePhone } from '@/lib/crm/dedupe';
 import { buildLeadCalendarLink } from '@/lib/crm/calendarLink';
 import { sastLocalToUtc } from '@/lib/crm/timezone';
+import { STAGES as STAGE_LIST } from '@/lib/crm/stages';
 
 // ─── Server-side guard: sales OR admin ───────────────────────────────
 //
@@ -60,10 +61,7 @@ export type CreateLeadInput = {
 };
 
 const SOURCES = new Set(['referral', 'cold_outreach', 'inbound', 'event', 'other']);
-const STAGES  = new Set([
-  'new', 'contacted', 'meeting_scheduled', 'demo_done',
-  'agreement_sent', 'signed', 'onboarded', 'lost',
-]);
+const STAGES: Set<string> = new Set(STAGE_LIST);
 
 export type CreateLeadResult = {
   error?:      string;
@@ -225,16 +223,20 @@ const LOST_REASONS = new Set([
 ]);
 
 export async function moveLeadStage(
-  id:          string,
-  toStage:     string,
-  lostReason?: string,
-  note?:       string,
+  id:             string,
+  toStage:        string,
+  lostReason?:    string,
+  note?:          string,
+  nurtureWakeAt?: string,   // ISO — required when toStage === 'nurture'
 ): Promise<{ error?: string }> {
   const guard = await guardSalesOrAdmin();
   if (!guard.ok) return { error: guard.error };
   if (!STAGES.has(toStage)) return { error: `Invalid stage: ${toStage}` };
   if (toStage === 'lost' && (!lostReason || !LOST_REASONS.has(lostReason))) {
     return { error: 'A lost reason is required when moving a lead to lost.' };
+  }
+  if (toStage === 'nurture' && !nurtureWakeAt) {
+    return { error: 'A wake date is required when moving a lead to nurture.' };
   }
 
   const supabase = await createClient();
@@ -243,6 +245,9 @@ export async function moveLeadStage(
   if (toStage === 'lost') {
     patch.lost_reason = lostReason;
     patch.lost_note   = note?.trim() || null;
+  }
+  if (toStage === 'nurture') {
+    patch.nurture_wake_at = nurtureWakeAt;
   }
 
   const { error } = await supabase.from('crm_leads').update(patch).eq('id', id);

@@ -25,7 +25,7 @@ export type LeadScore = {
   reason: string;      // always non-empty
 };
 
-const TERMINAL_STAGES = new Set(['signed', 'onboarded', 'lost']);
+import { TERMINAL_STAGES, STAGE_STALL_DAYS } from './stages';
 
 const WEIGHTS = {
   overdueFollowUp:    40,
@@ -77,12 +77,17 @@ export function computeLeadScore(input: LeadScoreInput, now: Date): LeadScore {
     contributions.push({ points: WEIGHTS.unansweredReply, reason: 'Unanswered reply waiting.' });
   }
 
+  // Per-stage stall threshold — 0 (or a stage absent from the map,
+  // e.g. nurture) disables the stalled signal for that stage entirely;
+  // its own date signal (a scheduled meeting, a nurture wake date)
+  // already covers timing, so a flat staleness clock would be noise.
+  const stallThreshold = STAGE_STALL_DAYS[input.stage as keyof typeof STAGE_STALL_DAYS] ?? 0;
   const stalledDays = daysSince(input.lastStageChangeAt, now);
-  if (stalledDays !== null && stalledDays > 7) {
+  if (stallThreshold > 0 && stalledDays !== null && stalledDays > stallThreshold) {
     const weeks = Math.floor(stalledDays / 7);
     contributions.push({
-      points: Math.min(WEIGHTS.stalledPerWeek * weeks, WEIGHTS.stalledCap),
-      reason: `No stage movement in ${weeks} week${weeks === 1 ? '' : 's'}.`,
+      points: Math.min(WEIGHTS.stalledPerWeek * Math.max(weeks, 1), WEIGHTS.stalledCap),
+      reason: `No stage movement in ${Math.floor(stalledDays)} day${Math.floor(stalledDays) === 1 ? '' : 's'} (stalled for this stage).`,
     });
   }
 
