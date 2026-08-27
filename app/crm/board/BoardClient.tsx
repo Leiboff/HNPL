@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { moveLeadStage, markSigned } from '../leads/actions';
 import { LOST_REASONS, LOST_REASON_LABELS } from '@/lib/crm/lostReasons';
 import { formatRand } from '@/app/admin/_lib/format';
+import LeadsViewSwitcher from '../leads/LeadsViewSwitcher';
+
+const COLUMN_PAGE_SIZE = 50;
 
 type BoardRow = {
   id: string;
@@ -28,10 +31,11 @@ const STAGES = [
   { key: 'lost',               label: 'Lost' },
 ] as const;
 
-export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
+export default function BoardClient({ rows: initial, resultCount }: { rows: BoardRow[]; resultCount: number }) {
   const [rows, setRows] = useState(initial);
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [lostPrompt, setLostPrompt]   = useState<null | { id: string; from: string }>(null);
   const [inviteUrl,  setInviteUrl]    = useState<string | null>(null);
@@ -74,14 +78,17 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
 
   return (
     <div className="mx-auto max-w-full px-4 sm:px-6 py-6 sm:py-8">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Pipeline</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Drag to move between stages. Column totals show lead count per stage.
+          <p className="mt-1 text-sm text-gray-500" data-testid="board-result-count">
+            {resultCount} lead{resultCount === 1 ? '' : 's'} · drag to move between stages
           </p>
         </div>
-        <Link href="/crm/leads/new" className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium">+ New lead</Link>
+        <div className="flex items-center gap-2">
+          <LeadsViewSwitcher />
+          <Link href="/crm/leads/new" className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium">+ New lead</Link>
+        </div>
       </div>
 
       {msg && (
@@ -132,7 +139,7 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
                 )}
               </div>
               <ul className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[65vh]">
-                {stageRows.map(r => (
+                {(expanded.has(stage.key) ? stageRows : stageRows.slice(0, COLUMN_PAGE_SIZE)).map(r => (
                   <li key={r.id}>
                     <Link
                       href={`/crm/leads/${r.id}`}
@@ -140,7 +147,7 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
                       onDragStart={(e) => { e.dataTransfer.setData('text/lead-id', r.id); e.dataTransfer.effectAllowed = 'move'; }}
                       className="block cursor-move rounded-lg border border-gray-200 bg-white hover:border-gray-300 p-2"
                     >
-                      <p className="text-xs font-semibold text-gray-900 truncate">{r.practice_name}</p>
+                      <p className="text-xs font-semibold text-gray-900 break-words">{r.practice_name}</p>
                       <p className="text-[11px] text-gray-500 truncate">
                         {r.contact_first_name} {r.contact_last_name}
                       </p>
@@ -160,6 +167,18 @@ export default function BoardClient({ rows: initial }: { rows: BoardRow[] }) {
                 ))}
                 {stageRows.length === 0 && (
                   <li className="text-[11px] text-gray-400 text-center py-4">Drop leads here</li>
+                )}
+                {!expanded.has(stage.key) && stageRows.length > COLUMN_PAGE_SIZE && (
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(prev => new Set(prev).add(stage.key))}
+                      className="w-full rounded-lg border border-dashed border-gray-200 text-[11px] text-gray-500 py-2 hover:bg-gray-50"
+                      data-testid={`crm-board-column-show-more:${stage.key}`}
+                    >
+                      Show {stageRows.length - COLUMN_PAGE_SIZE} more
+                    </button>
+                  </li>
                 )}
               </ul>
             </div>

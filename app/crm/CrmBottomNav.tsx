@@ -22,36 +22,35 @@ function LeadsIcon({ active }: { active: boolean }) {
     </svg>
   );
 }
-function PipelineIcon({ active }: { active: boolean }) {
+function AccountsIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3"  y="3"  width="5" height="18" rx="1" />
-      <rect x="10" y="3"  width="5" height="12" rx="1" />
-      <rect x="17" y="3"  width="4" height="7"  rx="1" />
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <line x1="2" y1="10" x2="22" y2="10" />
     </svg>
   );
 }
-function ImportIcon({ active }: { active: boolean }) {
+function SettingsIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.25 : 1.75} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }
 
 const LINKS = [
-  { href: '/crm',        label: 'My Day',   Icon: MyDayIcon,    countKey: 'overdueFollowups' as const },
-  { href: '/crm/leads',  label: 'Leads',    Icon: LeadsIcon                                          },
-  { href: '/crm/board',  label: 'Pipeline', Icon: PipelineIcon                                       },
-  { href: '/crm/import', label: 'Import',   Icon: ImportIcon                                         },
+  { href: '/crm',           label: 'Today',    Icon: MyDayIcon,     countKey: 'overdueFollowups' as const },
+  { href: '/crm/leads',     label: 'Leads',    Icon: LeadsIcon                                            },
+  { href: '/crm/accounts',  label: 'Accounts', Icon: AccountsIcon                                         },
+  { href: '/crm/settings',  label: 'Settings', Icon: SettingsIcon                                         },
 ];
 
 export default function CrmBottomNav({ counts }: { counts: Counts }) {
   const pathname = usePathname();
   function isActive(href: string) {
     if (href === '/crm') return pathname === '/crm';
+    if (href === '/crm/leads') return pathname.startsWith('/crm/leads') || pathname.startsWith('/crm/board') || pathname.startsWith('/crm/map');
     return pathname.startsWith(href);
   }
 

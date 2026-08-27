@@ -3,9 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-// Desktop sidebar for /crm. Mirrors AdminNav layout with a smaller
-// section set: My Day / Leads / Board / Import. Counts (overdue
-// follow-ups today) come from the layout.
+// Desktop sidebar for /crm. Four sections: Today / Leads / Accounts /
+// Settings. Counts (overdue follow-ups today) come from the layout.
 
 type Counts = {
   overdueFollowups: number;
@@ -13,15 +12,15 @@ type Counts = {
 
 type NavLink = { href: string; label: string; countKey?: keyof Counts; adminOnly?: boolean };
 
+// Collapsed to four sections (Phase 3, 3.1): Today / Leads (List · Board ·
+// Map switcher lives INSIDE the Leads surface, not as separate top-level
+// nav items) / Accounts / Settings (Gmail, signature, import all live
+// there now — see app/crm/settings/page.tsx).
 const NAV_LINKS: NavLink[] = [
-  { href: '/crm',                        label: 'My Day',   countKey: 'overdueFollowups' },
+  { href: '/crm',                        label: 'Today',    countKey: 'overdueFollowups' },
   { href: '/crm/leads',                  label: 'Leads'                                   },
-  { href: '/crm/board',                  label: 'Pipeline'                                },
-  { href: '/crm/map',                    label: 'Map'                                     },
   { href: '/crm/accounts',               label: 'Accounts'                                },
-  { href: '/crm/import',                 label: 'Import'                                  },
   { href: '/crm/settings',               label: 'Settings'                                },
-  { href: '/crm/admin/gmail-accounts',   label: 'Gmail (admin)', adminOnly: true          },
 ];
 
 export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: boolean }) {
@@ -29,6 +28,9 @@ export default function CrmNav({ counts, isAdmin }: { counts: Counts; isAdmin?: 
 
   function isActive(href: string) {
     if (href === '/crm') return pathname === '/crm';
+    // /crm/board and /crm/map are the Board/Map faces of the same Leads
+    // surface (the switcher lives on the page, not in top-level nav).
+    if (href === '/crm/leads') return pathname.startsWith('/crm/leads') || pathname.startsWith('/crm/board') || pathname.startsWith('/crm/map');
     return pathname.startsWith(href);
   }
 

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import MapClient from './MapClient';
 import { sastDayWindows } from '@/lib/crm/timezone';
+import { decodeFilters, applyLeadFilters } from '@/lib/crm/leadsFilterState';
 
 // ─── /crm/map — territory-planning map ────────────────────────────────
 //
@@ -11,7 +12,11 @@ import { sastDayWindows } from '@/lib/crm/timezone';
 // route (via a client-side script tag inside MapClient) so the rest
 // of the CRM's bundle stays JS-lean.
 
-export default async function CrmMapPage() {
+export default async function CrmMapPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { user, supabase } = await requireConfirmedUser({ next: '/crm/map' });
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
   if (profile?.role !== 'sales' && profile?.role !== 'admin') {
@@ -21,12 +26,17 @@ export default async function CrmMapPage() {
     else                                                                              redirect('/login');
   }
 
-  const { data: rows } = await supabase
+  const filters = decodeFilters(await searchParams);
+
+  const { data: rawRows } = await supabase
     .from('crm_leads')
-    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, specialty, owner_user_id, latitude, longitude, next_follow_up_at, suburb, city, province, formatted_address')
+    .select('id, practice_name, contact_first_name, contact_last_name, phone, email, stage, source, specialty, owner_user_id, latitude, longitude, next_follow_up_at, suburb, city, province, formatted_address')
     .is('archived_at', null)
     .order('updated_at', { ascending: false })
     .limit(2000);
+
+  const withTags = (rawRows ?? []).map(r => ({ ...r, tags: [] as string[], archived_at: null as string | null }));
+  const rows = applyLeadFilters(withTags, { ...filters, tags: [] }, user.id);
 
   const { todayStartUtc } = sastDayWindows(new Date());
   const withCoords: MapLeadRow[] = [];

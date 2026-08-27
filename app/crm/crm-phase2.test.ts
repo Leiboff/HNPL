@@ -290,8 +290,11 @@ describe('/crm My Day — inbound tray', () => {
 
 describe('CRM nav — new routes', () => {
   const src = read('app/crm/CrmNav.tsx');
-  it('adds /crm/map and /crm/settings links', () => {
-    expect(src).toMatch(/href:\s*['"]\/crm\/map['"]/);
+  it('adds /crm/settings link', () => {
+    // /crm/map was a standalone nav link at Phase 2 time. Phase 3
+    // collapses the nav to Today/Leads/Accounts/Settings — Map is now
+    // a face of the Leads surface (List · Board · Map switcher on the
+    // page), reachable via /crm/leads, not a top-level nav entry.
     expect(src).toMatch(/href:\s*['"]\/crm\/settings['"]/);
   });
 });

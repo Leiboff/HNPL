@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { formatDateTime, formatRand } from '@/app/admin/_lib/format';
 import { bulkAssignOwner } from './actions';
+import type { LeadScore } from '@/lib/crm/priorityScore';
 
 export type LeadRow = {
   id: string;
@@ -30,10 +31,11 @@ export type LeadRow = {
 // count without that being an error.
 
 export default function LeadsResultsList({
-  rows, owners,
+  rows, owners, scores,
 }: {
   rows: LeadRow[];
   owners: Array<{ id: string; name: string }>;
+  scores?: Record<string, LeadScore>;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [assignTo, setAssignTo] = useState('');
@@ -110,7 +112,7 @@ export default function LeadsResultsList({
                     aria-label="Select all"
                   />
                 </th>
-                {['Practice', 'Contact', 'Stage', 'Specialty', 'Value', 'Next follow-up', 'Updated'].map(h => (
+                {['Practice', 'Contact', 'Stage', 'Specialty', 'Value', 'Priority', 'Next follow-up', 'Updated'].map(h => (
                   <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">
                     {h}
                   </th>
@@ -148,6 +150,18 @@ export default function LeadsResultsList({
                   <td className="px-4 py-3 text-xs text-gray-600">{r.specialty ?? '—'}</td>
                   <td className="px-4 py-3 text-xs text-gray-600 tabular-nums whitespace-nowrap" data-testid={`lead-value:${r.id}`}>
                     {r.estimated_monthly_billings != null ? formatRand(r.estimated_monthly_billings) : '—'}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap" data-testid={`lead-priority:${r.id}`}>
+                    {scores?.[r.id] && (
+                      <span
+                        className="inline-flex items-center gap-1.5 text-xs text-gray-600"
+                        title={scores[r.id].reason}
+                        data-testid={`lead-priority-reason:${r.id}`}
+                      >
+                        <span className="tabular-nums font-semibold text-gray-800">{scores[r.id].score}</span>
+                        <span className="text-gray-400 truncate max-w-[160px]">{scores[r.id].reason}</span>
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                     {r.next_follow_up_at
@@ -205,6 +219,15 @@ export default function LeadsResultsList({
                       {r.estimated_monthly_billings != null ? formatRand(r.estimated_monthly_billings) : '—'}
                     </p>
                   </div>
+                  {scores?.[r.id] && (
+                    <div className="col-span-2" data-testid={`lead-priority-mobile:${r.id}`}>
+                      <p className="text-gray-400 uppercase tracking-wide text-[10px]">Priority</p>
+                      <p className="text-gray-900">
+                        <span className="tabular-nums font-semibold">{scores[r.id].score}</span>
+                        <span className="text-gray-500"> — {scores[r.id].reason}</span>
+                      </p>
+                    </div>
+                  )}
                 </div>
               </Link>
             </div>

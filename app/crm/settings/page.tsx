@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import GmailConnectionsCard from './GmailConnectionsCard';
@@ -49,14 +50,29 @@ export default async function CrmSettingsPage({
     displayName: '', title: '', phone: '', email: '',
     htmlOverride: null, textFallback: null, updatedAt: null,
   };
+  const isAdmin = profile?.role === 'admin';
 
   return (
     <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
       <div>
         <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">Settings</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Manage your Gmail connections and email signature.
+          Manage your Gmail connections, email signature, and lead import.
         </p>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 p-4">
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">Tools</h2>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/crm/import" className="rounded-lg border border-gray-200 bg-white text-gray-700 px-3 py-2 text-sm font-medium hover:bg-gray-50">
+            Import leads
+          </Link>
+          {isAdmin && (
+            <Link href="/crm/admin/gmail-accounts" className="rounded-lg border border-gray-200 bg-white text-gray-700 px-3 py-2 text-sm font-medium hover:bg-gray-50">
+              Gmail accounts (admin)
+            </Link>
+          )}
+        </div>
       </div>
 
       <GmailConnectionsCard
