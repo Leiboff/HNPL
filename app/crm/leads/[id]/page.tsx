@@ -1,6 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LeadDetailClient from './LeadDetailClient';
+import { getAddressSuggestions } from './addressSuggestions';
 
 // ─── /crm/leads/[id] — lead detail ────────────────────────────────────
 //
@@ -69,10 +70,32 @@ export default async function LeadDetailPage({
 
   const { data: contacts } = await supabase
     .from('crm_lead_contacts')
-    .select('id, lead_id, first_name, last_name, role_at_practice, phone, email, is_primary, notes, created_at, updated_at')
+    .select('id, lead_id, first_name, last_name, role_at_practice, phone, email, is_primary, interest, is_decision_maker, hpcsa_number, hpcsa_group_key, notes, created_at, updated_at')
     .eq('lead_id', id)
     .order('is_primary', { ascending: false })
     .order('created_at', { ascending: true });
+
+  // "This practitioner also appears at" — one query per lead, only
+  // when at least one contact has an HPCSA on file (0118).
+  const hpcsaKeys = Array.from(new Set(
+    (contacts ?? []).map(c => c.hpcsa_group_key).filter((k): k is string => !!k),
+  ));
+  let practitionerAlsoAt: Array<{ leadId: string; practiceName: string }> = [];
+  if (hpcsaKeys.length > 0) {
+    const { data: otherContacts } = await supabase
+      .from('crm_lead_contacts')
+      .select('lead_id, hpcsa_group_key, crm_leads!inner(id, practice_name, archived_at)')
+      .in('hpcsa_group_key', hpcsaKeys)
+      .neq('lead_id', id);
+    type OtherRow = { lead_id: string; crm_leads: { id: string; practice_name: string; archived_at: string | null } | Array<{ id: string; practice_name: string; archived_at: string | null }> };
+    const seen = new Set<string>();
+    for (const raw of (otherContacts ?? []) as unknown as OtherRow[]) {
+      const rel = Array.isArray(raw.crm_leads) ? raw.crm_leads[0] : raw.crm_leads;
+      if (!rel || rel.archived_at || seen.has(rel.id)) continue;
+      seen.add(rel.id);
+      practitionerAlsoAt.push({ leadId: rel.id, practiceName: rel.practice_name });
+    }
+  }
 
   const { data: ownerRows } = await supabase
     .from('profiles')
@@ -80,6 +103,8 @@ export default async function LeadDetailPage({
     .in('role', ['admin', 'sales'])
     .order('first_name');
   const owners = (ownerRows ?? []).map(o => ({ id: o.id, name: `${o.first_name} ${o.last_name}`.trim() }));
+
+  const addressSuggestions = await getAddressSuggestions(id);
 
   return (
     <LeadDetailClient
@@ -89,6 +114,8 @@ export default async function LeadDetailPage({
       actorsById={actorsById}
       pendingInvite={pendingInvite ?? null}
       owners={owners}
+      addressSuggestions={addressSuggestions}
+      practitionerAlsoAt={practitionerAlsoAt}
     />
   );
 }

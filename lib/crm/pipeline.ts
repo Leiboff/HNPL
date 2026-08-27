@@ -24,6 +24,7 @@ export const STAGE_WEIGHTS: Record<string, number> = {
   meeting_scheduled:  0.20,
   demo_done:          0.35,
   agreement_sent:     0.60,
+  nurture:            0.02,
   signed:             0.90,
   onboarded:          1.00,
   lost:               0,

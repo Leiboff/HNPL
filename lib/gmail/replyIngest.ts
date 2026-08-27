@@ -11,8 +11,9 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { fetchThread, fetchMessageFull, type ThreadMessage } from './gmailClient';
 import { chooseIngestBody } from './extractBody';
+import { TERMINAL_STAGES } from '@/lib/crm/stages';
 
-export const CLOSED_STAGES = new Set(['signed', 'onboarded', 'lost']);
+export const CLOSED_STAGES = TERMINAL_STAGES;
 
 function svc() {
   return createServiceClient(

@@ -79,6 +79,34 @@ describe('9. every rendered score has a non-empty reason string', () => {
     expect(result.reason).toMatch(/overdue/i);
   });
 
+  it('per-stage stall: a lead 6 days in agreement_sent (threshold 5) scores stalled', () => {
+    const result = computeLeadScore({ ...BASE, stage: 'agreement_sent', lastStageChangeAt: iso(6) }, NOW);
+    expect(result.score).toBeGreaterThan(0);
+    expect(result.reason).toMatch(/stage movement/i);
+  });
+
+  it('per-stage stall: a lead 6 days in demo_done (threshold 7) does not score stalled', () => {
+    const result = computeLeadScore({ ...BASE, stage: 'demo_done', lastStageChangeAt: iso(6) }, NOW);
+    expect(result.score).toBe(0);
+  });
+
+  it('per-stage stall: contacted (threshold 5) stalls at 6 days but not at 4', () => {
+    const stalled    = computeLeadScore({ ...BASE, stage: 'contacted', lastStageChangeAt: iso(6) }, NOW);
+    const notStalled = computeLeadScore({ ...BASE, stage: 'contacted', lastStageChangeAt: iso(4) }, NOW);
+    expect(stalled.score).toBeGreaterThan(0);
+    expect(notStalled.score).toBe(0);
+  });
+
+  it('meeting_scheduled never scores stalled regardless of how long since the stage change (date-driven, no stall)', () => {
+    const result = computeLeadScore({ ...BASE, stage: 'meeting_scheduled', lastStageChangeAt: iso(365) }, NOW);
+    expect(result.score).toBe(0);
+  });
+
+  it('nurture (absent from STAGE_STALL_DAYS) never scores stalled — it is paused, not stalled', () => {
+    const result = computeLeadScore({ ...BASE, stage: 'nurture', lastStageChangeAt: iso(365) }, NOW);
+    expect(result.score).toBe(0);
+  });
+
   it('score is capped at 100 even when every signal fires', () => {
     const result = computeLeadScore({
       stage: 'demo_done',

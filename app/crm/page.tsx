@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { bucketFollowups } from '@/lib/crm/followups';
+import { bucketFollowups, bucketWakingToday } from '@/lib/crm/followups';
 import { sastDayWindows } from '@/lib/crm/timezone';
 import { weightedPipelineValue, hasEnoughData } from '@/lib/crm/pipeline';
 import { formatRand } from '@/app/admin/_lib/format';
+import { STAGES } from '@/lib/crm/stages';
 import TodayCallsToLog from './TodayCallsToLog';
 
 // ─── /crm — My Day (default landing) ─────────────────────────────────
@@ -15,11 +16,6 @@ import TodayCallsToLog from './TodayCallsToLog';
 //
 // Belt-and-braces role check per crm-routes-auth.test.ts pin (mirrors
 // admin-routes-auth.test.ts).
-
-const STAGES = [
-  'new', 'contacted', 'meeting_scheduled', 'demo_done',
-  'agreement_sent', 'signed', 'onboarded', 'lost',
-] as const;
 
 export default async function CrmHomePage() {
   const { user, supabase } = await requireConfirmedUser({ next: '/crm' });
@@ -83,6 +79,23 @@ export default async function CrmHomePage() {
     })),
     now,
   );
+
+  // Nurture leads are excluded from the three buckets above (see
+  // lib/crm/followups.ts) — they run on nurture_wake_at instead,
+  // surfaced here as their own group. The rep decides what happens on
+  // wake; nothing here auto-advances the stage.
+  const { data: rawNurture } = await supabase
+    .from('crm_leads')
+    .select('id, practice_name, nurture_wake_at')
+    .is('archived_at', null)
+    .eq('stage', 'nurture')
+    .not('nurture_wake_at', 'is', null)
+    .limit(200);
+  const wakingToday = bucketWakingToday(
+    (rawNurture ?? []).map(l => ({ id: l.id, stage: 'nurture', nurture_wake_at: l.nurture_wake_at })),
+    now,
+  );
+  const wakingById = new Map((rawNurture ?? []).map(l => [l.id, l]));
 
   // Metrics strip
   const { data: allStages } = await supabase
@@ -190,6 +203,33 @@ export default async function CrmHomePage() {
                 </Link>
               </li>
             ))}
+          </ul>
+        </section>
+      )}
+
+      {/* ── Waking today (nurture leads whose wake date has arrived) ─ */}
+      {wakingToday.length > 0 && (
+        <section className="bg-white rounded-2xl border border-[#A78BFA]/40 overflow-hidden" data-testid="crm-waking-today">
+          <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-[#A78BFA]/5">
+            <h2 className="text-sm font-semibold text-gray-900">Waking today</h2>
+            <span className="inline-flex items-center rounded-full bg-[#A78BFA]/20 text-[#6D28D9] px-2 py-0.5 text-xs font-medium">
+              {wakingToday.length}
+            </span>
+          </header>
+          <ul className="divide-y divide-gray-100">
+            {wakingToday.map(w => {
+              const lead = wakingById.get(w.id);
+              return (
+                <li key={w.id}>
+                  <Link href={`/crm/leads/${w.id}`} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                    <div className="text-sm font-medium text-gray-900 truncate">{lead?.practice_name}</div>
+                    <div className="text-xs text-gray-500 tabular-nums shrink-0">
+                      {lead?.nurture_wake_at && new Date(lead.nurture_wake_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium' })}
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

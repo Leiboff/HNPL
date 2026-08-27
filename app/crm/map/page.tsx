@@ -3,6 +3,7 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import MapClient from './MapClient';
 import { sastDayWindows } from '@/lib/crm/timezone';
 import { decodeFilters, applyLeadFilters } from '@/lib/crm/leadsFilterState';
+import { deriveLeadInterest, type ContactForInterest, type Interest } from '@/lib/crm/interest';
 
 // ─── /crm/map — territory-planning map ────────────────────────────────
 //
@@ -35,7 +36,32 @@ export default async function CrmMapPage({
     .order('updated_at', { ascending: false })
     .limit(2000);
 
-  const withTags = (rawRows ?? []).map(r => ({ ...r, tags: [] as string[], archived_at: null as string | null }));
+  // Interest is derived from crm_lead_contacts (0115), not a crm_leads
+  // column — computed here too so the shared applyLeadFilters interest
+  // dimension behaves the same on Map as it does on the List view
+  // (otherwise every map row would lack `.interest` and an interest
+  // filter carried over via the List↔Map switcher would silently hide
+  // every lead instead of being honoured).
+  const leadIds = (rawRows ?? []).map(r => r.id);
+  const interestByLead = new Map<string, Interest>();
+  if (leadIds.length > 0) {
+    const { data: contactRows } = await supabase
+      .from('crm_lead_contacts')
+      .select('lead_id, interest, is_decision_maker')
+      .in('lead_id', leadIds);
+    const grouped = new Map<string, ContactForInterest[]>();
+    for (const c of (contactRows ?? []) as Array<{ lead_id: string; interest: Interest; is_decision_maker: boolean }>) {
+      const arr = grouped.get(c.lead_id) ?? [];
+      arr.push({ interest: c.interest, is_decision_maker: c.is_decision_maker });
+      grouped.set(c.lead_id, arr);
+    }
+    for (const id of leadIds) interestByLead.set(id, deriveLeadInterest(grouped.get(id) ?? []));
+  }
+
+  const withTags = (rawRows ?? []).map(r => ({
+    ...r, tags: [] as string[], archived_at: null as string | null,
+    interest: interestByLead.get(r.id) ?? 'unknown',
+  }));
   const rows = applyLeadFilters(withTags, { ...filters, tags: [] }, user.id);
 
   const { todayStartUtc } = sastDayWindows(new Date());
@@ -50,10 +76,12 @@ export default async function CrmMapPage({
   }>) {
     const lat = raw.latitude != null ? Number(raw.latitude) : null;
     const lng = raw.longitude != null ? Number(raw.longitude) : null;
+    // Nurture excluded alongside the terminal stages — see the same
+    // rationale in lib/crm/followups.ts and app/crm/leads/page.tsx.
     const overdueFollowup =
       !!raw.next_follow_up_at &&
       new Date(raw.next_follow_up_at) < todayStartUtc &&
-      raw.stage !== 'signed' && raw.stage !== 'onboarded' && raw.stage !== 'lost';
+      raw.stage !== 'signed' && raw.stage !== 'onboarded' && raw.stage !== 'lost' && raw.stage !== 'nurture';
     const row: MapLeadRow = {
       id:                raw.id,
       practiceName:      raw.practice_name,

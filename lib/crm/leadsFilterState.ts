@@ -19,13 +19,15 @@ export type LeadsFilters = {
   suburb: string;
   owner: string;         // '' = all (admin) | 'me' | a specific owner id
   overdue: boolean;
+  interest: string;      // '' = all | 'unknown' | 'cold' | 'warm' | 'hot' — derived, see lib/crm/interest.ts
+  hpcsaMatch: boolean;   // practitioner also appears at an onboarded lead — see lib/crm/hpcsa.ts
   sort: string;
   view: LeadsView;
 };
 
 export const DEFAULT_FILTERS: LeadsFilters = {
   q: '', stage: '', source: '', specialty: '', tags: [],
-  city: '', suburb: '', owner: '', overdue: false,
+  city: '', suburb: '', owner: '', overdue: false, interest: '', hpcsaMatch: false,
   sort: 'follow-up', view: 'list',
 };
 
@@ -55,6 +57,8 @@ export function decodeFilters(params: Record<string, string | string[] | undefin
     suburb:   get('suburb'),
     owner:    get('owner'),
     overdue:  get('overdue') === 'true',
+    interest: get('interest'),
+    hpcsaMatch: get('hpcsaMatch') === 'true',
     sort:     get('sort') || DEFAULT_FILTERS.sort,
     view:     (VALID_VIEWS as readonly string[]).includes(view) ? (view as LeadsView) : DEFAULT_FILTERS.view,
   };
@@ -73,6 +77,8 @@ export function encodeFilters(filters: Partial<LeadsFilters>): URLSearchParams {
   if (f.suburb)     params.set('suburb', f.suburb);
   if (f.owner)      params.set('owner', f.owner);
   if (f.overdue)    params.set('overdue', 'true');
+  if (f.interest)   params.set('interest', f.interest);
+  if (f.hpcsaMatch) params.set('hpcsaMatch', 'true');
   if (f.sort && f.sort !== DEFAULT_FILTERS.sort) params.set('sort', f.sort);
   if (f.view && f.view !== DEFAULT_FILTERS.view) params.set('view', f.view);
   return params;
@@ -102,6 +108,8 @@ export type FilterableLead = {
   tags: string[];
   archived_at: string | null;
   next_follow_up_at: string | null;
+  interest?: string;   // derived (lib/crm/interest.ts) — absent means "not computed by this caller", treated as unfiltered
+  hasOnboardedHpcsaMatch?: boolean;  // derived (lib/crm/hpcsa.ts) — same "absent = unfiltered" contract as interest
 };
 
 /** Applies LeadsFilters to an in-memory lead list. Pure — no DB, no clock (overdue is evaluated by the caller passing pre-computed `now`-relative data if needed; here `overdue` just means "has a next_follow_up_at at all" is left to callers that already bucket by date). Generic so callers can pass a richer row shape (extra display columns) without a lossy cast. */
@@ -121,6 +129,8 @@ export function applyLeadFilters<T extends FilterableLead>(
     if (filters.owner === 'me' && l.owner_user_id !== currentUserId) return false;
     if (filters.owner && filters.owner !== 'me' && l.owner_user_id !== filters.owner) return false;
     if (filters.tags.length && !filters.tags.every(t => l.tags.includes(t))) return false;
+    if (filters.interest && l.interest !== undefined && l.interest !== filters.interest) return false;
+    if (filters.hpcsaMatch && l.hasOnboardedHpcsaMatch !== undefined && !l.hasOnboardedHpcsaMatch) return false;
     if (q) {
       const hay = `${l.practice_name} ${l.contact_first_name ?? ''} ${l.contact_last_name ?? ''}`.toLowerCase();
       if (!hay.includes(q)) return false;

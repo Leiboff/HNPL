@@ -18,6 +18,7 @@ export const SEED_VIEWS: SeedView[] = [
   { id: 'seed-first-call', name: 'Needs a first call',   filters: { stage: 'new', sort: 'created-desc' } },
   { id: 'seed-waiting',    name: 'Waiting on me',        filters: { owner: 'me', sort: 'priority' } },
   { id: 'seed-high-value', name: 'High value',           filters: { sort: 'value' } },
+  { id: 'seed-hpcsa-onboarded', name: 'Practitioner already onboarded elsewhere', filters: { hpcsaMatch: true } },
   { id: 'seed-everything', name: 'Everything',           filters: {} },
 ];
 

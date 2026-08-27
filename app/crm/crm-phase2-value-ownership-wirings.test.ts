@@ -17,7 +17,13 @@ function read(p: string): string { return readFileSync(resolve(process.cwd(), p)
 describe('11. Move stage to lost without a reason is blocked in the UI before the request is sent', () => {
   it('LeadDetailClient — canSubmit requires a non-empty reason before Move is enabled', () => {
     const SRC = read('app/crm/leads/[id]/LeadDetailClient.tsx');
-    expect(SRC).toMatch(/const canSubmit = stage !== current && \(!requireReason \|\| reason\.trim\(\)\.length > 0\)/);
+    // Since the nurture stage (Change 3) added its own wake-date
+    // requirement alongside the pre-existing lost-reason one, canSubmit
+    // is a multi-line expression — assert on its clauses rather than
+    // the old single-line literal.
+    expect(SRC).toMatch(/const canSubmit = stage !== current/);
+    expect(SRC).toMatch(/!requireReason \|\| reason\.trim\(\)\.length > 0/);
+    expect(SRC).toMatch(/!requireWake \|\| wakeDate\.trim\(\)\.length > 0/);
     expect(SRC).toMatch(/disabled={pending \|\| !canSubmit}/);
   });
   // The board's own "Move to lost" gating (BoardClient) went with it

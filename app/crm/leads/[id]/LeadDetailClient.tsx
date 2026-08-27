@@ -16,6 +16,10 @@ import InviteSheet from './InviteSheet';
 import { groupTimeline, type TimelineActivity } from './conversationGrouper';
 import type { LeadContact } from './contactsActions';
 import { LOST_REASONS, LOST_REASON_LABELS } from '@/lib/crm/lostReasons';
+import { STAGES } from '@/lib/crm/stages';
+import { deriveLeadInterest, isMissingDecisionMaker, INTEREST_LABELS } from '@/lib/crm/interest';
+import type { AddressMatchSuggestion } from '@/lib/crm/addressMatch';
+import { dismissAddressSuggestion } from './addressSuggestions';
 
 // ─── Lead detail — fields (editable) + activity timeline + quick actions
 
@@ -41,6 +45,7 @@ type Lead = {
   owner_user_id: string | null;
   estimated_monthly_billings: number | null;
   next_follow_up_at: string | null;
+  nurture_wake_at: string | null;
   converted_practice_id: string | null;
   updated_at: string;
   created_at: string;
@@ -70,7 +75,6 @@ type PendingInvite = {
   accepted_by_practice_id: string | null;
 } | null;
 
-const STAGES = ['new','contacted','meeting_scheduled','demo_done','agreement_sent','signed','onboarded','lost'] as const;
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
 const SOURCE_LABELS: Record<string, string> = {
   referral: 'Referral', cold_outreach: 'Cold outreach', inbound: 'Inbound',
@@ -83,6 +87,8 @@ const ACTIVITY_ICONS: Record<string, string> = {
 
 export default function LeadDetailClient({
   lead: initialLead, activities: initialActivities, contacts: initialContacts, actorsById, pendingInvite, owners,
+  addressSuggestions: initialAddressSuggestions = [],
+  practitionerAlsoAt = [],
 }: {
   lead: Lead;
   activities: Activity[];
@@ -90,10 +96,13 @@ export default function LeadDetailClient({
   actorsById: ActorsById;
   pendingInvite: PendingInvite;
   owners: Array<{ id: string; name: string }>;
+  addressSuggestions?: AddressMatchSuggestion[];
+  practitionerAlsoAt?: Array<{ leadId: string; practiceName: string }>;
 }) {
   const [lead, setLead]           = useState(initialLead);
   const [activities, setActs]     = useState(initialActivities);
   const [contacts, setContacts]   = useState(initialContacts);
+  const [addressSuggestions, setAddressSuggestions] = useState(initialAddressSuggestions);
   const [msg, setMsg]             = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [inviteUrl, setInviteUrl] = useState<string | null>(
     pendingInvite && !pendingInvite.accepted_at
@@ -110,6 +119,16 @@ export default function LeadDetailClient({
   const timelineItems = useMemo(
     () => groupTimeline(activities as unknown as TimelineActivity[]),
     [activities],
+  );
+
+  // Interest is derived from contacts, never stored on the lead
+  // (0115) — recomputed whenever the contacts list changes so an
+  // interest/decision-maker edit in ContactsCard updates this
+  // immediately, with no extra round trip.
+  const leadInterest = useMemo(() => deriveLeadInterest(contacts), [contacts]);
+  const missingDecisionMaker = useMemo(
+    () => isMissingDecisionMaker(lead.stage, contacts),
+    [lead.stage, contacts],
   );
 
   // Ephemeral form state for the schedule sheet
@@ -131,11 +150,16 @@ export default function LeadDetailClient({
     });
   }
 
-  function doStage(stage: string, lostReason?: string, note?: string) {
+  function doStage(stage: string, lostReason?: string, note?: string, nurtureWakeAt?: string) {
     startTransition(async () => {
-      const res = await moveLeadStage(lead.id, stage, lostReason, note);
+      const res = await moveLeadStage(lead.id, stage, lostReason, note, nurtureWakeAt);
       if (res.error) return err(res.error);
-      setLead(l => ({ ...l, stage, lost_reason: stage === 'lost' ? lostReason ?? null : l.lost_reason }));
+      setLead(l => ({
+        ...l,
+        stage,
+        lost_reason: stage === 'lost' ? lostReason ?? null : l.lost_reason,
+        nurture_wake_at: stage === 'nurture' ? nurtureWakeAt ?? null : l.nurture_wake_at,
+      }));
       // Optimistic activity add (server has already logged the real one)
       setActs(a => ([
         {
@@ -217,6 +241,13 @@ export default function LeadDetailClient({
     });
   }
 
+  function dismissSuggestion(s: AddressMatchSuggestion) {
+    startTransition(async () => {
+      await dismissAddressSuggestion(lead.id, s.otherLeadId, s.kind);
+      setAddressSuggestions(prev => prev.filter(x => x.otherLeadId !== s.otherLeadId || x.kind !== s.kind));
+    });
+  }
+
   function markDoneWithNext(iso: string | null, note: string) {
     startTransition(async () => {
       const res = await markFollowupDone(lead.id, iso, note);
@@ -234,12 +265,74 @@ export default function LeadDetailClient({
       </div>
 
       <div>
-        <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">{lead.practice_name}</h1>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900">{lead.practice_name}</h1>
+          <span
+            className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-700"
+            data-testid="lead-interest-badge"
+            title="Derived from contacts: hottest among decision makers, or hottest overall."
+          >
+            Interest: {INTEREST_LABELS[leadInterest]}
+          </span>
+        </div>
         <p className="mt-1 text-sm text-gray-500 capitalize">
           Stage: {lead.stage.replace(/_/g, ' ')} · Source: {lead.source.replace('_', ' ')}
           {lead.lost_reason && ` · Lost reason: ${lead.lost_reason}`}
+          {lead.stage === 'nurture' && lead.nurture_wake_at &&
+            ` · Wakes: ${new Date(lead.nurture_wake_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium' })}`}
         </p>
       </div>
+
+      {missingDecisionMaker && (
+        <div
+          role="status"
+          className="text-xs rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2"
+          data-testid="missing-decision-maker-nudge"
+        >
+          No decision-maker contact on file yet — worth confirming who signs before this goes further.
+        </div>
+      )}
+
+      {addressSuggestions.length > 0 && (
+        <div className="space-y-2" data-testid="address-suggestions-banner">
+          {addressSuggestions.map(s => (
+            <div
+              key={`${s.kind}:${s.otherLeadId}`}
+              role="status"
+              className="flex items-center justify-between gap-3 text-xs rounded-lg border border-amber-200 bg-amber-50 text-amber-900 px-3 py-2"
+              data-testid={`address-suggestion:${s.otherLeadId}`}
+            >
+              <div>
+                <p className="font-medium">
+                  {s.kind === 'duplicate_practice' ? 'Possible duplicate practice' : 'Practitioner in the same building'}
+                </p>
+                <p className="text-amber-800">{s.reason}</p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                {s.kind === 'duplicate_practice' ? (
+                  <>
+                    <Link href={`/crm/leads/${s.otherLeadId}`} className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-medium hover:bg-amber-100">
+                      Merge
+                    </Link>
+                    <button type="button" onClick={() => dismissSuggestion(s)} disabled={pending} className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-medium hover:bg-amber-100">
+                      Not the same
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link href={`/crm/leads/${s.otherLeadId}`} className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-medium hover:bg-amber-100">
+                      Add contact
+                    </Link>
+                    <button type="button" onClick={() => dismissSuggestion(s)} disabled={pending} className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 font-medium hover:bg-amber-100">
+                      Dismiss
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {msg && (
         <div
@@ -347,6 +440,24 @@ export default function LeadDetailClient({
         </p>
       </div>
 
+      {practitionerAlsoAt.length > 0 && (
+        <div
+          className="rounded-2xl border border-[#15A89E]/40 bg-[#15A89E]/5 px-4 py-3 text-sm"
+          data-testid="practitioner-also-at"
+        >
+          <p className="font-medium" style={{ color: '#13294B' }}>This practitioner also appears at:</p>
+          <ul className="mt-1 space-y-0.5">
+            {practitionerAlsoAt.map(p => (
+              <li key={p.leadId}>
+                <Link href={`/crm/leads/${p.leadId}`} className="text-[#15A89E] hover:underline">
+                  {p.practiceName}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Contacts card — primary is mirrored onto the lead columns; add/edit/remove other contacts here. */}
       <ContactsCard
         leadId={lead.id}
@@ -368,6 +479,8 @@ export default function LeadDetailClient({
             </p>
             <MarkDoneForm onDone={markDoneWithNext} pending={pending} />
           </>
+        ) : lead.stage === 'nurture' ? (
+          <p className="text-sm text-gray-500">No follow-up scheduled — this lead is nurtured and runs on its wake date instead (see above).</p>
         ) : (
           <p className="text-sm text-gray-500">No follow-up scheduled. Nudge: leads in non-terminal stages should always have a next action — use &lsquo;Schedule call&rsquo; above.</p>
         )}
@@ -670,15 +783,24 @@ function ScheduleSheet({ type, onSubmit, onCancel, pending }: {
 
 function MoveStageSheet({ current, onSubmit, onCancel, pending }: {
   current: string;
-  onSubmit: (stage: string, lostReason?: string, note?: string) => void;
+  onSubmit: (stage: string, lostReason?: string, note?: string, nurtureWakeAt?: string) => void;
   onCancel: () => void;
   pending: boolean;
 }) {
-  const [stage, setStage]    = useState(current);
-  const [reason, setReason]  = useState('');
-  const [note, setNote]      = useState('');
+  const [stage, setStage]           = useState(current);
+  const [reason, setReason]         = useState('');
+  const [note, setNote]             = useState('');
+  const [wakeDate, setWakeDate]     = useState('');
   const requireReason = stage === 'lost';
-  const canSubmit = stage !== current && (!requireReason || reason.trim().length > 0);
+  const requireWake   = stage === 'nurture';
+  const canSubmit = stage !== current
+    && (!requireReason || reason.trim().length > 0)
+    && (!requireWake || wakeDate.trim().length > 0);
+
+  function quickSetWake(days: number) {
+    const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    setWakeDate(d.toISOString().slice(0, 10));
+  }
 
   return (
     <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -690,6 +812,36 @@ function MoveStageSheet({ current, onSubmit, onCancel, pending }: {
             {STAGES.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
           </select>
         </label>
+        {requireWake && (
+          <label className="text-xs text-gray-700 block">
+            Wake date <span className="text-red-500">*</span>
+            <input
+              type="date"
+              value={wakeDate}
+              onChange={e => setWakeDate(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+              data-testid="lead-nurture-wake-date"
+            />
+            <div className="mt-1.5 flex gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => quickSetWake(90)}
+                className="rounded-full border border-gray-200 bg-white text-gray-700 px-2.5 py-1 text-[11px] hover:border-[#15A89E] hover:text-[#15A89E]"
+                data-testid="lead-nurture-wake-90d"
+              >
+                Timing/budget — 90 days
+              </button>
+              <button
+                type="button"
+                onClick={() => quickSetWake(60)}
+                className="rounded-full border border-gray-200 bg-white text-gray-700 px-2.5 py-1 text-[11px] hover:border-[#15A89E] hover:text-[#15A89E]"
+                data-testid="lead-nurture-wake-60d"
+              >
+                Unresponsive — 60 days
+              </button>
+            </div>
+          </label>
+        )}
         {requireReason && (
           <label className="text-xs text-gray-700 block">
             Lost reason <span className="text-red-500">*</span>
@@ -711,7 +863,17 @@ function MoveStageSheet({ current, onSubmit, onCancel, pending }: {
         </label>
         <div className="flex gap-2 justify-end">
           <button type="button" onClick={onCancel} disabled={pending} className="rounded-lg border border-gray-200 bg-white text-gray-700 px-3 py-2 text-sm">Cancel</button>
-          <button type="button" onClick={() => onSubmit(stage, reason, note)} disabled={pending || !canSubmit} className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium disabled:opacity-60">Move</button>
+          <button
+            type="button"
+            onClick={() => onSubmit(
+              stage, reason, note,
+              requireWake ? new Date(`${wakeDate}T09:00:00+02:00`).toISOString() : undefined,
+            )}
+            disabled={pending || !canSubmit}
+            className="rounded-lg bg-[#13294B] text-white px-3 py-2 text-sm font-medium disabled:opacity-60"
+          >
+            Move
+          </button>
         </div>
       </div>
     </div>

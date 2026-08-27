@@ -13,7 +13,7 @@ describe('1. filter state survives List → Map → List with no loss', () => {
     const f: LeadsFilters = {
       q: 'dental', stage: 'contacted', source: 'referral', specialty: 'Dentistry',
       tags: ['hot', 'follow-up'], city: 'Cape Town', suburb: 'Rondebosch',
-      owner: 'me', overdue: true, sort: 'value', view: 'list',
+      owner: 'me', overdue: true, interest: 'hot', hpcsaMatch: true, sort: 'value', view: 'list',
     };
     const toMap = switchViewHref(f, 'map');
     expect(toMap).toContain('/crm/map?');
@@ -34,7 +34,7 @@ describe('2. a filtered URL opened cold in a new session reproduces it exactly',
     const f: LeadsFilters = {
       q: 'acme', stage: 'demo_done', source: 'event', specialty: '',
       tags: ['vip'], city: '', suburb: 'Sandton', owner: 'user-123',
-      overdue: false, sort: 'updated', view: 'map',
+      overdue: false, interest: 'warm', hpcsaMatch: false, sort: 'updated', view: 'map',
     };
     const decoded = decodeFilters(paramsToRecord(encodeFilters(f)));
     expect(decoded).toEqual(f);
@@ -84,5 +84,30 @@ describe('5. result counts match the underlying filter, and exclude archived lea
   it('owner=me scopes to the current user', () => {
     const result = applyLeadFilters(LEADS, { ...DEFAULT_FILTERS, owner: 'me' }, 'u1');
     expect(result.map(r => r.id).sort()).toEqual(['1']);
+  });
+});
+
+describe('6. interest — derived filter dimension', () => {
+  const LEADS: FilterableLead[] = [
+    { id: '1', practice_name: 'Hot Dental',  stage: 'new', source: 'other', specialty: null, city: null, suburb: null, owner_user_id: 'u1', tags: [], archived_at: null, next_follow_up_at: null, interest: 'hot' },
+    { id: '2', practice_name: 'Cold Dental', stage: 'new', source: 'other', specialty: null, city: null, suburb: null, owner_user_id: 'u1', tags: [], archived_at: null, next_follow_up_at: null, interest: 'cold' },
+  ];
+
+  it('filters to the requested interest level', () => {
+    const result = applyLeadFilters(LEADS, { ...DEFAULT_FILTERS, interest: 'hot' }, null);
+    expect(result.map(r => r.id)).toEqual(['1']);
+  });
+
+  it('a caller that never computed interest (field absent) is left unfiltered rather than hidden', () => {
+    const noInterestField: FilterableLead[] = [
+      { id: '3', practice_name: 'Unknown Dental', stage: 'new', source: 'other', specialty: null, city: null, suburb: null, owner_user_id: 'u1', tags: [], archived_at: null, next_follow_up_at: null },
+    ];
+    const result = applyLeadFilters(noInterestField, { ...DEFAULT_FILTERS, interest: 'hot' }, null);
+    expect(result.map(r => r.id)).toEqual(['3']);
+  });
+
+  it('round-trips through encode/decode', () => {
+    const decoded = decodeFilters(paramsToRecord(encodeFilters({ ...DEFAULT_FILTERS, interest: 'warm' })));
+    expect(decoded.interest).toBe('warm');
   });
 });
