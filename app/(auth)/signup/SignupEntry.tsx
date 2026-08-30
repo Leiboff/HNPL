@@ -203,11 +203,14 @@ export default function SignupEntry() {
           <div
             role="alert"
             data-testid="signup-bounce-notice"
-            className="mt-8 rounded-2xl border-[1.5px] border-amber-400/50 bg-amber-400/10 p-4 text-[14px] leading-[1.6] text-amber-100"
+            // Same red as the tick's own error below, not a new colour.
+            // It is the same problem stated one step earlier, and the
+            // eye should read them as one thing.
+            className="mt-8 rounded-2xl border-[1.5px] border-red-400/70 bg-red-500/10 p-4 text-[14px] leading-[1.6] text-red-100"
           >
             {bounce === 'terms'
-              ? 'Almost there — we can\u2019t create your account until you\u2019ve agreed to the terms below. Tick the box, then continue with Google again.'
-              : 'Something went wrong recording your agreement to the terms, so your account wasn\u2019t created. Please tick the box and try again.'}
+              ? 'Almost there — we can’t create your account until you’ve agreed to the terms below. Tick the box, then continue with Google again.'
+              : 'Something went wrong recording your agreement to the terms, so your account wasn’t created. Please tick the box and try again.'}
           </div>
         )}
 
