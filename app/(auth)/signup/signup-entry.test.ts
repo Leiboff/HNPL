@@ -54,25 +54,50 @@ describe('every way in is present, and each hands off to the path that already e
     expect(ENTRY).not.toMatch(/signInWithOAuth/);
   });
 
-  it('passkey → the shared hook, rendered only where WebAuthn is supported', () => {
-    expect(ENTRY).toMatch(/from '@\/lib\/hooks\/usePasskeySignIn'/);
-    expect(ENTRY).toMatch(/\{passkeySupport && \(/);
-    expect(ENTRY).toMatch(/data-testid="signup-entry-passkey"/);
+  it('every method on the screen can actually create an account', () => {
+    // The whole point of the stack: this is a front door. Email creates
+    // one; Google creates one on the same click that signs an existing
+    // user in. Those are the only two, and they are both here.
+    expect(ENTRY).toMatch(/data-testid="signup-entry-email"/);
+    expect(ENTRY).toMatch(/<ContinueWithGoogleButton/);
+  });
+});
+
+describe('there is deliberately NO passkey button', () => {
+  // WHY THIS TEST EXISTS.
+  //
+  // A passkey cannot create an account. supabase.auth.registerPasskey()
+  // needs a session, and the only two surfaces that call it
+  // (PostLoginPasskeyPrompt, /patient/account/passkeys) sit behind auth
+  // — so a passkey can only ever sign an EXISTING user back in.
+  //
+  // The trap is that usePasskeySignIn's `supported` flag means "this
+  // browser does WebAuthn", NOT "this visitor has a passkey". A button
+  // wired to it renders for every new visitor on a modern phone and
+  // dead-ends all of them: the OS sheet opens with no credential for
+  // this site, they dismiss it, user_cancelled maps to an empty
+  // message, and the screen does nothing at all.
+  //
+  // This is easy to re-add in good faith ("/login has one, why not
+  // here?"), so the absence is pinned rather than left to memory.
+
+  it('does not import the passkey sign-in hook', () => {
+    expect(ENTRY).not.toMatch(/usePasskeySignIn/);
+    expect(ENTRY).not.toMatch(/passkeyErrorMessage/);
   });
 
-  it('a passkey success records the method and bumps login_count before navigating', () => {
-    // Same two side effects /login performs, so arriving via this screen
-    // does not desync the "last used" hint or the passkey-prompt capping.
-    const cbIdx = ENTRY.indexOf('const onPasskeySuccess');
-    expect(cbIdx).toBeGreaterThan(-1);
-    expect(ENTRY.indexOf("setLastSignInMethod('passkey')", cbIdx)).toBeGreaterThan(cbIdx);
-    expect(ENTRY.indexOf('recordLoginLanding()', cbIdx)).toBeGreaterThan(cbIdx);
-    expect(ENTRY.indexOf("window.location.href = '/dashboard'", cbIdx)).toBeGreaterThan(cbIdx);
+  it('renders no passkey affordance', () => {
+    expect(ENTRY).not.toMatch(/data-testid="signup-entry-passkey"/);
+    expect(ENTRY).not.toMatch(/Sign in with a passkey/);
   });
 
-  it('a failed login_count bump never strands the sign-in', () => {
-    // .finally() carries the redirect, so the catch cannot swallow it.
-    expect(ENTRY).toMatch(/recordLoginLanding\(\)[\s\S]{0,200}\.finally\(\(\) => \{ window\.location\.href = '\/dashboard'; \}\)/);
+  it('/login — where a passkey genuinely works — still has one', () => {
+    // The capability is not being removed from the product, only from
+    // the screen it cannot work on. If this ever fails, the passkey
+    // path has been lost entirely rather than relocated.
+    const LOGIN = codeOf('app/(auth)/login/page.tsx');
+    expect(LOGIN).toMatch(/usePasskeySignIn/);
+    expect(LOGIN).toMatch(/Sign in with a passkey/);
   });
 });
 

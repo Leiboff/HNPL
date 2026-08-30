@@ -1,13 +1,9 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
-import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
-import { recordLoginLanding } from '@/app/patient/passkey-actions';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
-import { setLastSignInMethod } from '@/lib/auth/lastSignInMethod';
 
 // ─── /signup — the auth entry screen ───────────────────────────────────
 //
@@ -20,16 +16,42 @@ import { setLastSignInMethod } from '@/lib/auth/lastSignInMethod';
 // The stack is ordered by how most patients actually arrive:
 //   1. Sign up with email  → /signup/patient (the full form + I-agree tick)
 //   2. Continue with Google → OAuth, patients only (same button as /login)
-//   3. Sign in with a passkey → only rendered where WebAuthn is available
 //
 // Nothing here is a new auth mechanism: each button hands off to the
 // path that already existed. This screen is presentation + routing.
 //
+// ─── Why there is NO passkey button here ──────────────────────────────
+//
+// There is no such thing as signing UP with a passkey in this system.
+// A passkey is enrolled against an account that already exists —
+// supabase.auth.registerPasskey() needs a session, and the only two
+// surfaces that call it (PostLoginPasskeyPrompt, /patient/account/
+// passkeys) are both behind auth. So a passkey can only ever sign an
+// EXISTING user back in.
+//
+// usePasskeySignIn gates on `supported`, which means "this browser does
+// WebAuthn" — not "this visitor has a passkey". A passkey button here
+// would therefore render for every new visitor on a modern phone and
+// dead-end every one of them: the OS sheet opens with no credential for
+// this site, they dismiss it, and user_cancelled maps to an empty
+// message, so the screen does nothing at all. The one button on the
+// front door that cannot work for the people the front door is for.
+//
+// Returning passkey users are better served by /login anyway, which is
+// one tap away below: it runs the conditional-UI ceremony, so their
+// passkey surfaces as an autofill suggestion on the email field with no
+// button press at all, and LastUsedPill highlights it if it is what
+// they used last.
+//
+// Google is a genuine exception and stays: OAuth signs a new user UP
+// and an existing user IN with the same click, which is why its label
+// reads "Continue with".
+//
 // ─── Consent ──────────────────────────────────────────────────────────
 //
 // One legal line sits beneath the whole stack, so it covers the Google
-// and passkey buttons (which have no "I agree" tick of their own) as
-// well as the email route. ContinueWithGoogleButton renders its own
+// button (which has no "I agree" tick of its own) as well as the email
+// route. ContinueWithGoogleButton renders its own
 // note by default; here it is suppressed because this line already
 // says the same thing for every button above it. /auth/callback records
 // the acceptance server-side when an OAuth user arrives.
@@ -50,29 +72,6 @@ export default function SignupEntry() {
     });
     return () => { cancelled = true; };
   }, []);
-
-  const onPasskeySuccess = useCallback(() => {
-    setLastSignInMethod('passkey');
-    // Best-effort login-count bump, exactly as /login does — it drives
-    // how often the patient layout offers the passkey prompt. A failure
-    // here must never block the sign-in.
-    recordLoginLanding()
-      .catch(() => { /* nudge frequency capping, not a gate */ })
-      .finally(() => { window.location.href = '/dashboard'; });
-  }, []);
-
-  const {
-    supported: passkeySupport,
-    signIn:    signInWithPasskey,
-    loading:   passkeyLoading,
-    error:     passkeyError,
-  } = usePasskeySignIn({ onSuccess: onPasskeySuccess });
-
-  // DERIVED, not mirrored into state: the hook already clears its own
-  // error at the start of every explicit signIn() and filters out
-  // user_cancelled, so there is nothing here a local copy would add —
-  // only a second source of truth that can fall out of step with it.
-  const error = passkeyError ? passkeyErrorMessage(passkeyError) : null;
 
   return (
     <main
@@ -123,30 +122,7 @@ export default function SignupEntry() {
             label="Continue with Google"
             showConsentNote={false}
           />
-
-          {passkeySupport && (
-            <button
-              type="button"
-              onClick={() => { void signInWithPasskey(); }}
-              disabled={passkeyLoading}
-              data-testid="signup-entry-passkey"
-              className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{ borderColor: 'rgba(255,255,255,.24)', background: 'rgba(255,255,255,.05)' }}
-            >
-              <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <rect x="3" y="11" width="18" height="11" rx="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-              {passkeyLoading ? 'Authenticating…' : 'Sign in with a passkey'}
-            </button>
-          )}
         </div>
-
-        {error && (
-          <p className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-center text-[13px] text-red-200" role="alert">
-            {error}
-          </p>
-        )}
 
         {/* ── One legal line for the whole stack ────────────────────── */}
         <p
@@ -173,7 +149,10 @@ export default function SignupEntry() {
           </Link>.
         </p>
 
-        {/* ── Existing account ──────────────────────────────────────── */}
+        {/* ── Existing account ────────────────────────────────────────
+            This is the ONLY route back for a returning user, passkey
+            users included — /login runs the conditional-UI ceremony, so
+            a saved passkey appears as an autofill suggestion there. */}
         <p className="mt-8 text-center text-[15px] text-[#9FB3CC]">
           Already have an account?{' '}
           <Link
