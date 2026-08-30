@@ -50,6 +50,21 @@ export default function LoginPage() {
   // purely a UI hint. See lib/auth/lastSignInMethod.ts.
   const [lastUsed, setLastUsed] = useState<LastSignInMethod | null>(null);
 
+  // ── Email + password: revealed, not pre-rendered ──────────────────────
+  //
+  // The three options read as three equal choices now, rather than two
+  // buttons sitting on top of a form that was always open. Opening it is
+  // one tap, and it opens ITSELF for anyone whose last successful sign-in
+  // here was a password (see the getLastSignInMethod effect below), so
+  // the regular password user never pays for the collapse.
+  //
+  // This flag is also what tells usePasskeySignIn when to start the
+  // conditional-UI ceremony: that ceremony needs the
+  // autocomplete="username webauthn" input to be in the DOM, and until
+  // this is true it is not. Starting it on mount would bind to nothing
+  // and the passkey suggestion would silently never appear.
+  const [emailOpen, setEmailOpen] = useState(false);
+
   // Conditional UI + modal passkey sign-in. The hook starts a hanging
   // navigator.credentials.get() with mediation:'conditional' on mount; the
   // input below carries autocomplete="username webauthn" so the browser
@@ -60,7 +75,7 @@ export default function LoginPage() {
     window.location.href = nextPath;
   }, [nextPath]);
   const { supported: passkeySupport, signIn: signInWithPasskey, loading: passkeyLoading, error: passkeyError } =
-    usePasskeySignIn({ onSuccess: onPasskeySuccess });
+    usePasskeySignIn({ onSuccess: onPasskeySuccess, conditionalWhen: emailOpen });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -121,6 +136,8 @@ export default function LoginPage() {
     if (!method) return;
     setLastUsed(method);
     if (method === 'password' && savedEmail) setEmail(savedEmail);
+    // Their usual way in — open it for them rather than making them tap.
+    if (method === 'password') setEmailOpen(true);
   }, []);
 
   // Surface passkey hook errors in the existing error region. user_cancelled
@@ -251,23 +268,15 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Sign in with Google — patient-context option. Staff accounts
-            (practice / brand / admin) are provisioned via invitation
-            emails and sign in with email + password; the "For patients"
-            caption below the button makes the intent clear. A staff
-            email whose Google identity is linked in Supabase Auth will
-            still land correctly on their own role via the dispatcher —
-            see /auth/callback for the profile belt-and-braces +
+        {/* Sign in with Google. In practice this is a patient path —
+            staff accounts (practice / brand / admin) are provisioned by
+            invitation and sign in with email + password — but that is no
+            longer spelled out in a caption under the button. A staff
+            email whose Google identity IS linked in Supabase Auth still
+            lands correctly on its own role via the dispatcher; see
+            /auth/callback for the profile belt-and-braces +
             role-preservation logic. */}
         <div data-testid="login-google-block">
-          {/* Caption ABOVE the button, not below it. The button renders
-              its own consent note underneath, and with the caption there
-              too the two greys ran together into one block that labelled
-              neither. Above, it reads as what it is: a heading for the
-              option that follows. */}
-          <p className="mb-2 text-center text-[11px] text-[#7A90AD]">
-            For patients
-          </p>
           <ContinueWithGoogleButton
             label="Sign in with Google"
             next={nextPath}
@@ -276,98 +285,115 @@ export default function LoginPage() {
             tone="onDark"
           />
         </div>
-      </div>
 
-      <div className="relative mt-7 flex items-center">
-        <div className="grow border-t border-white/[.12]" />
-        <span className="mx-3 text-[12px] text-[#7A90AD]">or with password</span>
-        <div className="grow border-t border-white/[.12]" />
-      </div>
+        {/* ── Email + password, behind a reveal ────────────────────────
+            One more button in the stack rather than a form sitting under
+            it, so the three ways in read as three equal choices. It
+            opens itself for anyone whose last sign-in here was a
+            password, so the habitual user never taps twice.
 
-      {/* The password block gets the same teal-ring + pill treatment as
-          the passkey/Google options above when IT was the last method
-          to succeed — the one case that isn't a single button, so the
-          highlight wraps the cue + form together rather than sitting on
-          a single element. */}
-      <div
-        className="mt-6 rounded-2xl"
-        style={lastUsed === 'password'
-          ? { border: '1.5px solid #15A89E', background: 'rgba(21,168,158,.08)', padding: '16px' }
-          : undefined}
-      >
-        {lastUsed === 'password' && <LastUsedPill tone="onDark" />}
-
-        {/* The "For patients" caption above belongs to the GOOGLE button
-            (staff accounts are invite-provisioned and use email +
-            password). Sitting directly above this divider, though, it read
-            as labelling everything below it — leaving practice staff unsure
-            this password form was for them at all. This one line says the
-            form is shared; it deliberately does not touch the Google or
-            passkey options. */}
-        <p
-          data-testid="password-audience-cue"
-          className="mb-5 text-center text-[12px] leading-[1.55] text-[#8AA0BC]"
+            The reveal is why usePasskeySignIn takes conditionalWhen: the
+            autofill ceremony binds to the email input below, which does
+            not exist until this opens. */}
+        <div
+          style={lastUsed === 'password'
+            ? { border: '1.5px solid #15A89E', background: 'rgba(21,168,158,.08)', borderRadius: '18px', padding: '14px' }
+            : undefined}
         >
-          For <span className="font-medium text-white">patients and practices</span> — sign in
-          with the email you registered.
-        </p>
+          {lastUsed === 'password' && <LastUsedPill tone="onDark" />}
 
-        <form onSubmit={handleSubmit} noValidate className="space-y-4">
-          <div>
-            <label htmlFor="email" className="mb-[7px] block text-[13px] font-medium text-[#9FB3CC]">
-              Email address
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              // "username webauthn" tells the browser this field can be
-              // filled by a passkey suggestion (Conditional UI). The hook
-              // mounts the conditional ceremony so the suggestion appears
-              // on focus. It is why this input must stay rendered on mount
-              // rather than hiding behind a "sign in with email" reveal.
-              autoComplete="username webauthn"
-              className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
-              placeholder="jane@example.com"
-            />
-          </div>
+          {!emailOpen && (
+            <button
+              type="button"
+              onClick={() => setEmailOpen(true)}
+              data-testid="login-open-email"
+              aria-expanded={false}
+              aria-controls="login-email-form"
+              className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-white/[.09]"
+              style={{ borderColor: 'rgba(255,255,255,.24)', background: 'rgba(255,255,255,.05)' }}
+            >
+              <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m3 7 9 6 9-6" />
+              </svg>
+              Sign in with email
+            </button>
+          )}
 
-          <div>
-            <div className="mb-[7px] flex items-center justify-between">
-              <label htmlFor="password" className="block text-[13px] font-medium text-[#9FB3CC]">
-                Password
-              </label>
-              <Link
-                href="/forgot-password"
-                data-testid="login-forgot-password"
-                className="text-[12px] font-semibold underline underline-offset-[3px] text-[#9FB3CC] hover:text-white"
+          {emailOpen && (
+            <div id="login-email-form" className="pt-3">
+              {/* Which audience this form serves is no longer spelled out
+                  in a caption — the label says "Email address", which is
+                  as true for a practice as it is for a patient. */}
+              {/* Sits directly above the fields and claims no audience —
+                  see app/practice/practice-dashboard-ux.test.ts for why
+                  the wording must never re-narrow to one of them. */}
+              <p
+                data-testid="password-audience-cue"
+                className="mb-6 border-t border-white/[.12] pt-5 text-center text-[13px] text-[#9FB3CC]"
               >
-                Forgot password?
-              </Link>
-            </div>
-            <input
-              id="password"
-              type="password"
-              required
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              autoComplete="current-password webauthn"
-              className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
-              placeholder="Your password"
-            />
-          </div>
+                Sign in with the email you registered.
+              </p>
 
-          <button
-            type="submit"
-            disabled={pending.disabled}
-            className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[#06202B] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
-            style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
-          >
-            {pending.showLabel ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
+              <form onSubmit={handleSubmit} noValidate className="space-y-4">
+                <div>
+                  <label htmlFor="email" className="mb-[7px] block text-[13px] font-medium text-[#9FB3CC]">
+                    Email address
+                  </label>
+                  <input
+                    id="email"
+                    type="email"
+                    required
+                    autoFocus
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    // "username webauthn" tells the browser this field can be
+                    // filled by a passkey suggestion (Conditional UI). The
+                    // hook starts that ceremony when emailOpen flips true —
+                    // i.e. when THIS input reaches the DOM.
+                    autoComplete="username webauthn"
+                    className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
+                    placeholder="jane@example.com"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-[7px] flex items-center justify-between">
+                    <label htmlFor="password" className="block text-[13px] font-medium text-[#9FB3CC]">
+                      Password
+                    </label>
+                    <Link
+                      href="/forgot-password"
+                      data-testid="login-forgot-password"
+                      className="text-[12px] font-semibold text-[#9FB3CC] underline underline-offset-[3px] hover:text-white"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
+                  <input
+                    id="password"
+                    type="password"
+                    required
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    autoComplete="current-password webauthn"
+                    className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
+                    placeholder="Your password"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={pending.disabled}
+                  className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[#06202B] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
+                  style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
+                >
+                  {pending.showLabel ? 'Signing in…' : 'Sign in'}
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Signup CTAs ───────────────────────────────────────────────

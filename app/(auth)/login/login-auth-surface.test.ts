@@ -96,18 +96,58 @@ describe('the passkey option — the reason /login differs from /signup', () => 
     expect(LOGIN).toMatch(/Sign in with a passkey/);
   });
 
-  it('the conditional-UI input is still rendered on mount, not behind a reveal', () => {
-    // startAuthentication({ useBrowserAutofill: true }) needs an input
-    // with autocomplete="username webauthn" in the DOM when the hook
-    // mounts. Collapsing the email form behind a "sign in with email"
-    // button — tempting, and what the reference layout does — silently
-    // kills passkey autofill. The field must stay unconditional.
+  it('the conditional-UI ceremony waits for the email input to exist', () => {
+    // THE COUPLING THIS FILE EXISTS FOR.
+    //
+    // startAuthentication({ useBrowserAutofill: true }) binds to an input
+    // with autocomplete="username webauthn". The email field now lives
+    // behind a reveal, so on mount there is no such input — starting the
+    // ceremony then would bind to nothing and the passkey suggestion
+    // would silently never appear. Nothing would throw; the feature would
+    // just quietly stop existing, which is why it is pinned rather than
+    // trusted to reading.
+    //
+    // usePasskeySignIn takes conditionalWhen for exactly this, and /login
+    // passes the reveal flag to it.
+    const HOOK = codeOf('lib/hooks/usePasskeySignIn.ts');
+    expect(LOGIN).toMatch(/conditionalWhen: emailOpen/);
+    expect(HOOK).toMatch(/conditionalWhen = true/);
+    expect(HOOK).toMatch(/if \(!supported \|\| !conditionalWhen\) return;/);
+    // …and the ceremony effect must re-run when the flag flips, or the
+    // deferral becomes a permanent disable.
+    expect(HOOK).toMatch(/\}, \[supported, conditionalWhen\]\);/);
     expect(LOGIN).toMatch(/autoComplete="username webauthn"/);
-    const inputIdx = LOGIN.indexOf('autoComplete="username webauthn"');
-    const formIdx  = LOGIN.indexOf('<form onSubmit={handleSubmit}');
-    expect(formIdx).toBeGreaterThan(-1);
-    expect(inputIdx).toBeGreaterThan(formIdx);
-    // No collapse state gating the form.
-    expect(LOGIN).not.toMatch(/showEmailForm|emailFormOpen|setShowPassword\b/);
+  });
+
+  it('feature detection is NOT deferred — the passkey button appears regardless', () => {
+    // Gating `supported` on the same flag would hide the explicit passkey
+    // button until someone opened the email form: the exact opposite of
+    // what this screen wants, and an easy thing to do while "simplifying"
+    // the hook back into one effect.
+    const HOOK = codeOf('lib/hooks/usePasskeySignIn.ts');
+    const detect = HOOK.slice(0, HOOK.indexOf('if (!supported || !conditionalWhen) return;'));
+    expect(detect).toMatch(/if \(hasWebAuthn\) setSupported\(true\);/);
+    expect(detect).toMatch(/\}, \[\]\);/);
+  });
+});
+
+describe('the email form is a reveal, and opens itself for those who need it', () => {
+  it('is collapsed behind a button by default', () => {
+    expect(LOGIN).toMatch(/const \[emailOpen, setEmailOpen\] = useState\(false\);/);
+    expect(LOGIN).toMatch(/data-testid="login-open-email"/);
+    expect(LOGIN).toMatch(/Sign in with email/);
+    expect(LOGIN).toMatch(/\{emailOpen && \(/);
+  });
+
+  it('opens itself when the last successful sign-in here was a password', () => {
+    // Otherwise the habitual password user pays a tap on every visit for
+    // a collapse that exists to tidy the screen for everyone else.
+    expect(LOGIN).toMatch(/if \(method === 'password'\) setEmailOpen\(true\);/);
+  });
+
+  it('carries the accessibility wiring a disclosure needs', () => {
+    expect(LOGIN).toMatch(/aria-expanded=\{false\}/);
+    expect(LOGIN).toMatch(/aria-controls="login-email-form"/);
+    expect(LOGIN).toMatch(/id="login-email-form"/);
   });
 });
