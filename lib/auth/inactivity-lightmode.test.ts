@@ -267,13 +267,17 @@ describe('Per-layout wiring — InactivityGuard mounted with role-appropriate du
   ];
 
   it('patient: 5 / 5 → logout at 10 min (already inside 15, left alone)', () => {
+    // The tag is no longer self-closing on the props alone — it also
+    // carries sessionStartedAt (see lib/auth/activity-stale-session.test.ts).
+    // The DURATIONS are what this test is for, so it pins those and stops
+    // requiring the tag to end immediately after them.
     expect(PATIENT_LAY).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
-    expect(PATIENT_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{5\}\s+minutesWarn=\{5\}\s*\/>/);
+    expect(PATIENT_LAY).toMatch(/<InactivityGuard\s+minutesIdle=\{5\}\s+minutesWarn=\{5\}[\s\S]{0,160}?\/>/);
   });
 
   it.each(STAFF_LAYOUTS)('%s: 10 / 5 → logout at 15 min', (_name, src) => {
     expect(src).toMatch(/from ['"]@\/lib\/auth\/InactivityGuard['"]/);
-    expect(src).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{5\}\s*\/>/);
+    expect(src).toMatch(/<InactivityGuard\s+minutesIdle=\{10\}\s+minutesWarn=\{5\}[\s\S]{0,160}?\/>/);
   });
 
   it('EVERY staff surface logs out at 15 minutes or under — 8.2.8', () => {

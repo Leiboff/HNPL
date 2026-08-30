@@ -5,6 +5,7 @@ import LogoutButton from '@/app/dashboard/LogoutButton';
 import AdminNav from './AdminNav';
 import AdminBottomNav from './AdminBottomNav';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // Persistent shell for every /admin/* route — mirrors the patient
 // portal: sticky top bar with brand + logout, desktop left sidebar,
@@ -17,6 +18,11 @@ import InactivityGuard from '@/lib/auth/InactivityGuard';
 // the patient portal pattern).
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // Read-only and cache()-memoised per request, so this is free on
+  // pages that already resolve the user. Not a gate — each page keeps
+  // its own auth check and redirect target.
+  const guardUser = await getRequestUser();
+
   const { user, supabase } = await requireConfirmedUser({ next: '/admin' });
 
   const { data: profile } = await supabase
@@ -92,7 +98,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
       {/* Inactivity auto-logout — admin tuning: warn at 10 min idle,
           log out 10 min later (20 min total). */}
-      <InactivityGuard minutesIdle={10} minutesWarn={5} />
+      {/* sessionStartedAt: discards activity persisted by a PREVIOUS
+          session, which would otherwise sign this one out the instant it
+          starts. See InactivityGuardProps. */}
+      <InactivityGuard
+        minutesIdle={10}
+        minutesWarn={5}
+        sessionStartedAt={Date.parse(guardUser?.last_sign_in_at ?? '')}
+      />
     </div>
   );
 }

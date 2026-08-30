@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { logoutAndRedirect } from './logout';
 import {
   ACTIVITY_PERSIST_THROTTLE_MS,
+  discardActivityBefore,
   effectiveLastActivity,
   readStoredActivity,
   writeStoredActivity,
@@ -74,17 +75,52 @@ const RESET_THROTTLE_MS = 250;
 export type InactivityGuardProps = {
   minutesIdle: number;
   minutesWarn: number;
+  /**
+   * Epoch ms of the CURRENT session's sign-in — Supabase's
+   * `user.last_sign_in_at`, supplied by the server layout that mounts
+   * this guard. Any persisted activity older than this belongs to a
+   * previous session and is discarded on mount; see
+   * discardActivityBefore() for why that cannot lengthen a session.
+   *
+   * Optional so the guard still renders without it, but every mount site
+   * passes it — asserted in lib/auth/inactivity-lightmode.test.ts,
+   * because a layout that quietly stops passing it silently restores the
+   * signed-in-then-immediately-signed-out bug.
+   */
+  sessionStartedAt?: number;
   /** Testing hook — allows deterministic unit tests to inject a clock. */
   now?: () => number;
 };
 
-export default function InactivityGuard({ minutesIdle, minutesWarn, now }: InactivityGuardProps) {
+export default function InactivityGuard({ minutesIdle, minutesWarn, sessionStartedAt, now }: InactivityGuardProps) {
   const clock = now ?? Date.now;
   const idleMs = minutesIdle * 60 * 1000;
   const warnMs = minutesWarn * 60 * 1000;
 
   const [modalOpen, setModalOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(minutesWarn * 60);
+
+  // ── Discard activity that predates this session ─────────────────────
+  //
+  // The persisted timestamp is only ever cleared by the client-side
+  // logout, so a session that ended any other way — the server-side
+  // absolute cap, an expired cookie, the browser closed on an idle tab —
+  // leaves it behind. The next sign-in then inherits it and is logged
+  // straight back out for having been idle since before it began.
+  //
+  // The anchor arrives as a PROP, server-supplied, rather than being read
+  // from a client session here. Two reasons, in order of importance:
+  // this component deliberately imports no Supabase (pinned in
+  // lib/auth/inactivity-lightmode.test.ts, and worth keeping — it is a
+  // timer, not an auth client); and a server-read last_sign_in_at is one
+  // the browser cannot influence at all, which a client read is not.
+  //
+  // Declared BEFORE the timer effect so it runs first on mount and the
+  // very first tick already sees the reconciled value.
+  useEffect(() => {
+    if (sessionStartedAt === undefined) return;
+    discardActivityBefore(sessionStartedAt, clock());
+  }, [sessionStartedAt, clock]);
 
   // Refs so the tick loop reads current values without re-subscribing
   // on every render.

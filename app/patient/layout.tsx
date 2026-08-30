@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { getRequestUser } from '@/lib/auth/requestUser';
 import PatientNav from './PatientNav';
 import PatientBottomNav from './PatientBottomNav';
 import InstallPrompt from '@/app/_pwa/InstallPrompt';
@@ -17,6 +18,11 @@ export default async function PatientLayout({
   // Defense-in-depth: bounce to /login when no session, /verify-email when
   // session exists but the email is still unconfirmed.
   const { user, supabase } = await requireConfirmedUser({ next: '/patient' });
+  // requireConfirmedUser narrows its user to the four fields it needs, so
+  // last_sign_in_at is not on it. getRequestUser() is the fuller record
+  // and is cache()-memoised per request, so this is a map lookup rather
+  // than a second round trip.
+  const sessionUser = await getRequestUser();
 
   // Shared with app/patient/page.tsx via React cache(), so this row is read
   // ONCE per request instead of once here and again in the page. See
@@ -105,7 +111,14 @@ export default async function PatientLayout({
 
       {/* Inactivity auto-logout — patient tuning: warn at 5 min idle,
           log out 5 min later (10 min total). */}
-      <InactivityGuard minutesIdle={5} minutesWarn={5} />
+      {/* sessionStartedAt: see the note on InactivityGuardProps — it
+          discards activity persisted by a previous session, which would
+          otherwise sign this one out the instant it starts. */}
+      <InactivityGuard
+        minutesIdle={5}
+        minutesWarn={5}
+        sessionStartedAt={Date.parse(sessionUser?.last_sign_in_at ?? '')}
+      />
     </div>
   );
 }

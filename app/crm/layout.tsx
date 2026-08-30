@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { requireSalesOrAdmin } from '@/lib/auth/requireSalesOrAdmin';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
+import { getRequestUser } from '@/lib/auth/requestUser';
 import CrmNav from './CrmNav';
 import CrmBottomNav from './CrmBottomNav';
 import { sastDayWindows } from '@/lib/crm/timezone';
@@ -17,6 +18,11 @@ import { sastDayWindows } from '@/lib/crm/timezone';
 // the sidebar and mobile nav agree without re-querying.
 
 export default async function CrmLayout({ children }: { children: React.ReactNode }) {
+  // Read-only and cache()-memoised per request, so this is free on
+  // pages that already resolve the user. Not a gate — each page keeps
+  // its own auth check and redirect target.
+  const guardUser = await getRequestUser();
+
   const { supabase, role } = await requireSalesOrAdmin({ next: '/crm' });
   const isAdmin = role === 'admin';
 
@@ -61,7 +67,14 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
 
       <CrmBottomNav counts={counts} />
 
-      <InactivityGuard minutesIdle={10} minutesWarn={5} />
+      {/* sessionStartedAt: discards activity persisted by a PREVIOUS
+          session, which would otherwise sign this one out the instant it
+          starts. See InactivityGuardProps. */}
+      <InactivityGuard
+        minutesIdle={10}
+        minutesWarn={5}
+        sessionStartedAt={Date.parse(guardUser?.last_sign_in_at ?? '')}
+      />
     </div>
   );
 }

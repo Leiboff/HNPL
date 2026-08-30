@@ -3,8 +3,14 @@ import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 export default async function ProviderLayout({ children }: { children: React.ReactNode }) {
+  // Read-only and cache()-memoised per request, so this is free on
+  // pages that already resolve the user. Not a gate — each page keeps
+  // its own auth check and redirect target.
+  const guardUser = await getRequestUser();
+
   // Defense-in-depth: bounce to /login when no session, /verify-email when
   // session exists but the email is still unconfirmed.
   const { user, supabase } = await requireConfirmedUser({ next: '/provider' });
@@ -60,7 +66,14 @@ export default async function ProviderLayout({ children }: { children: React.Rea
 
       {/* Inactivity auto-logout — provider tuning: warn at 10 min idle,
           log out 10 min later (20 min total). */}
-      <InactivityGuard minutesIdle={10} minutesWarn={5} />
+      {/* sessionStartedAt: discards activity persisted by a PREVIOUS
+          session, which would otherwise sign this one out the instant it
+          starts. See InactivityGuardProps. */}
+      <InactivityGuard
+        minutesIdle={10}
+        minutesWarn={5}
+        sessionStartedAt={Date.parse(guardUser?.last_sign_in_at ?? '')}
+      />
     </div>
   );
 }

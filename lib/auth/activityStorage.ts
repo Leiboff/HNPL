@@ -180,6 +180,58 @@ export function writeStoredActivity(nowMs: number): void {
   }
 }
 
+/**
+ * Drop a timestamp that predates the CURRENT session.
+ *
+ * ─── THE BUG THIS FIXES ───────────────────────────────────────────────
+ *
+ * clearStoredActivity() runs in exactly one place — logoutAndRedirect's
+ * finally block — and sign-in never seeds the key, by design: the guard
+ * deliberately does not write on mount, because that would refresh the
+ * very timestamp the persistence exists to preserve.
+ *
+ * That works only while every session ends through the client-side
+ * logout. Several do not:
+ *
+ *   • the absolute session cap, enforced server-side in proxy.ts, which
+ *     redirects without any client code running;
+ *   • a cookie or refresh token expiring between visits;
+ *   • the browser simply being closed on an open, idle tab.
+ *
+ * In all of those the key survives. The next person to sign in on that
+ * browser — often the same person the next morning — gets
+ * effectiveLastActivity() = min(now, yesterday) = yesterday, an elapsed
+ * time far past the threshold, and is signed straight back out to
+ * /login?reason=inactivity. Signed in, then immediately signed out for
+ * being idle, having just typed a password.
+ *
+ * ─── WHY THIS IS SAFE ─────────────────────────────────────────────────
+ *
+ * It reads as though it breaks the module's rule that no value writable
+ * into this key can lengthen a session. It does not, for two reasons:
+ *
+ *   • The anchor is not writable. `last_sign_in_at` is set by Supabase
+ *     when credentials are actually presented and is not touched on a
+ *     token refresh — the same property lib/auth/sessionCap.ts already
+ *     depends on for the absolute cap. A refresh therefore cannot use
+ *     this to reset the idle clock.
+ *   • It grants nothing new even if it were forged. Clearing the key
+ *     falls back to the in-memory ref, which is exactly what DELETING
+ *     the key already does — named in this file's own list of accepted
+ *     limits as indistinguishable from a first sign-in. This adds no
+ *     capability an attacker did not already have.
+ *
+ * Only 'valid' timestamps are discarded. A 'tampered' one is left alone
+ * so it keeps failing closed.
+ */
+export function discardActivityBefore(sessionStartedAtMs: number, nowMs: number): void {
+  if (!Number.isFinite(sessionStartedAtMs)) return;
+  const stored = readStoredActivity(nowMs);
+  if (stored.kind !== 'valid') return;
+  if (stored.atMs >= sessionStartedAtMs) return;
+  clearStoredActivity();
+}
+
 /** Drop the timestamp — called on logout so the next sign-in starts clean. */
 export function clearStoredActivity(): void {
   const store = storage();
