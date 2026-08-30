@@ -300,49 +300,65 @@ describe('the auth palette is the BRAND palette', () => {
 });
 
 describe('the three options are one stack, not three components', () => {
-  // WHAT WENT WRONG, so it is recognisable if it returns.
+  // WHAT WENT WRONG — TWICE — so it is recognisable if it returns.
   //
-  // Each button centred its icon+label as a UNIT, so every icon landed
-  // wherever its own label's width put it. Measured on a 390px viewport
-  // the three icons sat at x = 78, 88 and 95 — a 17px scatter down what
-  // should read as a single column. And ContinueWithGoogleButton carried
-  // rounded-[14px] while its neighbours were rounded-full, so the middle
-  // option looked like a different component wedged into the stack.
+  // Measured on a 390px viewport at each stage:
   //
-  // Both are invisible in the source unless you know to look, and both
-  // come back the moment someone adds a fourth option by copying the
-  // wrong neighbour.
+  //   1. Icon and label were centred together as a UNIT, so each
+  //      button's contents depended on ITS OWN label width. Icons landed
+  //      at x = 78 / 88 / 95.
+  //   2. Pinning the icons to a left column fixed those (all 21) but
+  //      simply moved the scatter to the text: 92 / 103 / 109.
+  //   3. Anchoring BOTH left is what actually produces two columns —
+  //      icons 21, labels 51 — and is the standard provider-stack
+  //      layout.
+  //
+  // The lesson worth keeping: centring anything inside these buttons
+  // re-couples position to label length. justify-center is the tell.
+  //
+  // ContinueWithGoogleButton also carried rounded-[14px] between two
+  // rounded-full neighbours, so the middle option looked like a
+  // different component wedged into the stack.
 
   const CHOOSER = LOGIN.slice(
     LOGIN.indexOf('data-testid="login-view-chooser"'),
     LOGIN.indexOf('data-testid="login-view-email"'),
   );
   const ENTRY = codeOf('app/(auth)/signup/SignupEntry.tsx');
+  const stackControls = (src: string) =>
+    src.match(/className="flex h-\[\d+px\] w-full items-center[^"]*"/g) ?? [];
 
-  it('every icon sits in the same left column, not inline with its label', () => {
-    // Inline (gap-N before the label) is precisely what scattered them.
-    const icons = CHOOSER.match(/<svg className="[^"]*"/g) ?? [];
-    expect(icons.length).toBeGreaterThanOrEqual(2);
-    for (const i of icons) expect(i).toMatch(/absolute left-5/);
-    expect(CHOOSER).not.toMatch(/items-center justify-center gap-\d/);
-    // The Google glyph shares the column.
-    expect(GOOGLE).toMatch(/<svg className="absolute left-5"/);
-  });
-
-  it('the label keeps symmetric padding, so it stays optically centred', () => {
-    // px-12 clears the glyph (left-5 + 18px = 38px < 48px) on BOTH sides,
-    // so the icon column costs nothing in centring.
-    for (const btn of CHOOSER.match(/className="relative flex h-\[52px\][^"]*"/g) ?? []) {
-      expect(btn).toMatch(/px-12/);
-      expect(btn).toMatch(/justify-center/);
+  it('nothing in the stack is centred — that is what couples position to label length', () => {
+    for (const c of [...stackControls(CHOOSER), ...stackControls(ENTRY)]) {
+      expect(c).not.toMatch(/justify-center/);
     }
-    expect(GOOGLE).toMatch(/px-12/);
+    expect(GOOGLE).not.toMatch(/items-center justify-center/);
   });
 
-  it('all three options share one height and one radius', () => {
-    const controls = CHOOSER.match(/className="relative flex h-\[\d+px\][^"]*"/g) ?? [];
-    expect(controls.length).toBe(2); // passkey + email; Google is the shared component
+  it('every option opens the same two columns: icon then label', () => {
+    // px-5 sets the icon column; gap-3 after an 18px icon sets the label
+    // column. Same three tokens on every control, or they diverge.
+    const controls = [...stackControls(CHOOSER), ...stackControls(ENTRY)];
+    expect(controls.length).toBe(3); // passkey + email, and /signup's primary
     for (const c of controls) {
+      expect(c).toMatch(/items-center gap-3 px-5/);
+    }
+    expect(GOOGLE).toMatch(/items-center gap-3 px-5/);
+  });
+
+  it('every option HAS an icon, so none of them starts its label early', () => {
+    // /signup's primary had no icon: its label would have begun in the
+    // icon column while its neighbour's began after the gap. Misaligned
+    // by omission is still misaligned.
+    const icons = [...CHOOSER.matchAll(/<svg className="([^"]*)"/g)].map((m) => m[1]);
+    expect(icons.length).toBeGreaterThanOrEqual(2);
+    for (const i of icons) expect(i).toMatch(/shrink-0/);
+    expect(ENTRY).toMatch(/<svg className="h-\[18px\] w-\[18px\] shrink-0"/);
+    expect(GOOGLE).toMatch(/<svg className="shrink-0"/);
+  });
+
+  it('all options share one height and one radius', () => {
+    for (const c of [...stackControls(CHOOSER), ...stackControls(ENTRY)]) {
       expect(c).toMatch(/h-\[52px\]/);
       expect(c).toMatch(/rounded-full/);
     }
@@ -352,10 +368,6 @@ describe('the three options are one stack, not three components', () => {
   it('both dark stacks ask the Google button for the pill shape', () => {
     expect(CHOOSER).toMatch(/shape="pill"/);
     expect(ENTRY).toMatch(/shape="pill"/);
-    // /signup is a stack too: its primary must not be a different height.
-    for (const c of ENTRY.match(/className="flex h-\[\d+px\] w-full[^"]*rounded-full[^"]*"/g) ?? []) {
-      expect(c).toMatch(/h-\[52px\]/);
-    }
   });
 
   it('the shape stays opt-IN, so /signup/patient keeps its form geometry', () => {

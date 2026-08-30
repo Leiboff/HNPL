@@ -168,14 +168,15 @@ export default function ContinueWithGoogleButton({
         disabled={loading}
         aria-label={ariaLabel ?? label}
         data-testid="continue-with-google"
-        // The glyph is positioned in a fixed left column rather than
-        // sitting inline before the label. Inline, the icon+label pair is
-        // centred as a unit, so its icon lands wherever THIS label's width
-        // puts it — and in a stack of buttons with different label
-        // lengths, the icons scatter instead of forming a column. The
-        // symmetric px-12 keeps the label optically centred while
-        // guaranteeing it can never run under the glyph.
-        className={`relative flex h-[52px] w-full items-center justify-center px-12 border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors ${
+        // Icon AND label both start at fixed offsets, rather than the
+        // pair being centred as a unit. Centring the pair makes each
+        // button's contents depend on ITS OWN label width, so in a stack
+        // of options with different labels nothing lines up: first the
+        // icons scattered (78/88/95px), and centring the icons alone just
+        // moved the scatter to the text (92/103/109px). Anchoring both
+        // left is what actually produces two clean columns, and is the
+        // standard layout for a provider stack.
+        className={`flex h-[52px] w-full items-center gap-3 px-5 border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors ${
           shape === 'pill' ? 'rounded-full' : 'rounded-[14px]'
         }`}
         style={highlighted ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#E2E8EE' }}
@@ -221,7 +222,7 @@ export default function ContinueWithGoogleButton({
 
 function GoogleGlyph() {
   return (
-    <svg className="absolute left-5" width="18" height="18" viewBox="0 0 18 18" aria-hidden xmlns="http://www.w3.org/2000/svg">
+    <svg className="shrink-0" width="18" height="18" viewBox="0 0 18 18" aria-hidden xmlns="http://www.w3.org/2000/svg">
       <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.264h2.909c1.702-1.567 2.683-3.874 2.683-6.62z" />
       <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.909-2.258c-.806.54-1.837.86-3.047.86-2.344 0-4.328-1.584-5.036-3.71H.957v2.332A8.997 8.997 0 0 0 9 18z" />
       <path fill="#FBBC05" d="M3.964 10.712A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.712V4.956H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.044l3.007-2.332z" />

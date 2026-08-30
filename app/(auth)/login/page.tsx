@@ -300,10 +300,10 @@ export default function LoginPage() {
                   type="button"
                   onClick={handlePasskeySignIn}
                   disabled={passkeyLoading || pending.disabled}
-                  className="relative flex h-[52px] w-full items-center justify-center px-12 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex h-[52px] w-full items-center gap-3 px-5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                   style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
                 >
-                  <svg className="absolute left-5 h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <rect x="3" y="11" width="18" height="11" rx="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
@@ -346,10 +346,10 @@ export default function LoginPage() {
                 type="button"
                 onClick={openEmail}
                 data-testid="login-open-email"
-                className="relative flex h-[52px] w-full items-center justify-center px-12 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
+                className="flex h-[52px] w-full items-center gap-3 px-5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
                 style={lastUsed === 'password' ? { border: '1.5px solid #15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
               >
-                <svg className="absolute left-5 h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <rect x="3" y="5" width="18" height="14" rx="2" />
                   <path d="m3 7 9 6 9-6" />
                 </svg>
