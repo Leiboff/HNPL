@@ -153,7 +153,7 @@ describe('email sign-in is a SCREEN, not an expanding panel', () => {
       LOGIN.indexOf('data-testid="login-view-chooser"'),
       LOGIN.indexOf('data-testid="login-view-email"'),
     );
-    expect(chooser).toMatch(/aria-label="New to BetterNow"/);
+    expect(chooser).toMatch(/data-testid="login-signup-patient"/);
     expect(chooser).toMatch(/<InstallCallout \/>/);
     expect(LOGIN.match(/<InstallCallout \/>/g) ?? []).toHaveLength(1);
   });

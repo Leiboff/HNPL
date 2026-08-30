@@ -47,14 +47,22 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 //
 // ─── Why acceptance is recorded HERE ──────────────────────────────────
 //
-// The disclosure is presented at the click: every surface that renders
-// ContinueWithGoogleButton shows "By continuing with Google you agree
-// to our Terms & Conditions and Privacy Policy" directly beneath it
-// (the /signup entry screen covers its whole button stack with one
-// equivalent line). This callback is the first server-side moment
-// after that click, so it is where the acceptance is durably stamped
-// with the versions that were in force — the same columns and the same
-// constants the email path writes (migrations 0081 + 0082).
+// The disclosure is presented at the click. Every surface carrying the
+// Google button states the terms next to it, in one of two forms:
+//
+//   • /login and /signup put AuthConsentNote beneath the WHOLE stack of
+//     options ("By continuing you agree to our Terms & Conditions and
+//     Privacy Policy"), because every option there — passkey, Google,
+//     email — is an act of continuing, and Google in particular can be
+//     the moment an account first exists.
+//   • /signup/patient keeps ContinueWithGoogleButton's own note, since
+//     the button sits above an email form with its own "I agree" tick
+//     and there is no stack-wide line to inherit.
+//
+// This callback is the first server-side moment after that click, so it
+// is where the acceptance is durably stamped with the versions that were
+// in force — the same columns and the same constants the email path
+// writes (migrations 0081 + 0082).
 //
 // Stamp-if-NULL, never overwrite: a profile that already carries an
 // acceptance keeps the version it originally agreed to, so the audit

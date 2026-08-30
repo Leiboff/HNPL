@@ -41,6 +41,8 @@ const codeOf = (p: string) => stripComments(read(p));
 const BUTTON   = codeOf('app/_components/ContinueWithGoogleButton.tsx');
 const CALLBACK = codeOf('app/auth/callback/route.ts');
 const ENTRY    = codeOf('app/(auth)/signup/SignupEntry.tsx');
+const LOGIN    = codeOf('app/(auth)/login/page.tsx');
+const NOTE     = codeOf('app/_components/AuthConsentNote.tsx');
 
 // ─── 1. Disclosure at the click ────────────────────────────────────────
 
@@ -68,27 +70,71 @@ describe('ContinueWithGoogleButton discloses the terms', () => {
   });
 });
 
-describe('the only surface that opts out renders its own line', () => {
-  it('/signup suppresses the button note ONLY because it covers the whole stack itself', () => {
-    expect(ENTRY).toMatch(/showConsentNote=\{false\}/);
-    expect(ENTRY).toMatch(/data-testid="signup-entry-consent"/);
-    expect(ENTRY).toMatch(/By continuing you agree to our/);
-    expect(ENTRY).toMatch(/href="\/legal\/terms"/);
-    expect(ENTRY).toMatch(/href="\/legal\/privacy"/);
+describe('a surface may suppress the button note ONLY by covering the stack itself', () => {
+  // THE INVARIANT, stated once.
+  //
+  // The disclosure is what makes the acceptance /auth/callback records
+  // legitimate, so it must be present on every surface that can create
+  // an account. There are exactly two legal shapes:
+  //
+  //   A. the button's own note (the default), or
+  //   B. showConsentNote={false} PLUS AuthConsentNote covering the whole
+  //      stack — which is stronger, since it also covers the passkey and
+  //      email options that have no note of their own.
+  //
+  // What must never exist is a third shape: opting out and rendering
+  // nothing. This test enumerates every caller and allows only A or B.
+
+  const CALLERS = [
+    'app/(auth)/login/page.tsx',
+    'app/(auth)/signup/SignupEntry.tsx',
+    'app/signup/patient/PatientSignupForm.tsx',
+  ];
+
+  it('every caller of the Google button lands in one of the two legal shapes', () => {
+    for (const p of CALLERS) {
+      const src = codeOf(p);
+      if (!/<ContinueWithGoogleButton/.test(src)) continue;
+      const optsOut = /showConsentNote=\{false\}/.test(src);
+      if (optsOut) {
+        // Shape B — must render the stack-wide note instead.
+        expect(src).toMatch(/<AuthConsentNote/);
+      } else {
+        // Shape A — must NOT have silently disabled the default.
+        expect(src).not.toMatch(/showConsentNote/);
+      }
+    }
   });
 
-  it('that line sits BELOW the button stack, so it covers every method above it', () => {
-    const stackIdx   = ENTRY.indexOf('data-testid="signup-entry-methods"');
-    const consentIdx = ENTRY.indexOf('data-testid="signup-entry-consent"');
-    expect(stackIdx).toBeGreaterThan(-1);
-    expect(consentIdx).toBeGreaterThan(stackIdx);
+  it('/login and /signup both take shape B — one line under every option', () => {
+    for (const src of [LOGIN, ENTRY]) {
+      expect(src).toMatch(/showConsentNote=\{false\}/);
+      expect(src).toMatch(/<AuthConsentNote/);
+    }
   });
 
-  it('no OTHER caller opts out — the default must stay the norm', () => {
-    const LOGIN  = codeOf('app/(auth)/login/page.tsx');
-    const SIGNUP = codeOf('app/signup/patient/PatientSignupForm.tsx');
-    expect(LOGIN).not.toMatch(/showConsentNote/);
-    expect(SIGNUP).not.toMatch(/showConsentNote/);
+  it('the shared note names both documents and links to both pages', () => {
+    expect(NOTE).toMatch(/By \{action\} you agree to betternow/);
+    expect(NOTE).toMatch(/href="\/legal\/terms"/);
+    expect(NOTE).toMatch(/href="\/legal\/privacy"/);
+    expect(NOTE).toMatch(/data-testid="auth-consent-note"/);
+    expect(NOTE.match(/target="_blank"/g) ?? []).toHaveLength(2);
+    expect(NOTE.match(/rel="noopener"/g) ?? []).toHaveLength(2);
+  });
+
+  it('the line sits BELOW the options on both screens, so it covers them all', () => {
+    expect(ENTRY.indexOf('<AuthConsentNote'))
+      .toBeGreaterThan(ENTRY.indexOf('data-testid="signup-entry-methods"'));
+    // On /login the stack ends with the email option.
+    expect(LOGIN.indexOf('<AuthConsentNote'))
+      .toBeGreaterThan(LOGIN.indexOf('data-testid="login-open-email"'));
+  });
+
+  it('neither screen states the terms twice', () => {
+    // Two legal lines on one screen read as two different promises.
+    for (const src of [LOGIN, ENTRY]) {
+      expect(src.match(/<AuthConsentNote/g) ?? []).toHaveLength(1);
+    }
   });
 });
 

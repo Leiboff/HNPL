@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import AuthSurface from '@/app/_components/AuthSurface';
+import AuthConsentNote from '@/app/_components/AuthConsentNote';
 
 // ─── /signup — the auth entry screen ───────────────────────────────────
 //
@@ -113,30 +114,8 @@ export default function SignupEntry() {
           />
         </div>
 
-        {/* ── One legal line for the whole stack ────────────────────── */}
-        <p
-          data-testid="signup-entry-consent"
-          className="mt-5 text-center text-[12px] leading-[1.6] text-[var(--auth-dim)]"
-        >
-          By continuing you agree to our{' '}
-          <Link
-            href="/legal/terms"
-            target="_blank"
-            rel="noopener"
-            className="font-semibold text-white underline underline-offset-[3px]"
-          >
-            Terms &amp; Conditions
-          </Link>
-          {' '}and{' '}
-          <Link
-            href="/legal/privacy"
-            target="_blank"
-            rel="noopener"
-            className="font-semibold text-white underline underline-offset-[3px]"
-          >
-            Privacy Policy
-          </Link>.
-        </p>
+        {/* One legal line for the whole stack — see AuthConsentNote. */}
+        <AuthConsentNote className="mt-5" />
 
         {/* ── Existing account ────────────────────────────────────────
             This is the ONLY route back for a returning user, passkey

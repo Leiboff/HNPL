@@ -141,15 +141,38 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
     expect(LOGIN).toMatch(/href="\/forgot-password"/);
   });
 
-  it('renders prominent patient + practice signup CTAs as bordered cards (not footnote links)', () => {
+  it('renders ONE prominent signup CTA, for patients', () => {
+    // WAS: two bordered cards, patient and practice.
+    //
+    // The point this test has always defended is that signup is not a
+    // grey footnote link on the login page — that part is unchanged and
+    // still asserted below. What changed is the practice half: practice
+    // registration already has its own route from the landing page (the
+    // header and mobile menu link "For practices" → /practices, which
+    // carries the "Offer betternow at your practice" CTA →
+    // /signup/practice, as does the footer), so repeating it on a login
+    // screen gave a returning patient a decision they never needed to
+    // make. /login now offers the one door a signed-out visitor here
+    // actually wants.
     expect(LOGIN).toMatch(/data-testid="login-signup-patient"/);
-    expect(LOGIN).toMatch(/data-testid="login-signup-practice"/);
     expect(LOGIN).toMatch(/href="\/signup\/patient"/);
-    expect(LOGIN).toMatch(/href="\/signup\/practice"/);
-    // Both CTAs live inside a labelled section — the "New to
-    // BetterNow?" section header.
     expect(LOGIN).toMatch(/New to BetterNow/);
-    expect(LOGIN).toMatch(/aria-label="New to BetterNow"/);
+    // Still a full-width control, not a footnote link.
+    expect(LOGIN).toMatch(/data-testid="login-signup-patient"[\s\S]{0,200}h-\[52px\] w-full/);
+    // The practice card is deliberately gone from THIS page.
+    expect(LOGIN).not.toMatch(/data-testid="login-signup-practice"/);
+    expect(LOGIN).not.toMatch(/href="\/signup\/practice"/);
+  });
+
+  it('the practice route it dropped is still reachable from the landing page', () => {
+    // Removing a path from one screen must not remove it from the
+    // product. This is the assertion that would catch that.
+    const HEADER    = read('app/_landing/SiteHeader.tsx');
+    const FOOTER    = read('app/_landing/SiteFooter.tsx');
+    const PRACTICES = read('app/practices/PracticesPage.tsx');
+    expect(HEADER).toMatch(/href="\/practices"/);
+    expect(PRACTICES).toMatch(/href="\/signup\/practice"/);
+    expect(FOOTER).toMatch(/href="\/signup\/practice"/);
   });
 
   it('the previous "Don\'t have an account? Sign up → /" footnote is gone', () => {

@@ -13,6 +13,7 @@ import InstallCallout from '@/app/_pwa/InstallCallout';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import LastUsedPill from '@/app/_components/LastUsedPill';
 import AuthSurface from '@/app/_components/AuthSurface';
+import AuthConsentNote from '@/app/_components/AuthConsentNote';
 import { getLastSignInMethod, setLastSignInMethod, type LastSignInMethod } from '@/lib/auth/lastSignInMethod';
 
 // Validate ?next= from the URL — must be origin-relative and not
@@ -326,6 +327,10 @@ export default function LoginPage() {
                 onSignInAttempt={() => setLastSignInMethod('google')}
                 highlighted={lastUsed === 'google'}
                 tone="onDark"
+                // Suppressed in favour of the stack-wide line below: the
+                // disclosure covers passkey and email too, and saying it
+                // twice on one screen reads as two different promises.
+                showConsentNote={false}
               />
             </div>
 
@@ -352,53 +357,31 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* ── Signup CTAs ─────────────────────────────────────────────
-              Both roles, named explicitly. A login page is the one place
-              a visitor already knows which of the two they are, so these
-              stay direct links rather than routing through the /signup
-              chooser. Chooser-only: they are not part of the email
-              sign-in screen any more than they would be on a page of
-              their own. */}
-          <section
-            aria-label="New to BetterNow"
-            className="mt-9 rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] p-5"
+          {/* One legal line beneath ALL THREE options. Every one of them
+              can be the moment an account first exists — Google provisions
+              on first sign-in — so the disclosure belongs to the stack,
+              not to any single button. /auth/callback records the
+              acceptance this line makes. */}
+          <AuthConsentNote className="mt-5" action="signing in" />
+
+          {/* ── One way out: patient signup ──────────────────────────
+              This was two cards, patient and practice. Practice
+              registration is not a login-screen concern: it already has
+              its own route from the landing page — the header and mobile
+              menu link "For practices" → /practices, which carries the
+              "Offer betternow at your practice" CTA → /signup/practice,
+              as does the footer. Repeating it here gave a returning
+              patient a decision they never needed to make, so this is
+              now the single door a signed-out visitor on THIS page
+              actually wants. */}
+          <Link
+            href="/signup/patient"
+            data-testid="login-signup-patient"
+            className="mt-9 flex h-[52px] w-full items-center justify-center rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
+            style={{ borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
           >
-            <p className="mb-3.5 text-center text-[13px] font-semibold text-white">
-              New to BetterNow?
-            </p>
-            <div className="space-y-2.5">
-              <Link
-                href="/signup/patient"
-                data-testid="login-signup-patient"
-                className="block rounded-xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] px-4 py-3 transition-colors hover:border-[var(--auth-accent-soft)] hover:bg-[var(--auth-fill-hover)]"
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--auth-dim)]">
-                  Patient
-                </p>
-                <p className="mt-0.5 text-[15px] font-semibold text-white">
-                  Sign up as a patient
-                </p>
-                <p className="mt-0.5 text-[12px] text-[var(--auth-dim)]">
-                  Pay medical bills in interest-free instalments.
-                </p>
-              </Link>
-              <Link
-                href="/signup/practice"
-                data-testid="login-signup-practice"
-                className="block rounded-xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] px-4 py-3 transition-colors hover:border-[var(--auth-accent-soft)] hover:bg-[var(--auth-fill-hover)]"
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--auth-dim)]">
-                  Practice
-                </p>
-                <p className="mt-0.5 text-[15px] font-semibold text-white">
-                  Register your practice
-                </p>
-                <p className="mt-0.5 text-[12px] text-[var(--auth-dim)]">
-                  Offer BetterNow to your patients.
-                </p>
-              </Link>
-            </div>
-          </section>
+            New to BetterNow? Sign up
+          </Link>
 
           {/* PWA install callout — secondary visual weight so it doesn't
               compete with the sign-in options. Hidden when the page is
