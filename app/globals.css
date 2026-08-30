@@ -138,3 +138,125 @@ body {
   border: 0;
   display: block;
 }
+
+/* ── Auth screen transitions ───────────────────────────────────────────
+ * /login swaps between its method chooser and the email sign-in screen
+ * in place — same route, same component — so the two need to ARRIVE
+ * like pages rather than appear like an accordion. A short slide + fade
+ * is what sells that: it reads as travel, not as the page growing.
+ *
+ * Direction is meaningful. .auth-view-forward comes from the right (you
+ * went in), .auth-view-back from the left (you came out), matching the
+ * platform convention for a push/pop on a stack. See the pushState +
+ * popstate wiring in app/(auth)/login/page.tsx, which drives both this
+ * and the device back button.
+ *
+ * Reduced motion removes the travel and keeps only the fade, so the
+ * change of screen is still perceptible without the movement. */
+@keyframes auth-view-in-forward {
+  from { opacity: 0; transform: translateX(22px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes auth-view-in-back {
+  from { opacity: 0; transform: translateX(-22px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.auth-view-forward { animation: auth-view-in-forward .26s cubic-bezier(.22,.61,.36,1) both; }
+.auth-view-back    { animation: auth-view-in-back    .26s cubic-bezier(.22,.61,.36,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-view-forward,
+  .auth-view-back {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ── Auth surface palette ──────────────────────────────────────────────
+ * /login, /signup and /signup/patient are the app's only dark surfaces
+ * (see the forced-light note at the top of this file — there is no dark
+ * theme, these screens are a deliberate exception). The brand palette in
+ * app/landing.css was drawn for a light ground, so it has no muted text
+ * ramp that works on navy. This block is that ramp, and NOTHING here is
+ * a new hue: every value is a brand colour, a brand colour at alpha, or
+ * plain white at alpha, which over navy simply reads as a lighter navy.
+ *
+ * Contrast is measured against --auth-ground-to (#13294B), the LIGHTEST
+ * point of the gradient and therefore the worst case for light text.
+ * Anything carrying copy clears WCAG AA (4.5:1); the two values that did
+ * not are gone (see the commit that introduced this block).
+ *
+ * Defined once here rather than inline, because three files pasting the
+ * same navy gradient is exactly how this drifted the first time. */
+.auth-surface {
+  /* Brand, from app/landing.css */
+  --auth-ground-from:  #0E2140;              /* --navy-deep  */
+  --auth-ground-to:    #13294B;              /* --navy       */
+  --auth-teal:         #15A89E;              /* --teal       */
+  --auth-accent:       #19C2B6;              /* --teal-bright — 6.52:1 */
+
+  /* Brand teal at alpha, for rings and tints */
+  --auth-accent-soft:  rgba(25, 194, 182, .5);
+  --auth-accent-ring:  rgba(25, 194, 182, .15);
+  --auth-accent-tint:  rgba(25, 194, 182, .10);
+  --auth-accent-edge:  rgba(25, 194, 182, .25);
+
+  /* Text on the navy ground */
+  --auth-muted:        #9FB3CC;              /* 6.77:1 — sub-headings, labels */
+  --auth-dim:          #8AA0BC;              /* 5.42:1 — fine print          */
+  --auth-on-teal:      #0E2140;              /* 5.44:1 on --auth-teal        */
+
+  /* Neutral structure. White at alpha over navy = a lighter navy, so
+   * these need no hue of their own and can never drift out of family. */
+  --auth-hairline:     rgba(255, 255, 255, .12);
+  --auth-edge:         rgba(255, 255, 255, .20);
+  --auth-edge-strong:  rgba(255, 255, 255, .24);
+  --auth-fill:         rgba(255, 255, 255, .05);
+  --auth-fill-raised:  rgba(255, 255, 255, .06);
+  --auth-fill-hover:   rgba(255, 255, 255, .09);
+}
+
+/* ── Auth option row ───────────────────────────────────────────────────
+ * The icon + label inside every sign-in / sign-up option, on /login and
+ * /signup.
+ *
+ * The requirement is BOTH centred and aligned, which are in tension: if
+ * each button centres its own contents, position depends on that
+ * button's label width, and nothing lines up across the stack. Measured
+ * on a 390px viewport, that produced icons at x = 78 / 88 / 95; pinning
+ * the icons left alone just moved the scatter to the labels (92 / 103 /
+ * 109).
+ *
+ * The resolution is a FIXED-WIDTH row that is itself centred. The row is
+ * the same width in every option, so centring it puts the icon — and the
+ * label after it — at identical coordinates in all of them, while the
+ * block still reads as centred.
+ *
+ * The label must be LEFT-aligned inside its share of the row. Centring it
+ * there looks like the tidier choice and is the last version of this bug:
+ * the label BOXES line up, but the words inside them do not, because a
+ * centred short label starts further right. Measured, that put the boxes
+ * at 105 and the words at 107 / 118 / 124 — the original 17px scatter,
+ * one level down and harder to see. Left-aligned, the words start at the
+ * box edge, which is the same in every option.
+ *
+ * The width is sized to the longest label in the set ("Sign in with a
+ * passkey", 167px at 15px Poppins) plus the 18px icon and the 12px gap,
+ * with a little slack. A NEW LABEL LONGER THAN THAT will overflow rather
+ * than re-align the row — the labels are pinned in
+ * app/(auth)/login/login-auth-surface.test.ts so that is caught here
+ * rather than in production. */
+.auth-option-row {
+  display: flex;
+  width: 200px;          /* 18 icon + 12 gap + 170 label box */
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-option-row > .auth-option-label {
+  flex: 1;
+  /* Left, NOT centre — see the note above. This is the property that
+   * makes the words line up rather than merely their containers. */
+  text-align: left;
+  white-space: nowrap;
+}

@@ -62,10 +62,32 @@ describe('Part 2 — createBill never returns a raw provider/DB error to the cli
   });
 });
 
-describe('Part 5 — login page states the password form serves practices too', () => {
-  it('renders a cue naming both audiences near the password fields', () => {
+describe('Part 5 — the login password form never reads as patients-only', () => {
+  // ─── What changed, and what did NOT ──────────────────────────────────
+  //
+  // This block originally pinned two captions: "For patients" under the
+  // Google button, and "For patients and practices" above the password
+  // form. Both were removed in the auth redesign as product copy.
+  //
+  // The CONCERN they existed for is not removed, and is what this block
+  // now guards: practice staff must never be told, or led to infer, that
+  // the password form is not for them. The redesign satisfies that by
+  // claiming no audience at all rather than by listing both — a form
+  // labelled "Email address" is as true for a practice as for a patient.
+  //
+  // So the assertions below flip from "names both audiences" to "scopes
+  // itself to neither". If someone reintroduces a patients-only caption
+  // on this page, that is the actual regression, and it fails here.
+
+  it('renders a cue above the fields that scopes them to no audience', () => {
     expect(LOGIN).toMatch(/data-testid="password-audience-cue"/);
-    expect(LOGIN).toMatch(/patients and practices/i);
+    // Never narrowed to patients — the original bug.
+    const cue = LOGIN.slice(
+      LOGIN.indexOf('data-testid="password-audience-cue"'),
+      LOGIN.indexOf('<form onSubmit={handleSubmit}'),
+    );
+    expect(cue).not.toMatch(/for patients/i);
+    expect(cue).not.toMatch(/patients only/i);
   });
 
   it('the cue sits above the password form, not buried below it', () => {
@@ -76,12 +98,11 @@ describe('Part 5 — login page states the password form serves practices too', 
     expect(cueIdx).toBeLessThan(formIdx);
   });
 
-  it('the Google block keeps its patient-only caption (Google is not a staff path)', () => {
-    // Regression: the existing "For patients" caption belongs to the Google
-    // button and must survive — staff are invite-provisioned, so scoping
-    // Google to patients is correct and deliberate.
+  it('no audience caption anywhere on the page re-narrows a shared path', () => {
+    // The Google block keeps its testid; what it must not regrow is a
+    // caption telling one audience the page is not theirs.
     expect(LOGIN).toMatch(/data-testid="login-google-block"/);
-    expect(LOGIN).toMatch(/For patients\s*\n/);
+    expect(LOGIN).not.toMatch(/For patients/);
   });
 
   it('passkey and Google options are untouched', () => {

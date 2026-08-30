@@ -133,7 +133,7 @@ export default function ConfirmedView({ destination }: { destination: string }) 
               Go to sign in
             </Link>
             <Link
-              href="/signup/patient"
+              href="/signup"
               className="inline-flex items-center justify-center w-full rounded-xl border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
             >
               Sign up again

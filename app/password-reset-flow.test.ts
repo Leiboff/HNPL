@@ -28,7 +28,11 @@ const FP_FORM    = read('app/forgot-password/ForgotPasswordForm.tsx');
 const UP_PAGE    = read('app/update-password/page.tsx');
 const UP_FORM    = read('app/update-password/UpdatePasswordForm.tsx');
 const LOGIN      = read('app/(auth)/login/page.tsx');
-const PT_SIGNUP  = read('app/signup/patient/page.tsx');
+// The patient signup FORM used to have its own route+page; /signup now
+// carries it as a view and the old route is a redirect. The cross-link
+// assertions below follow the form, which is where they always pointed.
+const PT_SIGNUP  = read('app/signup/patient/PatientSignupForm.tsx');
+const SIGNUP_RT  = read('app/signup/patient/page.tsx');
 const PR_SIGNUP  = read('app/signup/practice/page.tsx');
 
 // ─── /auth/callback ────────────────────────────────────────────────────
@@ -141,15 +145,59 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
     expect(LOGIN).toMatch(/href="\/forgot-password"/);
   });
 
-  it('renders prominent patient + practice signup CTAs as bordered cards (not footnote links)', () => {
+  it('renders ONE prominent signup CTA, for patients', () => {
+    // WAS: two bordered cards, patient and practice.
+    //
+    // The point this test has always defended is that signup is not a
+    // grey footnote link on the login page — that part is unchanged and
+    // still asserted below. What changed is the practice half: practice
+    // registration already has its own route from the landing page (the
+    // header and mobile menu link "For practices" → /practices, which
+    // carries the "Offer betternow at your practice" CTA →
+    // /signup/practice, as does the footer), so repeating it on a login
+    // screen gave a returning patient a decision they never needed to
+    // make. /login now offers the one door a signed-out visitor here
+    // actually wants.
     expect(LOGIN).toMatch(/data-testid="login-signup-patient"/);
-    expect(LOGIN).toMatch(/data-testid="login-signup-practice"/);
-    expect(LOGIN).toMatch(/href="\/signup\/patient"/);
-    expect(LOGIN).toMatch(/href="\/signup\/practice"/);
-    // Both CTAs live inside a labelled section — the "New to
-    // BetterNow?" section header.
-    expect(LOGIN).toMatch(/New to BetterNow/);
-    expect(LOGIN).toMatch(/aria-label="New to BetterNow"/);
+    expect(LOGIN).toMatch(/href="\/signup"/);
+    expect(LOGIN).toMatch(/New to betternow/i);
+
+    // ─── What "prominent" means here, restated ──────────────────────
+    //
+    // This assertion used to require a bordered card, then a full-width
+    // pill. Both were over-specified: they pinned a SHAPE when the thing
+    // worth defending is that signup is findable at a glance and not the
+    // small grey footer link it once was.
+    //
+    // Matching the sign-in buttons' shape turned out to be its own bug —
+    // it read as a fourth way to sign in rather than a different journey
+    // — so the shape is now typographic. The guarantees that actually
+    // matter are asserted directly instead:
+    //
+    //   1. it carries the brand accent, not muted body grey, and
+    //   2. it sits directly under the sign-in options, well above the
+    //      install callout that used to sit between them.
+    const cta = LOGIN.slice(LOGIN.indexOf('data-testid="login-signup-patient"'));
+    expect(cta.slice(0, 300)).toMatch(/var\(--auth-accent\)/);
+    expect(cta.slice(0, 300)).not.toMatch(/--auth-dim/);
+    expect(LOGIN.indexOf('data-testid="login-signup-patient"'))
+      .toBeLessThan(LOGIN.indexOf('<InstallCallout'));
+    // And it is NOT one of the sign-in controls.
+    expect(cta.slice(0, 300)).not.toMatch(/h-\[52px\] w-full/);
+    // The practice card is deliberately gone from THIS page.
+    expect(LOGIN).not.toMatch(/data-testid="login-signup-practice"/);
+    expect(LOGIN).not.toMatch(/href="\/signup\/practice"/);
+  });
+
+  it('the practice route it dropped is still reachable from the landing page', () => {
+    // Removing a path from one screen must not remove it from the
+    // product. This is the assertion that would catch that.
+    const HEADER    = read('app/_landing/SiteHeader.tsx');
+    const FOOTER    = read('app/_landing/SiteFooter.tsx');
+    const PRACTICES = read('app/practices/PracticesPage.tsx');
+    expect(HEADER).toMatch(/href="\/practices"/);
+    expect(PRACTICES).toMatch(/href="\/signup\/practice"/);
+    expect(FOOTER).toMatch(/href="\/signup\/practice"/);
   });
 
   it('the previous "Don\'t have an account? Sign up → /" footnote is gone', () => {
@@ -163,17 +211,48 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
 
 // ─── Signup pages — Log-in cross-link (visible without scrolling) ─────
 
+describe('the retired /signup/patient route still routes', () => {
+  it('sends a stale provider-invite link to checkout, not to signup', () => {
+    // The ?token= branch predates this change and is the single
+    // invite-acceptance path. Losing it would silently break every
+    // invitation email already in the wild.
+    expect(SIGNUP_RT).toMatch(/if \(token\)/);
+    expect(SIGNUP_RT).toMatch(/redirect\(`\/checkout\/\$\{encodeURIComponent\(token\)\}`\)/);
+  });
+
+  it('sends everything else to the canonical /signup', () => {
+    expect(SIGNUP_RT).toMatch(/redirect\('\/signup'\)/);
+  });
+
+  it('no longer renders a page of its own', () => {
+    // Match IMPORTS and JSX, not prose — the file's header comment
+    // legitimately names the form it used to render and where it lives
+    // now, and a bare substring check would forbid explaining itself.
+    expect(SIGNUP_RT).not.toMatch(/^import .*PatientSignupForm/m);
+    expect(SIGNUP_RT).not.toMatch(/<PatientSignupForm/);
+    expect(SIGNUP_RT).not.toMatch(/<AuthSurface/);
+  });
+});
+
 describe('Signup pages — prominent Log-in cross-link', () => {
-  it('patient signup page renders the Log-in cross-link in the header (not just footer)', () => {
-    expect(PT_SIGNUP).toMatch(/data-testid="patient-signup-login-cross-link"/);
+  it('the patient signup form renders a Log-in cross-link', () => {
+    // WAS: pinned a header cross-link on app/signup/patient/page.tsx,
+    // with a testid, because that page was the signup screen and the
+    // link sat in its header row.
+    //
+    // That page is now a redirect — /signup carries the form as a view —
+    // so the header row went with it. What the assertion protected is
+    // unchanged and still true: someone who already has an account can
+    // get to /login from the signup screen without hunting. It now lives
+    // in the form itself, which is the thing that moved.
+    expect(PT_SIGNUP).toMatch(/Already have an account\?/);
     expect(PT_SIGNUP).toMatch(/href="\/login"/);
-    // The header link is positioned ABOVE the form card in the JSX;
-    // pinning that order guards against a regression that only leaves
-    // a bottom-of-page link.
-    const hdrLinkIdx = PT_SIGNUP.indexOf('patient-signup-login-cross-link');
-    const formIdx    = PT_SIGNUP.indexOf('<PatientSignupForm');
-    expect(hdrLinkIdx).toBeGreaterThan(0);
-    expect(formIdx).toBeGreaterThan(hdrLinkIdx);
+    // The ORDER pin is dropped rather than rewritten. It existed because
+    // the link sat in a header above a long form and could regress into
+    // a buried footer link. /signup opens the form as its own screen
+    // with a Back arrow at the top, so "above the form" is no longer the
+    // property that keeps it reachable — the Back arrow is, and it is
+    // pinned in app/(auth)/signup/signup-entry.test.ts.
   });
 
   it('practice signup page renders the Log-in cross-link in the header', () => {

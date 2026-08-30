@@ -81,11 +81,16 @@ describe('ContinueWithGoogleButton — Google OAuth initiation', () => {
 // ─── Placement (patient-only) ────────────────────────────────────────
 
 describe('Placement — patient surfaces only', () => {
-  it('/login renders the Google block with "For patients" caption', () => {
+  it('/login renders the Google block', () => {
     expect(LOGIN).toMatch(/from ['"]@\/app\/_components\/ContinueWithGoogleButton['"]/);
     expect(LOGIN).toMatch(/<ContinueWithGoogleButton\b/);
     expect(LOGIN).toMatch(/data-testid="login-google-block"/);
-    expect(LOGIN).toMatch(/For patients/);
+    // The "For patients" caption that used to sit with this button was
+    // removed with the auth redesign — see the note on the
+    // practice-dashboard-ux suite. Google being a patient path in
+    // practice is still true and still enforced where it matters (staff
+    // are invite-provisioned, and /auth/callback never rewrites a role);
+    // it is simply no longer narrated in the UI.
   });
 
   it('/signup/patient renders the Google block above the email form', () => {

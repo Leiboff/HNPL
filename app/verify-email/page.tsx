@@ -30,7 +30,7 @@ export default async function VerifyEmailPage({ searchParams }: Props) {
             We can&apos;t verify your email without knowing which address it was sent to.
             Please sign up again.
           </p>
-          <Link href="/signup/patient" className="font-semibold text-[#15A89E] hover:underline">
+          <Link href="/signup" className="font-semibold text-[#15A89E] hover:underline">
             Sign up →
           </Link>
         </div>
@@ -73,7 +73,7 @@ export default async function VerifyEmailPage({ searchParams }: Props) {
 
         <p className="mt-6 text-center text-xs text-gray-400">
           Wrong email?{' '}
-          <Link href="/signup/patient" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
+          <Link href="/signup" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
             Sign up again
           </Link>
         </p>

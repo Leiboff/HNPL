@@ -112,7 +112,7 @@ export default function SiteHeader() {
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
           <a href="/#faq"         onClick={() => setMenuOpen(false)}>FAQ</a>
           <div className="mobile-cta">
-            <Link className="m-get" href="/signup/patient" onClick={() => setMenuOpen(false)}>Get started</Link>
+            <Link className="m-get" href="/signup" onClick={() => setMenuOpen(false)}>Get started</Link>
             <Link className="m-signin" href="/login" onClick={() => setMenuOpen(false)}>Sign in</Link>
           </div>
         </div>

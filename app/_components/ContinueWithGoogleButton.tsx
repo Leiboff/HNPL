@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import LastUsedPill from './LastUsedPill';
 
@@ -26,6 +27,22 @@ import LastUsedPill from './LastUsedPill';
 //     "Continue with Google" (or "Sign in with Google") text label,
 //     UNMODIFIED. Do NOT restyle into brand navy/teal — Google's
 //     guidelines specifically prohibit that treatment.
+//
+// ─── Consent (added with the auth-entry redesign) ─────────────────────
+//
+// A Google click is a SIGN-UP for anyone without an account — Supabase
+// provisions the auth user and the 0024 trigger creates the profile.
+// The email form has always had an explicit "I agree" tick gating it
+// server-side (app/signup/patient/actions.ts); this path had NOTHING,
+// so Google-origin patients reached /patient with
+// profiles.terms_accepted_at NULL and had never been shown the terms.
+//
+// The consent note below is rendered by DEFAULT, directly beneath the
+// button, so every surface carrying this button presents the terms at
+// the moment of the click (sign-in-wrap). /auth/callback then records
+// that acceptance server-side against the profile. Pass
+// showConsentNote={false} ONLY when the caller renders its own legal
+// line covering this button — never to drop the disclosure entirely.
 
 type Props = {
   /** "Continue with Google" (signup context) or "Sign in with Google" (login context). */
@@ -58,6 +75,33 @@ type Props = {
    * used on the highlighted passkey button and password form.
    */
   highlighted?: boolean;
+  /**
+   * Render the "By continuing… Terms & Privacy" line beneath the button.
+   * Defaults to TRUE — the disclosure is the thing that makes the
+   * acceptance /auth/callback records honest. Set false only when the
+   * caller renders an equivalent line covering this button (the /signup
+   * entry screen puts one under its whole button stack).
+   */
+  showConsentNote?: boolean;
+  /**
+   * Which ground this button is sitting on. The BUTTON itself never
+   * changes — Google's guidelines require the white surface — but the
+   * consent note beneath it and the "last used" pill above it are our
+   * own text, and the light-ground greys are unreadable on the navy
+   * auth surface. Defaults to 'onLight'.
+   */
+  tone?: 'onLight' | 'onDark';
+  /**
+   * Geometry, so this button can sit in a stack without looking like a
+   * different component. 'rounded' (14px) is the default and matches the
+   * form controls on /signup/patient, where it sits above an email form.
+   * 'pill' matches the fully-rounded stacks on /login and /signup.
+   *
+   * Google's guidelines constrain the button's SURFACE — white ground,
+   * unmodified 4-colour glyph, approved wording — not its corner radius,
+   * so varying this is within the rules.
+   */
+  shape?: 'pill' | 'rounded';
 };
 
 // Origin-relative allow-list. Same posture as /auth/callback safeNext
@@ -76,7 +120,11 @@ export default function ContinueWithGoogleButton({
   next,
   onSignInAttempt,
   highlighted,
+  showConsentNote = true,
+  tone = 'onLight',
+  shape = 'rounded',
 }: Props) {
+  const onDark = tone === 'onDark';
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
@@ -113,21 +161,55 @@ export default function ContinueWithGoogleButton({
 
   return (
     <div className="w-full">
-      {highlighted && <LastUsedPill />}
+      {highlighted && <LastUsedPill tone={tone} />}
       <button
         type="button"
         onClick={handleClick}
         disabled={loading}
         aria-label={ariaLabel ?? label}
         data-testid="continue-with-google"
-        className="flex h-[52px] w-full items-center justify-center gap-3 rounded-[14px] border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        // Contents are centred, but as a FIXED-WIDTH row (.auth-option-row
+        // in app/globals.css) rather than shrink-to-fit — so the icon and
+        // label land at the same coordinates here as in the sibling
+        // options, instead of at coordinates derived from this button's
+        // own label width. See that block for the measurements.
+        className={`flex h-[52px] w-full items-center justify-center border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors ${
+          shape === 'pill' ? 'rounded-full' : 'rounded-[14px]'
+        }`}
         style={highlighted ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#E2E8EE' }}
       >
-        <GoogleGlyph />
-        <span>{loading ? 'Opening Google…' : label}</span>
+        <span className="auth-option-row">
+          <GoogleGlyph />
+          <span className="auth-option-label">{loading ? 'Opening Google…' : label}</span>
+        </span>
       </button>
+      {showConsentNote && (
+        <p
+          className={`mt-2 text-center text-[11px] leading-[1.5] ${onDark ? 'text-[var(--auth-dim)]' : 'text-[#5B6B80]'}`}
+          data-testid="google-consent-note"
+        >
+          By continuing with Google you agree to betternow&apos;s{' '}
+          <Link
+            href="/legal/terms"
+            target="_blank"
+            rel="noopener"
+            className={`font-semibold underline underline-offset-2 ${onDark ? 'text-white' : 'text-[#41556F]'}`}
+          >
+            Terms &amp; Conditions
+          </Link>
+          {' '}and{' '}
+          <Link
+            href="/legal/privacy"
+            target="_blank"
+            rel="noopener"
+            className={`font-semibold underline underline-offset-2 ${onDark ? 'text-white' : 'text-[#41556F]'}`}
+          >
+            Privacy Policy
+          </Link>.
+        </p>
+      )}
       {error && (
-        <p className="mt-2 text-xs text-red-700" role="alert">
+        <p className={`mt-2 text-xs ${onDark ? 'text-red-300' : 'text-red-700'}`} role="alert">
           {error}
         </p>
       )}
@@ -139,7 +221,7 @@ export default function ContinueWithGoogleButton({
 
 function GoogleGlyph() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden xmlns="http://www.w3.org/2000/svg">
+    <svg className="shrink-0" width="18" height="18" viewBox="0 0 18 18" aria-hidden xmlns="http://www.w3.org/2000/svg">
       <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.264h2.909c1.702-1.567 2.683-3.874 2.683-6.62z" />
       <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.909-2.258c-.806.54-1.837.86-3.047.86-2.344 0-4.328-1.584-5.036-3.71H.957v2.332A8.997 8.997 0 0 0 9 18z" />
       <path fill="#FBBC05" d="M3.964 10.712A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.712V4.956H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.044l3.007-2.332z" />

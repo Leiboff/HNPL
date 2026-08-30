@@ -45,8 +45,24 @@ import { mapPasskeyError, type PasskeyError } from './passkeyErrors';
  *
  * The EXPLICIT `signIn()` path (modal button click) keeps the original
  * behaviour: real failures of a real auth attempt SHOULD be visible.
+ *
+ * ─── conditionalWhen: starting the ceremony later than mount ─────────────
+ *
+ * Requirement 2 above is a DOM requirement, not a timing one: the
+ * `autocomplete="username webauthn"` input has to exist when
+ * startAuthentication({ useBrowserAutofill: true }) runs, not when the
+ * component mounts. /login now hides its email field behind a "Sign in with
+ * email" button, so on mount there is no such input and the ceremony would
+ * bind to nothing — the suggestion would simply never appear, silently.
+ *
+ * `conditionalWhen` defers the ceremony until the caller says the input is
+ * on the page. Feature detection is deliberately NOT deferred with it: it
+ * runs on mount either way, so the explicit passkey button appears
+ * immediately regardless of whether the email form has been opened.
  */
-export function usePasskeySignIn({ onSuccess }: { onSuccess: () => void }) {
+export function usePasskeySignIn(
+  { onSuccess, conditionalWhen = true }: { onSuccess: () => void; conditionalWhen?: boolean },
+) {
   const [supported,         setSupported]         = useState(false);
   const [conditionalActive, setConditionalActive] = useState(false);
   const [loading,           setLoading]           = useState(false);
@@ -57,8 +73,10 @@ export function usePasskeySignIn({ onSuccess }: { onSuccess: () => void }) {
   const onSuccessRef = useRef(onSuccess);
   onSuccessRef.current = onSuccess;
 
+  // ── Feature detection — always on mount ───────────────────────────────
+  // Split out from the ceremony below so `supported` (and therefore the
+  // explicit passkey button) never waits on conditionalWhen.
   useEffect(() => {
-    // ── Feature detection (synchronous) ─────────────────────────────────
     // Wrapped in try/catch because sandboxed iframes and strict CSP can
     // throw on accessing window properties (uncommon, but real).
     let hasWebAuthn = false;
@@ -67,12 +85,14 @@ export function usePasskeySignIn({ onSuccess }: { onSuccess: () => void }) {
     } catch {
       hasWebAuthn = false;
     }
-    if (!hasWebAuthn) {
-      // supported stays false → the button is hidden, the password form
-      // is the only path. That's the right fallback.
-      return;
-    }
-    setSupported(true);
+    // supported stays false → the button is hidden, the password form
+    // is the only path. That's the right fallback.
+    if (hasWebAuthn) setSupported(true);
+  }, []);
+
+  // ── Conditional ceremony — once supported AND the input is on the page ─
+  useEffect(() => {
+    if (!supported || !conditionalWhen) return;
 
     let cancelled = false;
 
@@ -100,7 +120,7 @@ export function usePasskeySignIn({ onSuccess }: { onSuccess: () => void }) {
       if (!autofillAvailable || cancelled) return;
 
       // ── Conditional ceremony (best-effort) ───────────────────────────
-      // We auto-start this on mount; the patient never clicked anything.
+      // We start this ourselves; the patient never clicked anything.
       // ANY failure here — Supabase error, WebAuthn ceremony exception,
       // network blip — must NOT surface a page-level banner. Log for ops
       // visibility, then quietly fall back to the password form (which
@@ -141,7 +161,7 @@ export function usePasskeySignIn({ onSuccess }: { onSuccess: () => void }) {
       // observed to throw on some browsers in race conditions.
       try { WebAuthnAbortService.cancelCeremony(); } catch { /* ignore */ }
     };
-  }, []);
+  }, [supported, conditionalWhen]);
 
   const signIn = useCallback(async (): Promise<{ error: PasskeyError | null }> => {
     if (!supported) return { error: 'unsupported' };

@@ -16,6 +16,7 @@ const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 
 const SIGNUP   = read('app/signup/patient/actions.ts');
+const CALLBACK = read('app/auth/callback/route.ts');
 const PATIENT  = read('app/patient/actions.ts');
 const CHECKOUT = read('app/checkout/[token]/actions.ts');
 const MIGRATION      = read('supabase/migrations/0081_terms_acceptance.sql');
@@ -42,6 +43,30 @@ describe('signup records acceptance server-side', () => {
     expect(SIGNUP).toMatch(
       /\.from\('profiles'\)\s*\.update\(\{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION\s*\}\)/,
     );
+  });
+});
+
+describe('Google (OAuth) signup records acceptance server-side', () => {
+  // The OAuth path has no "I agree" checkbox to gate on — the
+  // disclosure is presented beneath the button and the acceptance is
+  // recorded at /auth/callback, the first server-side moment after the
+  // click. Full coverage of both halves (disclosure + record) lives in
+  // app/oauth-terms-consent.test.ts; this is the pointer that keeps the
+  // OAuth path visible from the suite that owns acceptance overall, so
+  // it cannot be the one path someone forgets exists.
+  it('stamps profiles.terms_accepted_at + terms_version + privacy_version for OAuth arrivals', () => {
+    expect(CALLBACK).toMatch(/from '@\/lib\/legal\/terms'/);
+    expect(CALLBACK).toMatch(/from '@\/lib\/legal\/privacy'/);
+    expect(CALLBACK).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
+    expect(CALLBACK).toMatch(/terms_version:\s*TERMS_VERSION/);
+    expect(CALLBACK).toMatch(/privacy_version:\s*PRIVACY_VERSION/);
+  });
+
+  it('the button that starts that flow carries the disclosure by default', () => {
+    const BUTTON = read('app/_components/ContinueWithGoogleButton.tsx');
+    expect(BUTTON).toMatch(/showConsentNote = true/);
+    expect(BUTTON).toMatch(/href="\/legal\/terms"/);
+    expect(BUTTON).toMatch(/href="\/legal\/privacy"/);
   });
 });
 
