@@ -131,23 +131,94 @@ describe('the passkey option — the reason /login differs from /signup', () => 
   });
 });
 
-describe('the email form is a reveal, and opens itself for those who need it', () => {
-  it('is collapsed behind a button by default', () => {
+describe('email sign-in is a SCREEN, not an expanding panel', () => {
+  // The two views are mutually exclusive on one route: entering the
+  // email screen must take the chooser, the signup CTAs and the install
+  // callout away with it, or the change reads as the page growing rather
+  // than as arriving somewhere. That exclusivity is the whole effect, so
+  // it is pinned rather than left to the eye.
+
+  it('renders exactly one of the two views, never both', () => {
+    expect(LOGIN).toMatch(/\{!emailOpen \? \(/);
+    expect(LOGIN).toMatch(/data-testid="login-view-chooser"/);
+    expect(LOGIN).toMatch(/data-testid="login-view-email"/);
+    // A ternary, not two independent && blocks that could both render.
+    expect(LOGIN).not.toMatch(/\{emailOpen && \(/);
+  });
+
+  it('the chooser owns the signup CTAs and the install callout', () => {
+    // If these drift outside the ternary they persist onto the email
+    // screen, and the illusion goes with them.
+    const chooser = LOGIN.slice(
+      LOGIN.indexOf('data-testid="login-view-chooser"'),
+      LOGIN.indexOf('data-testid="login-view-email"'),
+    );
+    expect(chooser).toMatch(/aria-label="New to BetterNow"/);
+    expect(chooser).toMatch(/<InstallCallout \/>/);
+    expect(LOGIN.match(/<InstallCallout \/>/g) ?? []).toHaveLength(1);
+  });
+
+  it('the email screen has its own heading and a way back', () => {
+    const emailView = LOGIN.slice(LOGIN.indexOf('data-testid="login-view-email"'));
+    expect(emailView).toMatch(/data-testid="login-email-back"/);
+    expect(emailView).toMatch(/onClick=\{closeEmail\}/);
+    expect(emailView).toMatch(/Sign in with email/);
+    expect(emailView).toMatch(/autoFocus/);
+  });
+
+  it('is the chooser on first load — nothing auto-navigates to the sub-screen', () => {
     expect(LOGIN).toMatch(/const \[emailOpen, setEmailOpen\] = useState\(false\);/);
-    expect(LOGIN).toMatch(/data-testid="login-open-email"/);
-    expect(LOGIN).toMatch(/Sign in with email/);
-    expect(LOGIN).toMatch(/\{emailOpen && \(/);
+    // The old auto-open was fine for an expanding panel and wrong for a
+    // screen: it lands you on a page you never appeared to travel to.
+    expect(LOGIN).not.toMatch(/setEmailOpen\(true\);?\s*\}?\s*,?\s*\[\]\)/);
+    expect(LOGIN).not.toMatch(/if \(method === 'password'\) setEmailOpen\(true\)/);
   });
 
-  it('opens itself when the last successful sign-in here was a password', () => {
-    // Otherwise the habitual password user pays a tap on every visit for
-    // a collapse that exists to tidy the screen for everyone else.
-    expect(LOGIN).toMatch(/if \(method === 'password'\) setEmailOpen\(true\);/);
+  it('the last-used password highlight moved to the chooser button', () => {
+    // What replaces the auto-open: their usual way in is ringed and
+    // pilled on the chooser, one tap away.
+    const chooser = LOGIN.slice(
+      LOGIN.indexOf('data-testid="login-view-chooser"'),
+      LOGIN.indexOf('data-testid="login-view-email"'),
+    );
+    expect(chooser).toMatch(/data-testid="login-open-email"/);
+    expect(chooser).toMatch(/lastUsed === 'password' && <LastUsedPill tone="onDark" \/>/);
+    expect(chooser).toMatch(/lastUsed === 'password' \? \{ border: '1\.5px solid #15A89E'/);
+  });
+});
+
+describe('looking like a page means behaving like one', () => {
+  it('opening pushes a history entry, so the device back button comes back here', () => {
+    // Without this, hardware-back from the email screen leaves /login
+    // entirely — the single most jarring way a fake page can betray
+    // itself, and the one users hit constantly in an installed PWA.
+    expect(LOGIN).toMatch(/window\.history\.pushState\(\{ hnplLoginView: 'email' \}, ''\)/);
+    expect(LOGIN).toMatch(/window\.addEventListener\('popstate', onPop\)/);
+    expect(LOGIN).toMatch(/window\.removeEventListener\('popstate', onPop\)/);
   });
 
-  it('carries the accessibility wiring a disclosure needs', () => {
-    expect(LOGIN).toMatch(/aria-expanded=\{false\}/);
-    expect(LOGIN).toMatch(/aria-controls="login-email-form"/);
-    expect(LOGIN).toMatch(/id="login-email-form"/);
+  it('the on-screen arrow and the hardware button run the SAME path', () => {
+    // closeEmail delegates to history.back() so the two cannot diverge —
+    // otherwise the arrow closes the view while leaving the pushed entry
+    // behind, and the next hardware-back does nothing visible.
+    expect(LOGIN).toMatch(/window\.history\.back\(\); return;/);
+  });
+
+  it('a pushState failure still leaves the arrow working', () => {
+    // Sandboxed/file-origin contexts can throw on pushState. The view
+    // must still open; only the hardware-back nicety is lost, which is
+    // why closeEmail checks the state before delegating.
+    expect(LOGIN).toMatch(/try \{ window\.history\.pushState/);
+    expect(LOGIN).toMatch(/if \(window\.history\.state\?\.hnplLoginView === 'email'\)/);
+  });
+
+  it('the transition is directional and respects reduced motion', () => {
+    const CSS = read('app/globals.css');
+    expect(LOGIN).toMatch(/auth-view-\$\{viewDir\}/);
+    expect(CSS).toMatch(/\.auth-view-forward/);
+    expect(CSS).toMatch(/\.auth-view-back/);
+    const reduced = CSS.slice(CSS.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toMatch(/auth-view-forward/);
+    expect(reduced).toMatch(/animation: none/);
   });
 });

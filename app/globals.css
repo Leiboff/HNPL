@@ -138,3 +138,36 @@ body {
   border: 0;
   display: block;
 }
+
+/* ── Auth screen transitions ───────────────────────────────────────────
+ * /login swaps between its method chooser and the email sign-in screen
+ * in place — same route, same component — so the two need to ARRIVE
+ * like pages rather than appear like an accordion. A short slide + fade
+ * is what sells that: it reads as travel, not as the page growing.
+ *
+ * Direction is meaningful. .auth-view-forward comes from the right (you
+ * went in), .auth-view-back from the left (you came out), matching the
+ * platform convention for a push/pop on a stack. See the pushState +
+ * popstate wiring in app/(auth)/login/page.tsx, which drives both this
+ * and the device back button.
+ *
+ * Reduced motion removes the travel and keeps only the fade, so the
+ * change of screen is still perceptible without the movement. */
+@keyframes auth-view-in-forward {
+  from { opacity: 0; transform: translateX(22px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes auth-view-in-back {
+  from { opacity: 0; transform: translateX(-22px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.auth-view-forward { animation: auth-view-in-forward .26s cubic-bezier(.22,.61,.36,1) both; }
+.auth-view-back    { animation: auth-view-in-back    .26s cubic-bezier(.22,.61,.36,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-view-forward,
+  .auth-view-back {
+    animation: none;
+    opacity: 1;
+  }
+}
