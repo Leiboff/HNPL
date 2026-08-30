@@ -39,7 +39,6 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n
 const codeOf = (p: string) => stripComments(read(p));
 
 const BUTTON   = codeOf('app/_components/ContinueWithGoogleButton.tsx');
-const CALLBACK = codeOf('app/auth/callback/route.ts');
 const ENTRY    = codeOf('app/(auth)/signup/SignupEntry.tsx');
 const LOGIN    = codeOf('app/(auth)/login/page.tsx');
 const NOTE     = codeOf('app/_components/AuthConsentNote.tsx');
@@ -152,66 +151,80 @@ describe('a surface may suppress the button note ONLY by covering the stack itse
 
 // ─── 2. The record, server-side ────────────────────────────────────────
 
-describe('/auth/callback records the acceptance for OAuth arrivals', () => {
-  it('reads the versions from the same single sources every other path uses', () => {
-    expect(CALLBACK).toMatch(/from '@\/lib\/legal\/terms'/);
-    expect(CALLBACK).toMatch(/from '@\/lib\/legal\/privacy'/);
-    // Never a hardcoded version string — that is how the audit trail
-    // drifts away from the published documents.
-    expect(CALLBACK).not.toMatch(/terms_version:\s*['"]/);
-    expect(CALLBACK).not.toMatch(/privacy_version:\s*['"]/);
+describe('the OAuth path AGREES — actively, like the email path', () => {
+  // WHAT THIS USED TO PIN, and why it changed.
+  //
+  // The first fix for the Google gap was inference: a "by continuing…"
+  // line beside the button, and /auth/callback stamping
+  // terms_accepted_at on arrival. Defensible as sign-in-wrap, and
+  // strictly weaker than what the email path does — where an unticked
+  // box has to be ticked and signUpPatient refuses without it.
+  //
+  // The agreement is now an explicit onboarding step, so these
+  // assertions moved with it. The callback must NOT stamp any more:
+  // doing so would pre-satisfy the step and skip the very screen that
+  // collects the agreement.
+
+  const CALLBACK_SRC = codeOf('app/auth/callback/route.ts');
+  const STEP_PAGE    = codeOf('app/onboarding/terms/page.tsx');
+  const STEP_ACTION  = codeOf('app/onboarding/terms/actions.ts');
+  const STEP_CLIENT  = codeOf('app/onboarding/terms/TermsStepClient.tsx');
+  const STATE        = codeOf('lib/onboarding/state.ts');
+
+  it('the callback no longer stamps acceptance — that would skip the step', () => {
+    expect(CALLBACK_SRC).not.toMatch(/terms_accepted_at:/);
+    expect(CALLBACK_SRC).not.toMatch(/TERMS_VERSION/);
+    expect(CALLBACK_SRC).not.toMatch(/PRIVACY_VERSION/);
   });
 
-  it('selects terms_accepted_at so it can tell "already accepted" from "never"', () => {
-    expect(CALLBACK).toMatch(/\.select\('id, first_name, last_name, role, terms_accepted_at'\)/);
+  it('the step is FIRST for OAuth paths, so nothing can be reached before it', () => {
+    // A gate that is not first is not a gate.
+    expect(STATE).toMatch(/if \(!user\.identity_providers\.includes\('email'\)\) steps\.push\('terms'\);/);
+    expect(STATE).toMatch(/case 'terms':\s*return !!profile\.terms_accepted_at;/);
   });
 
-  it('stamps all three columns when nothing is recorded yet', () => {
-    expect(CALLBACK).toMatch(
-      /const consent: Record<string, unknown> = profile\.terms_accepted_at\s*\?\s*\{\}\s*:\s*\{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION,\s*\}/,
-    );
+  it('the email path has no terms STEP — it has the tick in the form instead', () => {
+    // Both paths agree actively; they just do it in the place that suits
+    // each. Adding the step to the email list would show a screen whose
+    // answer was already given.
+    expect(STATE).toMatch(/if \(user\.identity_providers\.includes\('email'\)\) steps\.push\('verify-email'\);/);
+    expect(codeOf('app/signup/patient/actions.ts')).toMatch(/if \(!termsAccepted\)\s*return \{ error:/);
   });
 
-  it('NEVER overwrites an existing acceptance — the audit trail is not re-versioned', () => {
-    // The ternary above is the whole guard: a truthy terms_accepted_at
-    // yields an empty patch. Pin that the write is the merge of the two
-    // objects and nothing wider.
-    expect(CALLBACK).toMatch(/\.update\(\{ \.\.\.updates, \.\.\.consent \}\)\.eq\('id', userId\)/);
+  it('the tick is unticked, names both documents, and gates the button', () => {
+    // Same shape as the email form's tick — nothing pre-ticked, nothing
+    // inferred from having got this far.
+    expect(STEP_CLIENT).toMatch(/useState\(false\)/);
+    expect(STEP_CLIENT).toMatch(/href="\/legal\/terms"/);
+    expect(STEP_CLIENT).toMatch(/href="\/legal\/privacy"/);
+    expect(STEP_CLIENT).toMatch(/disabled=\{!accepted \|\| pending\.disabled\}/);
   });
 
-  it('the defensively-provisioned row gets the same stamp (it must not be the one that escapes)', () => {
-    const insertIdx = CALLBACK.indexOf(".from('profiles').insert(");
-    expect(insertIdx).toBeGreaterThan(-1);
-    const insert = CALLBACK.slice(insertIdx, CALLBACK.indexOf('return;', insertIdx));
-    expect(insert).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
-    expect(insert).toMatch(/terms_version:\s*TERMS_VERSION/);
-    expect(insert).toMatch(/privacy_version:\s*PRIVACY_VERSION/);
+  it('acceptance is a SERVER decision, not a client checkbox', () => {
+    // The checkbox is an affordance; a hand-crafted POST can omit it.
+    expect(STEP_ACTION).toMatch(/'use server'/);
+    expect(STEP_ACTION).toMatch(/if \(!accepted\) return \{ error:/);
+    expect(STEP_ACTION).toMatch(/await supabase\.auth\.getUser\(\)/);
   });
 
-  it('still returns early when there is genuinely nothing to write', () => {
-    expect(CALLBACK).toMatch(
-      /if \(Object\.keys\(updates\)\.length === 0 && Object\.keys\(consent\)\.length === 0\) return;/,
-    );
+  it('it stamps all three columns from the same single sources', () => {
+    expect(STEP_ACTION).toMatch(/from '@\/lib\/legal\/terms'/);
+    expect(STEP_ACTION).toMatch(/from '@\/lib\/legal\/privacy'/);
+    expect(STEP_ACTION).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
+    expect(STEP_ACTION).toMatch(/terms_version:\s*TERMS_VERSION/);
+    expect(STEP_ACTION).toMatch(/privacy_version:\s*PRIVACY_VERSION/);
+    // Never a hardcoded version string.
+    expect(STEP_ACTION).not.toMatch(/terms_version:\s*['"]/);
   });
 
-  it('the name-sync payload is still names-only — the stamp did not widen it', () => {
-    const scope = CALLBACK.slice(CALLBACK.indexOf('async function ensureOAuthProfileSynced'));
-    const setters = scope.match(/updates\.\w+/g) ?? [];
-    expect(setters.length).toBeGreaterThan(0);
-    for (const s of setters) {
-      expect(['first_name', 'last_name']).toContain(s.replace('updates.', ''));
-    }
+  it('write-once — an existing acceptance is never re-versioned', () => {
+    // The audit trail records what the customer ORIGINALLY agreed to.
+    expect(STEP_ACTION).toMatch(/\.is\('terms_accepted_at', null\)/);
   });
 
-  it('the stamp stays inside the OAuth-only branch — a password reset lands here too', () => {
-    // ensureOAuthProfileSynced is the ONLY place the consent object is
-    // built, and it is called only for users with a non-email identity.
-    expect((CALLBACK.match(/const consent:/g) ?? []).length).toBe(1);
-    const syncStart = CALLBACK.indexOf('async function ensureOAuthProfileSynced');
-    const syncEnd   = CALLBACK.indexOf('export async function GET');
-    const consentIdx = CALLBACK.indexOf('const consent:');
-    expect(consentIdx).toBeGreaterThan(syncStart);
-    expect(consentIdx).toBeLessThan(syncEnd);
-    expect(CALLBACK).toMatch(/identities\.some\(\(i\)\s*=>\s*i\.provider\s*!==\s*'email'\)/);
+  it('the step page refuses to render for anyone it is not the step for', () => {
+    // Stops an email-path user reaching a screen absent from their list,
+    // and stops anyone re-agreeing to something already recorded.
+    expect(STEP_PAGE).toMatch(/if \(status\.done \|\| status\.step !== 'terms'\) \{\s*redirect\('\/onboarding'\);/);
   });
 });

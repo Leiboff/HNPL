@@ -428,6 +428,9 @@ describe('the three options are one stack, not three components', () => {
     // is what a new caller gets for free.
     expect(GOOGLE).toMatch(/shape = 'rounded'/);
     expect(GOOGLE).toMatch(/shape === 'pill' \? 'rounded-full' : 'rounded-\[14px\]'/);
-    expect(codeOf('app/signup/patient/PatientSignupForm.tsx')).toMatch(/shape="pill"/);
+    // The signup form no longer renders this button at all — Google is
+    // offered on the /signup chooser instead — so the remaining callers
+    // are the two dark stacks, both of which opt in.
+    expect(codeOf('app/signup/patient/PatientSignupForm.tsx')).not.toMatch(/ContinueWithGoogleButton/);
   });
 });

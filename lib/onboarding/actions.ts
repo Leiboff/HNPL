@@ -43,7 +43,7 @@ function svc() {
 // plus the Didit identity-verification columns (UI-display only — they
 // don't feed computeOnboarding; sa_id_number/liveness_verified_at do that).
 const PROFILE_SELECT =
-  'phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, ' +
+  'terms_accepted_at, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, ' +
   'onboarding_completed, identity_verification_status, didit_session_id, first_name, last_name';
 
 async function loadUserAndProfile() {
@@ -68,6 +68,7 @@ async function loadUserAndProfile() {
       identity_providers: (user.identities ?? []).map((i) => i.provider),
     },
     profile: {
+      terms_accepted_at:    profile.terms_accepted_at    as string | null,
       phone_verified_at:    profile.phone_verified_at    as string | null,
       sa_id_number:         profile.sa_id_number         as string | null,
       salary_day:           profile.salary_day           as number | null,
