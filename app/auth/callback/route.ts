@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { TERMS_VERSION } from '@/lib/legal/terms';
-import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 
 // ─── Auth callback — PKCE code exchange for recovery / OAuth / magic links
 //
@@ -39,34 +37,19 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 //   • If (edge case) the trigger somehow didn't fire, we insert the
 //     profile ourselves so the caller never lands in the app
 //     half-provisioned.
-//   • It ALSO records T&C + Privacy acceptance for OAuth arrivals —
-//     see below. This closes the gap where a Google signup created a
-//     fully usable patient account with profiles.terms_accepted_at
-//     NULL, because the "I agree" tick lived only on the email form
-//     (app/signup/patient/actions.ts) and the OAuth path skipped it.
 //
-// ─── Why acceptance is recorded HERE ──────────────────────────────────
+// ─── Acceptance is NOT recorded here ──────────────────────────────────
 //
-// The disclosure is presented at the click. Every surface carrying the
-// Google button states the terms next to it, in one of two forms:
+// It used to be: this callback stamped terms_accepted_at on arrival,
+// inferring agreement from a "by continuing…" line beside the Google
+// button. That was the weaker half of a real gap — a Google signup had
+// no equivalent of the email form's "I agree" tick.
 //
-//   • /login and /signup put AuthConsentNote beneath the WHOLE stack of
-//     options ("By continuing you agree to our Terms & Conditions and
-//     Privacy Policy"), because every option there — passkey, Google,
-//     email — is an act of continuing, and Google in particular can be
-//     the moment an account first exists.
-//   • /signup/patient keeps ContinueWithGoogleButton's own note, since
-//     the button sits above an email form with its own "I agree" tick
-//     and there is no stack-wide line to inherit.
-//
-// This callback is the first server-side moment after that click, so it
-// is where the acceptance is durably stamped with the versions that were
-// in force — the same columns and the same constants the email path
-// writes (migrations 0081 + 0082).
-//
-// Stamp-if-NULL, never overwrite: a profile that already carries an
-// acceptance keeps the version it originally agreed to, so the audit
-// trail is never rewritten by a later sign-in.
+// It is now an explicit onboarding step instead
+// (app/onboarding/terms/), first in the OAuth step list, gated
+// server-side by its own action. Stamping here would pre-satisfy that
+// step and skip the screen, so this route deliberately does not touch
+// those columns — it provisions the profile and nothing more.
 
 const DEFAULT_NEXT = '/dashboard';
 
@@ -115,7 +98,7 @@ async function ensureOAuthProfileSynced(userId: string, email: string, metadata:
   // is DEFINER-mode — insert it here.
   const { data: profile } = await client
     .from('profiles')
-    .select('id, first_name, last_name, role, terms_accepted_at')
+    .select('id, first_name, last_name, role')
     .eq('id', userId)
     .maybeSingle();
 
@@ -132,11 +115,6 @@ async function ensureOAuthProfileSynced(userId: string, email: string, metadata:
       first_name: names.first || '',
       last_name:  names.last  || '',
       verification_status: 'unverified',
-      // Same acceptance stamp as the update branch below — a row we
-      // provision ourselves must not be the one that escapes it.
-      terms_accepted_at: new Date().toISOString(),
-      terms_version:     TERMS_VERSION,
-      privacy_version:   PRIVACY_VERSION,
     });
     return;
   }
@@ -150,21 +128,9 @@ async function ensureOAuthProfileSynced(userId: string, email: string, metadata:
   if (!profile.first_name && names.first) updates.first_name = names.first;
   if (!profile.last_name  && names.last)  updates.last_name  = names.last;
 
-  // Acceptance stamp — kept in its OWN object so the name-sync payload
-  // above stays exactly what it was (names only, never role). Written
-  // only when nothing is recorded yet: an existing acceptance is an
-  // audit fact and is never re-versioned by a later sign-in.
-  const consent: Record<string, unknown> = profile.terms_accepted_at
-    ? {}
-    : {
-        terms_accepted_at: new Date().toISOString(),
-        terms_version:     TERMS_VERSION,
-        privacy_version:   PRIVACY_VERSION,
-      };
+  if (Object.keys(updates).length === 0) return;
 
-  if (Object.keys(updates).length === 0 && Object.keys(consent).length === 0) return;
-
-  await client.from('profiles').update({ ...updates, ...consent }).eq('id', userId);
+  await client.from('profiles').update(updates).eq('id', userId);
 }
 
 export async function GET(request: NextRequest) {

@@ -12,7 +12,6 @@ import {
   focusAndScrollTo,
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
-import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import { usePendingAction } from '@/components/loading/usePendingAction';
 
 // ─── PatientSignupForm — account-only ─────────────────────────────────
@@ -27,6 +26,9 @@ import { usePendingAction } from '@/components/loading/usePendingAction';
 // unchanged: a patient arriving here via a practice's checkout link
 // still gets their invitation cookie set and processed by the
 // middleware after they finish onboarding.
+//
+// Google is NOT offered here — it is offered on the /signup chooser that
+// leads to this form. See the note where that block used to be.
 
 type Invitation = {
   email:        string;
@@ -167,19 +169,15 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         </div>
       )}
 
-      {/* Continue with Google — patient signup shortcut. Google users
-          skip the email + password step; every OTHER onboarding step
-          (email confirmed via Google, ID + phone + salary date + credit
-          + affordability check) still applies via the standard patient
-          surfaces after they land in /patient. */}
-      <div className="mb-[18px] space-y-[18px]" data-testid="patient-signup-google-block">
-        <ContinueWithGoogleButton label="Continue with Google" tone="onDark" shape="pill" />
-        <div className="relative flex items-center gap-[14px]">
-          <div className="grow border-t border-[var(--auth-hairline)]" />
-          <span className="text-[12px] text-[var(--auth-dim)]">or with email</span>
-          <div className="grow border-t border-[var(--auth-hairline)]" />
-        </div>
-      </div>
+      {/* No Google option here, deliberately.
+          
+          This form is reached by choosing "Sign up with email" on the
+          /signup chooser, where Google is offered alongside it. Repeating
+          it inside the form re-asks a question the visitor has already
+          answered, one screen after they answered it — and it was the
+          only reason this form imported ContinueWithGoogleButton at all.
+          
+          The chooser is the one place the methods compete. */}
 
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <div className="grid grid-cols-2 gap-3">
@@ -317,7 +315,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
           style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
         >
-          {pending.showLabel ? 'Creating account…' : 'Create account'}
+          {pending.showLabel ? 'Creating account…' : 'Next'}
         </button>
       </form>
 

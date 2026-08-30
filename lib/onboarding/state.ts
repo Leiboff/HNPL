@@ -30,6 +30,7 @@ import type { OnboardingFlags } from '@/lib/featureFlags';
 // fixtures.
 
 export type OnboardingStep =
+  | 'terms'
   | 'verify-email'
   | 'phone'
   | 'salary'
@@ -50,6 +51,7 @@ export type OnboardingStep =
 // always-passes liveness check is a liability, not an option.
 
 export const STEP_PATH: Record<OnboardingStep, string> = {
+  'terms':        '/onboarding/terms',
   'verify-email': '/onboarding/verify-email',
   'phone':        '/onboarding/phone',
   'salary':       '/onboarding/salary',
@@ -59,6 +61,7 @@ export const STEP_PATH: Record<OnboardingStep, string> = {
 
 // Display copy — shown in the shell above the current step.
 export const STEP_TITLE: Record<OnboardingStep, string> = {
+  'terms':        'Terms & conditions',
   'verify-email': 'Verify your email',
   'phone':        'Add your cell number',
   'salary':       'Your income',
@@ -79,6 +82,8 @@ export type UserForOnboarding = {
 };
 
 export type ProfileForOnboarding = {
+  /** Set when the customer has actively agreed. See the 'terms' step. */
+  terms_accepted_at:      string | null;
   phone_verified_at:      string | null;
   sa_id_number:           string | null;
   salary_day:             number | null;
@@ -113,6 +118,25 @@ export type OnboardingStatus =
  */
 export function stepListFor(user: UserForOnboarding, flags: OnboardingFlags): OnboardingStep[] {
   const steps: OnboardingStep[] = [];
+  // ── Terms — OAuth paths only, and first ──────────────────────────────
+  //
+  // An email signup ticks "I agree" inside the signup form, gated
+  // server-side in signUpPatient before the account is created, so by the
+  // time they reach onboarding the acceptance is already recorded and a
+  // step here would be a screen they never see.
+  //
+  // A Google signup has no such moment. The OAuth round trip creates the
+  // account with nothing agreed to, which is why acceptance used to be
+  // inferred from a "by continuing…" line rather than actively given.
+  // This step is that missing moment, and it is FIRST because agreeing to
+  // the terms is the precondition for the rest of onboarding, not a
+  // formality to collect on the way out.
+  //
+  // Included by IDENTITY PROVIDER rather than by whether the column is
+  // already set — same rule as verify-email below, and for the same
+  // reason: the list is path-fixed, so a step's presence must not depend
+  // on how far along the user is.
+  if (!user.identity_providers.includes('email')) steps.push('terms');
   if (user.identity_providers.includes('email')) steps.push('verify-email');
   steps.push('phone');
   // Salary comes BEFORE identity deliberately. The identity step ends by
@@ -142,6 +166,8 @@ function stepIsSatisfied(
   profile: ProfileForOnboarding,
 ): boolean {
   switch (step) {
+    case 'terms':
+      return !!profile.terms_accepted_at;
     case 'verify-email':
       return !!user.email_confirmed_at;
     case 'phone':

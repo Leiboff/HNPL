@@ -54,12 +54,20 @@ describe('Google (OAuth) signup records acceptance server-side', () => {
   // app/oauth-terms-consent.test.ts; this is the pointer that keeps the
   // OAuth path visible from the suite that owns acceptance overall, so
   // it cannot be the one path someone forgets exists.
-  it('stamps profiles.terms_accepted_at + terms_version + privacy_version for OAuth arrivals', () => {
-    expect(CALLBACK).toMatch(/from '@\/lib\/legal\/terms'/);
-    expect(CALLBACK).toMatch(/from '@\/lib\/legal\/privacy'/);
-    expect(CALLBACK).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
-    expect(CALLBACK).toMatch(/terms_version:\s*TERMS_VERSION/);
-    expect(CALLBACK).toMatch(/privacy_version:\s*PRIVACY_VERSION/);
+  it('records acceptance in the onboarding terms STEP, not by inference', () => {
+    // WAS: pinned /auth/callback stamping on arrival, with agreement
+    // inferred from a "by continuing…" line. The OAuth path now agrees
+    // ACTIVELY, in a step gated server-side — see
+    // app/oauth-terms-consent.test.ts for the full shape. This is the
+    // pointer that keeps that path visible from the suite owning
+    // acceptance overall.
+    const STEP = read('app/onboarding/terms/actions.ts');
+    expect(STEP).toMatch(/from '@\/lib\/legal\/terms'/);
+    expect(STEP).toMatch(/from '@\/lib\/legal\/privacy'/);
+    expect(STEP).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
+    expect(STEP).toMatch(/if \(!accepted\) return \{ error:/);
+    // And the callback no longer infers it.
+    expect(CALLBACK).not.toMatch(/terms_accepted_at:/);
   });
 
   it('the button that starts that flow carries the disclosure by default', () => {

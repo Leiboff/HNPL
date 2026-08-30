@@ -35,7 +35,7 @@ export default async function IdentityStep({ searchParams }: Props) {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed, identity_verification_status, identity_verification_reason')
+    .select('terms_accepted_at, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed, identity_verification_status, identity_verification_reason')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile) redirect('/dashboard');

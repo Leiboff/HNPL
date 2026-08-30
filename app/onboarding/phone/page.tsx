@@ -21,7 +21,7 @@ export default async function PhoneStep() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('phone, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
+    .select('phone, terms_accepted_at, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile) redirect('/dashboard');

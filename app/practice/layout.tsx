@@ -1,4 +1,5 @@
 import InactivityGuard from '@/lib/auth/InactivityGuard';
+import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Practice layout — inactivity guard wrapper ────────────────────────
 //
@@ -15,11 +16,21 @@ import InactivityGuard from '@/lib/auth/InactivityGuard';
 // specific redirect target for the current page, and the pages
 // already handle it cleanly.
 
-export default function PracticeLayout({ children }: { children: React.ReactNode }) {
+export default async function PracticeLayout({ children }: { children: React.ReactNode }) {
+  // Read-only, and memoised per request by cache() in requestUser.ts, so
+  // this costs nothing on pages that already call it. Deliberately NOT a
+  // gate: the note above still holds — each page owns its own
+  // requireConfirmedUser + role check and its own redirect target.
+  const user = await getRequestUser();
+
   return (
     <>
       {children}
-      <InactivityGuard minutesIdle={10} minutesWarn={5} />
+      <InactivityGuard
+        minutesIdle={10}
+        minutesWarn={5}
+        sessionStartedAt={Date.parse(user?.last_sign_in_at ?? '')}
+      />
     </>
   );
 }

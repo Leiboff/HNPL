@@ -93,17 +93,22 @@ describe('Placement — patient surfaces only', () => {
     // it is simply no longer narrated in the UI.
   });
 
-  it('/signup/patient renders the Google block above the email form', () => {
-    expect(PT_SIGNUP_F).toMatch(/from ['"]@\/app\/_components\/ContinueWithGoogleButton['"]/);
-    expect(PT_SIGNUP_F).toMatch(/<ContinueWithGoogleButton\b/);
-    expect(PT_SIGNUP_F).toMatch(/data-testid="patient-signup-google-block"/);
-
-    // The Google block MUST render before the email/password form so
-    // it's the first visible option. Pin DOM order via string index.
-    const googleIdx = PT_SIGNUP_F.indexOf('data-testid="patient-signup-google-block"');
-    const formIdx   = PT_SIGNUP_F.indexOf('<form onSubmit={handleSubmit}');
-    expect(googleIdx).toBeGreaterThan(0);
-    expect(formIdx).toBeGreaterThan(googleIdx);
+  it('the email signup form does NOT offer Google — the chooser does', () => {
+    // WAS: pinned the Google block above the form on /signup/patient.
+    //
+    // That form is now reached by choosing "Sign up with email" on the
+    // /signup chooser, where Google sits beside it. Offering it again
+    // inside the form re-asks a question the visitor answered one screen
+    // earlier. The block is gone from the form and the chooser is now
+    // the single place the methods compete.
+    // Match the IMPORT and the JSX, not prose — the note left where the
+    // block used to be names the component to explain its absence, and a
+    // bare substring check would forbid the file explaining itself.
+    expect(PT_SIGNUP_F).not.toMatch(/^import .*ContinueWithGoogleButton/m);
+    expect(PT_SIGNUP_F).not.toMatch(/<ContinueWithGoogleButton/);
+    expect(PT_SIGNUP_F).not.toMatch(/data-testid="patient-signup-google-block"/);
+    const ENTRY = read('app/(auth)/signup/SignupEntry.tsx');
+    expect(ENTRY).toMatch(/<ContinueWithGoogleButton/);
   });
 
   it('/signup/practice does NOT render the Google button (staff = email/password)', () => {
