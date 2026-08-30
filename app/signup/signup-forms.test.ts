@@ -92,10 +92,16 @@ describe('signup forms — branded betternow terms link', () => {
     expect(src).toContain('betternow');
   });
 
-  it('patient form links /legal/terms with lowercase "betternow"', () => {
-    const src = readSrc('app/signup/patient/PatientSignupForm.tsx');
+  it('the patient tick links /legal/terms with lowercase "betternow" — now on the chooser', () => {
+    // The tick moved off the email form and onto the /signup chooser,
+    // where it sits under BOTH the email and Google options so one
+    // agreement covers whichever route is taken. The wording guarantee
+    // follows it.
+    const src = readSrc('app/(auth)/signup/SignupEntry.tsx');
     expect(src).toContain('/legal/terms');
     expect(src).toContain('betternow');
+    // …and the form no longer carries one of its own.
+    expect(readSrc('app/signup/patient/PatientSignupForm.tsx')).not.toContain('patient-termsAccepted');
   });
 });
 

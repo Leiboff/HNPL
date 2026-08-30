@@ -38,6 +38,17 @@ type Invitation = {
 type Props = {
   invitation?: Invitation | null;
   token?:      string | null;
+  /**
+   * The agreement collected on the /signup chooser, one screen back —
+   * where it now sits under BOTH the email and Google options so a
+   * single tick covers whichever the visitor picks.
+   *
+   * The chooser will not open this form without it, so in practice it is
+   * always true here. It is still threaded through to signUpPatient,
+   * which keeps its own server-side gate: the tick is a client
+   * affordance and a hand-crafted POST can omit it.
+   */
+  termsAccepted: boolean;
 };
 
 // Dark-surface field styling, identical to the email sign-in screen on
@@ -63,17 +74,16 @@ function FieldLabel({ label, required }: { label: string; required?: boolean }) 
 }
 
 const BLANK = {
-  firstName:     '',
-  lastName:      '',
-  email:         '',
-  password:      '',
-  confirm:       '',
-  termsAccepted: false,
+  firstName: '',
+  lastName:  '',
+  email:     '',
+  password:  '',
+  confirm:   '',
 };
 
 type Fields = typeof BLANK;
 
-export default function PatientSignupForm({ invitation, token }: Props) {
+export default function PatientSignupForm({ invitation, token, termsAccepted }: Props) {
   const [fields, setFields] = useState<Fields>({
     ...BLANK,
     email: invitation?.email ?? '',
@@ -103,13 +113,12 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         return null;
       },
     },
-    confirm:       { validate: (v) => v.password !== v.confirm ? 'Passwords don\'t match.' : null },
-    termsAccepted: { validate: (v) => v.termsAccepted ? null : 'Please accept the betternow terms to continue.' },
+    confirm:   { validate: (v) => v.password !== v.confirm ? 'Passwords don\'t match.' : null },
   }), []);
 
   const { errors, handleBlur, validateAll } = useFieldValidation(fields, schema);
 
-  function setText(key: Exclude<keyof Fields, 'termsAccepted'>) {
+  function setText(key: keyof Fields) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
       setFields(f => ({ ...f, [key]: e.target.value }));
   }
@@ -137,7 +146,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
       email:         emailTrimmed,
       password:      fields.password,
       token:         token ?? undefined,
-      termsAccepted: fields.termsAccepted,
+      termsAccepted,
     });
     setLoading(false);
 
@@ -261,47 +270,12 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           {errors.confirm && <p className="mt-1 text-xs text-red-300">{errors.confirm}</p>}
         </div>
 
-        {/* ── Terms ───────────────────────────────────────────── */}
-        <div>
-          <div className={`flex items-start gap-[13px] rounded-2xl border-[1.5px] p-4 ${
-            errors.termsAccepted
-              ? 'border-red-400/70 bg-red-500/10'
-              : 'border-[var(--auth-edge)] bg-[var(--auth-fill-raised)]'
-          }`}>
-            <input
-              id="patient-termsAccepted"
-              type="checkbox"
-              checked={fields.termsAccepted}
-              onChange={(e) => setFields(f => ({ ...f, termsAccepted: e.target.checked }))}
-              onBlur={onBlur('termsAccepted')}
-              aria-invalid={!!errors.termsAccepted}
-              className="mt-px h-5 w-5 shrink-0 rounded-md border-[1.5px] border-[var(--auth-edge)] accent-[#15A89E]"
-            />
-            <label htmlFor="patient-termsAccepted" className="text-[14px] leading-[1.6] text-[var(--auth-muted)]">
-              I agree to the{' '}
-              <Link
-                href="/legal/terms"
-                target="_blank"
-                rel="noopener"
-                className="font-semibold text-white underline underline-offset-[3px]"
-              >
-                Terms &amp; Conditions
-              </Link>
-              {' '}and{' '}
-              <Link
-                href="/legal/privacy"
-                target="_blank"
-                rel="noopener"
-                className="font-semibold text-white underline underline-offset-[3px]"
-              >
-                Privacy Policy
-              </Link>.
-            </label>
-          </div>
-          {errors.termsAccepted && (
-            <p className="mt-1 text-xs text-red-300">{errors.termsAccepted}</p>
-          )}
-        </div>
+        {/* The "I agree" tick is NOT here any more. It lives on the
+            /signup chooser, one screen back, under both the email and
+            Google options — so one tick covers whichever route the
+            visitor takes, instead of the email path having its own and
+            the Google path having none. Its value arrives as a prop and
+            is still gated server-side in signUpPatient. */}
 
         {submitError && (
           <div className="rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-[13px] leading-[1.55] text-red-200" role="alert">

@@ -54,20 +54,19 @@ describe('Google (OAuth) signup records acceptance server-side', () => {
   // app/oauth-terms-consent.test.ts; this is the pointer that keeps the
   // OAuth path visible from the suite that owns acceptance overall, so
   // it cannot be the one path someone forgets exists.
-  it('records acceptance in the onboarding terms STEP, not by inference', () => {
-    // WAS: pinned /auth/callback stamping on arrival, with agreement
-    // inferred from a "by continuing…" line. The OAuth path now agrees
-    // ACTIVELY, in a step gated server-side — see
-    // app/oauth-terms-consent.test.ts for the full shape. This is the
-    // pointer that keeps that path visible from the suite owning
-    // acceptance overall.
-    const STEP = read('app/onboarding/terms/actions.ts');
-    expect(STEP).toMatch(/from '@\/lib\/legal\/terms'/);
-    expect(STEP).toMatch(/from '@\/lib\/legal\/privacy'/);
-    expect(STEP).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
+  it('records acceptance from the chooser tick, with the step as the floor', () => {
+    // The OAuth path collects an unticked box on the /signup chooser and
+    // carries it to /auth/callback, which records it. Nothing is
+    // inferred: absent the parameter, nothing is written. The onboarding
+    // step remains the enforcement floor for anything that arrives
+    // unstamped. Full shape in app/oauth-terms-consent.test.ts.
+    const CHOOSER = read('app/(auth)/signup/SignupEntry.tsx');
+    const STEP    = read('app/onboarding/terms/actions.ts');
+    expect(CHOOSER).toMatch(/data-testid="signup-terms-checkbox"/);
+    expect(CHOOSER).toMatch(/consentGiven=\{termsAccepted\}/);
+    expect(CALLBACK).toMatch(/terms_accepted'\) === '1'/);
+    expect(CALLBACK).toMatch(/consentGiven && !profile\.terms_accepted_at/);
     expect(STEP).toMatch(/if \(!accepted\) return \{ error:/);
-    // And the callback no longer infers it.
-    expect(CALLBACK).not.toMatch(/terms_accepted_at:/);
   });
 
   it('the button that starts that flow carries the disclosure by default', () => {
@@ -101,12 +100,13 @@ describe('plan activation records acceptance server-side', () => {
 });
 
 describe('both "I agree" checkboxes link to BOTH documents', () => {
-  const SIGNUP_FORM   = read('app/signup/patient/PatientSignupForm.tsx');
   const CHECKOUT_FORM = read('app/checkout/[token]/CheckoutForm.tsx');
 
   it('signup label links to /legal/terms AND /legal/privacy', () => {
-    expect(SIGNUP_FORM).toMatch(/href="\/legal\/terms"/);
-    expect(SIGNUP_FORM).toMatch(/href="\/legal\/privacy"/);
+    // On the chooser now, not the email form — one tick for both routes.
+    const CHOOSER = read('app/(auth)/signup/SignupEntry.tsx');
+    expect(CHOOSER).toMatch(/href="\/legal\/terms"/);
+    expect(CHOOSER).toMatch(/href="\/legal\/privacy"/);
   });
 
   it('checkout label links to /legal/terms AND /legal/privacy', () => {

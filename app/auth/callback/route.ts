@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { TERMS_VERSION } from '@/lib/legal/terms';
+import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 
 // ─── Auth callback — PKCE code exchange for recovery / OAuth / magic links
 //
@@ -38,18 +40,31 @@ import { createClient } from '@/lib/supabase/server';
 //     profile ourselves so the caller never lands in the app
 //     half-provisioned.
 //
-// ─── Acceptance is NOT recorded here ──────────────────────────────────
+// ─── Acceptance: recorded only when the caller actually collected it ──
 //
-// It used to be: this callback stamped terms_accepted_at on arrival,
-// inferring agreement from a "by continuing…" line beside the Google
-// button. That was the weaker half of a real gap — a Google signup had
-// no equivalent of the email form's "I agree" tick.
+// The /signup chooser puts an unticked box under BOTH its options and
+// will not start either route without it, then sends `terms_accepted=1`
+// on the OAuth round trip. That parameter is what this route records.
 //
-// It is now an explicit onboarding step instead
-// (app/onboarding/terms/), first in the OAuth step list, gated
-// server-side by its own action. Stamping here would pre-satisfy that
-// step and skip the screen, so this route deliberately does not touch
-// those columns — it provisions the profile and nothing more.
+// It is deliberately NOT inferred. An earlier version stamped every
+// OAuth arrival on the strength of a "by continuing…" line, which made
+// the record say more than the visitor had actually done. Absent the
+// parameter, nothing is written.
+//
+// WHAT THIS RECORD IS WORTH, stated plainly. The tick happens before any
+// session exists — there is no profile to stamp at that moment — so the
+// acceptance has to travel as a query parameter, and a query parameter
+// is client-asserted. Only the person completing the OAuth flow can set
+// it, so the failure mode is someone asserting their own agreement
+// rather than someone forging another's; but it is weaker than a server
+// action on an authenticated session.
+//
+// Which is why the onboarding terms step (app/onboarding/terms/) STAYS.
+// It is the enforcement floor: anything that reaches the app without a
+// recorded acceptance — this parameter missing, dropped, or a new
+// account arriving through /login's Google button, which is a sign-in
+// screen and collects no tick — is stopped there and asked properly. In
+// the normal /signup flow it never appears.
 
 const DEFAULT_NEXT = '/dashboard';
 
@@ -90,7 +105,12 @@ function extractOAuthName(metadata: Record<string, unknown> | null | undefined):
   return { first: '', last: '' };
 }
 
-async function ensureOAuthProfileSynced(userId: string, email: string, metadata: Record<string, unknown> | null | undefined): Promise<void> {
+async function ensureOAuthProfileSynced(
+  userId: string,
+  email: string,
+  metadata: Record<string, unknown> | null | undefined,
+  consentGiven: boolean,
+): Promise<void> {
   const client = svc();
 
   // Read the existing profile row (created by the on_auth_user_created
@@ -98,7 +118,7 @@ async function ensureOAuthProfileSynced(userId: string, email: string, metadata:
   // is DEFINER-mode — insert it here.
   const { data: profile } = await client
     .from('profiles')
-    .select('id, first_name, last_name, role')
+    .select('id, first_name, last_name, role, terms_accepted_at')
     .eq('id', userId)
     .maybeSingle();
 
@@ -115,6 +135,14 @@ async function ensureOAuthProfileSynced(userId: string, email: string, metadata:
       first_name: names.first || '',
       last_name:  names.last  || '',
       verification_status: 'unverified',
+      // Only when the chooser actually collected the tick.
+      ...(consentGiven
+        ? {
+            terms_accepted_at: new Date().toISOString(),
+            terms_version:     TERMS_VERSION,
+            privacy_version:   PRIVACY_VERSION,
+          }
+        : null),
     });
     return;
   }
@@ -128,15 +156,30 @@ async function ensureOAuthProfileSynced(userId: string, email: string, metadata:
   if (!profile.first_name && names.first) updates.first_name = names.first;
   if (!profile.last_name  && names.last)  updates.last_name  = names.last;
 
-  if (Object.keys(updates).length === 0) return;
+  // Write-once: an existing acceptance is an audit fact and is never
+  // re-versioned by a later sign-in. Kept in its own object so the
+  // name-sync payload above stays names-only, never role.
+  const consent: Record<string, unknown> =
+    consentGiven && !profile.terms_accepted_at
+      ? {
+          terms_accepted_at: new Date().toISOString(),
+          terms_version:     TERMS_VERSION,
+          privacy_version:   PRIVACY_VERSION,
+        }
+      : {};
 
-  await client.from('profiles').update(updates).eq('id', userId);
+  if (Object.keys(updates).length === 0 && Object.keys(consent).length === 0) return;
+
+  await client.from('profiles').update({ ...updates, ...consent }).eq('id', userId);
 }
 
 export async function GET(request: NextRequest) {
   const url    = new URL(request.url);
   const code   = url.searchParams.get('code');
   const next   = safeNext(url.searchParams.get('next'));
+  // Set by ContinueWithGoogleButton only when its caller collected the
+  // tick. Strict equality — any other value is treated as absent.
+  const consentGiven = url.searchParams.get('terms_accepted') === '1';
   const origin = url.origin;
 
   if (!code) {
@@ -159,7 +202,12 @@ export async function GET(request: NextRequest) {
     const identities = user?.identities ?? [];
     const hasOAuthIdentity = identities.some((i) => i.provider !== 'email');
     if (user && hasOAuthIdentity) {
-      await ensureOAuthProfileSynced(user.id, user.email ?? '', user.user_metadata as Record<string, unknown> | null | undefined);
+      await ensureOAuthProfileSynced(
+        user.id,
+        user.email ?? '',
+        user.user_metadata as Record<string, unknown> | null | undefined,
+        consentGiven,
+      );
     }
   } catch (err) {
     // Never block the redirect on a fixup failure. The user still

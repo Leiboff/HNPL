@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import AuthSurface from '@/app/_components/AuthSurface';
-import AuthConsentNote from '@/app/_components/AuthConsentNote';
 import PatientSignupForm from '@/app/signup/patient/PatientSignupForm';
 
 // ─── /signup — the auth entry screen ───────────────────────────────────
@@ -76,10 +75,34 @@ export default function SignupEntry() {
   // /signup, popstate to close, and the on-screen arrow delegating to
   // history.back() so the two cannot diverge. The two journeys are now
   // mirror images of each other, which is the point.
+  // ── One tick, both routes ───────────────────────────────────────────
+  //
+  // Sits under BOTH options rather than inside the email form, because
+  // the Google path had no equivalent moment: OAuth leaves the page and
+  // comes back with an account already made. Collecting it here — before
+  // either route starts — is the only point both paths pass through.
+  //
+  // NOT pre-checked, deliberately. A pre-ticked box is the textbook
+  // example of consent that is not freely given (POPIA's "expression of
+  // will"; GDPR's "clear affirmative action"), and functionally it is
+  // the same as the passive "by continuing you agree" line this
+  // replaces — the visitor does nothing. Unchecked costs one tap on a
+  // screen they are already looking at.
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsError,    setTermsError]    = useState(false);
+
+  function requireTerms(): boolean {
+    if (termsAccepted) return true;
+    setTermsError(true);
+    document.getElementById('signup-termsAccepted')?.focus();
+    return false;
+  }
+
   const [formOpen, setFormOpen] = useState(false);
   const [viewDir,  setViewDir]  = useState<'forward' | 'back'>('forward');
 
   function openForm() {
+    if (!requireTerms()) return;
     setViewDir('forward');
     setFormOpen(true);
     try { window.history.pushState({ hnplSignupView: 'form' }, ''); } catch { /* non-fatal: the arrow still works */ }
@@ -148,7 +171,15 @@ export default function SignupEntry() {
             onClick={openForm}
             data-testid="signup-entry-email"
             className="flex h-[52px] w-full items-center justify-center rounded-full text-[15px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
-            style={{ background: TEAL, boxShadow: '0 14px 30px -12px rgba(21,168,158,.75)' }}
+            // Dimmed while the tick is missing, matching the Google
+            // button beside it — both routes are gated, so both must read
+            // as equally unavailable. Still clickable: the click is what
+            // explains why (see requireTerms).
+            style={{
+              background: TEAL,
+              boxShadow: termsAccepted ? '0 14px 30px -12px rgba(21,168,158,.75)' : 'none',
+              opacity: termsAccepted ? 1 : 0.45,
+            }}
           >
             {/* Carries the envelope for the same reason /login's email
                 option does: without an icon its label would start at the
@@ -167,11 +198,53 @@ export default function SignupEntry() {
             label="Continue with Google"
             shape="pill"
             showConsentNote={false}
+            consentGiven={termsAccepted}
+            onConsentMissing={requireTerms}
           />
         </div>
 
-        {/* One legal line for the whole stack — see AuthConsentNote. */}
-        <AuthConsentNote className="mt-5" />
+        {/* ── The agreement, for both routes above ─────────────────── */}
+        <div className="mt-6">
+          <div className={`flex items-start gap-[13px] rounded-2xl border-[1.5px] p-4 transition-colors ${
+            termsError
+              ? 'border-red-400/70 bg-red-500/10'
+              : 'border-[var(--auth-edge)] bg-[var(--auth-fill-raised)]'
+          }`}>
+            <input
+              id="signup-termsAccepted"
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => { setTermsAccepted(e.target.checked); setTermsError(false); }}
+              data-testid="signup-terms-checkbox"
+              className="mt-px h-5 w-5 shrink-0 rounded-md border-[1.5px] border-[var(--auth-edge)] accent-[#15A89E]"
+            />
+            <label htmlFor="signup-termsAccepted" className="text-[14px] leading-[1.6] text-[var(--auth-muted)]">
+              I agree to betternow&apos;s{' '}
+              <Link
+                href="/legal/terms"
+                target="_blank"
+                rel="noopener"
+                className="font-semibold text-white underline underline-offset-[3px]"
+              >
+                Terms &amp; Conditions
+              </Link>
+              {' '}and{' '}
+              <Link
+                href="/legal/privacy"
+                target="_blank"
+                rel="noopener"
+                className="font-semibold text-white underline underline-offset-[3px]"
+              >
+                Privacy Policy
+              </Link>.
+            </label>
+          </div>
+          {termsError && (
+            <p className="mt-2 text-[13px] text-red-300" role="alert" data-testid="signup-terms-error">
+              Please accept the betternow terms to continue.
+            </p>
+          )}
+        </div>
 
         {/* ── Existing account ────────────────────────────────────────
             This is the ONLY route back for a returning user, passkey
@@ -231,7 +304,7 @@ export default function SignupEntry() {
             Interest-free medical payment plans.
           </p>
 
-          <PatientSignupForm invitation={null} token={null} />
+          <PatientSignupForm invitation={null} token={null} termsAccepted={termsAccepted} />
         </div>
       )}
     </AuthSurface>
