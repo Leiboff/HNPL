@@ -156,9 +156,30 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
     // actually wants.
     expect(LOGIN).toMatch(/data-testid="login-signup-patient"/);
     expect(LOGIN).toMatch(/href="\/signup\/patient"/);
-    expect(LOGIN).toMatch(/New to BetterNow/);
-    // Still a full-width control, not a footnote link.
-    expect(LOGIN).toMatch(/data-testid="login-signup-patient"[\s\S]{0,200}h-\[52px\] w-full/);
+    expect(LOGIN).toMatch(/New to betternow/i);
+
+    // ─── What "prominent" means here, restated ──────────────────────
+    //
+    // This assertion used to require a bordered card, then a full-width
+    // pill. Both were over-specified: they pinned a SHAPE when the thing
+    // worth defending is that signup is findable at a glance and not the
+    // small grey footer link it once was.
+    //
+    // Matching the sign-in buttons' shape turned out to be its own bug —
+    // it read as a fourth way to sign in rather than a different journey
+    // — so the shape is now typographic. The guarantees that actually
+    // matter are asserted directly instead:
+    //
+    //   1. it carries the brand accent, not muted body grey, and
+    //   2. it sits directly under the sign-in options, well above the
+    //      install callout that used to sit between them.
+    const cta = LOGIN.slice(LOGIN.indexOf('data-testid="login-signup-patient"'));
+    expect(cta.slice(0, 300)).toMatch(/var\(--auth-accent\)/);
+    expect(cta.slice(0, 300)).not.toMatch(/--auth-dim/);
+    expect(LOGIN.indexOf('data-testid="login-signup-patient"'))
+      .toBeLessThan(LOGIN.indexOf('<InstallCallout'));
+    // And it is NOT one of the sign-in controls.
+    expect(cta.slice(0, 300)).not.toMatch(/h-\[52px\] w-full/);
     // The practice card is deliberately gone from THIS page.
     expect(LOGIN).not.toMatch(/data-testid="login-signup-practice"/);
     expect(LOGIN).not.toMatch(/href="\/signup\/practice"/);

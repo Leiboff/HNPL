@@ -364,24 +364,36 @@ export default function LoginPage() {
               acceptance this line makes. */}
           <AuthConsentNote className="mt-5" action="signing in" />
 
-          {/* ── One way out: patient signup ──────────────────────────
-              This was two cards, patient and practice. Practice
-              registration is not a login-screen concern: it already has
-              its own route from the landing page — the header and mobile
-              menu link "For practices" → /practices, which carries the
-              "Offer betternow at your practice" CTA → /signup/practice,
-              as does the footer. Repeating it here gave a returning
-              patient a decision they never needed to make, so this is
-              now the single door a signed-out visitor on THIS page
-              actually wants. */}
-          <Link
-            href="/signup/patient"
-            data-testid="login-signup-patient"
-            className="mt-9 flex h-[52px] w-full items-center justify-center rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
-            style={{ borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
-          >
-            New to BetterNow? Sign up
-          </Link>
+          {/* ── A different kind of action ───────────────────────────
+              Not a fourth pill. The three options above are one task —
+              sign in — and giving signup the same height, shape and fill
+              made it read as another way to do that task rather than a
+              different journey for a different person.
+              
+              So it is differentiated the way hierarchy normally is:
+              typography instead of a control, the accent colour instead
+              of a border, and a hairline to mark that the screen has
+              moved on from its primary job. It also now mirrors the
+              footer on /signup ("Already have an account? Sign in"), so
+              the pair reads as one system from either direction.
+
+              It is NOT the grey footer link this replaced years ago —
+              see app/password-reset-flow.test.ts, which still guards
+              against that. It sits directly under the options, above the
+              fold, in the brand accent. Subordinate, not buried. */}
+          <div className="mt-8 border-t border-[var(--auth-hairline)] pt-7">
+            <p className="text-center text-[15px] text-[var(--auth-muted)]">
+              New to betternow?{' '}
+              <Link
+                href="/signup/patient"
+                data-testid="login-signup-patient"
+                className="font-semibold underline-offset-[3px] hover:underline"
+                style={{ color: 'var(--auth-accent)' }}
+              >
+                Sign up
+              </Link>
+            </p>
+          </div>
 
           {/* PWA install callout — secondary visual weight so it doesn't
               compete with the sign-in options. Hidden when the page is
