@@ -168,21 +168,20 @@ export default function ContinueWithGoogleButton({
         disabled={loading}
         aria-label={ariaLabel ?? label}
         data-testid="continue-with-google"
-        // Icon AND label both start at fixed offsets, rather than the
-        // pair being centred as a unit. Centring the pair makes each
-        // button's contents depend on ITS OWN label width, so in a stack
-        // of options with different labels nothing lines up: first the
-        // icons scattered (78/88/95px), and centring the icons alone just
-        // moved the scatter to the text (92/103/109px). Anchoring both
-        // left is what actually produces two clean columns, and is the
-        // standard layout for a provider stack.
-        className={`flex h-[52px] w-full items-center gap-3 px-5 border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors ${
+        // Contents are centred, but as a FIXED-WIDTH row (.auth-option-row
+        // in app/globals.css) rather than shrink-to-fit — so the icon and
+        // label land at the same coordinates here as in the sibling
+        // options, instead of at coordinates derived from this button's
+        // own label width. See that block for the measurements.
+        className={`flex h-[52px] w-full items-center justify-center border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors ${
           shape === 'pill' ? 'rounded-full' : 'rounded-[14px]'
         }`}
         style={highlighted ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#E2E8EE' }}
       >
-        <GoogleGlyph />
-        <span>{loading ? 'Opening Google…' : label}</span>
+        <span className="auth-option-row">
+          <GoogleGlyph />
+          <span className="auth-option-label">{loading ? 'Opening Google…' : label}</span>
+        </span>
       </button>
       {showConsentNote && (
         <p

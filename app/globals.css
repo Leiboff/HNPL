@@ -215,3 +215,40 @@ body {
   --auth-fill-raised:  rgba(255, 255, 255, .06);
   --auth-fill-hover:   rgba(255, 255, 255, .09);
 }
+
+/* ── Auth option row ───────────────────────────────────────────────────
+ * The icon + label inside every sign-in / sign-up option, on /login and
+ * /signup.
+ *
+ * The requirement is BOTH centred and aligned, which are in tension: if
+ * each button centres its own contents, position depends on that
+ * button's label width, and nothing lines up across the stack. Measured
+ * on a 390px viewport, that produced icons at x = 78 / 88 / 95; pinning
+ * the icons left alone just moved the scatter to the labels (92 / 103 /
+ * 109).
+ *
+ * The resolution is a FIXED-WIDTH row that is itself centred. The row is
+ * the same width in every option, so centring it puts the icon — and the
+ * label box after it — at identical coordinates in all of them, while
+ * the block still reads as centred. The label is then centred inside its
+ * own share of the row, so short labels do not sit hard against the
+ * icon.
+ *
+ * The width is sized to the longest label in the set ("Sign in with a
+ * passkey", 167px at 15px Poppins) plus the 18px icon and the 12px gap,
+ * with a little slack. A NEW LABEL LONGER THAN THAT will overflow rather
+ * than re-align the row — the labels are pinned in
+ * app/(auth)/login/login-auth-surface.test.ts so that is caught here
+ * rather than in production. */
+.auth-option-row {
+  display: flex;
+  width: 200px;          /* 18 icon + 12 gap + 170 label box */
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-option-row > .auth-option-label {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}

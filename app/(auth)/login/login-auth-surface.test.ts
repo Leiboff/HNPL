@@ -300,61 +300,84 @@ describe('the auth palette is the BRAND palette', () => {
 });
 
 describe('the three options are one stack, not three components', () => {
-  // WHAT WENT WRONG — TWICE — so it is recognisable if it returns.
+  // CENTRED **AND** ALIGNED — the two are in tension, and every naive
+  // fix satisfies one at the other's expense. Measured on a 390px
+  // viewport at each attempt:
   //
-  // Measured on a 390px viewport at each stage:
+  //   1. Icon + label centred as a shrink-to-fit pair → each button's
+  //      contents sit where ITS OWN label width puts them.
+  //      Icons at x = 78 / 88 / 95.
+  //   2. Icons pinned to a left column → icons all 21, but the scatter
+  //      simply moved to the labels: 92 / 103 / 109.
+  //   3. Both anchored left → aligned, but no longer centred.
+  //   4. A FIXED-WIDTH row, centred (.auth-option-row): the row is the
+  //      same width everywhere, so centring it lands the icon and the
+  //      label box at identical coordinates in every option, and the
+  //      block still reads as centred. Row 75/75, icons 75, labels 105.
   //
-  //   1. Icon and label were centred together as a UNIT, so each
-  //      button's contents depended on ITS OWN label width. Icons landed
-  //      at x = 78 / 88 / 95.
-  //   2. Pinning the icons to a left column fixed those (all 21) but
-  //      simply moved the scatter to the text: 92 / 103 / 109.
-  //   3. Anchoring BOTH left is what actually produces two columns —
-  //      icons 21, labels 51 — and is the standard provider-stack
-  //      layout.
-  //
-  // The lesson worth keeping: centring anything inside these buttons
-  // re-couples position to label length. justify-center is the tell.
-  //
-  // ContinueWithGoogleButton also carried rounded-[14px] between two
-  // rounded-full neighbours, so the middle option looked like a
-  // different component wedged into the stack.
+  // The rule that falls out: the row must never shrink to its content.
+  // Any width/padding token that reintroduces that reintroduces the bug.
 
   const CHOOSER = LOGIN.slice(
     LOGIN.indexOf('data-testid="login-view-chooser"'),
     LOGIN.indexOf('data-testid="login-view-email"'),
   );
   const ENTRY = codeOf('app/(auth)/signup/SignupEntry.tsx');
+  const CSS   = read('app/globals.css');
+  const ROW   = CSS.slice(CSS.indexOf('.auth-option-row {'));
   const stackControls = (src: string) =>
     src.match(/className="flex h-\[\d+px\] w-full items-center[^"]*"/g) ?? [];
 
-  it('nothing in the stack is centred — that is what couples position to label length', () => {
-    for (const c of [...stackControls(CHOOSER), ...stackControls(ENTRY)]) {
-      expect(c).not.toMatch(/justify-center/);
-    }
-    expect(GOOGLE).not.toMatch(/items-center justify-center/);
+  it('the row has a fixed width — the property the whole fix rests on', () => {
+    expect(ROW).toMatch(/display:\s*flex/);
+    expect(ROW).toMatch(/width:\s*\d+px/);
+    // Not fit-content / auto / max-content, all of which re-couple
+    // position to label length.
+    expect(ROW).not.toMatch(/width:\s*(auto|fit-content|max-content)/);
   });
 
-  it('every option opens the same two columns: icon then label', () => {
-    // px-5 sets the icon column; gap-3 after an 18px icon sets the label
-    // column. Same three tokens on every control, or they diverge.
+  it('every option centres that row rather than its raw contents', () => {
     const controls = [...stackControls(CHOOSER), ...stackControls(ENTRY)];
     expect(controls.length).toBe(3); // passkey + email, and /signup's primary
+    for (const c of controls) expect(c).toMatch(/justify-center/);
+    expect(GOOGLE).toMatch(/items-center justify-center/);
+    // …and none of them re-adds its own inline gap/padding, which would
+    // shift that button's row away from the shared position.
     for (const c of controls) {
-      expect(c).toMatch(/items-center gap-3 px-5/);
+      expect(c).not.toMatch(/gap-\d/);
+      expect(c).not.toMatch(/px-\d/);
     }
-    expect(GOOGLE).toMatch(/items-center gap-3 px-5/);
+  });
+
+  it('every option actually uses the shared row and label classes', () => {
+    for (const src of [CHOOSER, ENTRY, GOOGLE]) {
+      expect(src).toMatch(/className="auth-option-row"/);
+      expect(src).toMatch(/className="auth-option-label"/);
+    }
   });
 
   it('every option HAS an icon, so none of them starts its label early', () => {
-    // /signup's primary had no icon: its label would have begun in the
-    // icon column while its neighbour's began after the gap. Misaligned
-    // by omission is still misaligned.
     const icons = [...CHOOSER.matchAll(/<svg className="([^"]*)"/g)].map((m) => m[1]);
     expect(icons.length).toBeGreaterThanOrEqual(2);
     for (const i of icons) expect(i).toMatch(/shrink-0/);
     expect(ENTRY).toMatch(/<svg className="h-\[18px\] w-\[18px\] shrink-0"/);
     expect(GOOGLE).toMatch(/<svg className="shrink-0"/);
+  });
+
+  it('no label outgrows the row it has to fit in', () => {
+    // The row is sized to the longest label in the set. A longer one
+    // would overflow rather than re-align, so the set is pinned here —
+    // this is the test the CSS comment points at.
+    const labels = [
+      'Sign in with a passkey', 'Sign in with Google', 'Sign in with email',
+      'Sign up with email', 'Continue with Google',
+      'Authenticating…', 'Opening Google…',
+    ];
+    const longest = Math.max(...labels.map((l) => l.length));
+    expect(longest).toBeLessThanOrEqual('Sign in with a passkey'.length);
+    for (const l of labels) {
+      expect([CHOOSER, ENTRY, GOOGLE].some((s) => s.includes(l))).toBe(true);
+    }
   });
 
   it('all options share one height and one radius', () => {
@@ -371,8 +394,6 @@ describe('the three options are one stack, not three components', () => {
   });
 
   it('the shape stays opt-IN, so /signup/patient keeps its form geometry', () => {
-    // That page sits the button above rounded-[14px] inputs; defaulting
-    // to pill would make it the odd one out there instead.
     expect(GOOGLE).toMatch(/shape = 'rounded'/);
     expect(GOOGLE).toMatch(/shape === 'pill' \? 'rounded-full' : 'rounded-\[14px\]'/);
     expect(codeOf('app/signup/patient/PatientSignupForm.tsx')).not.toMatch(/shape=/);

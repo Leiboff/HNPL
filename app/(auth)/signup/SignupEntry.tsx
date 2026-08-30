@@ -102,18 +102,20 @@ export default function SignupEntry() {
           <Link
             href="/signup/patient"
             data-testid="signup-entry-email"
-            className="flex h-[52px] w-full items-center gap-3 px-5 rounded-full text-[15px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
+            className="flex h-[52px] w-full items-center justify-center rounded-full text-[15px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
             style={{ background: TEAL, boxShadow: '0 14px 30px -12px rgba(21,168,158,.75)' }}
           >
             {/* Carries the envelope for the same reason /login's email
                 option does: without an icon its label would start at the
                 icon column while its neighbour's starts after the gap,
                 and the stack would be misaligned again by omission. */}
-            <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <rect x="3" y="5" width="18" height="14" rx="2" />
-              <path d="m3 7 9 6 9-6" />
-            </svg>
-            Sign up with email
+            <span className="auth-option-row">
+              <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m3 7 9 6 9-6" />
+              </svg>
+              <span className="auth-option-label">Sign up with email</span>
+            </span>
           </Link>
 
           <ContinueWithGoogleButton
