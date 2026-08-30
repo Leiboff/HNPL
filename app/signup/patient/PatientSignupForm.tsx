@@ -38,10 +38,14 @@ type Props = {
   token?:      string | null;
 };
 
-const INPUT_BASE = 'h-[50px] w-full rounded-[14px] border-[1.5px] px-[14px] text-[15px] text-[#13294B] outline-none transition-all placeholder:text-[#A8B4C2]';
-const INPUT_OK   = 'border-[#E2E8EE] bg-[#FBFCFD] focus:border-[#15A89E] focus:bg-white focus:ring-4 focus:ring-[#15A89E]/15';
-const INPUT_ERR  = 'border-red-400 bg-white focus:border-red-500 focus:ring-4 focus:ring-red-200';
-const LABEL_CLS  = 'block text-[13px] font-medium text-[#41556F] mb-[7px]';
+// Dark-surface field styling, identical to the email sign-in screen on
+// /login — same height, radius, fill, focus ring and label colour — so
+// the two halves of the auth flow are the same component vocabulary
+// rather than two designs that merely share a background.
+const INPUT_BASE = 'h-[52px] w-full rounded-2xl border-[1.5px] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35';
+const INPUT_OK   = 'border-[var(--auth-edge)] bg-[var(--auth-fill-raised)] focus:border-[var(--auth-accent)] focus:bg-[var(--auth-fill-hover)] focus:ring-4 focus:ring-[var(--auth-accent-ring)]';
+const INPUT_ERR  = 'border-red-400/70 bg-red-500/10 focus:border-red-400 focus:ring-4 focus:ring-red-400/20';
+const LABEL_CLS  = 'block text-[13px] font-medium text-[var(--auth-muted)] mb-[7px]';
 
 function inputClass(hasError: boolean) {
   return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
@@ -51,7 +55,7 @@ function FieldLabel({ label, required }: { label: string; required?: boolean }) 
   return (
     <label className={LABEL_CLS}>
       {label}
-      {required && <span aria-hidden className="ml-0.5 text-[#E05252]">*</span>}
+      {required && <span aria-hidden className="ml-0.5 text-red-300">*</span>}
     </label>
   );
 }
@@ -153,13 +157,13 @@ export default function PatientSignupForm({ invitation, token }: Props) {
   return (
     <>
       {invitation && (
-        <div className="mb-6 rounded-xl border px-4 py-4" style={{ borderColor: 'rgba(19,41,75,.15)', background: 'rgba(19,41,75,.04)' }}>
-          <p className="text-sm font-medium" style={{ color: '#13294B' }}>
+        <div className="mb-6 rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] px-4 py-4">
+          <p className="text-sm font-medium text-white">
             {invitation.practiceName
               ? `${invitation.practiceName} has sent you a payment plan.`
               : 'You have been sent a payment plan.'}
           </p>
-          <p className="mt-0.5 text-sm text-gray-600">Register to view and accept it.</p>
+          <p className="mt-0.5 text-sm text-[var(--auth-muted)]">Register to view and accept it.</p>
         </div>
       )}
 
@@ -169,11 +173,11 @@ export default function PatientSignupForm({ invitation, token }: Props) {
           + affordability check) still applies via the standard patient
           surfaces after they land in /patient. */}
       <div className="mb-[18px] space-y-[18px]" data-testid="patient-signup-google-block">
-        <ContinueWithGoogleButton label="Continue with Google" />
+        <ContinueWithGoogleButton label="Continue with Google" tone="onDark" shape="pill" />
         <div className="relative flex items-center gap-[14px]">
-          <div className="grow border-t border-[#E7EDF1]" />
-          <span className="text-xs text-[#93A2B4]">or with email</span>
-          <div className="grow border-t border-[#E7EDF1]" />
+          <div className="grow border-t border-[var(--auth-hairline)]" />
+          <span className="text-[12px] text-[var(--auth-dim)]">or with email</span>
+          <div className="grow border-t border-[var(--auth-hairline)]" />
         </div>
       </div>
 
@@ -191,7 +195,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
               placeholder="Jane"
               className={inputClass(!!errors.firstName)}
             />
-            {errors.firstName && <p className="mt-1 text-xs text-red-600">{errors.firstName}</p>}
+            {errors.firstName && <p className="mt-1 text-xs text-red-300">{errors.firstName}</p>}
           </div>
           <div>
             <FieldLabel label="Last name" required />
@@ -205,7 +209,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
               placeholder="Smith"
               className={inputClass(!!errors.lastName)}
             />
-            {errors.lastName && <p className="mt-1 text-xs text-red-600">{errors.lastName}</p>}
+            {errors.lastName && <p className="mt-1 text-xs text-red-300">{errors.lastName}</p>}
           </div>
         </div>
 
@@ -220,9 +224,9 @@ export default function PatientSignupForm({ invitation, token }: Props) {
             readOnly={!!invitation}
             aria-invalid={!!errors.email}
             placeholder="jane@example.com"
-            className={`${inputClass(!!errors.email)} ${invitation ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}
+            className={`${inputClass(!!errors.email)} ${invitation ? 'cursor-not-allowed !bg-white/[.03] !text-[var(--auth-dim)]' : ''}`}
           />
-          {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email}</p>}
+          {errors.email && <p className="mt-1 text-xs text-red-300">{errors.email}</p>}
         </div>
 
         <div>
@@ -239,7 +243,7 @@ export default function PatientSignupForm({ invitation, token }: Props) {
             placeholder="At least 8 characters"
             className={inputClass(!!errors.password)}
           />
-          {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password}</p>}
+          {errors.password && <p className="mt-1 text-xs text-red-300">{errors.password}</p>}
         </div>
 
         <div>
@@ -256,13 +260,15 @@ export default function PatientSignupForm({ invitation, token }: Props) {
             placeholder="Repeat your password"
             className={inputClass(!!errors.confirm)}
           />
-          {errors.confirm && <p className="mt-1 text-xs text-red-600">{errors.confirm}</p>}
+          {errors.confirm && <p className="mt-1 text-xs text-red-300">{errors.confirm}</p>}
         </div>
 
         {/* ── Terms ───────────────────────────────────────────── */}
         <div>
           <div className={`flex items-start gap-[13px] rounded-2xl border-[1.5px] p-4 ${
-            errors.termsAccepted ? 'border-red-300 bg-red-50' : 'border-[#E2E8EE] bg-[#FBFCFD]'
+            errors.termsAccepted
+              ? 'border-red-400/70 bg-red-500/10'
+              : 'border-[var(--auth-edge)] bg-[var(--auth-fill-raised)]'
           }`}>
             <input
               id="patient-termsAccepted"
@@ -271,16 +277,15 @@ export default function PatientSignupForm({ invitation, token }: Props) {
               onChange={(e) => setFields(f => ({ ...f, termsAccepted: e.target.checked }))}
               onBlur={onBlur('termsAccepted')}
               aria-invalid={!!errors.termsAccepted}
-              className="mt-px h-5 w-5 shrink-0 rounded-md border-[1.5px] border-[#CBD6E0] accent-[#15A89E]"
+              className="mt-px h-5 w-5 shrink-0 rounded-md border-[1.5px] border-[var(--auth-edge)] accent-[#15A89E]"
             />
-            <label htmlFor="patient-termsAccepted" className="text-[14px] leading-[1.6] text-[#41556F]">
+            <label htmlFor="patient-termsAccepted" className="text-[14px] leading-[1.6] text-[var(--auth-muted)]">
               I agree to the{' '}
               <Link
                 href="/legal/terms"
                 target="_blank"
                 rel="noopener"
-                className="font-semibold underline underline-offset-[3px]"
-                style={{ color: '#13294B' }}
+                className="font-semibold text-white underline underline-offset-[3px]"
               >
                 Terms &amp; Conditions
               </Link>
@@ -289,20 +294,19 @@ export default function PatientSignupForm({ invitation, token }: Props) {
                 href="/legal/privacy"
                 target="_blank"
                 rel="noopener"
-                className="font-semibold underline underline-offset-[3px]"
-                style={{ color: '#13294B' }}
+                className="font-semibold text-white underline underline-offset-[3px]"
               >
                 Privacy Policy
               </Link>.
             </label>
           </div>
           {errors.termsAccepted && (
-            <p className="mt-1 text-xs text-red-600">{errors.termsAccepted}</p>
+            <p className="mt-1 text-xs text-red-300">{errors.termsAccepted}</p>
           )}
         </div>
 
         {submitError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-[13px] leading-[1.55] text-red-200" role="alert">
             {submitError}
           </div>
         )}
@@ -310,17 +314,17 @@ export default function PatientSignupForm({ invitation, token }: Props) {
         <button
           type="submit"
           disabled={pending.disabled}
-          className="flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
-          style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
+          className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
+          style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
         >
           {pending.showLabel ? 'Creating account…' : 'Create account'}
         </button>
       </form>
 
-      <p className="mt-6 text-center text-[14px] text-[#6B7C93]">
+      <p className="mt-8 text-center text-[15px] text-[var(--auth-muted)]">
         Already have an account?{' '}
-        <Link href="/login" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
-          Sign in →
+        <Link href="/login" className="font-semibold" style={{ color: 'var(--auth-accent)' }}>
+          Sign in
         </Link>
       </p>
     </>

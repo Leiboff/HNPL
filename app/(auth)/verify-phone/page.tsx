@@ -52,12 +52,16 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
     .eq('id', user.id)
     .maybeSingle();
 
-  // No phone on profile — the signup form is the right place to add
-  // one. Send them back to the patient signup with a hint. This is a
-  // rare edge: the signup action always writes phone, so reaching
-  // this branch implies an unusual data state.
+  // No phone on profile — signup is the right place to add one. This is
+  // a rare edge: the signup action always writes phone, so reaching this
+  // branch implies an unusual data state.
+  //
+  // Was '/signup/patient?missing=phone'. The route is now a redirect to
+  // /signup, so this pointed at a bounce; and ?missing=phone was written
+  // here and read NOWHERE (verified by grep across app/ and lib/), so it
+  // is dropped rather than carried forward as cargo.
   if (!profile?.phone) {
-    redirect('/signup/patient?missing=phone');
+    redirect('/signup');
   }
 
   // ── Source-of-truth read: phone_verifications, NOT profiles ────────

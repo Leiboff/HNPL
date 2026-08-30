@@ -148,7 +148,7 @@ export default function LandingPage() {
             Split any healthcare bill into interest-free instalments, timed to your salary dates. Get the care you need today.
           </p>
           <div className="ctas">
-            <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
+            <Link className="btn btn-primary btn-lg" href="/signup">Get started</Link>
             {/* Plain <a>, not next/link's <Link> — same-page hash
                 navigation via Link is a documented App Router no-op
                 (see SiteHeader.tsx), so this silently failed to scroll
@@ -325,7 +325,7 @@ export default function LandingPage() {
               content → image → CTA on both mobile (stacked) and desktop
               (centered row below both columns). */}
           <div className="gs-cta reveal">
-            <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
+            <Link className="btn btn-primary btn-lg" href="/signup">Get started</Link>
           </div>
         </div>
       </section>
@@ -355,7 +355,7 @@ export default function LandingPage() {
             <h2>Full recovery. Zero interest.</h2>
             <p>The best bill of health is one you can actually afford.</p>
             <div className="ctas">
-              <Link className="btn btn-primary btn-lg" href="/signup/patient">Get started</Link>
+              <Link className="btn btn-primary btn-lg" href="/signup">Get started</Link>
             </div>
           </div>
         </div>

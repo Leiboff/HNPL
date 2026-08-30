@@ -42,10 +42,14 @@ describe('the route renders the screen instead of bouncing', () => {
 });
 
 describe('every way in is present, and each hands off to the path that already existed', () => {
-  it('email → /signup/patient (the form that carries the "I agree" tick)', () => {
-    expect(ENTRY).toMatch(/href="\/signup\/patient"/);
+  it('email → the form view on this same route, not another page', () => {
+    // WAS a link to /signup/patient. That route is retired (it now
+    // redirects here), so this is an in-page view switch — the same
+    // screen-swap /login uses for its email screen.
     expect(ENTRY).toMatch(/data-testid="signup-entry-email"/);
+    expect(ENTRY).toMatch(/onClick=\{openForm\}/);
     expect(ENTRY).toMatch(/Sign up with email/);
+    expect(ENTRY).not.toMatch(/href="\/signup\/patient"/);
   });
 
   it('Google → the shared button, not a second signInWithOAuth call site', () => {
@@ -135,8 +139,8 @@ describe('brand', () => {
     // was extracted. Pin that the entry screen consumes the shared one,
     // and that it has not re-grown a local copy.
     expect(ENTRY).toMatch(/from '@\/app\/_components\/AuthSurface'/);
-    expect(ENTRY).toMatch(/<AuthSurface centred>/);
-    expect(ENTRY).not.toMatch(/linear-gradient\(180deg, #0A182E/);
+    expect(ENTRY).toMatch(/<AuthSurface>/);
+    expect(ENTRY).not.toMatch(/linear-gradient\(180deg/);
   });
 
   it('the decorative background can never intercept a tap on the buttons', () => {
@@ -153,5 +157,69 @@ describe('brand', () => {
     // fake one on the front door is the single thing on this screen a
     // visitor could read as an offer. No rand figures at all.
     expect(ENTRY).not.toMatch(/R\s?\d/);
+  });
+});
+
+describe('the signup form is a view here, not a route of its own', () => {
+  // /signup was a chooser and /signup/patient was the form: two routes
+  // for one job, and the second was still the old white-card design
+  // while the first had been rebuilt. The form is now the second view of
+  // THIS route, mirroring /login exactly, and the old route redirects.
+
+  const ROUTE = codeOf('app/signup/patient/page.tsx');
+  const FORM  = codeOf('app/signup/patient/PatientSignupForm.tsx');
+
+  it('renders exactly one of the two views, never both', () => {
+    expect(ENTRY).toMatch(/\{!formOpen \? \(/);
+    expect(ENTRY).toMatch(/data-testid="signup-view-chooser"/);
+    expect(ENTRY).toMatch(/data-testid="signup-view-form"/);
+    expect(ENTRY).not.toMatch(/\{formOpen && \(/);
+  });
+
+  it('the form view carries a way back, like /login\'s email screen', () => {
+    const form = ENTRY.slice(ENTRY.indexOf('data-testid="signup-view-form"'));
+    expect(form).toMatch(/data-testid="signup-form-back"/);
+    expect(form).toMatch(/onClick=\{closeForm\}/);
+    expect(form).toMatch(/<PatientSignupForm/);
+  });
+
+  it('looking like a page means behaving like one, same as /login', () => {
+    // Without the history entry, hardware-back from the form leaves
+    // /signup entirely — and this form is long enough that losing it
+    // by accident is expensive.
+    expect(ENTRY).toMatch(/window\.history\.pushState\(\{ hnplSignupView: 'form' \}, ''\)/);
+    expect(ENTRY).toMatch(/window\.addEventListener\('popstate', onPop\)/);
+    expect(ENTRY).toMatch(/window\.history\.back\(\); return;/);
+  });
+
+  it('the retired route redirects rather than 404s', () => {
+    expect(ROUTE).toMatch(/redirect\('\/signup'\)/);
+    // …and still honours the invite-token branch, which predates this.
+    expect(ROUTE).toMatch(/redirect\(`\/checkout\/\$\{encodeURIComponent\(token\)\}`\)/);
+  });
+
+  it('the form is dressed for the dark surface it now sits on', () => {
+    // It kept a white card's colours when the page around it went navy;
+    // near-black text on navy is invisible but still focusable.
+    expect(FORM).toMatch(/text-white/);
+    expect(FORM).not.toMatch(/text-\[#13294B\]/);
+    expect(FORM).not.toMatch(/bg-\[#FBFCFD\]/);
+    expect(FORM).not.toMatch(/text-gray-500|text-gray-600/);
+    // Same field geometry as the sign-in email screen.
+    expect(FORM).toMatch(/h-\[52px\] w-full rounded-2xl/);
+  });
+
+  it('nothing in the app still links to the retired route', () => {
+    for (const p of [
+      'app/LandingPage.tsx',
+      'app/_landing/SiteHeader.tsx',
+      'app/_landing/SiteFooter.tsx',
+      'app/(auth)/login/page.tsx',
+      'app/auth/confirmed/ConfirmedView.tsx',
+      'app/verify-email/page.tsx',
+      'app/(auth)/verify-phone/page.tsx',
+    ]) {
+      expect(codeOf(p)).not.toMatch(/["\'`]\/signup\/patient/);
+    }
   });
 });

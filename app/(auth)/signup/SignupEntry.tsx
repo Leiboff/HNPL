@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import AuthSurface from '@/app/_components/AuthSurface';
 import AuthConsentNote from '@/app/_components/AuthConsentNote';
+import PatientSignupForm from '@/app/signup/patient/PatientSignupForm';
 
 // ─── /signup — the auth entry screen ───────────────────────────────────
 //
@@ -16,7 +17,10 @@ import AuthConsentNote from '@/app/_components/AuthConsentNote';
 // marketing page and had to hunt for the CTA.
 //
 // The stack is ordered by how most patients actually arrive:
-//   1. Sign up with email  → /signup/patient (the full form + I-agree tick)
+//   1. Sign up with email  → the form view on THIS route (the full form
+//      + I-agree tick). /signup/patient used to be a separate route for
+//      it; that split is gone and the old URL now redirects here, so
+//      there is one canonical "create an account" screen.
 //   2. Continue with Google → OAuth, patients only (same button as /login)
 //
 // Nothing here is a new auth mechanism: each button hands off to the
@@ -61,6 +65,41 @@ import AuthConsentNote from '@/app/_components/AuthConsentNote';
 const TEAL = '#15A89E';
 
 export default function SignupEntry() {
+  // ── Two views, one route ────────────────────────────────────────────
+  //
+  // false → the method chooser (email / Google).
+  // true  → the email signup form, which REPLACES the chooser rather
+  //         than expanding below it.
+  //
+  // Deliberately the same machinery as /login: pushState on open so the
+  // device back button returns to the chooser instead of leaving
+  // /signup, popstate to close, and the on-screen arrow delegating to
+  // history.back() so the two cannot diverge. The two journeys are now
+  // mirror images of each other, which is the point.
+  const [formOpen, setFormOpen] = useState(false);
+  const [viewDir,  setViewDir]  = useState<'forward' | 'back'>('forward');
+
+  function openForm() {
+    setViewDir('forward');
+    setFormOpen(true);
+    try { window.history.pushState({ hnplSignupView: 'form' }, ''); } catch { /* non-fatal: the arrow still works */ }
+  }
+
+  function closeForm() {
+    if (window.history.state?.hnplSignupView === 'form') { window.history.back(); return; }
+    setViewDir('back');
+    setFormOpen(false);
+  }
+
+  useEffect(() => {
+    function onPop() {
+      setViewDir('back');
+      setFormOpen(false);
+    }
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   // Already signed in? Don't show a front door to someone who is
   // already inside. Mirrors /login's shortcut: getSession() reads the
   // cookie the browser client already holds (no round trip) and is a
@@ -74,7 +113,12 @@ export default function SignupEntry() {
   }, []);
 
   return (
-    <AuthSurface centred>
+    // Not `centred`: the form view is tall enough to scroll on a small
+    // phone, and centring a scrolling column pushes its first line off
+    // the top. The chooser keeps its own vertical centring below.
+    <AuthSurface>
+      {!formOpen ? (
+        <div key="chooser" className={`auth-view-${viewDir} flex min-h-[calc(100vh-6rem)] flex-col justify-center`} data-testid="signup-view-chooser">
         {/* ── Hero: the wordmark carries it ─────────────────────────
             There is no illustration here on purpose. A mocked-up bill
             with invented figures is the one thing on this screen a
@@ -99,8 +143,9 @@ export default function SignupEntry() {
 
         {/* ── The ways in ───────────────────────────────────────────── */}
         <div className="mt-9 space-y-3" data-testid="signup-entry-methods">
-          <Link
-            href="/signup/patient"
+          <button
+            type="button"
+            onClick={openForm}
             data-testid="signup-entry-email"
             className="flex h-[52px] w-full items-center justify-center rounded-full text-[15px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
             style={{ background: TEAL, boxShadow: '0 14px 30px -12px rgba(21,168,158,.75)' }}
@@ -116,7 +161,7 @@ export default function SignupEntry() {
               </svg>
               <span className="auth-option-label">Sign up with email</span>
             </span>
-          </Link>
+          </button>
 
           <ContinueWithGoogleButton
             label="Continue with Google"
@@ -157,6 +202,38 @@ export default function SignupEntry() {
             Register your practice
           </Link>
         </p>
+        </div>
+      ) : (
+        /* ─── The form: same screen-swap as /login's email view ─────── */
+        <div key="form" className={`auth-view-${viewDir}`} data-testid="signup-view-form">
+          <div className="text-center">
+            <span className="text-[46px] font-bold leading-none tracking-[-0.04em] text-white">
+              better<span style={{ color: 'var(--auth-accent)' }}>now</span>
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={closeForm}
+            data-testid="signup-form-back"
+            className="mt-8 -ml-2 flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[14px] font-medium text-[var(--auth-muted)] transition-colors hover:text-white"
+          >
+            <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+            Back
+          </button>
+
+          <h1 className="mt-4 text-[28px] font-semibold leading-[1.2] tracking-[-0.03em] text-white">
+            Create your account
+          </h1>
+          <p className="mt-2 mb-7 text-[15px] text-[var(--auth-muted)]">
+            Interest-free medical payment plans.
+          </p>
+
+          <PatientSignupForm invitation={null} token={null} />
+        </div>
+      )}
     </AuthSurface>
   );
 }

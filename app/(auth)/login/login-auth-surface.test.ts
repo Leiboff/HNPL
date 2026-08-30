@@ -25,15 +25,17 @@ const PILL    = codeOf('app/_components/LastUsedPill.tsx');
 const GOOGLE  = codeOf('app/_components/ContinueWithGoogleButton.tsx');
 
 describe('one surface, not three copies of a gradient', () => {
-  it('all three auth screens consume AuthSurface', () => {
+  it('both auth screens consume AuthSurface', () => {
+    // Two, not three: /signup/patient used to be the third and is now a
+    // redirect — /signup carries that form as a view of its own.
     for (const p of [
       'app/(auth)/login/page.tsx',
       'app/(auth)/signup/SignupEntry.tsx',
-      'app/signup/patient/page.tsx',
     ]) {
       expect(codeOf(p)).toMatch(/from '@\/app\/_components\/AuthSurface'/);
       expect(codeOf(p)).toMatch(/<AuthSurface/);
     }
+    expect(codeOf('app/signup/patient/page.tsx')).not.toMatch(/<AuthSurface/);
   });
 
   it('none of them still carries an inline copy of the navy gradient', () => {
@@ -42,7 +44,7 @@ describe('one surface, not three copies of a gradient', () => {
     for (const p of [
       'app/(auth)/login/page.tsx',
       'app/(auth)/signup/SignupEntry.tsx',
-      'app/signup/patient/page.tsx',
+      'app/signup/patient/PatientSignupForm.tsx',
     ]) {
       expect(codeOf(p)).not.toMatch(/linear-gradient\(180deg/);
     }
@@ -56,11 +58,18 @@ describe('one surface, not three copies of a gradient', () => {
     expect(SURFACE).not.toMatch(/useState|useEffect/);
   });
 
-  it('only /signup centres its column — the taller screens do not', () => {
-    // Centring a column that scrolls pushes its first line off the top.
-    expect(codeOf('app/(auth)/signup/SignupEntry.tsx')).toMatch(/<AuthSurface centred>/);
+  it('no surface centres a column that can scroll', () => {
+    // Centring a scrolling column pushes its first line off the top.
+    // /signup used to pass `centred` at the surface, which was fine when
+    // it was only a chooser; now that it also holds a tall form view,
+    // the centring belongs to the CHOOSER view alone.
+    const ENTRY = codeOf('app/(auth)/signup/SignupEntry.tsx');
     expect(LOGIN).toMatch(/<AuthSurface>/);
-    expect(codeOf('app/signup/patient/page.tsx')).toMatch(/<AuthSurface>/);
+    expect(ENTRY).toMatch(/<AuthSurface>/);
+    expect(ENTRY).not.toMatch(/<AuthSurface centred>/);
+    // The chooser still centres itself — on its own wrapper, whose
+    // className precedes the testid in the source.
+    expect(ENTRY).toMatch(/flex min-h-\[calc\(100vh-6rem\)\] flex-col justify-center[^>]*data-testid="signup-view-chooser"/);
   });
 });
 
@@ -406,9 +415,19 @@ describe('the three options are one stack, not three components', () => {
     expect(ENTRY).toMatch(/shape="pill"/);
   });
 
-  it('the shape stays opt-IN, so /signup/patient keeps its form geometry', () => {
+  it('the shape stays opt-IN even though every caller now opts in', () => {
+    // When this was written, /signup/patient sat the button above
+    // rounded-[14px] inputs on a white card and NEEDED the rounded
+    // default. That form is now on the dark surface with pill controls,
+    // so all three call sites pass shape="pill".
+    //
+    // It stays a default rather than being inlined: the prop exists so
+    // this button can sit on a light form surface without looking
+    // imported from somewhere else, which is still true of any future
+    // caller. A default with no current user is not dead code here — it
+    // is what a new caller gets for free.
     expect(GOOGLE).toMatch(/shape = 'rounded'/);
     expect(GOOGLE).toMatch(/shape === 'pill' \? 'rounded-full' : 'rounded-\[14px\]'/);
-    expect(codeOf('app/signup/patient/PatientSignupForm.tsx')).not.toMatch(/shape=/);
+    expect(codeOf('app/signup/patient/PatientSignupForm.tsx')).toMatch(/shape="pill"/);
   });
 });

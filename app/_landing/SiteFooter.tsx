@@ -38,7 +38,7 @@ export default function SiteFooter() {
           </div>
           <div className="col">
             <h5>Get started</h5>
-            <Link href="/signup/patient">For patients</Link>
+            <Link href="/signup">For patients</Link>
             <Link href="/signup/practice">For practices</Link>
             <Link href="/login">Sign in</Link>
           </div>

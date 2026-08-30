@@ -392,7 +392,7 @@ export default function LoginPage() {
             <p className="text-center text-[15px] text-[var(--auth-muted)]">
               New to betternow?{' '}
               <Link
-                href="/signup/patient"
+                href="/signup"
                 data-testid="login-signup-patient"
                 className="font-semibold underline-offset-[3px] hover:underline"
                 style={{ color: 'var(--auth-accent)' }}

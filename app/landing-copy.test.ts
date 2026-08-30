@@ -211,8 +211,8 @@ describe('Hero CTAs — two-button pair (Get started + See how it works)', () =>
   const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
 
   it('hero has BOTH a filled primary "Get started" and an outlined "See how it works" button', () => {
-    // Filled primary → /signup/patient.
-    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup\/patient"[^>]*>Get started<\/Link>/);
+    // Filled primary → /signup (the canonical create-an-account screen).
+    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup"[^>]*>Get started<\/Link>/);
     // Outlined secondary → the How-it-works anchor. v3 moves Sign in to
     // the header (still asserted in the SiteHeader block below) and makes
     // the hero's secondary CTA "See how it works". A plain <a>, not
@@ -262,7 +262,7 @@ describe('Slogan 7 — final CTA band headline: "Full recovery. Zero interest."'
   });
 
   it('the final CTA is a SINGLE patient CTA (no "I run a practice" here either)', () => {
-    expect(finalScope).toMatch(/href="\/signup\/patient"/);
+    expect(finalScope).toMatch(/href="\/signup"/);
     expect(finalScope).not.toContain('I run a practice');
     expect(finalScope).not.toMatch(/href="\/signup\/practice"/);
   });
@@ -691,7 +691,7 @@ describe('Getting-started band — narrative order: what you need → what you g
     const beforeCta = bc.slice(gridStart, ctaIdx);
     expect(beforeCta).toMatch(/<\/div>\s*<\/div>/);
     // The CTA still targets patient signup with the expected label.
-    expect(bc).toMatch(/className="gs-cta[^"]*"[\s\S]{0,200}href="\/signup\/patient"[^>]*>Get started</);
+    expect(bc).toMatch(/className="gs-cta[^"]*"[\s\S]{0,200}href="\/signup"[^>]*>Get started</);
   });
 
   it('the two pillars ("A debit or credit card" + "1 minute") stay inside the band', () => {

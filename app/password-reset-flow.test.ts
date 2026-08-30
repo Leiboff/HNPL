@@ -28,7 +28,11 @@ const FP_FORM    = read('app/forgot-password/ForgotPasswordForm.tsx');
 const UP_PAGE    = read('app/update-password/page.tsx');
 const UP_FORM    = read('app/update-password/UpdatePasswordForm.tsx');
 const LOGIN      = read('app/(auth)/login/page.tsx');
-const PT_SIGNUP  = read('app/signup/patient/page.tsx');
+// The patient signup FORM used to have its own route+page; /signup now
+// carries it as a view and the old route is a redirect. The cross-link
+// assertions below follow the form, which is where they always pointed.
+const PT_SIGNUP  = read('app/signup/patient/PatientSignupForm.tsx');
+const SIGNUP_RT  = read('app/signup/patient/page.tsx');
 const PR_SIGNUP  = read('app/signup/practice/page.tsx');
 
 // ─── /auth/callback ────────────────────────────────────────────────────
@@ -155,7 +159,7 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
     // make. /login now offers the one door a signed-out visitor here
     // actually wants.
     expect(LOGIN).toMatch(/data-testid="login-signup-patient"/);
-    expect(LOGIN).toMatch(/href="\/signup\/patient"/);
+    expect(LOGIN).toMatch(/href="\/signup"/);
     expect(LOGIN).toMatch(/New to betternow/i);
 
     // ─── What "prominent" means here, restated ──────────────────────
@@ -207,17 +211,48 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
 
 // ─── Signup pages — Log-in cross-link (visible without scrolling) ─────
 
+describe('the retired /signup/patient route still routes', () => {
+  it('sends a stale provider-invite link to checkout, not to signup', () => {
+    // The ?token= branch predates this change and is the single
+    // invite-acceptance path. Losing it would silently break every
+    // invitation email already in the wild.
+    expect(SIGNUP_RT).toMatch(/if \(token\)/);
+    expect(SIGNUP_RT).toMatch(/redirect\(`\/checkout\/\$\{encodeURIComponent\(token\)\}`\)/);
+  });
+
+  it('sends everything else to the canonical /signup', () => {
+    expect(SIGNUP_RT).toMatch(/redirect\('\/signup'\)/);
+  });
+
+  it('no longer renders a page of its own', () => {
+    // Match IMPORTS and JSX, not prose — the file's header comment
+    // legitimately names the form it used to render and where it lives
+    // now, and a bare substring check would forbid explaining itself.
+    expect(SIGNUP_RT).not.toMatch(/^import .*PatientSignupForm/m);
+    expect(SIGNUP_RT).not.toMatch(/<PatientSignupForm/);
+    expect(SIGNUP_RT).not.toMatch(/<AuthSurface/);
+  });
+});
+
 describe('Signup pages — prominent Log-in cross-link', () => {
-  it('patient signup page renders the Log-in cross-link in the header (not just footer)', () => {
-    expect(PT_SIGNUP).toMatch(/data-testid="patient-signup-login-cross-link"/);
+  it('the patient signup form renders a Log-in cross-link', () => {
+    // WAS: pinned a header cross-link on app/signup/patient/page.tsx,
+    // with a testid, because that page was the signup screen and the
+    // link sat in its header row.
+    //
+    // That page is now a redirect — /signup carries the form as a view —
+    // so the header row went with it. What the assertion protected is
+    // unchanged and still true: someone who already has an account can
+    // get to /login from the signup screen without hunting. It now lives
+    // in the form itself, which is the thing that moved.
+    expect(PT_SIGNUP).toMatch(/Already have an account\?/);
     expect(PT_SIGNUP).toMatch(/href="\/login"/);
-    // The header link is positioned ABOVE the form card in the JSX;
-    // pinning that order guards against a regression that only leaves
-    // a bottom-of-page link.
-    const hdrLinkIdx = PT_SIGNUP.indexOf('patient-signup-login-cross-link');
-    const formIdx    = PT_SIGNUP.indexOf('<PatientSignupForm');
-    expect(hdrLinkIdx).toBeGreaterThan(0);
-    expect(formIdx).toBeGreaterThan(hdrLinkIdx);
+    // The ORDER pin is dropped rather than rewritten. It existed because
+    // the link sat in a header above a long form and could regress into
+    // a buried footer link. /signup opens the form as its own screen
+    // with a Back arrow at the top, so "above the form" is no longer the
+    // property that keeps it reachable — the Back arrow is, and it is
+    // pinned in app/(auth)/signup/signup-entry.test.ts.
   });
 
   it('practice signup page renders the Log-in cross-link in the header', () => {
