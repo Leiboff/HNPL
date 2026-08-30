@@ -310,13 +310,17 @@ describe('the three options are one stack, not three components', () => {
   //   2. Icons pinned to a left column → icons all 21, but the scatter
   //      simply moved to the labels: 92 / 103 / 109.
   //   3. Both anchored left → aligned, but no longer centred.
-  //   4. A FIXED-WIDTH row, centred (.auth-option-row): the row is the
-  //      same width everywhere, so centring it lands the icon and the
-  //      label box at identical coordinates in every option, and the
-  //      block still reads as centred. Row 75/75, icons 75, labels 105.
+  //   4. A FIXED-WIDTH row, centred (.auth-option-row) — but with the
+  //      label centred INSIDE it. The label boxes lined up at 105 and
+  //      the words did not: 107 / 118 / 124. The same 17px scatter, one
+  //      level down, and invisible to any measurement that reads the box
+  //      instead of the ink.
+  //   5. The row centred, the label LEFT-aligned within it. Row 75/75,
+  //      icons 75, words 105 — on both screens.
   //
-  // The rule that falls out: the row must never shrink to its content.
-  // Any width/padding token that reintroduces that reintroduces the bug.
+  // Two rules fall out, and both are enforced below: the row must never
+  // shrink to its content, and the label must never be centred inside
+  // it. Each is a way of re-coupling position to label length.
 
   const CHOOSER = LOGIN.slice(
     LOGIN.indexOf('data-testid="login-view-chooser"'),
@@ -327,6 +331,15 @@ describe('the three options are one stack, not three components', () => {
   const ROW   = CSS.slice(CSS.indexOf('.auth-option-row {'));
   const stackControls = (src: string) =>
     src.match(/className="flex h-\[\d+px\] w-full items-center[^"]*"/g) ?? [];
+
+  it('the label is left-aligned in the row — what makes the WORDS line up', () => {
+    // Centring here aligns the containers and not their contents, which
+    // is the difference between looking right in a measurement and
+    // looking right on screen.
+    const label = ROW.slice(ROW.indexOf('.auth-option-label'));
+    expect(label).toMatch(/text-align:\s*left/);
+    expect(label).not.toMatch(/text-align:\s*center/);
+  });
 
   it('the row has a fixed width — the property the whole fix rests on', () => {
     expect(ROW).toMatch(/display:\s*flex/);

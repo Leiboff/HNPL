@@ -229,10 +229,16 @@ body {
  *
  * The resolution is a FIXED-WIDTH row that is itself centred. The row is
  * the same width in every option, so centring it puts the icon — and the
- * label box after it — at identical coordinates in all of them, while
- * the block still reads as centred. The label is then centred inside its
- * own share of the row, so short labels do not sit hard against the
- * icon.
+ * label after it — at identical coordinates in all of them, while the
+ * block still reads as centred.
+ *
+ * The label must be LEFT-aligned inside its share of the row. Centring it
+ * there looks like the tidier choice and is the last version of this bug:
+ * the label BOXES line up, but the words inside them do not, because a
+ * centred short label starts further right. Measured, that put the boxes
+ * at 105 and the words at 107 / 118 / 124 — the original 17px scatter,
+ * one level down and harder to see. Left-aligned, the words start at the
+ * box edge, which is the same in every option.
  *
  * The width is sized to the longest label in the set ("Sign in with a
  * passkey", 167px at 15px Poppins) plus the 18px icon and the 12px gap,
@@ -249,6 +255,8 @@ body {
 
 .auth-option-row > .auth-option-label {
   flex: 1;
-  text-align: center;
+  /* Left, NOT centre — see the note above. This is the property that
+   * makes the words line up rather than merely their containers. */
+  text-align: left;
   white-space: nowrap;
 }
