@@ -300,10 +300,10 @@ export default function LoginPage() {
                   type="button"
                   onClick={handlePasskeySignIn}
                   disabled={passkeyLoading || pending.disabled}
-                  className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="relative flex h-[52px] w-full items-center justify-center px-12 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                   style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
                 >
-                  <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <svg className="absolute left-5 h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <rect x="3" y="11" width="18" height="11" rx="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
@@ -327,6 +327,7 @@ export default function LoginPage() {
                 onSignInAttempt={() => setLastSignInMethod('google')}
                 highlighted={lastUsed === 'google'}
                 tone="onDark"
+                shape="pill"
                 // Suppressed in favour of the stack-wide line below: the
                 // disclosure covers passkey and email too, and saying it
                 // twice on one screen reads as two different promises.
@@ -345,10 +346,10 @@ export default function LoginPage() {
                 type="button"
                 onClick={openEmail}
                 data-testid="login-open-email"
-                className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
+                className="relative flex h-[52px] w-full items-center justify-center px-12 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
                 style={lastUsed === 'password' ? { border: '1.5px solid #15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
               >
-                <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <svg className="absolute left-5 h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <rect x="3" y="5" width="18" height="14" rx="2" />
                   <path d="m3 7 9 6 9-6" />
                 </svg>

@@ -102,7 +102,7 @@ export default function SignupEntry() {
           <Link
             href="/signup/patient"
             data-testid="signup-entry-email"
-            className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
+            className="flex h-[52px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
             style={{ background: TEAL, boxShadow: '0 14px 30px -12px rgba(21,168,158,.75)' }}
           >
             Sign up with email
@@ -110,6 +110,7 @@ export default function SignupEntry() {
 
           <ContinueWithGoogleButton
             label="Continue with Google"
+            shape="pill"
             showConsentNote={false}
           />
         </div>

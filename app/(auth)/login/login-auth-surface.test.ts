@@ -298,3 +298,71 @@ describe('the auth palette is the BRAND palette', () => {
     }
   });
 });
+
+describe('the three options are one stack, not three components', () => {
+  // WHAT WENT WRONG, so it is recognisable if it returns.
+  //
+  // Each button centred its icon+label as a UNIT, so every icon landed
+  // wherever its own label's width put it. Measured on a 390px viewport
+  // the three icons sat at x = 78, 88 and 95 — a 17px scatter down what
+  // should read as a single column. And ContinueWithGoogleButton carried
+  // rounded-[14px] while its neighbours were rounded-full, so the middle
+  // option looked like a different component wedged into the stack.
+  //
+  // Both are invisible in the source unless you know to look, and both
+  // come back the moment someone adds a fourth option by copying the
+  // wrong neighbour.
+
+  const CHOOSER = LOGIN.slice(
+    LOGIN.indexOf('data-testid="login-view-chooser"'),
+    LOGIN.indexOf('data-testid="login-view-email"'),
+  );
+  const ENTRY = codeOf('app/(auth)/signup/SignupEntry.tsx');
+
+  it('every icon sits in the same left column, not inline with its label', () => {
+    // Inline (gap-N before the label) is precisely what scattered them.
+    const icons = CHOOSER.match(/<svg className="[^"]*"/g) ?? [];
+    expect(icons.length).toBeGreaterThanOrEqual(2);
+    for (const i of icons) expect(i).toMatch(/absolute left-5/);
+    expect(CHOOSER).not.toMatch(/items-center justify-center gap-\d/);
+    // The Google glyph shares the column.
+    expect(GOOGLE).toMatch(/<svg className="absolute left-5"/);
+  });
+
+  it('the label keeps symmetric padding, so it stays optically centred', () => {
+    // px-12 clears the glyph (left-5 + 18px = 38px < 48px) on BOTH sides,
+    // so the icon column costs nothing in centring.
+    for (const btn of CHOOSER.match(/className="relative flex h-\[52px\][^"]*"/g) ?? []) {
+      expect(btn).toMatch(/px-12/);
+      expect(btn).toMatch(/justify-center/);
+    }
+    expect(GOOGLE).toMatch(/px-12/);
+  });
+
+  it('all three options share one height and one radius', () => {
+    const controls = CHOOSER.match(/className="relative flex h-\[\d+px\][^"]*"/g) ?? [];
+    expect(controls.length).toBe(2); // passkey + email; Google is the shared component
+    for (const c of controls) {
+      expect(c).toMatch(/h-\[52px\]/);
+      expect(c).toMatch(/rounded-full/);
+    }
+    expect(GOOGLE).toMatch(/h-\[52px\]/);
+  });
+
+  it('both dark stacks ask the Google button for the pill shape', () => {
+    expect(CHOOSER).toMatch(/shape="pill"/);
+    expect(ENTRY).toMatch(/shape="pill"/);
+    // /signup is a stack too: its primary must not be a different height.
+    for (const c of ENTRY.match(/className="flex h-\[\d+px\] w-full[^"]*rounded-full[^"]*"/g) ?? []) {
+      expect(c).toMatch(/h-\[52px\]/);
+    }
+  });
+
+  it('the shape stays opt-IN, so /signup/patient keeps its form geometry', () => {
+    // That page sits the button above rounded-[14px] inputs; defaulting
+    // to pill would make it the odd one out there instead.
+    expect(GOOGLE).toMatch(/shape = 'rounded'/);
+    expect(GOOGLE).toMatch(/shape === 'pill' \? 'rounded-full' : 'rounded-\[14px\]'/);
+    expect(codeOf('app/signup/patient/PatientSignupForm.tsx')).not.toMatch(/shape=/);
+  });
+});
