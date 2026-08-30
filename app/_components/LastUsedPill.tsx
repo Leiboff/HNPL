@@ -6,14 +6,22 @@
 // ContinueWithGoogleButton.tsx and app/(auth)/login/page.tsx — two call
 // sites is exactly the point where a shared component earns its keep
 // rather than staying duplicated.
+//
+// `tone` picks the teal: the deep #0C8579 has the contrast to sit on a
+// white card, and none at all on the navy auth surface, where the
+// brighter #4FD8CD is the readable one. Same pill, same meaning — only
+// the ground under it changes.
 
-export default function LastUsedPill() {
+type Props = { tone?: 'onLight' | 'onDark' };
+
+export default function LastUsedPill({ tone = 'onLight' }: Props) {
+  const colour = tone === 'onDark' ? '#4FD8CD' : '#0C8579';
   return (
     <p
       className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase"
-      style={{ color: '#0C8579', letterSpacing: '.04em' }}
+      style={{ color: colour, letterSpacing: '.04em' }}
     >
-      <svg viewBox="0 0 20 20" width="9" height="9" fill="none" stroke="#0C8579" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <svg viewBox="0 0 20 20" width="9" height="9" fill="none" stroke={colour} strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M4 10l4 4 8-8" />
       </svg>
       Last used

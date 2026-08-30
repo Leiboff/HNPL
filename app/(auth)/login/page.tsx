@@ -12,6 +12,7 @@ import { recordLoginLanding } from '@/app/patient/passkey-actions';
 import InstallCallout from '@/app/_pwa/InstallCallout';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import LastUsedPill from '@/app/_components/LastUsedPill';
+import AuthSurface from '@/app/_components/AuthSurface';
 import { getLastSignInMethod, setLastSignInMethod, type LastSignInMethod } from '@/lib/auth/lastSignInMethod';
 
 // Validate ?next= from the URL — must be origin-relative and not
@@ -176,252 +177,253 @@ export default function LoginPage() {
   }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4 py-12"
-      // Shared auth-surface treatment (see app/(auth)/signup/SignupEntry.tsx):
-      // a deep brand-navy ground with soft teal light behind it. The card
-      // below stays WHITE — form fields need the light surface, and every
-      // input/label/error colour in it is unchanged.
-      style={{
-        background: 'linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
-        backgroundImage: 'radial-gradient(58% 44% at 86% 2%, rgba(21,168,158,.30), transparent 70%), radial-gradient(52% 44% at 2% 92%, rgba(35,80,150,.42), transparent 72%), linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
-      }}
-    >
-      <div className="w-full max-w-md">
+    <AuthSurface>
 
-        {/* Brand mark */}
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-block text-[30px] font-bold tracking-[-0.035em]" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-            <span style={{ color: '#FFFFFF' }}>better</span><span style={{ color: '#4FD8CD' }}>now</span>
-          </Link>
+      {/* Brand mark */}
+      <div className="text-center">
+        <Link href="/" className="inline-block text-[46px] font-bold leading-none tracking-[-0.04em]">
+          <span style={{ color: '#FFFFFF' }}>better</span><span style={{ color: '#4FD8CD' }}>now</span>
+        </Link>
+      </div>
+
+      <h1 className="mt-9 text-center text-[31px] font-semibold leading-[1.2] tracking-[-0.03em] text-white">
+        Welcome back
+      </h1>
+      <p className="mt-3 text-center text-[15px] text-[#9FB3CC]">
+        Sign in to your betternow account.
+      </p>
+
+      {notice && (
+        <div className="mt-7 rounded-2xl border border-[#4FD8CD]/25 bg-[#4FD8CD]/10 px-4 py-3 text-center text-[13px] leading-[1.55] text-[#BFE9E4]">
+          {notice}
         </div>
+      )}
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8">
-          <div className="mb-7">
-            <h1 className="text-2xl font-semibold" style={{ color: '#13294B', fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-              Welcome back
-            </h1>
-            <p className="mt-1 text-sm text-gray-500">Sign in to your BetterNow account.</p>
-          </div>
+      {error && (
+        <div className="mt-7 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-center text-[13px] leading-[1.55] text-red-200" role="alert">
+          {error}
+        </div>
+      )}
 
-          {notice && (
-            <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
-              {notice}
-            </div>
-          )}
-
-          {error && (
-            <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-
-          {notConfirmed && (
-            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800 space-y-3">
-              <p>Please confirm your email before signing in — check your inbox for the link.</p>
-              {resendState === 'sent' && (
-                <p className="font-medium text-green-700">
-                  If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
-                </p>
-              )}
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={resendState === 'sending' || resendState === 'sent'}
-                className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-                style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-              >
-                {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? 'Sent ✓' : 'Resend confirmation email'}
-              </button>
-            </div>
-          )}
-
-          {passkeySupport && (
-            <div className="mb-3">
-              {lastUsed === 'passkey' && <LastUsedPill />}
-              <button
-                type="button"
-                onClick={handlePasskeySignIn}
-                disabled={passkeyLoading || pending.disabled}
-                className="w-full rounded-lg border bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-                style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#D1D5DB' }}
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <rect x="3" y="11" width="18" height="11" rx="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-                {passkeyLoading ? 'Authenticating…' : 'Sign in with a passkey'}
-              </button>
-            </div>
-          )}
-
-          {/* Continue with Google — patient-context option. Staff
-              accounts (practice / brand / admin) are provisioned via
-              invitation emails and sign in with email + password; the
-              "For patients" caption below the button makes the intent
-              clear. A staff email whose Google identity is linked in
-              Supabase Auth will still land correctly on their own role
-              via the dispatcher — see /auth/callback for the profile
-              belt-and-braces + role-preservation logic. */}
-          <div className="mb-5 space-y-2" data-testid="login-google-block">
-            <ContinueWithGoogleButton
-              label="Sign in with Google"
-              next={nextPath}
-              onSignInAttempt={() => setLastSignInMethod('google')}
-              highlighted={lastUsed === 'google'}
-            />
-            <p className="text-center text-[11px] text-gray-400">
-              For patients
+      {notConfirmed && (
+        <div className="mt-7 space-y-3 rounded-2xl border border-amber-300/30 bg-amber-400/[.10] px-4 py-4 text-[13px] leading-[1.55] text-amber-100">
+          <p>Please confirm your email before signing in — check your inbox for the link.</p>
+          {resendState === 'sent' && (
+            <p className="font-medium text-[#8FE3D9]">
+              If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
             </p>
-            <div className="relative flex items-center pt-2">
-              <div className="grow border-t border-gray-200" />
-              <span className="mx-3 text-xs text-gray-400">or with password</span>
-              <div className="grow border-t border-gray-200" />
-            </div>
-          </div>
-
-          {/* The password block gets the same teal-ring + pill treatment as
-              the passkey/Google options above when IT was the last method
-              to succeed — the one case that isn't a single button, so the
-              highlight wraps the cue + form together rather than sitting on
-              a single element. */}
-          <div
-            className="rounded-xl p-4 -mx-1"
-            style={lastUsed === 'password'
-              ? { border: '1.5px solid #15A89E', background: 'rgba(21,168,158,.045)' }
-              : undefined}
+          )}
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={resendState === 'sending' || resendState === 'sent'}
+            className="flex h-[46px] w-full items-center justify-center rounded-full text-[14px] font-semibold text-[#06202B] transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ background: '#15A89E' }}
           >
-            {lastUsed === 'password' && <LastUsedPill />}
-
-            {/* The "For patients" caption above belongs to the GOOGLE button
-                (staff accounts are invite-provisioned and use email +
-                password). Sitting directly above this divider, though, it read
-                as labelling everything below it — leaving practice staff unsure
-                this password form was for them at all. This one line says the
-                form is shared; it deliberately does not touch the Google or
-                passkey options. */}
-            <p
-              data-testid="password-audience-cue"
-              className="mb-4 text-center text-xs text-gray-500"
-            >
-              For <span className="font-medium text-gray-700">patients and practices</span> — sign in
-              with the email you registered.
-            </p>
-
-            <form onSubmit={handleSubmit} noValidate className="space-y-5">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-                Email address
-              </label>
-              <input
-                id="email"
-                type="email"
-                required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                // "username webauthn" tells the browser this field can be
-                // filled by a passkey suggestion (Conditional UI). The hook
-                // mounts the conditional ceremony so the suggestion appears
-                // on focus.
-                autoComplete="username webauthn"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
-                placeholder="jane@example.com"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                  Password
-                </label>
-                <Link
-                  href="/forgot-password"
-                  data-testid="login-forgot-password"
-                  className="text-xs font-semibold underline underline-offset-2"
-                  style={{ color: '#13294B' }}
-                >
-                  Forgot password?
-                </Link>
-              </div>
-              <input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                autoComplete="current-password webauthn"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
-                placeholder="Your password"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={pending.disabled}
-              className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
-            >
-              {pending.showLabel ? 'Signing in…' : 'Sign in'}
-            </button>
-            </form>
-          </div>
+            {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? 'Sent ✓' : 'Resend confirmation email'}
+          </button>
         </div>
+      )}
 
-        {/* ── Prominent signup CTAs ────────────────────────────────────
-            Previously buried as small grey footer links + a "Sign up"
-            text link pointing at the homepage. New visitors need a
-            clear one-glance path in — this section makes both patient
-            and practice signup visible as bordered cards with distinct
-            purpose. Mobile-first: cards stack vertically. */}
-        <section
-          aria-label="New to BetterNow"
-          className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-200/80 p-6"
-        >
-          <p className="text-sm font-semibold text-center mb-4" style={{ color: '#13294B' }}>
-            New to BetterNow?
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Link
-              href="/signup/patient"
-              data-testid="login-signup-patient"
-              className="group rounded-xl border border-[rgba(19,41,75,.12)] bg-white px-4 py-3 hover:shadow-md transition-shadow"
+      {/* ── The ways back in ──────────────────────────────────────────
+          Passkey first where the browser supports it: it is the fastest
+          of the three and the only one that needs no typing. Unlike the
+          /signup entry screen, a passkey button belongs HERE — everyone
+          on this page already has an account, which is the precondition
+          a passkey has and a signup screen cannot meet. */}
+      <div className="mt-9 space-y-3">
+        {passkeySupport && (
+          <div>
+            {lastUsed === 'passkey' && <LastUsedPill tone="onDark" />}
+            <button
+              type="button"
+              onClick={handlePasskeySignIn}
+              disabled={passkeyLoading || pending.disabled}
+              className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'rgba(255,255,255,.24)', background: 'rgba(255,255,255,.05)' }}
             >
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
-                Patient
-              </p>
-              <p className="mt-1 font-semibold" style={{ color: '#13294B' }}>
-                Sign up as a patient
-              </p>
-              <p className="mt-1 text-xs text-gray-500">
-                Pay medical bills in interest-free instalments.
-              </p>
-            </Link>
-            <Link
-              href="/signup/practice"
-              data-testid="login-signup-practice"
-              className="group rounded-xl border border-[rgba(19,41,75,.12)] bg-white px-4 py-3 hover:shadow-md transition-shadow"
-            >
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
-                Practice
-              </p>
-              <p className="mt-1 font-semibold" style={{ color: '#13294B' }}>
-                Register your practice
-              </p>
-              <p className="mt-1 text-xs text-gray-500">
-                Offer BetterNow to your patients.
-              </p>
-            </Link>
+              <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              {passkeyLoading ? 'Authenticating…' : 'Sign in with a passkey'}
+            </button>
           </div>
-        </section>
+        )}
 
-        {/* PWA install callout — placed, persistent, secondary visual
-            weight so it doesn't compete with Sign in. Hidden when the
-            page is already running in the installed app (display-mode
-            standalone) or when the runtime can't install at all. */}
-        <div className="mt-6">
-          <InstallCallout />
+        {/* Sign in with Google — patient-context option. Staff accounts
+            (practice / brand / admin) are provisioned via invitation
+            emails and sign in with email + password; the "For patients"
+            caption below the button makes the intent clear. A staff
+            email whose Google identity is linked in Supabase Auth will
+            still land correctly on their own role via the dispatcher —
+            see /auth/callback for the profile belt-and-braces +
+            role-preservation logic. */}
+        <div data-testid="login-google-block">
+          {/* Caption ABOVE the button, not below it. The button renders
+              its own consent note underneath, and with the caption there
+              too the two greys ran together into one block that labelled
+              neither. Above, it reads as what it is: a heading for the
+              option that follows. */}
+          <p className="mb-2 text-center text-[11px] text-[#7A90AD]">
+            For patients
+          </p>
+          <ContinueWithGoogleButton
+            label="Sign in with Google"
+            next={nextPath}
+            onSignInAttempt={() => setLastSignInMethod('google')}
+            highlighted={lastUsed === 'google'}
+            tone="onDark"
+          />
         </div>
       </div>
-    </div>
+
+      <div className="relative mt-7 flex items-center">
+        <div className="grow border-t border-white/[.12]" />
+        <span className="mx-3 text-[12px] text-[#7A90AD]">or with password</span>
+        <div className="grow border-t border-white/[.12]" />
+      </div>
+
+      {/* The password block gets the same teal-ring + pill treatment as
+          the passkey/Google options above when IT was the last method
+          to succeed — the one case that isn't a single button, so the
+          highlight wraps the cue + form together rather than sitting on
+          a single element. */}
+      <div
+        className="mt-6 rounded-2xl"
+        style={lastUsed === 'password'
+          ? { border: '1.5px solid #15A89E', background: 'rgba(21,168,158,.08)', padding: '16px' }
+          : undefined}
+      >
+        {lastUsed === 'password' && <LastUsedPill tone="onDark" />}
+
+        {/* The "For patients" caption above belongs to the GOOGLE button
+            (staff accounts are invite-provisioned and use email +
+            password). Sitting directly above this divider, though, it read
+            as labelling everything below it — leaving practice staff unsure
+            this password form was for them at all. This one line says the
+            form is shared; it deliberately does not touch the Google or
+            passkey options. */}
+        <p
+          data-testid="password-audience-cue"
+          className="mb-5 text-center text-[12px] leading-[1.55] text-[#8AA0BC]"
+        >
+          For <span className="font-medium text-white">patients and practices</span> — sign in
+          with the email you registered.
+        </p>
+
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
+          <div>
+            <label htmlFor="email" className="mb-[7px] block text-[13px] font-medium text-[#9FB3CC]">
+              Email address
+            </label>
+            <input
+              id="email"
+              type="email"
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              // "username webauthn" tells the browser this field can be
+              // filled by a passkey suggestion (Conditional UI). The hook
+              // mounts the conditional ceremony so the suggestion appears
+              // on focus. It is why this input must stay rendered on mount
+              // rather than hiding behind a "sign in with email" reveal.
+              autoComplete="username webauthn"
+              className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
+              placeholder="jane@example.com"
+            />
+          </div>
+
+          <div>
+            <div className="mb-[7px] flex items-center justify-between">
+              <label htmlFor="password" className="block text-[13px] font-medium text-[#9FB3CC]">
+                Password
+              </label>
+              <Link
+                href="/forgot-password"
+                data-testid="login-forgot-password"
+                className="text-[12px] font-semibold underline underline-offset-[3px] text-[#9FB3CC] hover:text-white"
+              >
+                Forgot password?
+              </Link>
+            </div>
+            <input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              autoComplete="current-password webauthn"
+              className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
+              placeholder="Your password"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={pending.disabled}
+            className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[#06202B] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
+            style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
+          >
+            {pending.showLabel ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+
+      {/* ── Signup CTAs ───────────────────────────────────────────────
+          Both roles, named explicitly. A login page is the one place a
+          visitor already knows which of the two they are, so these stay
+          direct links rather than routing through the /signup chooser. */}
+      <section
+        aria-label="New to BetterNow"
+        className="mt-9 rounded-2xl border border-white/[.12] bg-white/[.04] p-5"
+      >
+        <p className="mb-3.5 text-center text-[13px] font-semibold text-white">
+          New to BetterNow?
+        </p>
+        <div className="space-y-2.5">
+          <Link
+            href="/signup/patient"
+            data-testid="login-signup-patient"
+            className="block rounded-xl border border-white/[.14] bg-white/[.05] px-4 py-3 transition-colors hover:border-[#4FD8CD]/50 hover:bg-white/[.09]"
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#7A90AD]">
+              Patient
+            </p>
+            <p className="mt-0.5 text-[15px] font-semibold text-white">
+              Sign up as a patient
+            </p>
+            <p className="mt-0.5 text-[12px] text-[#8AA0BC]">
+              Pay medical bills in interest-free instalments.
+            </p>
+          </Link>
+          <Link
+            href="/signup/practice"
+            data-testid="login-signup-practice"
+            className="block rounded-xl border border-white/[.14] bg-white/[.05] px-4 py-3 transition-colors hover:border-[#4FD8CD]/50 hover:bg-white/[.09]"
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#7A90AD]">
+              Practice
+            </p>
+            <p className="mt-0.5 text-[15px] font-semibold text-white">
+              Register your practice
+            </p>
+            <p className="mt-0.5 text-[12px] text-[#8AA0BC]">
+              Offer BetterNow to your patients.
+            </p>
+          </Link>
+        </div>
+      </section>
+
+      {/* PWA install callout — placed, persistent, secondary visual
+          weight so it doesn't compete with Sign in. Hidden when the
+          page is already running in the installed app (display-mode
+          standalone) or when the runtime can't install at all. Its own
+          white card reads as a deliberate object on the navy, so it
+          needs no dark variant. */}
+      <div className="mt-6">
+        <InstallCallout />
+      </div>
+    </AuthSurface>
   );
 }

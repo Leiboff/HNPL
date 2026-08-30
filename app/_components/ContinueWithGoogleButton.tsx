@@ -83,6 +83,14 @@ type Props = {
    * entry screen puts one under its whole button stack).
    */
   showConsentNote?: boolean;
+  /**
+   * Which ground this button is sitting on. The BUTTON itself never
+   * changes — Google's guidelines require the white surface — but the
+   * consent note beneath it and the "last used" pill above it are our
+   * own text, and the light-ground greys are unreadable on the navy
+   * auth surface. Defaults to 'onLight'.
+   */
+  tone?: 'onLight' | 'onDark';
 };
 
 // Origin-relative allow-list. Same posture as /auth/callback safeNext
@@ -102,7 +110,9 @@ export default function ContinueWithGoogleButton({
   onSignInAttempt,
   highlighted,
   showConsentNote = true,
+  tone = 'onLight',
 }: Props) {
+  const onDark = tone === 'onDark';
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
@@ -139,7 +149,7 @@ export default function ContinueWithGoogleButton({
 
   return (
     <div className="w-full">
-      {highlighted && <LastUsedPill />}
+      {highlighted && <LastUsedPill tone={tone} />}
       <button
         type="button"
         onClick={handleClick}
@@ -153,13 +163,16 @@ export default function ContinueWithGoogleButton({
         <span>{loading ? 'Opening Google…' : label}</span>
       </button>
       {showConsentNote && (
-        <p className="mt-2 text-center text-[11px] leading-[1.5] text-[#8494A8]" data-testid="google-consent-note">
+        <p
+          className={`mt-2 text-center text-[11px] leading-[1.5] ${onDark ? 'text-[#8AA0BC]' : 'text-[#8494A8]'}`}
+          data-testid="google-consent-note"
+        >
           By continuing with Google you agree to our{' '}
           <Link
             href="/legal/terms"
             target="_blank"
             rel="noopener"
-            className="font-semibold underline underline-offset-2 text-[#41556F]"
+            className={`font-semibold underline underline-offset-2 ${onDark ? 'text-white' : 'text-[#41556F]'}`}
           >
             Terms &amp; Conditions
           </Link>
@@ -168,14 +181,14 @@ export default function ContinueWithGoogleButton({
             href="/legal/privacy"
             target="_blank"
             rel="noopener"
-            className="font-semibold underline underline-offset-2 text-[#41556F]"
+            className={`font-semibold underline underline-offset-2 ${onDark ? 'text-white' : 'text-[#41556F]'}`}
           >
             Privacy Policy
           </Link>.
         </p>
       )}
       {error && (
-        <p className="mt-2 text-xs text-red-700" role="alert">
+        <p className={`mt-2 text-xs ${onDark ? 'text-red-300' : 'text-red-700'}`} role="alert">
           {error}
         </p>
       )}

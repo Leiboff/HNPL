@@ -22,8 +22,9 @@ const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 const codeOf = (p: string) => stripComments(read(p));
 
-const PAGE  = codeOf('app/(auth)/signup/page.tsx');
-const ENTRY = codeOf('app/(auth)/signup/SignupEntry.tsx');
+const PAGE    = codeOf('app/(auth)/signup/page.tsx');
+const ENTRY   = codeOf('app/(auth)/signup/SignupEntry.tsx');
+const SURFACE = codeOf('app/_components/AuthSurface.tsx');
 
 describe('the route renders the screen instead of bouncing', () => {
   it('no longer redirects away', () => {
@@ -125,13 +126,25 @@ describe('a signed-in visitor is not shown a front door', () => {
 });
 
 describe('brand', () => {
-  it('uses the betternow wordmark and Poppins, not a generic heading', () => {
+  it('uses the betternow wordmark, not a generic heading', () => {
     expect(ENTRY).toMatch(/better<span/);
-    expect(ENTRY).toMatch(/var\(--font-poppins\)/);
+  });
+
+  it('sits on the shared auth surface rather than its own copy of the gradient', () => {
+    // The navy ground + blobs were pasted into three files before this
+    // was extracted. Pin that the entry screen consumes the shared one,
+    // and that it has not re-grown a local copy.
+    expect(ENTRY).toMatch(/from '@\/app\/_components\/AuthSurface'/);
+    expect(ENTRY).toMatch(/<AuthSurface centred>/);
+    expect(ENTRY).not.toMatch(/linear-gradient\(180deg, #0A182E/);
   });
 
   it('the decorative background can never intercept a tap on the buttons', () => {
-    expect(ENTRY).toMatch(/aria-hidden className="pointer-events-none absolute inset-0/);
+    expect(SURFACE).toMatch(/aria-hidden className="pointer-events-none absolute inset-0/);
+  });
+
+  it('the surface carries Poppins for every screen that uses it', () => {
+    expect(SURFACE).toMatch(/var\(--font-poppins\)/);
   });
 
   it('shows NO mocked-up amounts — nothing here can be mistaken for a quote', () => {

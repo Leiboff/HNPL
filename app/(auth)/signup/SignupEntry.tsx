@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
+import AuthSurface from '@/app/_components/AuthSurface';
 
 // ─── /signup — the auth entry screen ───────────────────────────────────
 //
@@ -56,9 +57,7 @@ import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton
 // says the same thing for every button above it. /auth/callback records
 // the acceptance server-side when an OAuth user arrives.
 
-const NAVY      = '#13294B';
-const NAVY_DEEP = '#0A182E';
-const TEAL      = '#15A89E';
+const TEAL = '#15A89E';
 
 export default function SignupEntry() {
   // Already signed in? Don't show a front door to someone who is
@@ -74,17 +73,7 @@ export default function SignupEntry() {
   }, []);
 
   return (
-    <main
-      className="relative flex min-h-screen flex-col justify-center overflow-hidden px-5 py-12"
-      style={{
-        background: `linear-gradient(180deg, ${NAVY_DEEP} 0%, #0D2039 45%, ${NAVY} 100%)`,
-        fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif',
-      }}
-    >
-      <BrandBlobs />
-
-      <div className="relative mx-auto flex w-full max-w-[420px] flex-col">
-
+    <AuthSurface centred>
         {/* ── Hero: the wordmark carries it ─────────────────────────
             There is no illustration here on purpose. A mocked-up bill
             with invented figures is the one thing on this screen a
@@ -178,45 +167,6 @@ export default function SignupEntry() {
             Register your practice
           </Link>
         </p>
-      </div>
-    </main>
-  );
-}
-
-// ─── Decoration ────────────────────────────────────────────────────────
-
-/**
- * The organic background shapes. Purely decorative — blurred, low
- * opacity, aria-hidden, and pointer-events-none so they can never
- * intercept a tap on the buttons above them.
- */
-function BrandBlobs() {
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      {/* Deep blue, top-left — sits behind the hero card's shoulder. */}
-      <div
-        className="absolute -left-28 -top-32 h-[330px] w-[350px] opacity-[.55] blur-[34px]"
-        style={{
-          background: 'linear-gradient(150deg, #2C5F9E 0%, #1B3E6B 100%)',
-          borderRadius: '58% 42% 47% 53% / 46% 51% 49% 54%',
-        }}
-      />
-      {/* Teal, right — the brand accent, largest of the three. */}
-      <div
-        className="absolute -right-32 top-16 h-[380px] w-[380px] opacity-[.50] blur-[30px]"
-        style={{
-          background: 'linear-gradient(200deg, #19C2B6 0%, #0E7A80 100%)',
-          borderRadius: '43% 57% 62% 38% / 54% 43% 57% 46%',
-        }}
-      />
-      {/* Teal-into-navy, bottom-left — lifts the base of the stack. */}
-      <div
-        className="absolute -bottom-32 -left-24 h-[340px] w-[400px] opacity-[.42] blur-[40px]"
-        style={{
-          background: 'linear-gradient(20deg, #15A89E 0%, #1E4E86 100%)',
-          borderRadius: '52% 48% 38% 62% / 44% 57% 43% 56%',
-        }}
-      />
-    </div>
+    </AuthSurface>
   );
 }

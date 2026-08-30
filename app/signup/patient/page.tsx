@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import PatientSignupForm from './PatientSignupForm';
+import AuthSurface from '@/app/_components/AuthSurface';
 
 type Props = {
   searchParams: Promise<{ token?: string }>;
@@ -26,16 +27,10 @@ export default async function PatientSignupPage({ searchParams }: Props) {
   const invitation: { email: string; practiceName: string | null } | null = null;
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4 py-12"
-      // Same auth-surface treatment as /signup and /login — deep navy
-      // ground, teal light. The white form card is unchanged.
-      style={{
-        background: 'linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
-        backgroundImage: 'radial-gradient(58% 44% at 86% 2%, rgba(21,168,158,.30), transparent 70%), radial-gradient(52% 44% at 2% 92%, rgba(35,80,150,.42), transparent 72%), linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
-      }}
-    >
-      <div className="w-full max-w-md">
+    // Same ground as /signup and /login. The white form card on top is
+    // unchanged — a form this long needs the light surface, and every
+    // input, label and error colour inside it is untouched.
+    <AuthSurface>
 
         <section
           className="rounded-[28px] border bg-white"
@@ -70,7 +65,6 @@ export default async function PatientSignupPage({ searchParams }: Props) {
 
           <PatientSignupForm invitation={invitation} token={token ?? null} />
         </section>
-      </div>
-    </div>
+    </AuthSurface>
   );
 }
