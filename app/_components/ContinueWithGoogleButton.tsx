@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import LastUsedPill from './LastUsedPill';
 
@@ -26,6 +27,22 @@ import LastUsedPill from './LastUsedPill';
 //     "Continue with Google" (or "Sign in with Google") text label,
 //     UNMODIFIED. Do NOT restyle into brand navy/teal — Google's
 //     guidelines specifically prohibit that treatment.
+//
+// ─── Consent (added with the auth-entry redesign) ─────────────────────
+//
+// A Google click is a SIGN-UP for anyone without an account — Supabase
+// provisions the auth user and the 0024 trigger creates the profile.
+// The email form has always had an explicit "I agree" tick gating it
+// server-side (app/signup/patient/actions.ts); this path had NOTHING,
+// so Google-origin patients reached /patient with
+// profiles.terms_accepted_at NULL and had never been shown the terms.
+//
+// The consent note below is rendered by DEFAULT, directly beneath the
+// button, so every surface carrying this button presents the terms at
+// the moment of the click (sign-in-wrap). /auth/callback then records
+// that acceptance server-side against the profile. Pass
+// showConsentNote={false} ONLY when the caller renders its own legal
+// line covering this button — never to drop the disclosure entirely.
 
 type Props = {
   /** "Continue with Google" (signup context) or "Sign in with Google" (login context). */
@@ -58,6 +75,14 @@ type Props = {
    * used on the highlighted passkey button and password form.
    */
   highlighted?: boolean;
+  /**
+   * Render the "By continuing… Terms & Privacy" line beneath the button.
+   * Defaults to TRUE — the disclosure is the thing that makes the
+   * acceptance /auth/callback records honest. Set false only when the
+   * caller renders an equivalent line covering this button (the /signup
+   * entry screen puts one under its whole button stack).
+   */
+  showConsentNote?: boolean;
 };
 
 // Origin-relative allow-list. Same posture as /auth/callback safeNext
@@ -76,6 +101,7 @@ export default function ContinueWithGoogleButton({
   next,
   onSignInAttempt,
   highlighted,
+  showConsentNote = true,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
@@ -126,6 +152,28 @@ export default function ContinueWithGoogleButton({
         <GoogleGlyph />
         <span>{loading ? 'Opening Google…' : label}</span>
       </button>
+      {showConsentNote && (
+        <p className="mt-2 text-center text-[11px] leading-[1.5] text-[#8494A8]" data-testid="google-consent-note">
+          By continuing with Google you agree to our{' '}
+          <Link
+            href="/legal/terms"
+            target="_blank"
+            rel="noopener"
+            className="font-semibold underline underline-offset-2 text-[#41556F]"
+          >
+            Terms &amp; Conditions
+          </Link>
+          {' '}and{' '}
+          <Link
+            href="/legal/privacy"
+            target="_blank"
+            rel="noopener"
+            className="font-semibold underline underline-offset-2 text-[#41556F]"
+          >
+            Privacy Policy
+          </Link>.
+        </p>
+      )}
       {error && (
         <p className="mt-2 text-xs text-red-700" role="alert">
           {error}

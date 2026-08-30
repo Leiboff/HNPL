@@ -28,9 +28,11 @@ export default async function PatientSignupPage({ searchParams }: Props) {
   return (
     <div
       className="min-h-screen flex items-center justify-center px-4 py-12"
+      // Same auth-surface treatment as /signup and /login — deep navy
+      // ground, teal light. The white form card is unchanged.
       style={{
-        background: '#f7fbfb',
-        backgroundImage: 'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
+        background: 'linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
+        backgroundImage: 'radial-gradient(58% 44% at 86% 2%, rgba(21,168,158,.30), transparent 70%), radial-gradient(52% 44% at 2% 92%, rgba(35,80,150,.42), transparent 72%), linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
       }}
     >
       <div className="w-full max-w-md">

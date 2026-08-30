@@ -178,17 +178,21 @@ export default function LoginPage() {
   return (
     <div
       className="min-h-screen flex items-center justify-center px-4 py-12"
+      // Shared auth-surface treatment (see app/(auth)/signup/SignupEntry.tsx):
+      // a deep brand-navy ground with soft teal light behind it. The card
+      // below stays WHITE — form fields need the light surface, and every
+      // input/label/error colour in it is unchanged.
       style={{
-        background: '#f7fbfb',
-        backgroundImage: 'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
+        background: 'linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
+        backgroundImage: 'radial-gradient(58% 44% at 86% 2%, rgba(21,168,158,.30), transparent 70%), radial-gradient(52% 44% at 2% 92%, rgba(35,80,150,.42), transparent 72%), linear-gradient(180deg, #0A182E 0%, #0D2039 45%, #13294B 100%)',
       }}
     >
       <div className="w-full max-w-md">
 
         {/* Brand mark */}
         <div className="text-center mb-8">
-          <Link href="/" className="inline-block text-2xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+          <Link href="/" className="inline-block text-[30px] font-bold tracking-[-0.035em]" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
+            <span style={{ color: '#FFFFFF' }}>better</span><span style={{ color: '#4FD8CD' }}>now</span>
           </Link>
         </div>
 

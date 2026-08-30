@@ -1,0 +1,290 @@
+'use client';
+
+import { useCallback, useEffect } from 'react';
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase/client';
+import { passkeyErrorMessage } from '@/lib/hooks/passkeyErrors';
+import { usePasskeySignIn } from '@/lib/hooks/usePasskeySignIn';
+import { recordLoginLanding } from '@/app/patient/passkey-actions';
+import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
+import { setLastSignInMethod } from '@/lib/auth/lastSignInMethod';
+
+// ─── /signup — the auth entry screen ───────────────────────────────────
+//
+// One mobile-first screen that opens the whole front door: brand, the
+// promise in a sentence, then every way in as a stack of full-width
+// pills. Previously /signup was a bare redirect('/'), so a visitor who
+// typed it — or tapped a "sign up" link from an email — landed on the
+// marketing page and had to hunt for the CTA.
+//
+// The stack is ordered by how most patients actually arrive:
+//   1. Sign up with email  → /signup/patient (the full form + I-agree tick)
+//   2. Continue with Google → OAuth, patients only (same button as /login)
+//   3. Sign in with a passkey → only rendered where WebAuthn is available
+//
+// Nothing here is a new auth mechanism: each button hands off to the
+// path that already existed. This screen is presentation + routing.
+//
+// ─── Consent ──────────────────────────────────────────────────────────
+//
+// One legal line sits beneath the whole stack, so it covers the Google
+// and passkey buttons (which have no "I agree" tick of their own) as
+// well as the email route. ContinueWithGoogleButton renders its own
+// note by default; here it is suppressed because this line already
+// says the same thing for every button above it. /auth/callback records
+// the acceptance server-side when an OAuth user arrives.
+
+const NAVY      = '#13294B';
+const NAVY_DEEP = '#0A182E';
+const TEAL      = '#15A89E';
+
+export default function SignupEntry() {
+  // Already signed in? Don't show a front door to someone who is
+  // already inside. Mirrors /login's shortcut: getSession() reads the
+  // cookie the browser client already holds (no round trip) and is a
+  // convenience, never the security boundary — /dashboard re-checks.
+  useEffect(() => {
+    let cancelled = false;
+    createClient().auth.getSession().then(({ data: { session } }) => {
+      if (!cancelled && session) window.location.href = '/dashboard';
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const onPasskeySuccess = useCallback(() => {
+    setLastSignInMethod('passkey');
+    // Best-effort login-count bump, exactly as /login does — it drives
+    // how often the patient layout offers the passkey prompt. A failure
+    // here must never block the sign-in.
+    recordLoginLanding()
+      .catch(() => { /* nudge frequency capping, not a gate */ })
+      .finally(() => { window.location.href = '/dashboard'; });
+  }, []);
+
+  const {
+    supported: passkeySupport,
+    signIn:    signInWithPasskey,
+    loading:   passkeyLoading,
+    error:     passkeyError,
+  } = usePasskeySignIn({ onSuccess: onPasskeySuccess });
+
+  // DERIVED, not mirrored into state: the hook already clears its own
+  // error at the start of every explicit signIn() and filters out
+  // user_cancelled, so there is nothing here a local copy would add —
+  // only a second source of truth that can fall out of step with it.
+  const error = passkeyError ? passkeyErrorMessage(passkeyError) : null;
+
+  return (
+    <main
+      className="relative min-h-screen overflow-hidden px-5 pb-10 pt-12"
+      style={{
+        background: `linear-gradient(180deg, ${NAVY_DEEP} 0%, #0D2039 45%, ${NAVY} 100%)`,
+        fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif',
+      }}
+    >
+      <BrandBlobs />
+
+      <div className="relative mx-auto flex w-full max-w-[420px] flex-col">
+
+        {/* ── Hero: the product in one squircle ─────────────────────── */}
+        <div className="relative mx-auto w-full max-w-[300px]">
+          <PlanSquircle />
+          {/* Wordmark overlaps the bottom of the squircle, the way the
+              reference layout seats the logo on its hero card. */}
+          <div className="relative -mt-9 text-center">
+            <span className="text-[40px] font-bold leading-none tracking-[-0.035em] text-white drop-shadow-[0_6px_18px_rgba(0,0,0,.45)]">
+              better<span style={{ color: '#4FD8CD' }}>now</span>
+            </span>
+          </div>
+        </div>
+
+        {/* ── The promise ───────────────────────────────────────────── */}
+        <h1 className="mt-7 text-center text-[27px] font-semibold leading-[1.22] tracking-[-0.025em] text-white">
+          Any medical bill,
+          <br />
+          split interest-free
+        </h1>
+        <p className="mt-3 text-center text-[15px] leading-[1.55] text-[#9FB3CC]">
+          Pay in 2 or 3 instalments, timed around your payday. No interest, ever.
+        </p>
+
+        {/* ── The ways in ───────────────────────────────────────────── */}
+        <div className="mt-9 space-y-3" data-testid="signup-entry-methods">
+          <Link
+            href="/signup/patient"
+            data-testid="signup-entry-email"
+            className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[#06202B] transition-transform active:scale-[.985]"
+            style={{ background: TEAL, boxShadow: '0 14px 30px -12px rgba(21,168,158,.75)' }}
+          >
+            Sign up with email
+          </Link>
+
+          <ContinueWithGoogleButton
+            label="Continue with Google"
+            showConsentNote={false}
+          />
+
+          {passkeySupport && (
+            <button
+              type="button"
+              onClick={() => { void signInWithPasskey(); }}
+              disabled={passkeyLoading}
+              data-testid="signup-entry-passkey"
+              className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{ borderColor: 'rgba(255,255,255,.24)', background: 'rgba(255,255,255,.05)' }}
+            >
+              <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              {passkeyLoading ? 'Authenticating…' : 'Sign in with a passkey'}
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <p className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-center text-[13px] text-red-200" role="alert">
+            {error}
+          </p>
+        )}
+
+        {/* ── One legal line for the whole stack ────────────────────── */}
+        <p
+          data-testid="signup-entry-consent"
+          className="mt-5 text-center text-[12px] leading-[1.6] text-[#8AA0BC]"
+        >
+          By continuing you agree to our{' '}
+          <Link
+            href="/legal/terms"
+            target="_blank"
+            rel="noopener"
+            className="font-semibold text-white underline underline-offset-[3px]"
+          >
+            Terms &amp; Conditions
+          </Link>
+          {' '}and{' '}
+          <Link
+            href="/legal/privacy"
+            target="_blank"
+            rel="noopener"
+            className="font-semibold text-white underline underline-offset-[3px]"
+          >
+            Privacy Policy
+          </Link>.
+        </p>
+
+        {/* ── Existing account ──────────────────────────────────────── */}
+        <p className="mt-8 text-center text-[15px] text-[#9FB3CC]">
+          Already have an account?{' '}
+          <Link
+            href="/login"
+            data-testid="signup-entry-login"
+            className="font-semibold"
+            style={{ color: '#4FD8CD' }}
+          >
+            Sign in
+          </Link>
+        </p>
+
+        {/* Practices are invite-provisioned staff accounts, not a Google
+            path — kept as a quiet third door rather than a fourth pill,
+            so the patient stack stays the obvious read. */}
+        <p className="mt-3 text-center text-[13px] text-[#7A90AD]">
+          Are you a practice?{' '}
+          <Link
+            href="/signup/practice"
+            data-testid="signup-entry-practice"
+            className="font-medium underline underline-offset-[3px] text-[#A9BDD6]"
+          >
+            Register your practice
+          </Link>
+        </p>
+      </div>
+    </main>
+  );
+}
+
+// ─── Decoration ────────────────────────────────────────────────────────
+
+/**
+ * The organic background shapes. Purely decorative — blurred, low
+ * opacity, aria-hidden, and pointer-events-none so they can never
+ * intercept a tap on the buttons above them.
+ */
+function BrandBlobs() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      {/* Deep blue, top-left — sits behind the hero card's shoulder. */}
+      <div
+        className="absolute -left-28 -top-32 h-[330px] w-[350px] opacity-[.55] blur-[34px]"
+        style={{
+          background: 'linear-gradient(150deg, #2C5F9E 0%, #1B3E6B 100%)',
+          borderRadius: '58% 42% 47% 53% / 46% 51% 49% 54%',
+        }}
+      />
+      {/* Teal, right — the brand accent, largest of the three. */}
+      <div
+        className="absolute -right-32 top-16 h-[380px] w-[380px] opacity-[.50] blur-[30px]"
+        style={{
+          background: 'linear-gradient(200deg, #19C2B6 0%, #0E7A80 100%)',
+          borderRadius: '43% 57% 62% 38% / 54% 43% 57% 46%',
+        }}
+      />
+      {/* Teal-into-navy, bottom-left — lifts the base of the stack. */}
+      <div
+        className="absolute -bottom-32 -left-24 h-[340px] w-[400px] opacity-[.42] blur-[40px]"
+        style={{
+          background: 'linear-gradient(20deg, #15A89E 0%, #1E4E86 100%)',
+          borderRadius: '52% 48% 38% 62% / 44% 57% 43% 56%',
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * The hero card — a squircle standing in for the reference layout's
+ * media panel. Built in markup rather than shipped as an image so it
+ * stays crisp on any density and carries no extra payload. The numbers
+ * are the same illustrative R3,000 split the landing page uses; they
+ * are an EXAMPLE, not a quote (a real schedule comes from the
+ * patient's salary_day at checkout).
+ */
+function PlanSquircle() {
+  const rows = [
+    { when: 'Today',             amount: 'R1 000' },
+    { when: 'Next payday',       amount: 'R1 000' },
+    { when: 'The payday after',  amount: 'R1 000' },
+  ];
+
+  return (
+    <div
+      className="relative overflow-hidden px-6 pb-16 pt-7"
+      style={{
+        borderRadius: '30% 30% 30% 30% / 12% 12% 12% 12%',
+        background: 'linear-gradient(160deg, #1B7F86 0%, #15A89E 42%, #0E5F84 100%)',
+        boxShadow: '0 30px 70px -30px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.22)',
+      }}
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
+        Your bill
+      </p>
+      <p className="mt-0.5 text-[32px] font-bold leading-none tracking-[-0.03em] text-white">
+        R3 000
+      </p>
+
+      <div className="mt-4 space-y-2">
+        {rows.map((r) => (
+          <div
+            key={r.when}
+            className="flex items-center justify-between rounded-xl px-3 py-2"
+            style={{ background: 'rgba(255,255,255,.16)' }}
+          >
+            <span className="text-[12px] font-medium text-white/85">{r.when}</span>
+            <span className="text-[13px] font-semibold text-white">{r.amount}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
