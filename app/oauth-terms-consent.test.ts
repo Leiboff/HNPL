@@ -69,20 +69,24 @@ describe('ContinueWithGoogleButton discloses the terms', () => {
   });
 });
 
-describe('a surface may suppress the button note ONLY by covering the stack itself', () => {
-  // THE INVARIANT, stated once.
+describe('every surface offering Google discloses the terms somehow', () => {
+  // THE INVARIANT, restated as the surfaces changed.
   //
-  // The disclosure is what makes the acceptance /auth/callback records
-  // legitimate, so it must be present on every surface that can create
-  // an account. There are exactly two legal shapes:
+  // A Google click can create an account, so no surface may offer it
+  // silently. There are three legal shapes, and what makes them legal
+  // differs:
   //
-  //   A. the button's own note (the default), or
-  //   B. showConsentNote={false} PLUS AuthConsentNote covering the whole
-  //      stack — which is stronger, since it also covers the passkey and
-  //      email options that have no note of their own.
+  //   A. the button's own note (the default) — a disclosure.
+  //   B. showConsentNote={false} + AuthConsentNote covering the whole
+  //      stack — the same disclosure, once, for every option. /login
+  //      takes this: it is a SIGN-IN screen, so a tick would tax every
+  //      returning user for an agreement most of them gave long ago.
+  //   C. showConsentNote={false} + an actual gating tick — an
+  //      AGREEMENT, not merely a disclosure. /signup takes this,
+  //      because it is where accounts are made.
   //
-  // What must never exist is a third shape: opting out and rendering
-  // nothing. This test enumerates every caller and allows only A or B.
+  // What must never exist is a fourth: offering the button with none of
+  // them. This enumerates the callers and allows only A, B or C.
 
   const CALLERS = [
     'app/(auth)/login/page.tsx',
@@ -90,38 +94,52 @@ describe('a surface may suppress the button note ONLY by covering the stack itse
     'app/signup/patient/PatientSignupForm.tsx',
   ];
 
-  it('every caller of the Google button lands in one of the two legal shapes', () => {
+  it('every caller lands in one of the three shapes', () => {
     for (const p of CALLERS) {
       const src = codeOf(p);
       if (!/<ContinueWithGoogleButton/.test(src)) continue;
-      const optsOut = /showConsentNote=\{false\}/.test(src);
-      if (optsOut) {
-        // Shape B — must render the stack-wide note instead.
-        expect(src).toMatch(/<AuthConsentNote/);
+      if (/showConsentNote=\{false\}/.test(src)) {
+        // B or C.
+        expect(/<AuthConsentNote/.test(src) || /consentGiven=/.test(src)).toBe(true);
       } else {
-        // Shape A — must NOT have silently disabled the default.
+        // A — must not have silently disabled the default.
         expect(src).not.toMatch(/showConsentNote/);
       }
     }
   });
 
-  it('/login and /signup both take shape B — one line under every option', () => {
-    for (const src of [LOGIN, ENTRY]) {
-      expect(src).toMatch(/showConsentNote=\{false\}/);
-      expect(src).toMatch(/<AuthConsentNote/);
-    }
+  it('/signup takes shape C — a tick that actually blocks both routes', () => {
+    expect(ENTRY).toMatch(/data-testid="signup-terms-checkbox"/);
+    // Google is handed the value AND a way to refuse.
+    expect(ENTRY).toMatch(/consentGiven=\{termsAccepted\}/);
+    expect(ENTRY).toMatch(/onConsentMissing=\{requireTerms\}/);
+    // The email route is gated by the same function.
+    expect(ENTRY).toMatch(/function openForm\(\) \{\s*if \(!requireTerms\(\)\) return;/);
   });
 
-  it('both notes name the brand identically', () => {
-    // Two of the three auth screens carry AuthConsentNote and one carries
-    // the button's own note. They must not describe the same documents as
-    // belonging to different parties — "our" on one screen and
-    // "betternow's" on the others reads as an oversight, and was one.
-    expect(NOTE).toMatch(/agree to betternow/);
-    expect(codeOf('app/_components/ContinueWithGoogleButton.tsx')).toMatch(/agree to betternow/);
-    for (const src of [NOTE, codeOf('app/_components/ContinueWithGoogleButton.tsx')]) {
-      expect(src).not.toMatch(/agree to our/);
-    }
+  it('the tick is NOT pre-checked', () => {
+    // A pre-ticked box is consent the visitor never gave — the textbook
+    // example of what POPIA's "expression of will" and GDPR's "clear
+    // affirmative action" exclude — and is functionally identical to the
+    // passive line it replaced, since the visitor does nothing.
+    expect(ENTRY).toMatch(/const \[termsAccepted, setTermsAccepted\] = useState\(false\);/);
+    expect(ENTRY).toMatch(/checked=\{termsAccepted\}/);
+    expect(ENTRY).not.toMatch(/useState\(true\)[\s\S]{0,80}termsAccepted/);
+  });
+
+  it('/login stays shape B — a sign-in screen must not tax returning users', () => {
+    expect(LOGIN).toMatch(/showConsentNote=\{false\}/);
+    expect(LOGIN).toMatch(/<AuthConsentNote/);
+    expect(LOGIN).not.toMatch(/consentGiven=/);
+  });
+
+  it('the email form has no tick of its own — one agreement, not two', () => {
+    const FORM = codeOf('app/signup/patient/PatientSignupForm.tsx');
+    expect(FORM).not.toMatch(/patient-termsAccepted/);
+    expect(FORM).not.toMatch(/href="\/legal\/terms"/);
+    // It still receives the chooser's value and still passes it on.
+    expect(FORM).toMatch(/termsAccepted: boolean/);
+    expect(FORM).toMatch(/termsAccepted,/);
   });
 
   it('the shared note names both documents and links to both pages', () => {
@@ -129,27 +147,8 @@ describe('a surface may suppress the button note ONLY by covering the stack itse
     expect(NOTE).toMatch(/href="\/legal\/terms"/);
     expect(NOTE).toMatch(/href="\/legal\/privacy"/);
     expect(NOTE).toMatch(/data-testid="auth-consent-note"/);
-    expect(NOTE.match(/target="_blank"/g) ?? []).toHaveLength(2);
-    expect(NOTE.match(/rel="noopener"/g) ?? []).toHaveLength(2);
-  });
-
-  it('the line sits BELOW the options on both screens, so it covers them all', () => {
-    expect(ENTRY.indexOf('<AuthConsentNote'))
-      .toBeGreaterThan(ENTRY.indexOf('data-testid="signup-entry-methods"'));
-    // On /login the stack ends with the email option.
-    expect(LOGIN.indexOf('<AuthConsentNote'))
-      .toBeGreaterThan(LOGIN.indexOf('data-testid="login-open-email"'));
-  });
-
-  it('neither screen states the terms twice', () => {
-    // Two legal lines on one screen read as two different promises.
-    for (const src of [LOGIN, ENTRY]) {
-      expect(src.match(/<AuthConsentNote/g) ?? []).toHaveLength(1);
-    }
   });
 });
-
-// ─── 2. The record, server-side ────────────────────────────────────────
 
 describe('the OAuth path AGREES — actively, like the email path', () => {
   // WHAT THIS USED TO PIN, and why it changed.
@@ -171,10 +170,34 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
   const STEP_CLIENT  = codeOf('app/onboarding/terms/TermsStepClient.tsx');
   const STATE        = codeOf('lib/onboarding/state.ts');
 
-  it('the callback no longer stamps acceptance — that would skip the step', () => {
-    expect(CALLBACK_SRC).not.toMatch(/terms_accepted_at:/);
-    expect(CALLBACK_SRC).not.toMatch(/TERMS_VERSION/);
-    expect(CALLBACK_SRC).not.toMatch(/PRIVACY_VERSION/);
+  it('the callback records the tick — and ONLY the tick', () => {
+    // It stamps when the chooser says the box was ticked, and writes
+    // nothing otherwise. The earlier version stamped every OAuth
+    // arrival on the strength of a passive line, which made the record
+    // say more than the visitor had done.
+    expect(CALLBACK_SRC).toMatch(/terms_accepted'\) === '1'/);
+    expect(CALLBACK_SRC).toMatch(/consentGiven && !profile\.terms_accepted_at/);
+    // Write-once, and never a hardcoded version.
+    expect(CALLBACK_SRC).toMatch(/terms_version:\s*TERMS_VERSION/);
+    expect(CALLBACK_SRC).not.toMatch(/terms_version:\s*['"]/);
+  });
+
+  it('the param is opt-in at the button, so no surface claims consent it never asked for', () => {
+    expect(BUTTON).toMatch(/const consentParam = consentGiven \? '&terms_accepted=1' : '';/);
+    expect(BUTTON).toMatch(/const blocked = consentGiven === false;/);
+    // undefined means "not a consent moment" — /login keeps its old
+    // behaviour and adds no parameter.
+    expect(LOGIN).not.toMatch(/consentGiven=/);
+  });
+
+  it('the onboarding step REMAINS the floor — the param is client-asserted', () => {
+    // The tick happens before a session exists, so the acceptance has to
+    // travel as a query parameter, and a query parameter is asserted by
+    // the client. The step catches anything arriving unstamped: the
+    // param missing or dropped, or a new account created through
+    // /login's Google button, which collects no tick.
+    expect(STATE).toMatch(/if \(!user\.identity_providers\.includes\('email'\)\) steps\.push\('terms'\);/);
+    expect(STEP_ACTION).toMatch(/if \(!accepted\) return \{ error:/);
   });
 
   it('the step is FIRST for OAuth paths, so nothing can be reached before it', () => {

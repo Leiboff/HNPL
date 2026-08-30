@@ -28,21 +28,25 @@ import LastUsedPill from './LastUsedPill';
 //     UNMODIFIED. Do NOT restyle into brand navy/teal — Google's
 //     guidelines specifically prohibit that treatment.
 //
-// ─── Consent (added with the auth-entry redesign) ─────────────────────
+// ─── Consent ──────────────────────────────────────────────────────────
 //
 // A Google click is a SIGN-UP for anyone without an account — Supabase
-// provisions the auth user and the 0024 trigger creates the profile.
-// The email form has always had an explicit "I agree" tick gating it
-// server-side (app/signup/patient/actions.ts); this path had NOTHING,
-// so Google-origin patients reached /patient with
-// profiles.terms_accepted_at NULL and had never been shown the terms.
+// provisions the auth user and the 0024 trigger creates the profile — so
+// no surface may offer it silently. Two props cover the two kinds of
+// surface:
 //
-// The consent note below is rendered by DEFAULT, directly beneath the
-// button, so every surface carrying this button presents the terms at
-// the moment of the click (sign-in-wrap). /auth/callback then records
-// that acceptance server-side against the profile. Pass
-// showConsentNote={false} ONLY when the caller renders its own legal
-// line covering this button — never to drop the disclosure entirely.
+//   • showConsentNote (default true) — a DISCLOSURE. The right thing on
+//     a sign-in screen like /login, where most arrivals already have an
+//     account and taxing them with a tick would be noise.
+//   • consentGiven / onConsentMissing — an AGREEMENT. /signup passes
+//     these: it is where accounts are made, so it collects an unticked
+//     box that gates both this button and the email route, and carries
+//     the result to /auth/callback to be recorded.
+//
+// Set showConsentNote={false} only when the caller provides one of the
+// two itself — never to drop the disclosure entirely. The enumeration of
+// every caller and which shape it takes lives in
+// app/oauth-terms-consent.test.ts.
 
 type Props = {
   /** "Continue with Google" (signup context) or "Sign in with Google" (login context). */
@@ -102,6 +106,28 @@ type Props = {
    * so varying this is within the rules.
    */
   shape?: 'pill' | 'rounded';
+  /**
+   * Whether the caller has collected an affirmative agreement to the
+   * terms before this click.
+   *
+   *   undefined — the caller is not a consent moment. The button behaves
+   *               exactly as it always did. /login passes nothing: it is
+   *               a sign-in screen, and a brand-new account arriving that
+   *               way is caught by the terms step in onboarding.
+   *   false     — blocked. The click does NOT start OAuth; onConsentMissing
+   *               fires instead so the caller can point at its checkbox.
+   *   true      — proceed, and carry the acceptance to /auth/callback so
+   *               it can be recorded.
+   *
+   * The acceptance travels as a query parameter because the tick happens
+   * BEFORE any session exists — there is no profile to stamp yet. That
+   * makes the resulting record client-asserted, which is weaker than a
+   * server action on an authenticated session, and is why the onboarding
+   * terms step stays as a backstop for anything arriving unstamped.
+   */
+  consentGiven?: boolean;
+  /** Called instead of starting OAuth when consentGiven is false. */
+  onConsentMissing?: () => void;
 };
 
 // Origin-relative allow-list. Same posture as /auth/callback safeNext
@@ -123,12 +149,33 @@ export default function ContinueWithGoogleButton({
   showConsentNote = true,
   tone = 'onLight',
   shape = 'rounded',
+  consentGiven,
+  onConsentMissing,
 }: Props) {
   const onDark = tone === 'onDark';
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
+  const blocked = consentGiven === false;
+
   async function handleClick() {
+    // Deliberately NOT disabled — and not aria-disabled either.
+    //
+    // Both stop the click from ever landing, which sounds like the point
+    // until you notice that the click is what DELIVERS THE EXPLANATION:
+    // onConsentMissing is what surfaces the error and moves focus to the
+    // checkbox. Blocking it leaves someone facing a control that does
+    // nothing and says nothing about why — worst for exactly the people
+    // an aria attribute was meant to help. (Caught by a browser test:
+    // Playwright treats aria-disabled as non-interactive and refused the
+    // click, which is the same refusal an assistive tech may make.)
+    //
+    // So the button stays fully interactive. The dimming is a hint; the
+    // click is the explanation.
+    if (blocked) {
+      onConsentMissing?.();
+      return;
+    }
     setLoading(true);
     setError(null);
     onSignInAttempt?.();
@@ -144,10 +191,14 @@ export default function ContinueWithGoogleButton({
     // tampered Google-hosted round-trip. Belt-and-braces so no
     // single edit can open a redirect vector.
     const nextParam = safeNext(next);
+    // terms_accepted rides along only when the caller actually collected
+    // the tick. Absent by default, so no surface can accidentally claim
+    // an agreement it never asked for.
+    const consentParam = consentGiven ? '&terms_accepted=1' : '';
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(nextParam)}`,
+        redirectTo: `${origin}/auth/callback?next=${encodeURIComponent(nextParam)}${consentParam}`,
       },
     });
 
@@ -176,7 +227,12 @@ export default function ContinueWithGoogleButton({
         className={`flex h-[52px] w-full items-center justify-center border-[1.5px] bg-white text-[15px] font-medium text-[#1F2937] hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors ${
           shape === 'pill' ? 'rounded-full' : 'rounded-[14px]'
         }`}
-        style={highlighted ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' } : { borderColor: '#E2E8EE' }}
+        style={{
+          ...(highlighted
+            ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)' }
+            : { borderColor: '#E2E8EE' }),
+          ...(blocked ? { opacity: 0.45 } : null),
+        }}
       >
         <span className="auth-option-row">
           <GoogleGlyph />
