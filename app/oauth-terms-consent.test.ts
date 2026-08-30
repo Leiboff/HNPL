@@ -53,7 +53,7 @@ describe('ContinueWithGoogleButton discloses the terms', () => {
   });
 
   it('the note names both documents and links to both pages', () => {
-    expect(BUTTON).toMatch(/By continuing with Google you agree to our/);
+    expect(BUTTON).toMatch(/By continuing with Google you agree to betternow/);
     expect(BUTTON).toMatch(/href="\/legal\/terms"/);
     expect(BUTTON).toMatch(/href="\/legal\/privacy"/);
   });
@@ -110,6 +110,18 @@ describe('a surface may suppress the button note ONLY by covering the stack itse
     for (const src of [LOGIN, ENTRY]) {
       expect(src).toMatch(/showConsentNote=\{false\}/);
       expect(src).toMatch(/<AuthConsentNote/);
+    }
+  });
+
+  it('both notes name the brand identically', () => {
+    // Two of the three auth screens carry AuthConsentNote and one carries
+    // the button's own note. They must not describe the same documents as
+    // belonging to different parties — "our" on one screen and
+    // "betternow's" on the others reads as an oversight, and was one.
+    expect(NOTE).toMatch(/agree to betternow/);
+    expect(codeOf('app/_components/ContinueWithGoogleButton.tsx')).toMatch(/agree to betternow/);
+    for (const src of [NOTE, codeOf('app/_components/ContinueWithGoogleButton.tsx')]) {
+      expect(src).not.toMatch(/agree to our/);
     }
   });
 
