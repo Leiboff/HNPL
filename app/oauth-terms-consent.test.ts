@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stripComments } from '@/lib/testing/stripComments';
 
@@ -151,23 +151,32 @@ describe('every surface offering Google discloses the terms somehow', () => {
 });
 
 describe('the OAuth path AGREES — actively, like the email path', () => {
-  // WHAT THIS USED TO PIN, and why it changed.
+  // WHAT THIS USED TO PIN, and why it changed. Twice.
   //
   // The first fix for the Google gap was inference: a "by continuing…"
   // line beside the button, and /auth/callback stamping
   // terms_accepted_at on arrival. Defensible as sign-in-wrap, and
-  // strictly weaker than what the email path does — where an unticked
-  // box has to be ticked and signUpPatient refuses without it.
+  // strictly weaker than what the email path does.
   //
-  // The agreement is now an explicit onboarding step, so these
-  // assertions moved with it. The callback must NOT stamp any more:
-  // doing so would pre-satisfy the step and skip the very screen that
-  // collects the agreement.
+  // The second was an onboarding step — a real tick, but AFTER the
+  // session existed. That is the part that did not hold up: a step is a
+  // screen an unaccepted, fully authenticated account sits in front of,
+  // and every account reaching it was already an account.
+  //
+  // The rule now is that acceptance is a PRECONDITION of the session,
+  // enforced at the two doors:
+  //
+  //   • email  → signUpPatient confirms the row was written and DELETES
+  //     the auth user it just created if it wasn't.
+  //   • Google → /auth/callback confirms the row was written and signs
+  //     the arrival back out if it wasn't.
+  //
+  // So there is no terms step, and this suite pins its absence as
+  // firmly as it used to pin its presence: re-adding one would mean the
+  // door had stopped holding.
 
   const CALLBACK_SRC = codeOf('app/auth/callback/route.ts');
-  const STEP_PAGE    = codeOf('app/onboarding/terms/page.tsx');
-  const STEP_ACTION  = codeOf('app/onboarding/terms/actions.ts');
-  const STEP_CLIENT  = codeOf('app/onboarding/terms/TermsStepClient.tsx');
+  const SIGNUP_SRC   = codeOf('app/signup/patient/actions.ts');
   const STATE        = codeOf('lib/onboarding/state.ts');
 
   it('the callback records the tick — and ONLY the tick', () => {
@@ -176,7 +185,7 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // arrival on the strength of a passive line, which made the record
     // say more than the visitor had done.
     expect(CALLBACK_SRC).toMatch(/terms_accepted'\) === '1'/);
-    expect(CALLBACK_SRC).toMatch(/consentGiven && !profile\.terms_accepted_at/);
+    expect(CALLBACK_SRC).toMatch(/if \(needsAcceptance && !consentGiven\) return 'needs-terms';/);
     // Write-once, and never a hardcoded version.
     expect(CALLBACK_SRC).toMatch(/terms_version:\s*TERMS_VERSION/);
     expect(CALLBACK_SRC).not.toMatch(/terms_version:\s*['"]/);
@@ -185,69 +194,84 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
   it('the param is opt-in at the button, so no surface claims consent it never asked for', () => {
     expect(BUTTON).toMatch(/const consentParam = consentGiven \? '&terms_accepted=1' : '';/);
     expect(BUTTON).toMatch(/const blocked = consentGiven === false;/);
-    // undefined means "not a consent moment" — /login keeps its old
-    // behaviour and adds no parameter.
+    // undefined means "not a consent moment" — /login adds no parameter,
+    // which is why a NEW account arriving through it is refused below.
     expect(LOGIN).not.toMatch(/consentGiven=/);
   });
 
-  it('the onboarding step REMAINS the floor — the param is client-asserted', () => {
-    // The tick happens before a session exists, so the acceptance has to
-    // travel as a query parameter, and a query parameter is asserted by
-    // the client. The step catches anything arriving unstamped: the
-    // param missing or dropped, or a new account created through
-    // /login's Google button, which collects no tick.
-    expect(STATE).toMatch(/if \(!user\.identity_providers\.includes\('email'\)\) steps\.push\('terms'\);/);
-    expect(STEP_ACTION).toMatch(/if \(!accepted\) return \{ error:/);
+  it('an unaccepted OAuth arrival does not keep its session', () => {
+    // THE GATE. Not "is asked later" — does not keep its session. The
+    // cookies the exchange just set are cleared and the visitor is
+    // returned to /signup, where the tick lives.
+    expect(CALLBACK_SRC).toMatch(/if \(outcome !== 'ok'\) \{/);
+    expect(CALLBACK_SRC).toMatch(/await supabase\.auth\.signOut\(\);/);
+    expect(CALLBACK_SRC).toMatch(/\/signup\?error=\$\{outcome === 'write-failed' \? 'terms_write' : 'terms'\}/);
   });
 
-  it('the step is FIRST for OAuth paths, so nothing can be reached before it', () => {
-    // A gate that is not first is not a gate.
-    expect(STATE).toMatch(/if \(!user\.identity_providers\.includes\('email'\)\) steps\.push\('terms'\);/);
-    expect(STATE).toMatch(/case 'terms':\s*return !!profile\.terms_accepted_at;/);
+  it('a FAILED write is refused just as hard as a missing tick', () => {
+    // "It didn't save" and "they never agreed" leave the same database
+    // row, so they get the same answer. The distinction survives only
+    // in the sentence the visitor reads.
+    expect(CALLBACK_SRC).toMatch(/type OAuthSyncOutcome = 'ok' \| 'needs-terms' \| 'write-failed';/);
+    // An update matching NO rows is not an error in PostgREST, so the
+    // column is read back rather than the error being trusted.
+    expect(CALLBACK_SRC).toMatch(/\.select\('terms_accepted_at'\)/);
+    expect(CALLBACK_SRC).toMatch(/if \(writeErr \|\| !written\?\.length \|\| !written\[0\]\.terms_accepted_at\)/);
+    // And a thrown error fails CLOSED — this used to be swallowed.
+    expect(CALLBACK_SRC).toMatch(/outcome = 'write-failed';/);
   });
 
-  it('the email path has no terms STEP — it has the tick in the form instead', () => {
-    // Both paths agree actively; they just do it in the place that suits
-    // each. Adding the step to the email list would show a screen whose
-    // answer was already given.
+  it('the ONE exception is an already-onboarded account, and it is server-set', () => {
+    // Accounts that finished onboarding before any of this existed keep
+    // working. onboarding_completed is never written by anything the
+    // visitor controls, so this cannot be claimed into.
+    expect(CALLBACK_SRC).toMatch(/profile\.onboarding_completed === true/);
+    expect(CALLBACK_SRC).toMatch(/const needsAcceptance = !alreadyAgreed && !grandfathered;/);
+  });
+
+  it('the email path refuses too — and ROLLS BACK the account it just made', () => {
+    // The stamp used to be best-effort here: log and carry on, leaving a
+    // live customer with no record of agreeing to anything. Now the auth
+    // user created moments earlier in the same request is deleted, so a
+    // failed signup leaves nothing behind to strand the next attempt on
+    // "an account with this email already exists".
+    expect(SIGNUP_SRC).toMatch(/if \(!newUserId \|\| !\(await recordAcceptance\(svc, newUserId\)\)\) \{/);
+    expect(SIGNUP_SRC).toMatch(/await svc\.auth\.admin\.deleteUser\(newUserId\)/);
+    expect(SIGNUP_SRC).not.toMatch(/console\.warn\('terms acceptance stamp on signup failed/);
+  });
+
+  it('recordAcceptance confirms the row, it does not trust a null error', () => {
+    expect(SIGNUP_SRC).toMatch(/async function recordAcceptance\(/);
+    expect(SIGNUP_SRC).toMatch(/\.select\('id'\)/);
+    // Write-once — an existing acceptance is never re-dated.
+    expect(SIGNUP_SRC).toMatch(/\.is\('terms_accepted_at', null\)/);
+    // Zero rows is ambiguous (already accepted vs no row), so it reads
+    // the column back rather than guessing.
+    expect(SIGNUP_SRC).toMatch(/return !!row\?\.terms_accepted_at;/);
+  });
+
+  it('the half-finished-signup branch is gated too, without dead-ending', () => {
+    // An unconfirmed account being resumed may predate the requirement.
+    // It is re-stamped before the OTP is resent; if the stamp can't land
+    // (no profile row — the AUTH_ONLY orphan) the unconfirmed shell is
+    // cleared so the signup below can proceed, rather than returning an
+    // error every retry would meet again.
+    expect(SIGNUP_SRC).toMatch(/if \(await recordAcceptance\(svc, existing\.id\)\) \{/);
+    expect(SIGNUP_SRC).toMatch(/await svc\.auth\.admin\.deleteUser\(existing\.id\)/);
+  });
+
+  it('there is NO terms onboarding step, on any path', () => {
+    // Its absence is the point, not an omission. If the doors hold,
+    // every account reaching onboarding already has an acceptance, and
+    // a step could only ever be a screen nobody sees — a dead gate that
+    // reads like a live one.
+    expect(STATE).not.toMatch(/'terms'/);
+    expect(STATE).not.toMatch(/steps\.push\('terms'\)/);
+    expect(existsSync(resolve(ROOT, 'app/onboarding/terms'))).toBe(false);
+  });
+
+  it('the email path still gates on the tick before creating anything', () => {
     expect(STATE).toMatch(/if \(user\.identity_providers\.includes\('email'\)\) steps\.push\('verify-email'\);/);
-    expect(codeOf('app/signup/patient/actions.ts')).toMatch(/if \(!termsAccepted\)\s*return \{ error:/);
-  });
-
-  it('the tick is unticked, names both documents, and gates the button', () => {
-    // Same shape as the email form's tick — nothing pre-ticked, nothing
-    // inferred from having got this far.
-    expect(STEP_CLIENT).toMatch(/useState\(false\)/);
-    expect(STEP_CLIENT).toMatch(/href="\/legal\/terms"/);
-    expect(STEP_CLIENT).toMatch(/href="\/legal\/privacy"/);
-    expect(STEP_CLIENT).toMatch(/disabled=\{!accepted \|\| pending\.disabled\}/);
-  });
-
-  it('acceptance is a SERVER decision, not a client checkbox', () => {
-    // The checkbox is an affordance; a hand-crafted POST can omit it.
-    expect(STEP_ACTION).toMatch(/'use server'/);
-    expect(STEP_ACTION).toMatch(/if \(!accepted\) return \{ error:/);
-    expect(STEP_ACTION).toMatch(/await supabase\.auth\.getUser\(\)/);
-  });
-
-  it('it stamps all three columns from the same single sources', () => {
-    expect(STEP_ACTION).toMatch(/from '@\/lib\/legal\/terms'/);
-    expect(STEP_ACTION).toMatch(/from '@\/lib\/legal\/privacy'/);
-    expect(STEP_ACTION).toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
-    expect(STEP_ACTION).toMatch(/terms_version:\s*TERMS_VERSION/);
-    expect(STEP_ACTION).toMatch(/privacy_version:\s*PRIVACY_VERSION/);
-    // Never a hardcoded version string.
-    expect(STEP_ACTION).not.toMatch(/terms_version:\s*['"]/);
-  });
-
-  it('write-once — an existing acceptance is never re-versioned', () => {
-    // The audit trail records what the customer ORIGINALLY agreed to.
-    expect(STEP_ACTION).toMatch(/\.is\('terms_accepted_at', null\)/);
-  });
-
-  it('the step page refuses to render for anyone it is not the step for', () => {
-    // Stops an email-path user reaching a screen absent from their list,
-    // and stops anyone re-agreeing to something already recorded.
-    expect(STEP_PAGE).toMatch(/if \(status\.done \|\| status\.step !== 'terms'\) \{\s*redirect\('\/onboarding'\);/);
+    expect(SIGNUP_SRC).toMatch(/if \(!termsAccepted\)\s*return \{ error:/);
   });
 });

@@ -54,8 +54,6 @@ const CONVERTED = [
   'app/practice/bills/new/BillForm.tsx',
   // login / signup
   'app/(auth)/login/page.tsx',
-  // onboarding — the OAuth path's terms agreement
-  'app/onboarding/terms/TermsStepClient.tsx',
   'app/signup/patient/PatientSignupForm.tsx',
   'app/signup/practice/page.tsx',
   // password set

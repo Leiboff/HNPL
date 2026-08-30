@@ -40,7 +40,7 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 //     profile ourselves so the caller never lands in the app
 //     half-provisioned.
 //
-// ─── Acceptance: recorded only when the caller actually collected it ──
+// ─── Acceptance is a PRECONDITION of the session, not a later step ────
 //
 // The /signup chooser puts an unticked box under BOTH its options and
 // will not start either route without it, then sends `terms_accepted=1`
@@ -48,8 +48,23 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 //
 // It is deliberately NOT inferred. An earlier version stamped every
 // OAuth arrival on the strength of a "by continuing…" line, which made
-// the record say more than the visitor had actually done. Absent the
-// parameter, nothing is written.
+// the record say more than the visitor had actually done.
+//
+// There used to be an onboarding step (app/onboarding/terms/) as a
+// backstop for arrivals with nothing recorded. It is gone, and the
+// enforcement moved HERE, because a backstop downstream of a live
+// session is not enforcement: it is a screen an unverified account can
+// sit in front of. The rule now is absolute —
+//
+//   an OAuth arrival with no acceptance ON THE PROFILE ROW does not get
+//   to keep its session.
+//
+// If the tick is missing, or the stamp fails to write for any reason,
+// the session is signed out and the visitor is returned to /signup to
+// agree. The account row Supabase created during the exchange survives
+// (deleting an auth user on a sign-IN path would be catastrophic if we
+// misjudged who it was), but it is inert: every subsequent arrival
+// meets the same gate until an acceptance is actually recorded.
 //
 // WHAT THIS RECORD IS WORTH, stated plainly. The tick happens before any
 // session exists — there is no profile to stamp at that moment — so the
@@ -59,12 +74,13 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 // rather than someone forging another's; but it is weaker than a server
 // action on an authenticated session.
 //
-// Which is why the onboarding terms step (app/onboarding/terms/) STAYS.
-// It is the enforcement floor: anything that reaches the app without a
-// recorded acceptance — this parameter missing, dropped, or a new
-// account arriving through /login's Google button, which is a sign-in
-// screen and collects no tick — is stopped there and asked properly. In
-// the normal /signup flow it never appears.
+// ONE EXCEPTION, and it is not a hole: an account whose
+// onboarding_completed is already true is let through with a NULL
+// column. Those are accounts that finished onboarding before any of
+// this existed. Locking existing customers out of an app they already
+// use, over a record we never asked them for, would be a worse wrong
+// than the gap it closes — and onboarding_completed is written only by
+// the server, never by anything the visitor controls.
 
 const DEFAULT_NEXT = '/dashboard';
 
@@ -105,46 +121,76 @@ function extractOAuthName(metadata: Record<string, unknown> | null | undefined):
   return { first: '', last: '' };
 }
 
+/**
+ * Outcome of the OAuth profile fixup.
+ *
+ *   'ok'           → profile is synced AND an acceptance is on record.
+ *   'needs-terms'  → no acceptance recorded and none offered. Refuse.
+ *   'write-failed' → an acceptance was offered but did not land. Refuse.
+ *
+ * The last two are distinguished only so the visitor gets an accurate
+ * sentence; both refuse the session.
+ */
+type OAuthSyncOutcome = 'ok' | 'needs-terms' | 'write-failed';
+
+function consentColumns(): Record<string, unknown> {
+  return {
+    terms_accepted_at: new Date().toISOString(),
+    terms_version:     TERMS_VERSION,
+    privacy_version:   PRIVACY_VERSION,
+  };
+}
+
 async function ensureOAuthProfileSynced(
   userId: string,
   email: string,
   metadata: Record<string, unknown> | null | undefined,
   consentGiven: boolean,
-): Promise<void> {
+): Promise<OAuthSyncOutcome> {
   const client = svc();
 
   // Read the existing profile row (created by the on_auth_user_created
   // trigger). If none exists — which shouldn't happen given the trigger
   // is DEFINER-mode — insert it here.
-  const { data: profile } = await client
+  const { data: profile, error: readErr } = await client
     .from('profiles')
-    .select('id, first_name, last_name, role, terms_accepted_at')
+    .select('id, first_name, last_name, role, terms_accepted_at, onboarding_completed')
     .eq('id', userId)
     .maybeSingle();
+
+  // Couldn't even read the row, so we cannot know whether an acceptance
+  // exists. Fail closed: assuming "probably fine" is exactly the
+  // best-effort posture this gate replaced.
+  if (readErr) {
+    console.error('[auth/callback] profile read failed — refusing session', { userId, message: readErr.message });
+    return 'write-failed';
+  }
 
   const names = extractOAuthName(metadata);
 
   if (!profile) {
     // Belt-and-braces: trigger didn't fire OR the row was deleted.
-    // Provision as a standard patient (role='patient').
+    // Provision as a standard patient (role='patient') — but only WITH
+    // the acceptance. There is no such thing here as an existing
+    // customer to protect: if we are inserting the row, this arrival is
+    // creating the account, so no tick means no account.
+    if (!consentGiven) return 'needs-terms';
+
     console.warn('[auth/callback] profile row missing after OAuth session — provisioning defensively', { userId });
-    await client.from('profiles').insert({
+    const { error: insertErr } = await client.from('profiles').insert({
       id:         userId,
       email,
       role:       'patient',
       first_name: names.first || '',
       last_name:  names.last  || '',
       verification_status: 'unverified',
-      // Only when the chooser actually collected the tick.
-      ...(consentGiven
-        ? {
-            terms_accepted_at: new Date().toISOString(),
-            terms_version:     TERMS_VERSION,
-            privacy_version:   PRIVACY_VERSION,
-          }
-        : null),
+      ...consentColumns(),
     });
-    return;
+    if (insertErr) {
+      console.error('[auth/callback] defensive profile insert failed — refusing session', { userId, message: insertErr.message });
+      return 'write-failed';
+    }
+    return 'ok';
   }
 
   // Existing profile — never overwrite the role (guards against a
@@ -157,20 +203,47 @@ async function ensureOAuthProfileSynced(
   if (!profile.last_name  && names.last)  updates.last_name  = names.last;
 
   // Write-once: an existing acceptance is an audit fact and is never
-  // re-versioned by a later sign-in. Kept in its own object so the
-  // name-sync payload above stays names-only, never role.
-  const consent: Record<string, unknown> =
-    consentGiven && !profile.terms_accepted_at
-      ? {
-          terms_accepted_at: new Date().toISOString(),
-          terms_version:     TERMS_VERSION,
-          privacy_version:   PRIVACY_VERSION,
-        }
-      : {};
+  // re-versioned by a later sign-in.
+  const alreadyAgreed   = !!profile.terms_accepted_at;
+  const grandfathered   = !alreadyAgreed && profile.onboarding_completed === true;
+  const needsAcceptance = !alreadyAgreed && !grandfathered;
 
-  if (Object.keys(updates).length === 0 && Object.keys(consent).length === 0) return;
+  if (needsAcceptance && !consentGiven) return 'needs-terms';
 
-  await client.from('profiles').update({ ...updates, ...consent }).eq('id', userId);
+  // Kept in its own object so the name-sync payload above stays
+  // names-only, never role.
+  const consent: Record<string, unknown> = needsAcceptance ? consentColumns() : {};
+
+  if (Object.keys(updates).length === 0 && Object.keys(consent).length === 0) {
+    return 'ok';
+  }
+
+  // .select() back, not just an error check. An update that matches no
+  // rows is not an error in PostgREST — it is a silent no-op, which is
+  // precisely the "the write didn't happen" case this gate exists to
+  // catch.
+  const { data: written, error: writeErr } = await client
+    .from('profiles')
+    .update({ ...updates, ...consent })
+    .eq('id', userId)
+    .select('terms_accepted_at');
+
+  if (!needsAcceptance) {
+    // Names-only sync. A failure here costs an empty display name, not
+    // a legal record — never a reason to refuse a session.
+    if (writeErr) console.warn('[auth/callback] name sync failed (non-blocking):', writeErr.message);
+    return 'ok';
+  }
+
+  if (writeErr || !written?.length || !written[0].terms_accepted_at) {
+    console.error('[auth/callback] terms acceptance did not land — refusing session', {
+      userId,
+      message: writeErr?.message ?? 'update matched no rows',
+    });
+    return 'write-failed';
+  }
+
+  return 'ok';
 }
 
 export async function GET(request: NextRequest) {
@@ -194,27 +267,54 @@ export async function GET(request: NextRequest) {
   }
 
   // Session is now attached to the response cookies. Before the
-  // dispatcher redirect, run the OAuth profile-sync fixup — a no-op
-  // for password-reset users (their profile is already populated) and
-  // a one-shot name fill-in for first-time Google users.
+  // dispatcher redirect, run the OAuth profile-sync fixup — a one-shot
+  // name fill-in for first-time Google users, and the acceptance gate.
+  //
+  // Password-reset and magic-link users have no OAuth identity and skip
+  // the whole thing: they already have an account, and this route is
+  // not where a password reset gets re-litigated.
+  let user = null;
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    const identities = user?.identities ?? [];
-    const hasOAuthIdentity = identities.some((i) => i.provider !== 'email');
-    if (user && hasOAuthIdentity) {
-      await ensureOAuthProfileSynced(
-        user.id,
-        user.email ?? '',
-        user.user_metadata as Record<string, unknown> | null | undefined,
-        consentGiven,
-      );
-    }
+    ({ data: { user } } = await supabase.auth.getUser());
   } catch (err) {
-    // Never block the redirect on a fixup failure. The user still
-    // reaches /dashboard with a valid session; their profile may just
-    // have empty name fields, which is recoverable via /patient
-    // settings.
-    console.error('[auth/callback] OAuth profile sync failed (non-blocking)', err);
+    console.error('[auth/callback] getUser failed after exchange', err);
+    return NextResponse.redirect(`${origin}/forgot-password?error=expired`);
+  }
+
+  const identities       = user?.identities ?? [];
+  const hasOAuthIdentity = identities.some((i) => i.provider !== 'email');
+  if (!user || !hasOAuthIdentity) {
+    return NextResponse.redirect(`${origin}${next}`);
+  }
+
+  let outcome: OAuthSyncOutcome;
+  try {
+    outcome = await ensureOAuthProfileSynced(
+      user.id,
+      user.email ?? '',
+      user.user_metadata as Record<string, unknown> | null | undefined,
+      consentGiven,
+    );
+  } catch (err) {
+    // Fail CLOSED. This used to swallow the error and redirect anyway,
+    // on the reasoning that a name-sync failure shouldn't cost the user
+    // their session. The same code path now decides whether an
+    // acceptance exists, and "we don't know" has to mean "no".
+    console.error('[auth/callback] OAuth profile sync threw — refusing session', err);
+    outcome = 'write-failed';
+  }
+
+  if (outcome !== 'ok') {
+    // No acceptance on record → no session. signOut clears the cookies
+    // the exchange just set, so nothing authenticated survives this
+    // redirect and the visitor lands back on the front door with the
+    // tick still to give.
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('[auth/callback] signOut after refused session failed', err);
+    }
+    return NextResponse.redirect(`${origin}/signup?error=${outcome === 'write-failed' ? 'terms_write' : 'terms'}`);
   }
 
   return NextResponse.redirect(`${origin}${next}`);

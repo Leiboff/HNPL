@@ -52,14 +52,13 @@ const GOOGLE_USER: UserForOnboarding = {
   identity_providers: ['google'],
 };
 
-// A Google user's FIRST step is now 'terms' (an email signup ticks the
-// box inside the signup form instead — see stepListFor). Tests about the
-// steps that come after it use AGREED_PROFILE so they keep asserting the
-// thing they were written for rather than re-testing the new step.
-const AGREED = '2026-07-06T09:00:00Z';
-
+// There is NO terms step, on any path. T&C acceptance is a precondition
+// of the account existing — signUpPatient rolls back the auth user it
+// just created if the stamp doesn't land, and /auth/callback signs an
+// OAuth arrival back out rather than let it in unaccepted — so an
+// account reaching onboarding always has one on record. ProfileForOnboarding
+// no longer carries the column at all, which is what these fixtures pin.
 const BLANK_PROFILE: ProfileForOnboarding = {
-  terms_accepted_at:    null,
   phone_verified_at:    null,
   sa_id_number:         null,
   salary_day:           null,
@@ -87,20 +86,23 @@ describe('stepListFor — path is stable across the journey; keyed on identity p
     expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF).length).toBe(4);
   });
 
-  it('Google-only user — [terms, phone, salary, identity]; verify-email never appears', () => {
-    // 'terms' leads: a Google signup never saw the signup form's "I
-    // agree" tick, so this is where that agreement is actually given.
-    expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).toEqual(['terms', 'phone', 'salary', 'identity']);
+  it('Google-only user — [phone, salary, identity]; verify-email never appears', () => {
+    expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).toEqual(['phone', 'salary', 'identity']);
     expect(stepListFor(GOOGLE_USER, FLAGS_OFF)).not.toContain('verify-email');
   });
 
-  it('email-only user never sees a terms STEP — they ticked in the form', () => {
-    // signUpPatient gates on the tick server-side before creating the
-    // account, so the acceptance already exists by the time onboarding
-    // starts. A step here would be a screen they are never shown, and
-    // the list is path-fixed, so it must not be in their list at all.
-    expect(stepListFor(EMAIL_USER, FLAGS_OFF)).not.toContain('terms');
-    expect(stepListFor(EMAIL_USER_CONFIRMED, FLAGS_ON)).not.toContain('terms');
+  it('NO path has a terms step — acceptance is a precondition, not a stage', () => {
+    // Both routes now record the acceptance before a usable session
+    // exists: the email form gates in signUpPatient (which deletes the
+    // auth user if the stamp fails) and the Google round trip gates in
+    // /auth/callback (which signs the arrival back out). An onboarding
+    // step could therefore only ever be a screen nobody sees, and a
+    // dead gate reads like a live one.
+    for (const user of [EMAIL_USER, EMAIL_USER_CONFIRMED, GOOGLE_USER]) {
+      for (const flags of [FLAGS_OFF, FLAGS_ON]) {
+        expect(stepListFor(user, flags)).not.toContain('terms');
+      }
+    }
   });
 
   it('Path decision is driven by identity_providers, NOT by email_confirmed_at', () => {
@@ -109,14 +111,12 @@ describe('stepListFor — path is stable across the journey; keyed on identity p
     // heart of the fix.
     const emailPath  = stepListFor(EMAIL_USER_CONFIRMED, FLAGS_OFF);
     const googlePath = stepListFor(GOOGLE_USER,          FLAGS_OFF);
-    // Each path carries exactly one step the other does not: the email
-    // path opens with verify-email, the Google path with terms. Asserted
-    // as a shape rather than as two magic numbers so it survives steps
-    // being added elsewhere.
-    expect(emailPath.length).toBe(googlePath.length);
+    // The email path is the Google path plus exactly one leading step.
+    // Asserted as a shape rather than as two magic numbers so it
+    // survives steps being added elsewhere.
+    expect(emailPath.length).toBe(googlePath.length + 1);
     expect(emailPath[0]).toBe('verify-email');
-    expect(googlePath[0]).toBe('terms');
-    expect(emailPath.slice(1)).toEqual(googlePath.slice(1));
+    expect(emailPath.slice(1)).toEqual(googlePath);
   });
 
   it('An account linked to BOTH providers includes verify-email (email identity present)', () => {
@@ -133,9 +133,9 @@ describe('stepListFor — path is stable across the journey; keyed on identity p
     ]);
   });
 
-  it('Google user, flags on → 5 steps (no verify-email)', () => {
+  it('Google user, flags on → 4 steps (no verify-email)', () => {
     expect(stepListFor(GOOGLE_USER, FLAGS_ON)).toEqual([
-      'terms', 'phone', 'salary', 'identity', 'credit-check',
+      'phone', 'salary', 'identity', 'credit-check',
     ]);
   });
 
@@ -159,25 +159,13 @@ describe('computeOnboarding — flags off (launch shape)', () => {
     }
   });
 
-  it('Google user, blank profile → step=terms, 1 of 4 (email OTP skipped)', () => {
-    // The gate: a Google account cannot reach any other step, or the
-    // rest of the app, without agreeing first.
+  it('Google user, blank profile → step=phone, 1 of 3 (email OTP skipped)', () => {
     const s = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
     expect(s.done).toBe(false);
     if (!s.done) {
-      expect(s.step).toBe('terms');
-      expect(s.index).toBe(1);
-      expect(s.total).toBe(4);
-    }
-  });
-
-  it('Google user who has agreed → step=phone, 2 of 4', () => {
-    const s = computeOnboarding(GOOGLE_USER, { ...BLANK_PROFILE, terms_accepted_at: AGREED }, FLAGS_OFF);
-    expect(s.done).toBe(false);
-    if (!s.done) {
       expect(s.step).toBe('phone');
-      expect(s.index).toBe(2);
-      expect(s.total).toBe(4);
+      expect(s.index).toBe(1);
+      expect(s.total).toBe(3);
     }
   });
 
@@ -206,20 +194,20 @@ describe('computeOnboarding — flags off (launch shape)', () => {
     }
   });
 
-  it('Google user progression: terms (1 of 4) → phone (2 of 4) → salary (3 of 4)', () => {
-    // The list length is 4 at every stage — verify-email is never in
-    // their path, and terms always is.
+  it('Google user progression: phone (1 of 3) → salary (2 of 3)', () => {
+    // The list length is 3 at every stage — verify-email is never in
+    // their path.
     const s1 = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
     if (!s1.done) {
-      expect(s1.total).toBe(4);
+      expect(s1.total).toBe(3);
       expect(s1.index).toBe(1);
-      expect(s1.step).toBe('terms');
+      expect(s1.step).toBe('phone');
     }
-    const p2 = { ...BLANK_PROFILE, terms_accepted_at: AGREED, phone_verified_at: '2026-07-06T10:00:00Z' };
+    const p2 = { ...BLANK_PROFILE, phone_verified_at: '2026-07-06T10:00:00Z' };
     const s2 = computeOnboarding(GOOGLE_USER, p2, FLAGS_OFF);
     if (!s2.done) {
-      expect(s2.total).toBe(4);
-      expect(s2.index).toBe(3);   // terms, phone done → salary
+      expect(s2.total).toBe(3);
+      expect(s2.index).toBe(2);
       expect(s2.step).toBe('salary');
     }
   });
@@ -229,7 +217,6 @@ describe('computeOnboarding — flags off (launch shape)', () => {
     // (webhook writes it with sa_id_number), not a separate step.
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
-      terms_accepted_at: AGREED,
       phone_verified_at: '2026-07-06T10:00:00Z',
       sa_id_number:      'v1:iv:tag:ciphertext',
       liveness_verified_at: '2026-07-06T10:00:00Z',
@@ -245,7 +232,6 @@ describe('computeOnboarding — the credit-check flag adds one step', () => {
   it('phone + ID satisfied, flag on, credit_check_status null → step=credit-check', () => {
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
-      terms_accepted_at: AGREED,
       phone_verified_at: '2026-07-06T10:00:00Z',
       sa_id_number:      'v1:iv:tag:ciphertext',
       liveness_verified_at: '2026-07-06T10:00:00Z',
@@ -256,7 +242,7 @@ describe('computeOnboarding — the credit-check flag adds one step', () => {
     expect(s.done).toBe(false);
     if (!s.done) {
       expect(s.step).toBe('credit-check');
-      expect(s.total).toBe(5);   // terms, phone, salary, id, credit
+      expect(s.total).toBe(4);   // phone, salary, identity, credit
     }
   });
 
@@ -267,7 +253,6 @@ describe('computeOnboarding — the credit-check flag adds one step', () => {
     // liveness_verified_at alongside sa_id_number in the same update.
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
-      terms_accepted_at:    AGREED,
       phone_verified_at:    '2026-07-06T10:00:00Z',
       sa_id_number:         'v1:iv:tag:ciphertext',
       liveness_verified_at: '2026-07-06T10:00:00Z',
@@ -285,7 +270,6 @@ describe('computeOnboarding — the credit-check flag adds one step', () => {
     // face match — which must not count as a verified identity.
     const p: ProfileForOnboarding = {
       ...BLANK_PROFILE,
-      terms_accepted_at:    AGREED,
       phone_verified_at:    '2026-07-06T10:00:00Z',
       sa_id_number:         'v1:iv:tag:ciphertext',
       liveness_verified_at: null,
@@ -325,21 +309,11 @@ describe('cached onboarding_completed — write-once-true, no retro-lock', () =>
 
 describe('resume behaviour — abandonment mid-flow returns them to the same step', () => {
   it('Google user abandons at phone → next login recomputes to phone', () => {
-    // Agreed already, so the resumption point is phone rather than the
-    // terms step that now opens this path.
-    const agreed = { ...BLANK_PROFILE, terms_accepted_at: AGREED };
-    const s1 = computeOnboarding(GOOGLE_USER, agreed, FLAGS_OFF);
+    const s1 = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
     // Simulate a session gap — same fixture, no state change.
-    const s2 = computeOnboarding(GOOGLE_USER, agreed, FLAGS_OFF);
+    const s2 = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
     expect(s1).toEqual(s2);
     if (!s2.done) expect(s2.step).toBe('phone');
-  });
-
-  it('Google user abandons BEFORE agreeing → returns to the terms step', () => {
-    // The gate has to survive abandonment, or it is not a gate.
-    const s = computeOnboarding(GOOGLE_USER, BLANK_PROFILE, FLAGS_OFF);
-    expect(s.done).toBe(false);
-    if (!s.done) expect(s.step).toBe('terms');
   });
 
   it('email user abandons after email OTP → resumes at phone with list length UNCHANGED', () => {

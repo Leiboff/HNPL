@@ -41,32 +41,29 @@ describe('signup records acceptance server-side', () => {
     expect(SIGNUP).toMatch(/from '@\/lib\/legal\/terms'/);
     expect(SIGNUP).toMatch(/from '@\/lib\/legal\/privacy'/);
     expect(SIGNUP).toMatch(
-      /\.from\('profiles'\)\s*\.update\(\{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION\s*\}\)/,
+      /\.from\('profiles'\)\s*\.update\(\{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION,\s*\}\)/,
     );
   });
 });
 
 describe('Google (OAuth) signup records acceptance server-side', () => {
-  // The OAuth path has no "I agree" checkbox to gate on — the
-  // disclosure is presented beneath the button and the acceptance is
-  // recorded at /auth/callback, the first server-side moment after the
-  // click. Full coverage of both halves (disclosure + record) lives in
+  // The OAuth path has no "I agree" checkbox of its own — the tick is
+  // collected once on the /signup chooser, covering both routes, and
+  // carried to /auth/callback, the first server-side moment after the
+  // click. Full coverage of both halves (tick + record) lives in
   // app/oauth-terms-consent.test.ts; this is the pointer that keeps the
   // OAuth path visible from the suite that owns acceptance overall, so
   // it cannot be the one path someone forgets exists.
-  it('records acceptance from the chooser tick, with the step as the floor', () => {
-    // The OAuth path collects an unticked box on the /signup chooser and
-    // carries it to /auth/callback, which records it. Nothing is
-    // inferred: absent the parameter, nothing is written. The onboarding
-    // step remains the enforcement floor for anything that arrives
-    // unstamped. Full shape in app/oauth-terms-consent.test.ts.
+  it('records acceptance from the chooser tick, and refuses the session without it', () => {
+    // Nothing is inferred: absent the parameter, nothing is written —
+    // and nothing written means no session. There is no onboarding step
+    // behind this any more, so the callback IS the floor.
     const CHOOSER = read('app/(auth)/signup/SignupEntry.tsx');
-    const STEP    = read('app/onboarding/terms/actions.ts');
     expect(CHOOSER).toMatch(/data-testid="signup-terms-checkbox"/);
     expect(CHOOSER).toMatch(/consentGiven=\{termsAccepted\}/);
     expect(CALLBACK).toMatch(/terms_accepted'\) === '1'/);
-    expect(CALLBACK).toMatch(/consentGiven && !profile\.terms_accepted_at/);
-    expect(STEP).toMatch(/if \(!accepted\) return \{ error:/);
+    expect(CALLBACK).toMatch(/if \(needsAcceptance && !consentGiven\) return 'needs-terms';/);
+    expect(CALLBACK).toMatch(/await supabase\.auth\.signOut\(\);/);
   });
 
   it('the button that starts that flow carries the disclosure by default', () => {
