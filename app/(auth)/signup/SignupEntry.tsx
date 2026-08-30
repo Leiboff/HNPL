@@ -76,7 +76,7 @@ export default function SignupEntry() {
 
   return (
     <main
-      className="relative min-h-screen overflow-hidden px-5 pb-10 pt-12"
+      className="relative flex min-h-screen flex-col justify-center overflow-hidden px-5 py-12"
       style={{
         background: `linear-gradient(180deg, ${NAVY_DEEP} 0%, #0D2039 45%, ${NAVY} 100%)`,
         fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif',
@@ -86,25 +86,25 @@ export default function SignupEntry() {
 
       <div className="relative mx-auto flex w-full max-w-[420px] flex-col">
 
-        {/* ── Hero: the product in one squircle ─────────────────────── */}
-        <div className="relative mx-auto w-full max-w-[300px]">
-          <PlanSquircle />
-          {/* Wordmark overlaps the bottom of the squircle, the way the
-              reference layout seats the logo on its hero card. */}
-          <div className="relative -mt-9 text-center">
-            <span className="text-[40px] font-bold leading-none tracking-[-0.035em] text-white drop-shadow-[0_6px_18px_rgba(0,0,0,.45)]">
-              better<span style={{ color: '#4FD8CD' }}>now</span>
-            </span>
-          </div>
+        {/* ── Hero: the wordmark carries it ─────────────────────────
+            There is no illustration here on purpose. A mocked-up bill
+            with invented figures is the one thing on this screen a
+            visitor could mistake for a quote, and it bought nothing the
+            headline doesn't already say. The brand, the promise, and
+            the way in — nothing between them. */}
+        <div className="text-center">
+          <span className="text-[46px] font-bold leading-none tracking-[-0.04em] text-white">
+            better<span style={{ color: '#4FD8CD' }}>now</span>
+          </span>
         </div>
 
         {/* ── The promise ───────────────────────────────────────────── */}
-        <h1 className="mt-7 text-center text-[27px] font-semibold leading-[1.22] tracking-[-0.025em] text-white">
+        <h1 className="mt-10 text-center text-[31px] font-semibold leading-[1.2] tracking-[-0.03em] text-white">
           Any medical bill,
           <br />
           split interest-free
         </h1>
-        <p className="mt-3 text-center text-[15px] leading-[1.55] text-[#9FB3CC]">
+        <p className="mt-4 text-center text-[15px] leading-[1.55] text-[#9FB3CC]">
           Pay in 2 or 3 instalments, timed around your payday. No interest, ever.
         </p>
 
@@ -238,53 +238,6 @@ function BrandBlobs() {
           borderRadius: '52% 48% 38% 62% / 44% 57% 43% 56%',
         }}
       />
-    </div>
-  );
-}
-
-/**
- * The hero card — a squircle standing in for the reference layout's
- * media panel. Built in markup rather than shipped as an image so it
- * stays crisp on any density and carries no extra payload. The numbers
- * are the same illustrative R3,000 split the landing page uses; they
- * are an EXAMPLE, not a quote (a real schedule comes from the
- * patient's salary_day at checkout).
- */
-function PlanSquircle() {
-  const rows = [
-    { when: 'Today',             amount: 'R1 000' },
-    { when: 'Next payday',       amount: 'R1 000' },
-    { when: 'The payday after',  amount: 'R1 000' },
-  ];
-
-  return (
-    <div
-      className="relative overflow-hidden px-6 pb-16 pt-7"
-      style={{
-        borderRadius: '30% 30% 30% 30% / 12% 12% 12% 12%',
-        background: 'linear-gradient(160deg, #1B7F86 0%, #15A89E 42%, #0E5F84 100%)',
-        boxShadow: '0 30px 70px -30px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.22)',
-      }}
-    >
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">
-        Your bill
-      </p>
-      <p className="mt-0.5 text-[32px] font-bold leading-none tracking-[-0.03em] text-white">
-        R3 000
-      </p>
-
-      <div className="mt-4 space-y-2">
-        {rows.map((r) => (
-          <div
-            key={r.when}
-            className="flex items-center justify-between rounded-xl px-3 py-2"
-            style={{ background: 'rgba(255,255,255,.16)' }}
-          >
-            <span className="text-[12px] font-medium text-white/85">{r.when}</span>
-            <span className="text-[13px] font-semibold text-white">{r.amount}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

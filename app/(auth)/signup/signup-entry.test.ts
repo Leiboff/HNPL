@@ -109,10 +109,11 @@ describe('brand', () => {
     expect(ENTRY).toMatch(/aria-hidden className="pointer-events-none absolute inset-0/);
   });
 
-  it('the hero figures are labelled in the source as illustrative, not a quote', () => {
-    // The R3,000 split mirrors the landing page's example. A reader of
-    // this file must not mistake it for a real schedule — the real one
-    // comes from the patient's salary_day at checkout.
-    expect(read('app/(auth)/signup/SignupEntry.tsx')).toMatch(/EXAMPLE, not a quote/);
+  it('shows NO mocked-up amounts — nothing here can be mistaken for a quote', () => {
+    // An earlier draft put an invented R3,000 split in the hero. A real
+    // schedule comes from the patient's salary_day at checkout, and a
+    // fake one on the front door is the single thing on this screen a
+    // visitor could read as an offer. No rand figures at all.
+    expect(ENTRY).not.toMatch(/R\s?\d/);
   });
 });
