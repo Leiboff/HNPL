@@ -30,6 +30,9 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 //     the same lib/idEncryption + lib/validation/saId under the hood)
 //   • salary_day (now in /onboarding/salary)
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ServiceClient = any;
+
 export type PatientSignupInput = {
   firstName:     string;
   lastName:      string;
@@ -50,6 +53,52 @@ export type PatientSignupResult = {
   needsVerification?: boolean;
   email?:             string;
 };
+
+// ─── The acceptance stamp is a HARD gate ───────────────────────────────
+//
+// It used to be best-effort: log the failure, create the account
+// anyway. That produced exactly the account this system must not be
+// able to produce — a live customer with no record that they agreed to
+// anything, and nothing downstream to catch it (the email path never
+// had a terms onboarding step, so the miss was permanent and silent).
+//
+// Now: no stamp, no account. Returns true only when the row is
+// confirmed written.
+//
+// .select() back rather than trusting a null error, because an update
+// matching NO rows is a success in PostgREST. If the profile trigger
+// hadn't fired yet, the "successful" stamp would have hit nothing.
+async function recordAcceptance(svc: ServiceClient, userId: string): Promise<boolean> {
+  const { data, error } = await svc
+    .from('profiles')
+    .update({
+      terms_accepted_at: new Date().toISOString(),
+      terms_version:     TERMS_VERSION,
+      privacy_version:   PRIVACY_VERSION,
+    })
+    .eq('id', userId)
+    // Write-once. An earlier acceptance is an audit fact and is not
+    // re-dated by a second run through signup; the filter makes a
+    // repeat a no-op rather than an overwrite, so the confirmation
+    // below reads the column instead of counting rows.
+    .is('terms_accepted_at', null)
+    .select('id');
+
+  if (error) {
+    console.error('terms acceptance stamp failed:', error.message);
+    return false;
+  }
+  if (data?.length) return true;
+
+  // Zero rows: either already accepted (fine — write-once did its job)
+  // or the row isn't there (not fine). Read back to tell them apart.
+  const { data: row } = await svc
+    .from('profiles')
+    .select('terms_accepted_at')
+    .eq('id', userId)
+    .maybeSingle();
+  return !!row?.terms_accepted_at;
+}
 
 export async function signUpPatient(input: PatientSignupInput): Promise<PatientSignupResult> {
   const { firstName, lastName, email, password, token, termsAccepted } = input;
@@ -86,11 +135,34 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   // metadata are deliberately not re-written on the recovery branch.
   const existing = await findExistingAuthUser(svc, normalizedEmail);
   if (existing) {
-    if (!existing.email_confirmed_at) {
+    if (existing.email_confirmed_at) {
+      return { error: 'An account with this email already exists. Please sign in instead.', success: false };
+    }
+
+    // Unconfirmed — the abandon-at-OTP case. It gets the same gate as a
+    // fresh signup: this account was never finished, so it may predate
+    // the acceptance requirement entirely, and it does not get waved
+    // through on the strength of already existing.
+    if (await recordAcceptance(svc, existing.id)) {
       await svc.auth.resend({ type: 'signup', email: normalizedEmail });
       return { error: null, success: true, needsVerification: true, email: normalizedEmail };
     }
-    return { error: 'An account with this email already exists. Please sign in instead.', success: false };
+
+    // The stamp didn't land, which here almost always means there is no
+    // profile row to stamp — the AUTH_ONLY orphan findExistingAuthUser
+    // exists to catch. Resending the OTP would walk them into an app
+    // with no profile AND no acceptance, and returning an error would
+    // dead-end them permanently: every retry meets the same orphan.
+    //
+    // So clear it and create the account properly below. This is not
+    // deleting someone's account — it is unconfirmed, meaning nobody has
+    // ever proved they own this address, it carries no data, and the
+    // person in front of us is asking for this exact email right now.
+    const { error: orphanErr } = await svc.auth.admin.deleteUser(existing.id);
+    if (orphanErr) {
+      console.error('could not clear unaccepted orphan signup:', orphanErr.message);
+      return { error: 'We couldn\'t create your account. Please try again.', success: false };
+    }
   }
 
   // signUp triggers Supabase to email the 6-digit OTP. With email-
@@ -118,16 +190,26 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   // signup. The profile row is created synchronously by the
   // on_auth_user_created trigger, so it exists by the time signUp
   // returns; we stamp it with the version the customer agreed to
-  // (lib/legal/terms.ts). Best-effort: a stamp failure must not block
-  // account creation — the tick was already required above — so we log
-  // and continue rather than fail the signup.
+  // (lib/legal/terms.ts).
+  //
+  // If it does not land, the account is UNDONE. The auth user was
+  // created microseconds ago by this request, findExistingAuthUser
+  // established there was nothing here before it, and it carries no
+  // data yet — so deleting it is a rollback of our own half-finished
+  // transaction, not the destruction of anyone's account. The
+  // alternative is leaving an unaccepted account behind and telling the
+  // customer to try again, which would then hit "an account with this
+  // email already exists" and strand them permanently.
   const newUserId = signUpData.user?.id;
-  if (newUserId) {
-    const { error: termsErr } = await svc
-      .from('profiles')
-      .update({ terms_accepted_at: new Date().toISOString(), terms_version: TERMS_VERSION, privacy_version: PRIVACY_VERSION })
-      .eq('id', newUserId);
-    if (termsErr) console.warn('terms acceptance stamp on signup failed:', termsErr.message);
+  if (!newUserId || !(await recordAcceptance(svc, newUserId))) {
+    if (newUserId) {
+      const { error: delErr } = await svc.auth.admin.deleteUser(newUserId);
+      if (delErr) console.error('rollback of unaccepted signup failed:', delErr.message);
+    }
+    return {
+      error: 'We couldn\'t record your agreement to the terms, so your account wasn\'t created. Please try again.',
+      success: false,
+    };
   }
 
   if (token) {

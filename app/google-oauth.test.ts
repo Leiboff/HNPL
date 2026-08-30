@@ -179,12 +179,31 @@ describe('/auth/callback — reuses PKCE exchange; adds OAuth profile-sync', () 
     expect(CALLBACK).toMatch(/createServiceClient/);
   });
 
-  it('sync failures are non-blocking — the user still redirects to /dashboard', () => {
-    // The try/catch wraps ensureOAuthProfileSynced so a fixup error
-    // never strands the user on the callback.
+  it('sync failures now fail CLOSED — no acceptance on record, no session', () => {
+    // This used to pin the opposite: the try/catch swallowed the error
+    // and redirected to /dashboard anyway, so a fixup failure never
+    // stranded anyone. That was right while the sync only filled in
+    // display names.
+    //
+    // The same code path now decides whether the customer's T&C
+    // acceptance was recorded, and "we don't know" has to mean "no" —
+    // otherwise a thrown error is a way INTO the app with nothing
+    // agreed to. The try/catch is still there; what changed is that the
+    // catch refuses instead of shrugging.
     const scope = CALLBACK.slice(CALLBACK.indexOf('exchangeCodeForSession(code)'));
     expect(scope).toMatch(/try\s*\{[\s\S]*?ensureOAuthProfileSynced\([\s\S]*?\}\s*catch/);
-    expect(scope).toMatch(/non-blocking/);
+    expect(scope).toMatch(/outcome = 'write-failed';/);
+    expect(scope).toMatch(/if \(outcome !== 'ok'\)/);
+    expect(scope).toMatch(/await supabase\.auth\.signOut\(\)/);
+    expect(scope).not.toMatch(/non-blocking\)/);
+  });
+
+  it('the name-sync half is still non-blocking — it costs a display name, not a session', () => {
+    // The distinction the fail-closed rule must not flatten: an empty
+    // first_name is recoverable from account settings, a missing legal
+    // record is not. Only the acceptance write refuses.
+    const scope = CALLBACK.slice(CALLBACK.indexOf('async function ensureOAuthProfileSynced'));
+    expect(scope).toMatch(/if \(!needsAcceptance\) \{[\s\S]*?name sync failed \(non-blocking\)[\s\S]*?return 'ok';/);
   });
 });
 

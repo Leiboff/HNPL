@@ -223,3 +223,37 @@ describe('the signup form is a view here, not a route of its own', () => {
     }
   });
 });
+
+describe('a refused OAuth arrival is told why it is back here', () => {
+  // /auth/callback signs out an OAuth arrival with no acceptance on
+  // record and returns it to /signup with ?error=. Silence there would
+  // read as Google having failed — the visitor would tap the same button
+  // again and get the same nothing.
+
+  it('renders a notice for both refusal reasons, and only those', () => {
+    expect(ENTRY).toMatch(/data-testid="signup-bounce-notice"/);
+    expect(ENTRY).toMatch(/raw === 'terms' \|\| raw === 'terms_write' \? raw : null/);
+    // role=alert, because it appears after the screen has already
+    // rendered once — a returning visitor is not re-reading the page.
+    expect(ENTRY).toMatch(/role="alert"[\s\S]{0,80}data-testid="signup-bounce-notice"/);
+  });
+
+  it('the two reasons say different things', () => {
+    // "you haven't agreed yet" and "we couldn't save your agreement" are
+    // different problems; telling someone to tick a box they already
+    // ticked is how a bug becomes a loop.
+    expect(ENTRY).toMatch(/bounce === 'terms'/);
+    expect(ENTRY).toMatch(/agreed to the terms below/);
+    expect(ENTRY).toMatch(/went wrong recording your agreement/);
+  });
+
+  it('reads the URL without an effect and without Suspense', () => {
+    // A setState-on-mount effect is a cascading render; useSearchParams
+    // would force a Suspense boundary around the whole screen and cost
+    // the page its prerender. useSyncExternalStore is the two-snapshot
+    // case this hook exists for.
+    expect(ENTRY).toMatch(/useSyncExternalStore\(/);
+    expect(ENTRY).not.toMatch(/useSearchParams/);
+  });
+});
+

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
@@ -59,9 +59,41 @@ import PatientSignupForm from '@/app/signup/patient/PatientSignupForm';
 // route. ContinueWithGoogleButton renders its own
 // note by default; here it is suppressed because this line already
 // says the same thing for every button above it. /auth/callback records
-// the acceptance server-side when an OAuth user arrives.
+// the acceptance server-side when an OAuth user arrives — and refuses
+// the session outright if the record doesn't land, signing the arrival
+// back out and bouncing it to this screen with ?error= (see `bounce`
+// below). There is no longer an onboarding step behind this: the tick
+// is the only gate, so it has to hold.
 
 const TEAL = '#15A89E';
+
+// ── Bounced back from /auth/callback ──────────────────────────────────
+//
+// The callback refuses an OAuth session that has no acceptance recorded
+// on the profile row — signs it out and sends the visitor here with
+// ?error=. Without a line explaining it, that round trip looks like
+// Google silently failing.
+//
+// useSyncExternalStore rather than an effect or useSearchParams. An
+// effect that setStates on mount is a cascading render (and the lint
+// rule that says so is right); useSearchParams would force a Suspense
+// boundary around this whole screen and cost the page its prerender.
+// This reads the URL during render on the client and returns null on the
+// server, which is exactly the two-snapshot case the hook exists for —
+// React hydrates the server value and swaps to the client one itself.
+//
+// The subscribe is a no-op: nothing here navigates without a full page
+// load, so the value cannot change while mounted.
+const NEVER_CHANGES = () => () => {};
+
+function useBounce(): 'terms' | 'terms_write' | null {
+  const raw = useSyncExternalStore(
+    NEVER_CHANGES,
+    () => new URLSearchParams(window.location.search).get('error'),
+    () => null,
+  );
+  return raw === 'terms' || raw === 'terms_write' ? raw : null;
+}
 
 export default function SignupEntry() {
   // ── Two views, one route ────────────────────────────────────────────
@@ -90,6 +122,8 @@ export default function SignupEntry() {
   // screen they are already looking at.
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsError,    setTermsError]    = useState(false);
+
+  const bounce = useBounce();
 
   function requireTerms(): boolean {
     if (termsAccepted) return true;
@@ -163,6 +197,19 @@ export default function SignupEntry() {
         <p className="mt-4 text-center text-[15px] leading-[1.55] text-[var(--auth-muted)]">
           Pay in 2 or 3 instalments, timed around your payday. No interest, ever.
         </p>
+
+        {/* ── Why you're back here ──────────────────────────────────── */}
+        {bounce && (
+          <div
+            role="alert"
+            data-testid="signup-bounce-notice"
+            className="mt-8 rounded-2xl border-[1.5px] border-amber-400/50 bg-amber-400/10 p-4 text-[14px] leading-[1.6] text-amber-100"
+          >
+            {bounce === 'terms'
+              ? 'Almost there — we can\u2019t create your account until you\u2019ve agreed to the terms below. Tick the box, then continue with Google again.'
+              : 'Something went wrong recording your agreement to the terms, so your account wasn\u2019t created. Please tick the box and try again.'}
+          </div>
+        )}
 
         {/* ── The ways in ───────────────────────────────────────────── */}
         <div className="mt-9 space-y-3" data-testid="signup-entry-methods">
