@@ -164,7 +164,7 @@ export default function ContinueWithGoogleButton({
       </button>
       {showConsentNote && (
         <p
-          className={`mt-2 text-center text-[11px] leading-[1.5] ${onDark ? 'text-[#8AA0BC]' : 'text-[#8494A8]'}`}
+          className={`mt-2 text-center text-[11px] leading-[1.5] ${onDark ? 'text-[var(--auth-dim)]' : 'text-[#5B6B80]'}`}
           data-testid="google-consent-note"
         >
           By continuing with Google you agree to our{' '}

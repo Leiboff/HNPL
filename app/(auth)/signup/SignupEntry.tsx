@@ -82,7 +82,7 @@ export default function SignupEntry() {
             the way in — nothing between them. */}
         <div className="text-center">
           <span className="text-[46px] font-bold leading-none tracking-[-0.04em] text-white">
-            better<span style={{ color: '#4FD8CD' }}>now</span>
+            better<span style={{ color: 'var(--auth-accent)' }}>now</span>
           </span>
         </div>
 
@@ -92,7 +92,7 @@ export default function SignupEntry() {
           <br />
           split interest-free
         </h1>
-        <p className="mt-4 text-center text-[15px] leading-[1.55] text-[#9FB3CC]">
+        <p className="mt-4 text-center text-[15px] leading-[1.55] text-[var(--auth-muted)]">
           Pay in 2 or 3 instalments, timed around your payday. No interest, ever.
         </p>
 
@@ -101,7 +101,7 @@ export default function SignupEntry() {
           <Link
             href="/signup/patient"
             data-testid="signup-entry-email"
-            className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[#06202B] transition-transform active:scale-[.985]"
+            className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985]"
             style={{ background: TEAL, boxShadow: '0 14px 30px -12px rgba(21,168,158,.75)' }}
           >
             Sign up with email
@@ -116,7 +116,7 @@ export default function SignupEntry() {
         {/* ── One legal line for the whole stack ────────────────────── */}
         <p
           data-testid="signup-entry-consent"
-          className="mt-5 text-center text-[12px] leading-[1.6] text-[#8AA0BC]"
+          className="mt-5 text-center text-[12px] leading-[1.6] text-[var(--auth-dim)]"
         >
           By continuing you agree to our{' '}
           <Link
@@ -142,13 +142,13 @@ export default function SignupEntry() {
             This is the ONLY route back for a returning user, passkey
             users included — /login runs the conditional-UI ceremony, so
             a saved passkey appears as an autofill suggestion there. */}
-        <p className="mt-8 text-center text-[15px] text-[#9FB3CC]">
+        <p className="mt-8 text-center text-[15px] text-[var(--auth-muted)]">
           Already have an account?{' '}
           <Link
             href="/login"
             data-testid="signup-entry-login"
             className="font-semibold"
-            style={{ color: '#4FD8CD' }}
+            style={{ color: 'var(--auth-accent)' }}
           >
             Sign in
           </Link>
@@ -157,12 +157,12 @@ export default function SignupEntry() {
         {/* Practices are invite-provisioned staff accounts, not a Google
             path — kept as a quiet third door rather than a fourth pill,
             so the patient stack stays the obvious read. */}
-        <p className="mt-3 text-center text-[13px] text-[#7A90AD]">
+        <p className="mt-3 text-center text-[13px] text-[var(--auth-dim)]">
           Are you a practice?{' '}
           <Link
             href="/signup/practice"
             data-testid="signup-entry-practice"
-            className="font-medium underline underline-offset-[3px] text-[#A9BDD6]"
+            className="font-medium underline underline-offset-[3px] text-[var(--auth-muted)]"
           >
             Register your practice
           </Link>

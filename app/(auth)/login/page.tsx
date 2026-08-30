@@ -236,7 +236,7 @@ export default function LoginPage() {
           jump somewhere else. */}
       <div className="text-center">
         <Link href="/" className="inline-block text-[46px] font-bold leading-none tracking-[-0.04em]">
-          <span style={{ color: '#FFFFFF' }}>better</span><span style={{ color: '#4FD8CD' }}>now</span>
+          <span style={{ color: '#FFFFFF' }}>better</span><span style={{ color: 'var(--auth-accent)' }}>now</span>
         </Link>
       </div>
 
@@ -244,7 +244,7 @@ export default function LoginPage() {
           the chooser, a password error on the email screen, and the
           not-confirmed state can come from either. */}
       {notice && (
-        <div className="mt-7 rounded-2xl border border-[#4FD8CD]/25 bg-[#4FD8CD]/10 px-4 py-3 text-center text-[13px] leading-[1.55] text-[#BFE9E4]">
+        <div className="mt-7 rounded-2xl border border-[var(--auth-accent-edge)] bg-[var(--auth-accent-tint)] px-4 py-3 text-center text-[13px] leading-[1.55] text-[var(--auth-muted)]">
           {notice}
         </div>
       )}
@@ -259,7 +259,7 @@ export default function LoginPage() {
         <div className="mt-7 space-y-3 rounded-2xl border border-amber-300/30 bg-amber-400/[.10] px-4 py-4 text-[13px] leading-[1.55] text-amber-100">
           <p>Please confirm your email before signing in — check your inbox for the link.</p>
           {resendState === 'sent' && (
-            <p className="font-medium text-[#8FE3D9]">
+            <p className="font-medium text-[var(--auth-accent)]">
               If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
             </p>
           )}
@@ -267,8 +267,8 @@ export default function LoginPage() {
             type="button"
             onClick={handleResend}
             disabled={resendState === 'sending' || resendState === 'sent'}
-            className="flex h-[46px] w-full items-center justify-center rounded-full text-[14px] font-semibold text-[#06202B] transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-            style={{ background: '#15A89E' }}
+            className="flex h-[46px] w-full items-center justify-center rounded-full text-[14px] font-semibold text-[var(--auth-on-teal)] transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ background: 'var(--auth-teal)' }}
           >
             {resendState === 'sending' ? 'Sending…' : resendState === 'sent' ? 'Sent ✓' : 'Resend confirmation email'}
           </button>
@@ -281,7 +281,7 @@ export default function LoginPage() {
           <h1 className="mt-9 text-center text-[31px] font-semibold leading-[1.2] tracking-[-0.03em] text-white">
             Welcome back
           </h1>
-          <p className="mt-3 text-center text-[15px] text-[#9FB3CC]">
+          <p className="mt-3 text-center text-[15px] text-[var(--auth-muted)]">
             Sign in to your betternow account.
           </p>
 
@@ -300,7 +300,7 @@ export default function LoginPage() {
                   onClick={handlePasskeySignIn}
                   disabled={passkeyLoading || pending.disabled}
                   className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                  style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'rgba(255,255,255,.24)', background: 'rgba(255,255,255,.05)' }}
+                  style={lastUsed === 'passkey' ? { borderColor: '#15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
                 >
                   <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <rect x="3" y="11" width="18" height="11" rx="2" />
@@ -340,8 +340,8 @@ export default function LoginPage() {
                 type="button"
                 onClick={openEmail}
                 data-testid="login-open-email"
-                className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-white/[.09]"
-                style={lastUsed === 'password' ? { border: '1.5px solid #15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'rgba(255,255,255,.24)', background: 'rgba(255,255,255,.05)' }}
+                className="flex h-[52px] w-full items-center justify-center gap-2.5 rounded-full border-[1.5px] text-[15px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
+                style={lastUsed === 'password' ? { border: '1.5px solid #15A89E', boxShadow: '0 0 0 3px rgba(21,168,158,.12)', background: 'rgba(21,168,158,.12)' } : { borderColor: 'var(--auth-edge-strong)', background: 'var(--auth-fill)' }}
               >
                 <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <rect x="3" y="5" width="18" height="14" rx="2" />
@@ -361,7 +361,7 @@ export default function LoginPage() {
               their own. */}
           <section
             aria-label="New to BetterNow"
-            className="mt-9 rounded-2xl border border-white/[.12] bg-white/[.04] p-5"
+            className="mt-9 rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] p-5"
           >
             <p className="mb-3.5 text-center text-[13px] font-semibold text-white">
               New to BetterNow?
@@ -370,30 +370,30 @@ export default function LoginPage() {
               <Link
                 href="/signup/patient"
                 data-testid="login-signup-patient"
-                className="block rounded-xl border border-white/[.14] bg-white/[.05] px-4 py-3 transition-colors hover:border-[#4FD8CD]/50 hover:bg-white/[.09]"
+                className="block rounded-xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] px-4 py-3 transition-colors hover:border-[var(--auth-accent-soft)] hover:bg-[var(--auth-fill-hover)]"
               >
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#7A90AD]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--auth-dim)]">
                   Patient
                 </p>
                 <p className="mt-0.5 text-[15px] font-semibold text-white">
                   Sign up as a patient
                 </p>
-                <p className="mt-0.5 text-[12px] text-[#8AA0BC]">
+                <p className="mt-0.5 text-[12px] text-[var(--auth-dim)]">
                   Pay medical bills in interest-free instalments.
                 </p>
               </Link>
               <Link
                 href="/signup/practice"
                 data-testid="login-signup-practice"
-                className="block rounded-xl border border-white/[.14] bg-white/[.05] px-4 py-3 transition-colors hover:border-[#4FD8CD]/50 hover:bg-white/[.09]"
+                className="block rounded-xl border border-[var(--auth-hairline)] bg-[var(--auth-fill)] px-4 py-3 transition-colors hover:border-[var(--auth-accent-soft)] hover:bg-[var(--auth-fill-hover)]"
               >
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#7A90AD]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--auth-dim)]">
                   Practice
                 </p>
                 <p className="mt-0.5 text-[15px] font-semibold text-white">
                   Register your practice
                 </p>
-                <p className="mt-0.5 text-[12px] text-[#8AA0BC]">
+                <p className="mt-0.5 text-[12px] text-[var(--auth-dim)]">
                   Offer BetterNow to your patients.
                 </p>
               </Link>
@@ -419,7 +419,7 @@ export default function LoginPage() {
             type="button"
             onClick={closeEmail}
             data-testid="login-email-back"
-            className="mt-8 -ml-2 flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[14px] font-medium text-[#9FB3CC] transition-colors hover:text-white"
+            className="mt-8 -ml-2 flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[14px] font-medium text-[var(--auth-muted)] transition-colors hover:text-white"
           >
             <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="m15 18-6-6 6-6" />
@@ -435,14 +435,14 @@ export default function LoginPage() {
               wording must never re-narrow to one of them. */}
           <p
             data-testid="password-audience-cue"
-            className="mt-2 mb-7 text-[15px] text-[#9FB3CC]"
+            className="mt-2 mb-7 text-[15px] text-[var(--auth-muted)]"
           >
             Use the address you registered with.
           </p>
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
             <div>
-              <label htmlFor="email" className="mb-[7px] block text-[13px] font-medium text-[#9FB3CC]">
+              <label htmlFor="email" className="mb-[7px] block text-[13px] font-medium text-[var(--auth-muted)]">
                 Email address
               </label>
               <input
@@ -457,20 +457,20 @@ export default function LoginPage() {
                 // hook starts that ceremony when emailOpen flips true —
                 // i.e. when THIS input reaches the DOM.
                 autoComplete="username webauthn"
-                className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
+                className="h-[52px] w-full rounded-2xl border-[1.5px] border-[var(--auth-edge)] bg-[var(--auth-fill-raised)] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[var(--auth-accent)] focus:bg-[var(--auth-fill-hover)] focus:ring-4 focus:ring-[var(--auth-accent-ring)]"
                 placeholder="jane@example.com"
               />
             </div>
 
             <div>
               <div className="mb-[7px] flex items-center justify-between">
-                <label htmlFor="password" className="block text-[13px] font-medium text-[#9FB3CC]">
+                <label htmlFor="password" className="block text-[13px] font-medium text-[var(--auth-muted)]">
                   Password
                 </label>
                 <Link
                   href="/forgot-password"
                   data-testid="login-forgot-password"
-                  className="text-[12px] font-semibold text-[#9FB3CC] underline underline-offset-[3px] hover:text-white"
+                  className="text-[12px] font-semibold text-[var(--auth-muted)] underline underline-offset-[3px] hover:text-white"
                 >
                   Forgot password?
                 </Link>
@@ -482,7 +482,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 autoComplete="current-password webauthn"
-                className="h-[52px] w-full rounded-2xl border-[1.5px] border-white/20 bg-white/[.06] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[#4FD8CD] focus:bg-white/[.10] focus:ring-4 focus:ring-[#4FD8CD]/15"
+                className="h-[52px] w-full rounded-2xl border-[1.5px] border-[var(--auth-edge)] bg-[var(--auth-fill-raised)] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35 focus:border-[var(--auth-accent)] focus:bg-[var(--auth-fill-hover)] focus:ring-4 focus:ring-[var(--auth-accent-ring)]"
                 placeholder="Your password"
               />
             </div>
@@ -490,8 +490,8 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={pending.disabled}
-              className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[#06202B] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
-              style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
+              className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
+              style={{ background: 'var(--auth-teal)', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
             >
               {pending.showLabel ? 'Signing in…' : 'Sign in'}
             </button>

@@ -171,3 +171,47 @@ body {
     opacity: 1;
   }
 }
+
+/* ── Auth surface palette ──────────────────────────────────────────────
+ * /login, /signup and /signup/patient are the app's only dark surfaces
+ * (see the forced-light note at the top of this file — there is no dark
+ * theme, these screens are a deliberate exception). The brand palette in
+ * app/landing.css was drawn for a light ground, so it has no muted text
+ * ramp that works on navy. This block is that ramp, and NOTHING here is
+ * a new hue: every value is a brand colour, a brand colour at alpha, or
+ * plain white at alpha, which over navy simply reads as a lighter navy.
+ *
+ * Contrast is measured against --auth-ground-to (#13294B), the LIGHTEST
+ * point of the gradient and therefore the worst case for light text.
+ * Anything carrying copy clears WCAG AA (4.5:1); the two values that did
+ * not are gone (see the commit that introduced this block).
+ *
+ * Defined once here rather than inline, because three files pasting the
+ * same navy gradient is exactly how this drifted the first time. */
+.auth-surface {
+  /* Brand, from app/landing.css */
+  --auth-ground-from:  #0E2140;              /* --navy-deep  */
+  --auth-ground-to:    #13294B;              /* --navy       */
+  --auth-teal:         #15A89E;              /* --teal       */
+  --auth-accent:       #19C2B6;              /* --teal-bright — 6.52:1 */
+
+  /* Brand teal at alpha, for rings and tints */
+  --auth-accent-soft:  rgba(25, 194, 182, .5);
+  --auth-accent-ring:  rgba(25, 194, 182, .15);
+  --auth-accent-tint:  rgba(25, 194, 182, .10);
+  --auth-accent-edge:  rgba(25, 194, 182, .25);
+
+  /* Text on the navy ground */
+  --auth-muted:        #9FB3CC;              /* 6.77:1 — sub-headings, labels */
+  --auth-dim:          #8AA0BC;              /* 5.42:1 — fine print          */
+  --auth-on-teal:      #0E2140;              /* 5.44:1 on --auth-teal        */
+
+  /* Neutral structure. White at alpha over navy = a lighter navy, so
+   * these need no hue of their own and can never drift out of family. */
+  --auth-hairline:     rgba(255, 255, 255, .12);
+  --auth-edge:         rgba(255, 255, 255, .20);
+  --auth-edge-strong:  rgba(255, 255, 255, .24);
+  --auth-fill:         rgba(255, 255, 255, .05);
+  --auth-fill-raised:  rgba(255, 255, 255, .06);
+  --auth-fill-hover:   rgba(255, 255, 255, .09);
+}

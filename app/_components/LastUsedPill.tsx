@@ -8,14 +8,14 @@
 // rather than staying duplicated.
 //
 // `tone` picks the teal: the deep #0C8579 has the contrast to sit on a
-// white card, and none at all on the navy auth surface, where the
-// brighter #4FD8CD is the readable one. Same pill, same meaning — only
-// the ground under it changes.
+// white card and none at all on the navy auth surface, where the brand's
+// own --teal-bright (#19C2B6, 6.52:1 on --navy) is the readable one.
+// Same pill, same meaning — only the ground under it changes.
 
 type Props = { tone?: 'onLight' | 'onDark' };
 
 export default function LastUsedPill({ tone = 'onLight' }: Props) {
-  const colour = tone === 'onDark' ? '#4FD8CD' : '#0C8579';
+  const colour = tone === 'onDark' ? '#19C2B6' : '#0C8579';
   return (
     <p
       className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase"

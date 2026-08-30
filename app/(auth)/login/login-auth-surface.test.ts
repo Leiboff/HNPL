@@ -44,9 +44,9 @@ describe('one surface, not three copies of a gradient', () => {
       'app/(auth)/signup/SignupEntry.tsx',
       'app/signup/patient/page.tsx',
     ]) {
-      expect(codeOf(p)).not.toMatch(/linear-gradient\(180deg, #0A182E/);
+      expect(codeOf(p)).not.toMatch(/linear-gradient\(180deg/);
     }
-    expect(SURFACE).toMatch(/linear-gradient\(180deg, #0A182E/);
+    expect(SURFACE).toMatch(/linear-gradient\(180deg, var\(--auth-ground-from\)/);
   });
 
   it('the surface is server-safe, so the server-rendered signup page can use it', () => {
@@ -81,7 +81,7 @@ describe('the dark ground did not swallow any text', () => {
     // white — Google's guidelines require it.
     expect(LOGIN).toMatch(/tone="onDark"/);
     expect(GOOGLE).toMatch(/tone\?: 'onLight' \| 'onDark'/);
-    expect(PILL).toMatch(/tone === 'onDark' \? '#4FD8CD' : '#0C8579'/);
+    expect(PILL).toMatch(/tone === 'onDark' \? '#19C2B6' : '#0C8579'/);
   });
 
   it('no light-card leftovers survive on the page', () => {
@@ -220,5 +220,81 @@ describe('looking like a page means behaving like one', () => {
     const reduced = CSS.slice(CSS.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
     expect(reduced).toMatch(/auth-view-forward/);
     expect(reduced).toMatch(/animation: none/);
+  });
+});
+
+describe('the auth palette is the BRAND palette', () => {
+  // WHY THIS EXISTS.
+  //
+  // These three screens are the app's only dark surfaces, and the brand
+  // palette in app/landing.css was drawn for a light ground — it has no
+  // muted text ramp that works on navy. Inventing one inline is how a
+  // parallel palette gets born: at one point these files carried fifteen
+  // hexes that appeared NOWHERE else in the app, two of which duplicated
+  // brand tokens that already existed and one of which failed WCAG AA.
+  //
+  // The ramp now lives in one .auth-surface block and is derived only
+  // from brand values. These tests are the fence around that.
+
+  const CSS = read('app/globals.css');
+  const AUTH = CSS.slice(CSS.indexOf('.auth-surface {'));
+  const LANDING = read('app/landing.css');
+
+  it('the screens carry no raw hex except the brand teal and white', () => {
+    for (const p of ['app/(auth)/login/page.tsx', 'app/(auth)/signup/SignupEntry.tsx']) {
+      const hexes = new Set(codeOf(p).match(/#[0-9A-Fa-f]{6}/g) ?? []);
+      for (const h of hexes) {
+        expect(['#15A89E', '#FFFFFF']).toContain(h.toUpperCase());
+      }
+    }
+  });
+
+  it('every hex in the token block is a colour the brand already defines', () => {
+    const brand = new Set(
+      (LANDING.match(/#[0-9A-Fa-f]{6}/g) ?? []).map((h) => h.toUpperCase()),
+    );
+    const used = (AUTH.match(/#[0-9A-Fa-f]{6}/g) ?? []).map((h) => h.toUpperCase());
+    expect(used.length).toBeGreaterThan(0);
+    for (const h of used) {
+      // --auth-muted / --auth-dim are the one legitimate addition: a
+      // light-on-navy ramp the brand simply does not have. Everything
+      // else must already exist in app/landing.css.
+      if (['#9FB3CC', '#8AA0BC'].includes(h)) continue;
+      expect(brand).toContain(h);
+    }
+  });
+
+  it('the two AA failures are gone and cannot come back', () => {
+    // #7A90AD measured 4.44:1 on --navy, #8494A8 measured 3.10:1 on
+    // white. Both carried real copy.
+    const all = [
+      CSS,
+      codeOf('app/(auth)/login/page.tsx'),
+      codeOf('app/(auth)/signup/SignupEntry.tsx'),
+      codeOf('app/_components/ContinueWithGoogleButton.tsx'),
+    ].join('\n');
+    expect(all).not.toMatch(/#7A90AD/i);
+    expect(all).not.toMatch(/#8494A8/i);
+  });
+
+  it('the accent is the brand teal-bright, not a second bright teal', () => {
+    expect(AUTH).toMatch(/--auth-accent:\s*#19C2B6/);
+    expect(LANDING).toMatch(/--teal-bright:#19c2b6/);
+    // The invented one is retired everywhere, pill included.
+    const all = [CSS, codeOf('app/_components/LastUsedPill.tsx'),
+                 codeOf('app/(auth)/login/page.tsx'),
+                 codeOf('app/(auth)/signup/SignupEntry.tsx')].join('\n');
+    expect(all).not.toMatch(/#4FD8CD/i);
+  });
+
+  it('the decorative blobs introduce no hue at all', () => {
+    // White at alpha over navy is a lighter navy; brand teal at alpha is
+    // brand teal. Neither can drift out of family the way a hand-picked
+    // mid-blue did.
+    const blobs = SURFACE.slice(SURFACE.indexOf('function BrandBlobs'));
+    expect(blobs).not.toMatch(/#[0-9A-Fa-f]{6}/);
+    for (const rgb of (blobs.match(/rgba\((\d+),\s*(\d+),\s*(\d+)/g) ?? [])) {
+      expect(['rgba(255,255,255', 'rgba(25,194,182', 'rgba(21,168,158']).toContain(rgb);
+    }
   });
 });
