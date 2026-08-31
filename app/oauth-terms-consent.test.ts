@@ -204,8 +204,17 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // cookies the exchange just set are cleared and the visitor is
     // returned to /signup, where the tick lives.
     expect(CALLBACK_SRC).toMatch(/if \(outcome !== 'ok'\) \{/);
-    expect(CALLBACK_SRC).toMatch(/await supabase\.auth\.signOut\(\);/);
     expect(CALLBACK_SRC).toMatch(/\/signup\?error=\$\{outcome === 'write-failed' \? 'terms_write' : 'terms'\}/);
+
+    // This used to assert `await supabase.auth.signOut();` and nothing
+    // more, which is precisely the shape that leaked: signOut REPORTS a
+    // failed revocation by returning `{ error }` and skips removing the
+    // stored session, so the visitor was shown the accept-the-terms
+    // screen while still signed in. Revoke globally, read the returned
+    // error, and delete the cookies on the response actually returned.
+    expect(CALLBACK_SRC).toMatch(/const \{ error: signOutError \} = await supabase\.auth\.signOut\(\{ scope: 'global' \}\)/);
+    expect(CALLBACK_SRC).toMatch(/if \(signOutError\)/);
+    expect(CALLBACK_SRC).toMatch(/clearAuthCookies\(refused, request\.cookies\.getAll\(\)/);
   });
 
   it('a FAILED write is refused just as hard as a missing tick', () => {
@@ -225,8 +234,15 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // Accounts that finished onboarding before any of this existed keep
     // working. onboarding_completed is never written by anything the
     // visitor controls, so this cannot be claimed into.
-    expect(CALLBACK_SRC).toMatch(/profile\.onboarding_completed === true/);
-    expect(CALLBACK_SRC).toMatch(/const needsAcceptance = !alreadyAgreed && !grandfathered;/);
+    //
+    // The rule moved to lib/legal/acceptance.ts when three more surfaces
+    // started asking the same question — a second copy of a grandfather
+    // clause is how two gates come to disagree. The callback now asks it
+    // rather than restating it; the clause itself is pinned, with its
+    // fixtures, in lib/legal/acceptance.test.ts.
+    expect(CALLBACK_SRC).toMatch(/const needsAcceptance = !hasAcceptedTerms\(profile\);/);
+    const ACCEPTANCE = read('lib/legal/acceptance.ts');
+    expect(ACCEPTANCE).toMatch(/profile\.onboarding_completed === true/);
   });
 
   it('the email path refuses too — and ROLLS BACK the account it just made', () => {

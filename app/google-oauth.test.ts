@@ -194,7 +194,13 @@ describe('/auth/callback — reuses PKCE exchange; adds OAuth profile-sync', () 
     expect(scope).toMatch(/try\s*\{[\s\S]*?ensureOAuthProfileSynced\([\s\S]*?\}\s*catch/);
     expect(scope).toMatch(/outcome = 'write-failed';/);
     expect(scope).toMatch(/if \(outcome !== 'ok'\)/);
-    expect(scope).toMatch(/await supabase\.auth\.signOut\(\)/);
+    // Global scope, and its RETURNED error read — signOut reports a failed
+    // revocation by returning rather than throwing, and skips removing the
+    // session when it does. The cookie deletion below is what makes the
+    // refusal terminal either way. See lib/legal/acceptance.test.ts for the
+    // field bug this replaced.
+    expect(scope).toMatch(/await supabase\.auth\.signOut\(\{ scope: 'global' \}\)/);
+    expect(scope).toMatch(/clearAuthCookies\(refused,/);
     expect(scope).not.toMatch(/non-blocking\)/);
   });
 

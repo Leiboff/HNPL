@@ -85,9 +85,22 @@ export type ProfileForOnboarding = {
   // usable session unless the acceptance row was written —
   // signUpPatient deletes the auth user it just made if the stamp
   // fails, and /auth/callback signs an OAuth arrival straight back out
-  // and returns them to /signup. So by the time anyone reaches
-  // onboarding the column is already set, and a step here could only
-  // ever be a screen nobody sees.
+  // and returns them to /signup.
+  //
+  // This comment used to end "so by the time anyone reaches onboarding
+  // the column is already set, and a step here could only ever be a
+  // screen nobody sees." The first half of that was wrong, and being
+  // written down is part of why it stayed wrong: it told every reader
+  // that checking was unnecessary. A refused OAuth arrival DID reach
+  // onboarding, because the refusal called signOut() without reading its
+  // returned error and signOut skips removing the session when its
+  // revocation call fails.
+  //
+  // The conclusion still holds — acceptance is not a step, and there is
+  // no screen for it here. What changed is that the precondition is now
+  // CHECKED wherever it is relied upon, by lib/legal/termsGate.ts, which
+  // every page in this tree calls before computing a step. This model
+  // stays pure and stays out of it.
   phone_verified_at:      string | null;
   sa_id_number:           string | null;
   salary_day:             number | null;

@@ -56,14 +56,24 @@ describe('Google (OAuth) signup records acceptance server-side', () => {
   // it cannot be the one path someone forgets exists.
   it('records acceptance from the chooser tick, and refuses the session without it', () => {
     // Nothing is inferred: absent the parameter, nothing is written —
-    // and nothing written means no session. There is no onboarding step
-    // behind this any more, so the callback IS the floor.
+    // and nothing written means no session.
+    //
+    // The callback is no longer the ONLY floor, though. It said "there is
+    // no onboarding step behind this any more, so the callback IS the
+    // floor", and a single floor on a security rule turned out to be one
+    // bug away from no floor: its refusal called signOut() without
+    // reading the error signOut RETURNS when revocation fails, so a
+    // refused arrival kept its session and reached an onboarding step.
+    // The refusal is now terminal, and lib/legal/termsGate.ts re-checks
+    // on every surface a session can reach. See
+    // lib/legal/acceptance.test.ts.
     const CHOOSER = read('app/(auth)/signup/SignupEntry.tsx');
     expect(CHOOSER).toMatch(/data-testid="signup-terms-checkbox"/);
     expect(CHOOSER).toMatch(/consentGiven=\{termsAccepted\}/);
     expect(CALLBACK).toMatch(/terms_accepted'\) === '1'/);
     expect(CALLBACK).toMatch(/if \(needsAcceptance && !consentGiven\) return 'needs-terms';/);
-    expect(CALLBACK).toMatch(/await supabase\.auth\.signOut\(\);/);
+    expect(CALLBACK).toMatch(/await supabase\.auth\.signOut\(\{ scope: 'global' \}\)/);
+    expect(CALLBACK).toMatch(/clearAuthCookies\(refused,/);
   });
 
   it('the button that starts that flow carries the disclosure by default', () => {

@@ -112,8 +112,14 @@ type Props = {
    *
    *   undefined — the caller is not a consent moment. The button behaves
    *               exactly as it always did. /login passes nothing: it is
-   *               a sign-in screen, and a brand-new account arriving that
-   *               way is caught by the terms step in onboarding.
+   *               a sign-in screen, so a brand-new account arriving that
+   *               way carries no acceptance, and /auth/callback REFUSES
+   *               the session and returns it to /signup to agree. (This
+   *               used to say "caught by the terms step in onboarding".
+   *               There is no such step, and describing a downstream
+   *               screen as the backstop is part of why the refusal was
+   *               allowed to be best-effort — see the field bug in
+   *               lib/legal/acceptance.test.ts.)
    *   false     — blocked. The click does NOT start OAuth; onConsentMissing
    *               fires instead so the caller can point at its checkbox.
    *   true      — proceed, and carry the acceptance to /auth/callback so
@@ -122,8 +128,11 @@ type Props = {
    * The acceptance travels as a query parameter because the tick happens
    * BEFORE any session exists — there is no profile to stamp yet. That
    * makes the resulting record client-asserted, which is weaker than a
-   * server action on an authenticated session, and is why the onboarding
-   * terms step stays as a backstop for anything arriving unstamped.
+   * server action on an authenticated session. Only the person completing
+   * the OAuth flow can set it, so the failure mode is someone asserting
+   * their own agreement rather than forging another's. Anything arriving
+   * unstamped is refused outright at /auth/callback, and refused again by
+   * lib/legal/termsGate.ts on every surface a session can reach.
    */
   consentGiven?: boolean;
   /** Called instead of starting OAuth when consentGiven is false. */

@@ -4,9 +4,9 @@ import { updateSession } from '@/lib/supabase/middleware';
 import {
   SESSION_CAP_REDIRECT_REASON,
   isCapExemptPath,
-  isSupabaseAuthCookie,
   sessionExceedsAbsoluteCap,
 } from '@/lib/auth/sessionCap';
+import { clearAuthCookies } from '@/lib/auth/authCookies';
 
 export async function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
@@ -51,6 +51,9 @@ export async function proxy(request: NextRequest) {
 
     // Delete on the RESPONSE we are actually returning: signOut's own
     // cookie writes landed on `response`, which this branch discards.
+    // (It also skips them outright when its revocation call fails — see
+    // lib/auth/authCookies.ts, which is now the one implementation of
+    // this deletion, shared with the two terms-refusal routes.)
     //
     // Names are collected from BOTH the original request and the mutated
     // one. updateSession's setAll writes refreshed cookies onto
@@ -59,13 +62,10 @@ export async function proxy(request: NextRequest) {
     // original request may not name every cookie now present, and a
     // partially deleted chunked cookie is worse than either extreme —
     // @supabase/ssr reassembles whatever it finds.
-    const names = new Set<string>([
+    clearAuthCookies(capped, [
       ...request.cookies.getAll().map((c) => c.name),
       ...modifiedRequest.cookies.getAll().map((c) => c.name),
     ]);
-    for (const name of names) {
-      if (isSupabaseAuthCookie(name)) capped.cookies.delete(name);
-    }
     return capped;
   }
 

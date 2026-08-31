@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
+import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import SalaryStepClient from './SalaryStepClient';
 
@@ -30,10 +31,15 @@ export default async function SalaryStep() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
+    .select('role, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed, terms_accepted_at')
     .eq('id', user.id)
     .maybeSingle();
   if (!profile) redirect('/dashboard');
+
+  // Acceptance is a precondition of the account, so it is checked
+  // BEFORE any step renders — not assumed because an upstream route was
+  // supposed to have enforced it. See lib/legal/termsGate.ts.
+  requireTermsAccepted(profile);
 
   const p = profile as ProfileForOnboarding;
   const flags = currentFlags();

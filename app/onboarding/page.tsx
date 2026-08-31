@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
+import { requireTermsAccepted } from '@/lib/legal/termsGate';
 
 // ─── Onboarding router ────────────────────────────────────────────────
 //
@@ -29,7 +30,7 @@ export default async function OnboardingRouter() {
   const service = svc();
   const { data: profile } = await service
     .from('profiles')
-    .select('role, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
+    .select('role, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed, terms_accepted_at')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -47,6 +48,13 @@ export default async function OnboardingRouter() {
   if (profile.role && profile.role !== 'patient') {
     redirect('/dashboard');
   }
+
+  // No acceptance, no onboarding — checked here as well as on each step,
+  // because this router hands out the step URLs and is the one address the
+  // rest of the app redirects to. Runs AFTER the role check above so a
+  // staff account is dispatched to its own portal rather than merely
+  // exempted. See lib/legal/termsGate.ts.
+  requireTermsAccepted(profile);
 
   const p = profile as ProfileForOnboarding;
   const status = computeOnboarding(
