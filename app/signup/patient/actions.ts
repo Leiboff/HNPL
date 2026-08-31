@@ -372,35 +372,49 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   // alternative is leaving an unaccepted account behind and telling the
   // customer to try again, which would then hit "an account with this
   // email already exists" and strand them permanently.
-  // ── signUp's TWO ways of saying "that email already exists" ──────────
+  // ── signUp does not reliably hand back the new user ──────────────────
   //
-  // Neither is an error, and neither used to be handled. Both mean the
-  // same thing and get the same answer.
+  // THE ACTUAL BUG, after two wrong diagnoses of mine and one wrong fix.
   //
-  //   • data.user = null, error = null — the anti-enumeration SILENT
-  //     RESPONSE. This is the one that reached production: the visitor
-  //     saw "We couldn't record your agreement to the terms" on every
-  //     attempt, forever, because the code read a null user as an
-  //     internal failure and rolled back an account that was never
-  //     created. lib/auth/findExistingAuthUser.ts predicted this
-  //     precisely — "the caller misreads it as 'shouldn't happen', and
-  //     the user can never sign up again with that email" — and it is
-  //     what the NOUSER reference in a field report turned out to be.
+  // @supabase/auth-js parses the /signup response with `_sessionResponse`,
+  // whose entire user extraction is:
   //
-  //   • data.user set with an EMPTY identities array — the obfuscated
-  //     fake user GoTrue returns when both Confirm-email and
-  //     Confirm-phone are enabled (documented in @supabase/auth-js's own
-  //     signUp remarks).
+  //     const user = data.user ?? null;
   //
-  // findExistingAuthUser is supposed to catch an existing address BEFORE
-  // we get here, and with migration 0119 it finally can — its auth.users
-  // fallback could never work, which is how the address got into this
-  // state unseen. This is the backstop for when it still does not, and it
-  // must never again be reported as a problem with the acceptance stamp.
+  // GoTrue's POST /signup returns an AccessTokenResponse — with the user
+  // NESTED under `user` — only when it creates a session. When email
+  // confirmation is required it creates no session and returns the User
+  // model at the TOP LEVEL of the body instead. There is no `user` key to
+  // read, so auth-js yields `{ user: null, session: null }` with no error.
+  // (`_userResponse`, two functions along in the same file, has the
+  // fallback this one lacks: `data.user ?? data`.)
+  //
+  // This project requires email confirmation — the whole OTP flow depends
+  // on it — so EVERY email signup came back with a null user. The account
+  // was created; we simply never learned its id, so the acceptance was
+  // never stamped and the visitor was told we could not record their
+  // agreement. Every time, for every address, new or not. That is both
+  // field reports, and it is why neither of my earlier fixes helped: one
+  // was about a key, the other provisioned a profile row for an id we did
+  // not have.
+  //
+  // It is also why the reference read NOUSER for an address that had
+  // never been used, which is the fact that finally ruled out
+  // "the email already exists" and pointed here.
+  //
+  // So this no longer trusts the response SHAPE. signUp returned no
+  // error, which means an auth user now exists for this address; the id
+  // is resolved by looking it up. findExistingAuthUser's cheap path finds
+  // it via the profiles row the handle_new_user trigger just created, so
+  // this works whether or not migration 0119 has been applied.
   const newUser = signUpData.user;
-  const alreadyRegistered = !newUser
-    || (Array.isArray(newUser.identities) && newUser.identities.length === 0);
-  if (alreadyRegistered) {
+
+  // The one response that really does mean "already registered": a user
+  // object with an EMPTY identities array — GoTrue's obfuscated fake user,
+  // returned when both Confirm-email and Confirm-phone are enabled
+  // (documented in auth-js's own signUp remarks). A null user is NOT this
+  // signal, and reading it as one made every signup report a duplicate.
+  if (newUser && Array.isArray(newUser.identities) && newUser.identities.length === 0) {
     return {
       error: 'An account with this email already exists. Please sign in instead — '
         + 'or use "Forgot password" if you can\'t get in.',
@@ -408,7 +422,20 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
     };
   }
 
-  const newUserId = newUser?.id;
+  let newUserId: string | null = newUser?.id ?? null;
+  if (!newUserId) {
+    const created = await findExistingAuthUser(svc, normalizedEmail);
+    newUserId = created?.id ?? null;
+    if (newUserId) {
+      // Expected on every confirm-email signup, not an anomaly — logged at
+      // warn so the shape is visible if auth-js ever starts nesting the
+      // user and this branch stops being taken.
+      console.warn('[signup] signUp returned no user id (top-level user body) — resolved by email lookup');
+    } else {
+      console.error('[signup] signUp reported no error, but no user could be resolved for this address');
+    }
+  }
+
   const accepted = newUserId ? await recordAcceptance(svc, newUserId, seed) : null;
   if (!newUserId || !accepted?.ok) {
     console.error('[signup] rolling back an account with no acceptance', {
