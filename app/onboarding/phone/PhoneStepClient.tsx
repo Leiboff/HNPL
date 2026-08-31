@@ -1,12 +1,18 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { setPhoneForOnboarding } from '@/lib/onboarding/actions';
 import {
   requestPhoneOtpForUser,
   verifyPhoneOtpForUser,
 } from '@/app/(auth)/verify-phone/actions';
 import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
+import {
+  toNationalDigitsZA,
+  formatNationalZA,
+  nationalToE164ZA,
+  ZA_DIAL_CODE,
+} from '@/lib/validation';
 import {
   AUTH_LABEL_CLS,
   AUTH_PRIMARY_CLS,
@@ -34,7 +40,25 @@ import {
 // bottom of the shell's body region. The cell number is a 74px field
 // with 28px digits, which is the same type treatment as the OTP cells
 // the patient meets on the next screen and on /onboarding/verify-email.
-// `normalizePhoneZA` still does the +27 conversion server-side.
+//
+// ── The number is entered in +27 form ──────────────────────────────────
+//
+// The field SHOWS "+27" as fixed chrome and holds only the nine national
+// digits, grouped as "82 123 4567". State is the digits; the displayed
+// string is derived from them, so the two cannot disagree.
+//
+// A leading 0 is dropped as it is typed. South Africans write their
+// number as 082…, but that 0 is a national trunk prefix and is not part
+// of the number — "+27 082…" is not a phone number anywhere. Dropping it
+// silently is better than accepting it and erroring on submit. The same
+// pass peels a pasted "+27", "27" or "0027", so pasting a number from a
+// contact card lands correctly whatever form it is in.
+//
+// All of that lives in lib/validation/phone.ts next to the canonical
+// normalizePhoneZA — which is still what validates the number, on the
+// server, when setPhoneForOnboarding receives the E.164 form this
+// submits. Nothing here validates; a field must let someone type a
+// half-finished number without being told it is wrong.
 //
 // There WAS an on-screen numeric keypad under the field — a tray of
 // ten buttons that appended to the same value. It is gone. Phones
@@ -47,26 +71,48 @@ import {
 
 type Stage = 'phone-entry' | 'otp';
 
+/**
+ * How the number reads once it leaves the field — on the OTP screen's
+ * "We sent a 6-digit code to …" line. Same grouping as the field, so the
+ * number the patient just typed is recognisably the number we are
+ * texting. The stored value is still bare E.164; this is display only.
+ */
+function displayNumber(nationalDigits: string): string {
+  return `${ZA_DIAL_CODE} ${formatNationalZA(nationalDigits)}`;
+}
+
 export default function PhoneStepClient({ existingPhone }: { existingPhone: string | null }) {
   const [stage,        setStage]        = useState<Stage>(existingPhone ? 'otp' : 'phone-entry');
-  const [phone,        setPhone]        = useState(existingPhone ?? '');
+  // The NINE national digits, never the dial code and never the trunk 0.
+  // Seeded from a stored number so "Change number" returns to a filled
+  // field rather than an empty one.
+  const [national,     setNational]     = useState(() => toNationalDigitsZA(existingPhone));
   const [phoneLoading, setPhoneLoading] = useState(false);
   const [phoneError,   setPhoneError]   = useState<string | null>(null);
   // Displayed number for the OTP step. Kept separate so a "wrong number"
   // reset doesn't lose it before we transition back to phone-entry.
-  const [displayPhone, setDisplayPhone] = useState(existingPhone ?? '');
+  const [displayPhone, setDisplayPhone] = useState(
+    () => (existingPhone ? displayNumber(toNationalDigitsZA(existingPhone)) : ''),
+  );
+  // The field is a styled row, not a bare input — tapping anywhere in it
+  // (including the "+27") must land in the input.
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   async function handlePhoneSubmit(e: React.FormEvent) {
     e.preventDefault();
     setPhoneError(null);
     setPhoneLoading(true);
-    const result = await setPhoneForOnboarding(phone.trim());
+    // E.164 candidate. normalizePhoneZA on the server is the gate: a
+    // short number comes back as "Enter a valid South African
+    // cellphone number." rather than being submitted as-is.
+    const e164 = nationalToE164ZA(national);
+    const result = await setPhoneForOnboarding(e164);
     setPhoneLoading(false);
     if (result.error) {
       setPhoneError(result.error);
       return;
     }
-    setDisplayPhone(phone.trim());
+    setDisplayPhone(displayNumber(national));
     setStage('otp');
   }
 
@@ -77,19 +123,51 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
           <label htmlFor="phone" className={AUTH_LABEL_CLS}>
             Cell number
           </label>
-          <input
-            id="phone"
-            type="tel"
-            inputMode="numeric"
-            autoComplete="tel"
-            autoFocus
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            data-testid="onboarding-phone-input"
-            placeholder="082 000 0000"
-            className="h-[74px] w-full rounded-[20px] border-[1.5px] border-[var(--auth-accent)] bg-[var(--auth-fill-raised)] text-center text-[28px] font-semibold tabular-nums tracking-[0.04em] text-white outline-none transition-all placeholder:font-normal placeholder:text-white/30 focus:bg-[var(--auth-fill-hover)]"
+
+          {/* The dial code and the digits are one number, so they are one
+              object: a field-shaped row, centred as a group, with the
+              input sized to the nine digits it will hold. The input keeps
+              its own left alignment inside that box so the digits start
+              at the same x whether the field is empty or full — centring
+              them there would make the number crawl sideways as it is
+              typed. */}
+          <div
+            onClick={() => inputRef.current?.focus()}
+            className="flex h-[74px] w-full items-center justify-center gap-2.5 rounded-[20px] border-[1.5px] border-[var(--auth-accent)] bg-[var(--auth-fill-raised)] transition-colors focus-within:bg-[var(--auth-fill-hover)]"
             style={{ boxShadow: '0 0 0 4px var(--auth-accent-ring)' }}
-          />
+          >
+            <span
+              aria-hidden
+              className="text-[28px] font-semibold tabular-nums text-[var(--auth-muted)]"
+            >
+              {ZA_DIAL_CODE}
+            </span>
+            <input
+              id="phone"
+              ref={inputRef}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel-national"
+              autoFocus
+              value={formatNationalZA(national)}
+              onChange={(e) => setNational(toNationalDigitsZA(e.target.value))}
+              // No maxLength: a pasted "+27 82 123 4567" is longer than
+              // the displayed string, and the browser would truncate it
+              // before onChange could peel the prefix. The slice in
+              // toNationalDigitsZA is the real cap.
+              aria-describedby="phone-dial-code-hint"
+              data-testid="onboarding-phone-input"
+              placeholder="82 000 0000"
+              className="w-[11.5ch] bg-transparent text-left text-[28px] font-semibold tabular-nums tracking-[0.04em] text-white outline-none placeholder:font-normal placeholder:text-white/30"
+            />
+          </div>
+
+          {/* The "+27" is visual, so it is invisible to a screen reader.
+              This says the same thing in words, and says the part the
+              sighted user infers from the placeholder too. */}
+          <span id="phone-dial-code-hint" className="sr-only">
+            South African number, country code +27. Enter your number without its leading zero.
+          </span>
         </div>
 
         {phoneError && (

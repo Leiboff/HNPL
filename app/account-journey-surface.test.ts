@@ -219,12 +219,32 @@ describe('Phone step — the same shape as the email-confirmation screen', () =>
   it('raises the numeric pad through the field itself', () => {
     expect(PHONE).toMatch(/inputMode="numeric"/);
     expect(PHONE).toMatch(/type="tel"/);
-    expect(PHONE).toMatch(/autoComplete="tel"/);
+    // "tel-national", not "tel": the field holds the national part only
+    // and shows +27 as chrome, so this is the token that describes what
+    // the browser should autofill into it.
+    expect(PHONE).toMatch(/autoComplete="tel-national"/);
   });
 
   it('pins its CTA to the body floor, as the email screen does', () => {
     expect(PHONE).toMatch(/mt-auto/);
     expect(read('app/verify-email/VerifyEmailForm.tsx')).toMatch(/mt-auto/);
+  });
+
+  it('takes the number in +27 form via the shared validators, not its own rules', () => {
+    // The dial code, the trunk-0 strip and the grouping all live in
+    // lib/validation/phone.ts next to normalizePhoneZA, which is what
+    // validates the result server-side. A component copy of any of them
+    // is how the two ends drift apart — and is what
+    // lib/validation/regression.test.ts bans.
+    expect(PHONE).toMatch(/from '@\/lib\/validation'/);
+    expect(PHONE).toMatch(/toNationalDigitsZA/);
+    expect(PHONE).toMatch(/formatNationalZA/);
+    expect(PHONE).toMatch(/nationalToE164ZA/);
+    // The country code is read from the shared constant, never written
+    // out here.
+    const src = PHONE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).toMatch(/ZA_DIAL_CODE/);
+    expect(src).not.toMatch(/['"`]\+27/);
   });
 });
 
