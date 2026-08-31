@@ -57,6 +57,39 @@ export const STEP_PATH: Record<OnboardingStep, string> = {
   'credit-check': '/onboarding/credit-check',
 };
 
+/**
+ * The path of the step that FOLLOWS `current` in this user's list, or the
+ * router itself when there is none.
+ *
+ * ─── WHY A STEP WOULD WANT THIS ────────────────────────────────────────
+ *
+ * A step that finishes client-side (the email OTP verifies against
+ * Supabase from the browser) has to hard-navigate so the server sees the
+ * freshly-set auth cookies. It used to navigate to `/onboarding` and let
+ * the router work out where to go — which costs a whole extra server
+ * execution: getUser() is a network round trip to Supabase Auth, then a
+ * profile read, then a 307, and then the step page does getUser() and the
+ * profile read AGAIN. Two of everything for a question the page that
+ * rendered the step had already answered.
+ *
+ * The step list is PATH-FIXED (see stepListFor), so the page rendering
+ * step N already knows the identity of step N+1 without reading anything.
+ * Handing that path to the client removes the hop.
+ *
+ * It is a shortcut, not a claim: if the next step turns out to be already
+ * satisfied, its own guard redirects to `/onboarding` and the router
+ * sorts it out exactly as before. Worst case is today's behaviour; best
+ * case — the common one — is one server execution instead of two.
+ */
+export function pathAfterStep(
+  steps: readonly OnboardingStep[],
+  current: OnboardingStep,
+): string {
+  const idx  = steps.indexOf(current);
+  const next = idx >= 0 ? steps[idx + 1] : undefined;
+  return next ? STEP_PATH[next] : '/onboarding';
+}
+
 // Display copy — shown in the shell above the current step.
 export const STEP_TITLE: Record<OnboardingStep, string> = {
   'verify-email': 'Verify your email',

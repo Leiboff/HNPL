@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import OtpInput, { OTP_LENGTH, type OtpTone } from '@/components/OtpInput';
+import { AUTH_PRIMARY_CLS, authPrimaryStyle } from '@/app/_components/authFormStyles';
 
 // ─── PhoneOtpStep ────────────────────────────────────────────────────────
 //
@@ -41,14 +42,16 @@ import OtpInput, { OTP_LENGTH, type OtpTone } from '@/components/OtpInput';
 const OTP_RESEND_COOLDOWN_MS = 30 * 1000;
 
 type ToneSet = {
-  body:     string;   // the "we sent a code to…" line
-  strong:   string;   // the number inside it
-  error:    string;   // the inline OTP error
-  meta:     string;   // sending / countdown / expiry copy
-  metaBold: string;   // the countdown seconds
-  resend:   string;   // the resend action
-  change:   string;   // the "change number" action
-  card:     string;   // the default (no-shell) card chrome
+  body:        string;   // the "we sent a code to…" line
+  strong:      string;   // the number inside it
+  error:       string;   // the inline OTP error
+  meta:        string;   // sending / countdown / expiry copy
+  metaBold:    string;   // the countdown seconds
+  resend:      string;   // the resend action
+  change:      string;   // the "change number" action
+  card:        string;   // the default (no-shell) card chrome
+  primary:     string;   // the verify CTA
+  primaryStyle: (disabled: boolean) => React.CSSProperties;
 };
 
 const TONES: Record<OtpTone, ToneSet> = {
@@ -61,6 +64,12 @@ const TONES: Record<OtpTone, ToneSet> = {
     resend:   'text-[14px] font-semibold text-[#13294B] hover:underline focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors',
     change:   'rounded-full bg-[#F1F5F6] px-5 py-[11px] text-[14px] font-semibold text-[#41556F] transition-colors focus:outline-none focus-visible:underline disabled:opacity-60',
     card:     'rounded-[20px] border border-[#E5E9F0] bg-white p-6 sm:p-8 shadow-[0_1px_2px_rgba(15,31,58,0.04)] space-y-5',
+    primary:  'flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white '
+      + 'transition-all disabled:cursor-not-allowed disabled:opacity-45',
+    primaryStyle: (disabled: boolean) => ({
+      background: '#15A89E',
+      boxShadow:  disabled ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)',
+    }),
   },
   onDark: {
     body:     'text-[15px] leading-[1.6] text-[var(--auth-muted)]',
@@ -71,6 +80,8 @@ const TONES: Record<OtpTone, ToneSet> = {
     resend:   'text-[14px] font-semibold text-[var(--auth-accent)] underline-offset-[3px] hover:underline focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors',
     change:   'rounded-full border-[1.5px] border-[var(--auth-edge-strong)] bg-[var(--auth-fill)] px-5 py-[11px] text-[14px] font-semibold text-white transition-colors hover:bg-[var(--auth-fill-hover)] focus:outline-none focus-visible:underline disabled:opacity-60',
     card:     'rounded-[20px] border border-[var(--auth-hairline)] bg-[var(--auth-fill)] p-6 sm:p-8 space-y-5',
+    primary:  AUTH_PRIMARY_CLS,
+    primaryStyle: authPrimaryStyle,
   },
 };
 
@@ -145,6 +156,9 @@ export default function PhoneOtpStep({
   // Fatal "SMS isn't configured" gets its own UI branch (no resend
   // makes sense in that state — there's nothing to retry against).
   const [smsUnavailable, setSmsUnavailable] = useState(false);
+  // Success is terminal: onVerified navigates away, so the CTA must not
+  // spring back to "Verify cellphone" during the hand-off.
+  const [verified,       setVerified]       = useState(false);
 
   // ── Auto-send on mount ─────────────────────────────────────────────
   // The patient just arrived at this step; they didn't ask for a send,
@@ -218,6 +232,7 @@ export default function PhoneOtpStep({
     try {
       const r = await verifyCode(submitted);
       if (r.ok) {
+        setVerified(true);
         onVerified();
         return;
       }
@@ -258,6 +273,29 @@ export default function PhoneOtpStep({
         <p role="alert" className={t.error}>{otpError}</p>
       )}
 
+      {/* ── The verify CTA ────────────────────────────────────────────
+          Reported as a difference between the two OTP screens: the email
+          one has a "Verify email" button that the sixth digit presses for
+          you, and this one had no button at all — the same six cells,
+          silently doing something different.
+          
+          The auto-submit on the sixth digit is unchanged and is still the
+          normal path. The button is what makes that path VISIBLE, and it
+          is the way back for anyone whose autofill pasted the code without
+          firing onComplete, or who arrived here with the code already in
+          the field. Disabled until six digits, exactly as the email
+          screen's is. */}
+      <button
+        type="button"
+        onClick={() => void handleVerify(code)}
+        disabled={verifying || verified || smsUnavailable || code.length !== OTP_LENGTH}
+        data-testid="phone-otp-verify"
+        className={t.primary}
+        style={t.primaryStyle(verifying || verified || smsUnavailable || code.length !== OTP_LENGTH)}
+      >
+        {verifying ? 'Verifying…' : verified ? 'Verified ✓' : 'Verify cellphone'}
+      </button>
+
       <div className="flex flex-col items-center gap-2 text-center">
         {!smsUnavailable && (
           sending ? (
@@ -271,7 +309,7 @@ export default function PhoneOtpStep({
             <button
               type="button"
               onClick={handleResend}
-              disabled={verifying}
+              disabled={verifying || verified}
               className={t.resend}
             >
               Didn’t arrive? Resend code
@@ -290,7 +328,7 @@ export default function PhoneOtpStep({
       <button
         type="button"
         onClick={onChangeNumber}
-        disabled={verifying}
+        disabled={verifying || verified}
         className={t.change}
       >
         ← Change number
