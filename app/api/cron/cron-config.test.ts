@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ROOT = resolve(process.cwd());
@@ -33,6 +33,28 @@ describe('vercel.json — cron entries', () => {
     expect(poll).toBeDefined();
     expect(poll.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
     expect(poll.schedule).not.toBe('*/15 * * * *');
+  });
+
+  it('has the onboarding-nudge cron on a short cadence', () => {
+    // Unlike the other three, this one is about PROMPTNESS: the first
+    // nudge goes to a patient who has been idle five minutes, so the poll
+    // interval is the precision of that promise. Correctness does not
+    // depend on it — the cohort is re-read at send time, so a longer
+    // interval just means a later email. If the deployment plan will not
+    // run this every five minutes, widen it here and the pin with it.
+    const nudge = config.crons.find((c: { path: string }) => c.path === '/api/cron/onboarding-nudge');
+    expect(nudge).toBeDefined();
+    expect(nudge.schedule).toMatch(/^\*\/\d+ \* \* \* \*$/);
+  });
+
+  it('every declared cron has a route on disk', () => {
+    // A path typo in vercel.json is a job that silently never runs: Vercel
+    // requests the URL, Next returns 404, and nothing anywhere complains.
+    for (const cron of config.crons as { path: string }[]) {
+      // The cron path is a URL; the handler lives under app/.
+      const route = resolve(ROOT, `app${cron.path}/route.ts`);
+      expect(existsSync(route), `${cron.path} has no route.ts`).toBe(true);
+    }
   });
 });
 

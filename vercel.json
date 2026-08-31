@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/payout-batches",
       "schedule": "0 0 * * 4"
+    },
+    {
+      "path": "/api/cron/onboarding-nudge",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
