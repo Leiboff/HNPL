@@ -204,8 +204,17 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // cookies the exchange just set are cleared and the visitor is
     // returned to /signup, where the tick lives.
     expect(CALLBACK_SRC).toMatch(/if \(outcome !== 'ok'\) \{/);
-    expect(CALLBACK_SRC).toMatch(/await supabase\.auth\.signOut\(\);/);
     expect(CALLBACK_SRC).toMatch(/\/signup\?error=\$\{outcome === 'write-failed' \? 'terms_write' : 'terms'\}/);
+
+    // This used to assert `await supabase.auth.signOut();` and nothing
+    // more, which is precisely the shape that leaked: signOut REPORTS a
+    // failed revocation by returning `{ error }` and skips removing the
+    // stored session, so the visitor was shown the accept-the-terms
+    // screen while still signed in. Revoke globally, read the returned
+    // error, and delete the cookies on the response actually returned.
+    expect(CALLBACK_SRC).toMatch(/const \{ error: signOutError \} = await supabase\.auth\.signOut\(\{ scope: 'global' \}\)/);
+    expect(CALLBACK_SRC).toMatch(/if \(signOutError\)/);
+    expect(CALLBACK_SRC).toMatch(/clearAuthCookies\(refused, request\.cookies\.getAll\(\)/);
   });
 
   it('a FAILED write is refused just as hard as a missing tick', () => {
@@ -225,8 +234,15 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // Accounts that finished onboarding before any of this existed keep
     // working. onboarding_completed is never written by anything the
     // visitor controls, so this cannot be claimed into.
-    expect(CALLBACK_SRC).toMatch(/profile\.onboarding_completed === true/);
-    expect(CALLBACK_SRC).toMatch(/const needsAcceptance = !alreadyAgreed && !grandfathered;/);
+    //
+    // The rule moved to lib/legal/acceptance.ts when three more surfaces
+    // started asking the same question — a second copy of a grandfather
+    // clause is how two gates come to disagree. The callback now asks it
+    // rather than restating it; the clause itself is pinned, with its
+    // fixtures, in lib/legal/acceptance.test.ts.
+    expect(CALLBACK_SRC).toMatch(/const needsAcceptance = !hasAcceptedTerms\(profile\);/);
+    const ACCEPTANCE = read('lib/legal/acceptance.ts');
+    expect(ACCEPTANCE).toMatch(/profile\.onboarding_completed === true/);
   });
 
   it('the email path refuses too — and ROLLS BACK the account it just made', () => {
@@ -235,7 +251,12 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // user created moments earlier in the same request is deleted, so a
     // failed signup leaves nothing behind to strand the next attempt on
     // "an account with this email already exists".
-    expect(SIGNUP_SRC).toMatch(/if \(!newUserId \|\| !\(await recordAcceptance\(svc, newUserId\)\)\) \{/);
+    // recordAcceptance now returns a REASON rather than a bare boolean,
+    // because "the write was refused" and "there was no row to write to"
+    // are not the same thing and only the first should cost an account.
+    // The rollback below is unchanged for the first.
+    expect(SIGNUP_SRC).toMatch(/const accepted = newUserId \? await recordAcceptance\(svc, newUserId, seed\) : null;/);
+    expect(SIGNUP_SRC).toMatch(/if \(!newUserId \|\| !accepted\?\.ok\) \{/);
     expect(SIGNUP_SRC).toMatch(/await svc\.auth\.admin\.deleteUser\(newUserId\)/);
     expect(SIGNUP_SRC).not.toMatch(/console\.warn\('terms acceptance stamp on signup failed/);
   });
@@ -245,19 +266,34 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     expect(SIGNUP_SRC).toMatch(/\.select\('id'\)/);
     // Write-once — an existing acceptance is never re-dated.
     expect(SIGNUP_SRC).toMatch(/\.is\('terms_accepted_at', null\)/);
-    // Zero rows is ambiguous (already accepted vs no row), so it reads
-    // the column back rather than guessing.
-    expect(SIGNUP_SRC).toMatch(/return !!row\?\.terms_accepted_at;/);
+    // Zero rows is ambiguous, so it reads the column back rather than
+    // guessing — and now distinguishes all three cases it can find:
+    // already accepted, row present but unstamped, and no row at all.
+    expect(SIGNUP_SRC).toMatch(/async function acceptanceOnRecord\(/);
+    expect(SIGNUP_SRC).toMatch(/if \(state\.accepted\) return \{ ok: true, how: 'already-on-record' \};/);
+    // Behaviour for each of those is driven through the real action in
+    // app/signup/patient/signup-acceptance-recovery.test.ts.
   });
 
   it('the half-finished-signup branch is gated too, without dead-ending', () => {
     // An unconfirmed account being resumed may predate the requirement.
-    // It is re-stamped before the OTP is resent; if the stamp can't land
-    // (no profile row — the AUTH_ONLY orphan) the unconfirmed shell is
-    // cleared so the signup below can proceed, rather than returning an
-    // error every retry would meet again.
-    expect(SIGNUP_SRC).toMatch(/if \(await recordAcceptance\(svc, existing\.id\)\) \{/);
+    // It is re-stamped before the OTP is resent. The AUTH_ONLY orphan (no
+    // profile row) is now PROVISIONED rather than reported as a failure,
+    // so the delete-and-recreate below is reached only when the database
+    // actually refuses the write.
+    expect(SIGNUP_SRC).toMatch(/const recovered = await recordAcceptance\(svc, existing\.id, seed\);/);
+    expect(SIGNUP_SRC).toMatch(/if \(recovered\.ok\) \{/);
     expect(SIGNUP_SRC).toMatch(/await svc\.auth\.admin\.deleteUser\(existing\.id\)/);
+  });
+
+  it('an already-registered email is never reported as a terms failure', () => {
+    // GoTrue returns a FAKE user with an empty identities array, rather
+    // than an error, when both Confirm-email and Confirm-phone are on and
+    // the address already exists. Untreated it walked into the stamp,
+    // found no row for an id that was never real, and told the visitor we
+    // could not record their agreement — for an email already registered.
+    expect(SIGNUP_SRC).toMatch(/newUser\.identities\.length === 0/);
+    expect(SIGNUP_SRC).toMatch(/if \(isObfuscated\) \{/);
   });
 
   it('there is NO terms onboarding step, on any path', () => {

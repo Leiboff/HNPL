@@ -203,8 +203,18 @@ describe('the cap is enforced in the proxy', () => {
     // signOut's own cookie writes land on the passthrough response, which
     // the capped branch discards in favour of a redirect. The deletes have
     // to be applied to the redirect.
-    expect(PROXY).toMatch(/isSupabaseAuthCookie\(name\)/);
-    expect(PROXY).toMatch(/capped\.cookies\.delete\(name\)/);
+    // The deletion loop was extracted to lib/auth/authCookies.ts when the
+    // terms-refusal routes needed the same thing; isSupabaseAuthCookie is
+    // now applied inside that helper. What matters here is unchanged: the
+    // cap branch deletes the auth cookies on the response it RETURNS,
+    // not on the one signOut wrote to.
+    expect(PROXY).toMatch(/clearAuthCookies\(capped,/);
+    // …and the helper it delegates to deletes on the response handed to
+    // it, filtered to Supabase's auth cookies. Read here so the extraction
+    // cannot quietly become a no-op.
+    const COOKIES = readFileSync(resolve(ROOT, 'lib/auth/authCookies.ts'), 'utf8');
+    expect(COOKIES).toMatch(/response\.cookies\.delete\(name\)/);
+    expect(COOKIES).toMatch(/isSupabaseAuthCookie\(name\)/);
   });
 
   it('it collects cookie names from BOTH request objects', () => {

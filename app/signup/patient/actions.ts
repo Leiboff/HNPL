@@ -59,45 +59,162 @@ export type PatientSignupResult = {
 // It used to be best-effort: log the failure, create the account
 // anyway. That produced exactly the account this system must not be
 // able to produce — a live customer with no record that they agreed to
-// anything, and nothing downstream to catch it (the email path never
-// had a terms onboarding step, so the miss was permanent and silent).
+// anything.
 //
-// Now: no stamp, no account. Returns true only when the row is
-// confirmed written.
+// Now: no stamp, no account.
 //
-// .select() back rather than trusting a null error, because an update
-// matching NO rows is a success in PostgREST. If the profile trigger
-// hadn't fired yet, the "successful" stamp would have hit nothing.
-async function recordAcceptance(svc: ServiceClient, userId: string): Promise<boolean> {
+// ─── But "no stamp" must mean the write was REFUSED ───────────────────
+//
+// Reported from the field: a normal email signup, terms ticked, and the
+// screen came back with "We couldn't record your agreement to the terms,
+// so your account wasn't created." Every retry does the same thing, and
+// after the first attempt a retry can also collide with the account the
+// rollback was meant to remove — a permanent dead end on the front door.
+//
+// This function conflated two very different situations and returned
+// false for both:
+//
+//   • the write was refused (permissions, a bad column, the row locked) —
+//     genuinely fatal, and worth undoing the account for;
+//   • there was no profile row to write TO.
+//
+// The second is not fatal and should never have cost anyone their
+// signup. /auth/callback has provisioned defensively in exactly that
+// situation for as long as it has existed ("trigger didn't fire OR the
+// row was deleted — provision as a standard patient"), and it does so
+// WITH the acceptance. The email path had no equivalent, so the same
+// database state that the OAuth path recovers from silently ended the
+// email path with this message. That asymmetry is the bug.
+//
+// So: stamp the row if it is there, CREATE it with the acceptance if it
+// is not, and fail only when the database actually refuses us.
+//
+// Every failure now carries its reason into the logs. The old version
+// logged `error.message` alone, which is why the field report could not
+// be told apart from a permissions problem: PostgREST puts the useful
+// part in `code` and `details`.
+
+type ProfileSeed = {
+  email:     string;
+  firstName: string;
+  lastName:  string;
+};
+
+type AcceptanceOutcome =
+  | { ok: true;  how: 'stamped' | 'already-on-record' | 'provisioned' }
+  | { ok: false; why: string };
+
+function consentColumns() {
+  return {
+    terms_accepted_at: new Date().toISOString(),
+    terms_version:     TERMS_VERSION,
+    privacy_version:   PRIVACY_VERSION,
+  };
+}
+
+/** Everything PostgREST knows about a failure, not just the sentence. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function describe(error: any): string {
+  const parts = [error?.code, error?.message, error?.details, error?.hint]
+    .filter(Boolean)
+    .map(String);
+  return parts.length ? parts.join(' | ') : 'unknown error';
+}
+
+/** Is the acceptance on the row now? The only question that matters. */
+async function acceptanceOnRecord(
+  svc: ServiceClient,
+  userId: string,
+): Promise<{ exists: boolean; accepted: boolean; error?: string }> {
   const { data, error } = await svc
-    .from('profiles')
-    .update({
-      terms_accepted_at: new Date().toISOString(),
-      terms_version:     TERMS_VERSION,
-      privacy_version:   PRIVACY_VERSION,
-    })
-    .eq('id', userId)
-    // Write-once. An earlier acceptance is an audit fact and is not
-    // re-dated by a second run through signup; the filter makes a
-    // repeat a no-op rather than an overwrite, so the confirmation
-    // below reads the column instead of counting rows.
-    .is('terms_accepted_at', null)
-    .select('id');
-
-  if (error) {
-    console.error('terms acceptance stamp failed:', error.message);
-    return false;
-  }
-  if (data?.length) return true;
-
-  // Zero rows: either already accepted (fine — write-once did its job)
-  // or the row isn't there (not fine). Read back to tell them apart.
-  const { data: row } = await svc
     .from('profiles')
     .select('terms_accepted_at')
     .eq('id', userId)
     .maybeSingle();
-  return !!row?.terms_accepted_at;
+  if (error) return { exists: false, accepted: false, error: describe(error) };
+  return { exists: !!data, accepted: !!data?.terms_accepted_at };
+}
+
+async function recordAcceptance(
+  svc: ServiceClient,
+  userId: string,
+  seed: ProfileSeed,
+): Promise<AcceptanceOutcome> {
+  // Write-once. An earlier acceptance is an audit fact and is not
+  // re-dated by a second run through signup; the `.is(null)` filter makes
+  // a repeat a no-op rather than an overwrite.
+  //
+  // .select() back rather than trusting a null error, because an update
+  // matching NO rows is a success in PostgREST.
+  const { data: stamped, error: updateErr } = await svc
+    .from('profiles')
+    .update(consentColumns())
+    .eq('id', userId)
+    .is('terms_accepted_at', null)
+    .select('id');
+
+  if (updateErr) {
+    // A refused write. Fatal — we do not know what state the row is in
+    // and we are not going to guess on a legal record.
+    console.error('[signup] terms acceptance UPDATE refused', { userId, error: describe(updateErr) });
+    return { ok: false, why: `update refused: ${describe(updateErr)}` };
+  }
+  if (stamped?.length) return { ok: true, how: 'stamped' };
+
+  // Zero rows. Three possibilities, and they are not the same thing.
+  const state = await acceptanceOnRecord(svc, userId);
+  if (state.error) {
+    console.error('[signup] terms acceptance read-back failed', { userId, error: state.error });
+    return { ok: false, why: `read-back failed: ${state.error}` };
+  }
+
+  // (1) Already accepted — write-once did its job.
+  if (state.accepted) return { ok: true, how: 'already-on-record' };
+
+  // (2) The row is there and the column is null, yet the filtered update
+  // matched nothing. Only a race gets here (something stamped and cleared
+  // between the two statements). Try once without the filter.
+  if (state.exists) {
+    const { data: retried, error: retryErr } = await svc
+      .from('profiles')
+      .update(consentColumns())
+      .eq('id', userId)
+      .select('id');
+    if (retryErr || !retried?.length) {
+      console.error('[signup] terms acceptance retry did not land', {
+        userId,
+        error: retryErr ? describe(retryErr) : 'update matched no rows',
+      });
+      return { ok: false, why: 'retry did not land' };
+    }
+    return { ok: true, how: 'stamped' };
+  }
+
+  // (3) No profile row at all. NOT fatal — provision it, with the
+  // acceptance, exactly as /auth/callback does for an OAuth arrival in
+  // the same state. role is 'patient' because this is the patient signup
+  // action and nothing else can reach it.
+  console.warn('[signup] no profile row to stamp — provisioning defensively', { userId });
+  const { error: insertErr } = await svc.from('profiles').insert({
+    id:         userId,
+    email:      seed.email,
+    role:       'patient',
+    first_name: seed.firstName,
+    last_name:  seed.lastName,
+    verification_status: 'unverified',
+    ...consentColumns(),
+  });
+
+  if (insertErr) {
+    // A unique violation means the trigger's row landed between our read
+    // and our insert. Re-read: if the acceptance is there, we are done.
+    const again = await acceptanceOnRecord(svc, userId);
+    if (again.accepted) return { ok: true, how: 'already-on-record' };
+    console.error('[signup] defensive profile provision failed', { userId, error: describe(insertErr) });
+    return { ok: false, why: `provision failed: ${describe(insertErr)}` };
+  }
+
+  return { ok: true, how: 'provisioned' };
 }
 
 export async function signUpPatient(input: PatientSignupInput): Promise<PatientSignupResult> {
@@ -129,6 +246,13 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   const supabase = await createClient();
 
   const normalizedEmail = email.trim().toLowerCase();
+  // What a defensively-provisioned profile row is filled with, if it turns
+  // out there is no row to stamp. Same shape /auth/callback inserts.
+  const seed: ProfileSeed = {
+    email:     normalizedEmail,
+    firstName: firstName.trim(),
+    lastName:  lastName.trim(),
+  };
 
   // OTP-abandon recovery — also covers AUTH_ONLY orphans from prior
   // failed signups (see lib/auth/findExistingAuthUser.ts). Password and
@@ -143,21 +267,30 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
     // fresh signup: this account was never finished, so it may predate
     // the acceptance requirement entirely, and it does not get waved
     // through on the strength of already existing.
-    if (await recordAcceptance(svc, existing.id)) {
+    const recovered = await recordAcceptance(svc, existing.id, seed);
+    if (recovered.ok) {
+      // Includes the AUTH_ONLY orphan case — no profile row — which
+      // recordAcceptance now PROVISIONS rather than reporting as a
+      // failure. That used to fall through to the delete-and-recreate
+      // below; provisioning reaches the same end state without
+      // destroying and re-minting an auth user, so the delete is now
+      // only for a genuinely refused write.
       await svc.auth.resend({ type: 'signup', email: normalizedEmail });
       return { error: null, success: true, needsVerification: true, email: normalizedEmail };
     }
 
-    // The stamp didn't land, which here almost always means there is no
-    // profile row to stamp — the AUTH_ONLY orphan findExistingAuthUser
-    // exists to catch. Resending the OTP would walk them into an app
-    // with no profile AND no acceptance, and returning an error would
-    // dead-end them permanently: every retry meets the same orphan.
+    // The database refused us. Resending the OTP would walk them into an
+    // app with no acceptance, and returning an error would dead-end them
+    // permanently: every retry meets the same orphan.
     //
     // So clear it and create the account properly below. This is not
     // deleting someone's account — it is unconfirmed, meaning nobody has
     // ever proved they own this address, it carries no data, and the
     // person in front of us is asking for this exact email right now.
+    console.error('[signup] could not record acceptance on an unconfirmed account', {
+      userId: existing.id,
+      why:    recovered.why,
+    });
     const { error: orphanErr } = await svc.auth.admin.deleteUser(existing.id);
     if (orphanErr) {
       console.error('could not clear unaccepted orphan signup:', orphanErr.message);
@@ -200,8 +333,34 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   // alternative is leaving an unaccepted account behind and telling the
   // customer to try again, which would then hit "an account with this
   // email already exists" and strand them permanently.
-  const newUserId = signUpData.user?.id;
-  if (!newUserId || !(await recordAcceptance(svc, newUserId))) {
+  // ── The obfuscated "user already exists" response ────────────────────
+  //
+  // With BOTH Confirm-email and Confirm-phone enabled, signUp on an
+  // existing CONFIRMED email does not error — GoTrue returns a fake user
+  // object to prevent enumeration, identified by an EMPTY identities
+  // array (documented in @supabase/auth-js's own signUp remarks). With
+  // only Confirm-email on it errors with "User already registered"
+  // instead, which the branch above already surfaces.
+  //
+  // Untreated, the fake user walked straight into the stamp below, which
+  // found no profile row for an id that was never real, and the visitor
+  // was told we could not record their agreement — for an email that was
+  // simply already registered. findExistingAuthUser is supposed to catch
+  // this first; this is the backstop for when it does not, and it is
+  // cheap enough that it should have been here anyway.
+  const newUser = signUpData.user;
+  const isObfuscated = !!newUser && Array.isArray(newUser.identities) && newUser.identities.length === 0;
+  if (isObfuscated) {
+    return { error: 'An account with this email already exists. Please sign in instead.', success: false };
+  }
+
+  const newUserId = newUser?.id;
+  const accepted = newUserId ? await recordAcceptance(svc, newUserId, seed) : null;
+  if (!newUserId || !accepted?.ok) {
+    console.error('[signup] rolling back an account with no acceptance', {
+      userId: newUserId ?? '(no user returned by signUp)',
+      why:    accepted && !accepted.ok ? accepted.why : 'signUp returned no user id',
+    });
     if (newUserId) {
       const { error: delErr } = await svc.auth.admin.deleteUser(newUserId);
       if (delErr) console.error('rollback of unaccepted signup failed:', delErr.message);

@@ -9,6 +9,7 @@ import InactivityGuard from '@/lib/auth/InactivityGuard';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { getPatientProfileForRequest } from '@/lib/patient/requestProfile';
 import { currentFlags } from '@/lib/featureFlags';
+import { requireTermsAccepted } from '@/lib/legal/termsGate';
 
 export default async function PatientLayout({
   children,
@@ -47,6 +48,14 @@ export default async function PatientLayout({
       redirect('/login');
     }
   }
+
+  // Before deciding "onboarding or main app?", decide whether this
+  // account may be in the app at all. The row is already in hand (the
+  // request-scoped memo selects terms_accepted_at), so this costs nothing
+  // and it closes the path that produced the bug: a session that survived
+  // a refused OAuth arrival reached /patient, and this layout forwarded it
+  // into an onboarding step. See lib/legal/termsGate.ts.
+  requireTermsAccepted(profile);
 
   // ─── Routing gate: incomplete patients get sent to /onboarding ─────
   //

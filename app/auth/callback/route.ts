@@ -3,6 +3,8 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
+import { clearAuthCookies } from '@/lib/auth/authCookies';
+import { hasAcceptedTerms } from '@/lib/legal/acceptance';
 
 // ─── Auth callback — PKCE code exchange for recovery / OAuth / magic links
 //
@@ -65,6 +67,30 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 // (deleting an auth user on a sign-IN path would be catastrophic if we
 // misjudged who it was), but it is inert: every subsequent arrival
 // meets the same gate until an acceptance is actually recorded.
+//
+// ─── How that refusal LEAKED, and what it took to close it ────────────
+//
+// The refusal used to be `try { await signOut() } catch {}` and then a
+// redirect. That is not a refusal. supabase.auth.signOut() reports a
+// failed revocation by RETURNING `{ error }`, and it early-returns
+// BEFORE removing the stored session when the revocation call fails with
+// anything other than 404/401/403 — a network blip, a 5xx, a timeout. A
+// try/catch sees none of that, so the visitor was shown
+// /signup?error=terms while still holding a live session; the
+// client-side "already signed in?" shortcut on that very page then sent
+// them to /dashboard, and the patient layout forwarded them into an
+// onboarding step. Reported from the field, and exactly the sequence a
+// tester hits: sign in with Google, get bounced to accept the terms, try
+// again, land in onboarding.
+//
+// So the refusal no longer depends on signOut succeeding. The auth
+// cookies are DELETED on the response this handler returns
+// (lib/auth/authCookies.ts), signOut's returned error is read rather
+// than ignored, and the same rule is enforced again downstream by
+// lib/legal/termsGate.ts on every surface a session can reach. The
+// callback is no longer the only thing standing between "no acceptance"
+// and "in the app", because a single choke point on a security rule is
+// one bug away from no rule at all.
 //
 // WHAT THIS RECORD IS WORTH, stated plainly. The tick happens before any
 // session exists — there is no profile to stamp at that moment — so the
@@ -203,10 +229,12 @@ async function ensureOAuthProfileSynced(
   if (!profile.last_name  && names.last)  updates.last_name  = names.last;
 
   // Write-once: an existing acceptance is an audit fact and is never
-  // re-versioned by a later sign-in.
-  const alreadyAgreed   = !!profile.terms_accepted_at;
-  const grandfathered   = !alreadyAgreed && profile.onboarding_completed === true;
-  const needsAcceptance = !alreadyAgreed && !grandfathered;
+  // re-versioned by a later sign-in. The rule itself (including the
+  // grandfather clause for accounts that finished onboarding before any
+  // of this existed) lives in lib/legal/acceptance.ts, because three
+  // other surfaces now ask the same question and none of them may
+  // answer it differently.
+  const needsAcceptance = !hasAcceptedTerms(profile);
 
   if (needsAcceptance && !consentGiven) return 'needs-terms';
 
@@ -305,16 +333,28 @@ export async function GET(request: NextRequest) {
   }
 
   if (outcome !== 'ok') {
-    // No acceptance on record → no session. signOut clears the cookies
-    // the exchange just set, so nothing authenticated survives this
-    // redirect and the visitor lands back on the front door with the
-    // tick still to give.
+    // No acceptance on record → no session. Revoke globally so the
+    // refresh token is dead upstream, THEN delete the auth cookies on the
+    // response we are actually returning — see the note above for why
+    // signOut alone was not enough, and lib/auth/authCookies.ts for the
+    // mechanics. Order matters: revoke while the token still exists.
     try {
-      await supabase.auth.signOut();
+      const { error: signOutError } = await supabase.auth.signOut({ scope: 'global' });
+      if (signOutError) {
+        // Reported, not thrown, by design in supabase-js. Logged so a
+        // systematic revocation failure is visible — but never load-
+        // bearing, because the deletion below is what stops this browser.
+        console.error('[auth/callback] signOut after refused session returned an error', signOutError);
+      }
     } catch (err) {
-      console.error('[auth/callback] signOut after refused session failed', err);
+      console.error('[auth/callback] signOut after refused session threw', err);
     }
-    return NextResponse.redirect(`${origin}/signup?error=${outcome === 'write-failed' ? 'terms_write' : 'terms'}`);
+
+    const refused = NextResponse.redirect(
+      `${origin}/signup?error=${outcome === 'write-failed' ? 'terms_write' : 'terms'}`,
+    );
+    clearAuthCookies(refused, request.cookies.getAll().map((c) => c.name));
+    return refused;
   }
 
   return NextResponse.redirect(`${origin}${next}`);

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
+import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import VerifyEmailStepClient from './VerifyEmailStepClient';
 
@@ -48,10 +49,17 @@ export default async function VerifyEmailStep({ searchParams }: Props) {
   if (user) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('email, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed')
+      .select('role, email, phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, onboarding_completed, terms_accepted_at')
       .eq('id', user.id)
       .maybeSingle();
     if (!profile) redirect('/dashboard');
+
+    // Authenticated branch only. The pre-session branch below has no
+    // session and therefore nothing to check — and it is reachable only on
+    // the email path, where signUpPatient has already recorded the
+    // acceptance (it deletes the auth user it just made if the stamp
+    // fails). See lib/legal/termsGate.ts.
+    requireTermsAccepted(profile);
 
     const p = profile as ProfileForOnboarding & { email: string | null };
     const userForState: UserForOnboarding = {

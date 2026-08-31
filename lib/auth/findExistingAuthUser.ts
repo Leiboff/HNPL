@@ -45,11 +45,24 @@ export async function findExistingAuthUser(
   // Cheap path: profile by email → admin.getUserById.
   // Catches normal abandon-at-OTP cases without paying for a schema-
   // scoped query against auth.users.
-  const { data: profile } = await svc
+  //
+  // ilike, not eq. profiles.email is written by the 0024 trigger from
+  // whatever auth.users holds, and an address typed as "Test@gmail.com"
+  // is stored with that casing — so an `eq` against the lower-cased form
+  // silently misses it and reports "no existing user" for an email that
+  // very much exists. Addresses have no wildcards to escape, and the
+  // caller has already trimmed and lower-cased.
+  const { data: profile, error: profileErr } = await svc
     .from('profiles')
     .select('id')
-    .eq('email', normalized)
+    .ilike('email', normalized)
     .maybeSingle();
+  if (profileErr) {
+    // Not fatal — the fallback below may still find them — but never
+    // silent: a failing lookup here reports "no such user" to a caller
+    // that is about to create a duplicate account.
+    console.error('[findExistingAuthUser] profile lookup failed', profileErr.message);
+  }
   if (profile?.id) {
     const { data: byId } = await svc.auth.admin.getUserById(profile.id);
     if (byId?.user) {
@@ -63,6 +76,21 @@ export async function findExistingAuthUser(
   // Fallback: schema-scoped read against auth.users directly. Service-role
   // bypasses RLS on the auth schema, so this returns the row even when no
   // matching profile exists (the AUTH_ONLY orphan case).
+  //
+  // ─── THIS FALLBACK NEEDS THE auth SCHEMA EXPOSED ──────────────────────
+  //
+  // PostgREST only serves schemas listed in its `db-schemas` setting, and
+  // a Supabase project ships with `public, graphql_public` — NOT `auth`.
+  // Where that has not been changed, the query below comes back as
+  // PGRST106 ("The schema must be one of the following…") and finds
+  // nothing, no matter who exists.
+  //
+  // The error used to be discarded, so the whole fallback could be inert
+  // in production and look exactly like "no such user" — and the caller
+  // would go on to create a second account for an email that already had
+  // one. It is logged now. If you see PGRST106 here, either expose the
+  // auth schema to PostgREST or move this lookup to a SECURITY DEFINER
+  // RPC in the public schema; do not leave it reading as an absence.
   const authClient = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -71,11 +99,14 @@ export async function findExistingAuthUser(
       db:   { schema: 'auth' },
     },
   );
-  const { data: authUser } = await authClient
+  const { data: authUser, error: authErr } = await authClient
     .from('users')
     .select('id, email_confirmed_at')
-    .eq('email', normalized)
+    .ilike('email', normalized)
     .maybeSingle();
+  if (authErr) {
+    console.error('[findExistingAuthUser] auth.users fallback unavailable', authErr.message);
+  }
   if (authUser) {
     return {
       id:                 authUser.id as string,

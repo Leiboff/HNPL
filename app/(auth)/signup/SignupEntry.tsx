@@ -63,8 +63,10 @@ import PatientSignupForm from '@/app/signup/patient/PatientSignupForm';
 // the acceptance server-side when an OAuth user arrives — and refuses
 // the session outright if the record doesn't land, signing the arrival
 // back out and bouncing it to this screen with ?error= (see `bounce`
-// below). There is no longer an onboarding step behind this: the tick
-// is the only gate, so it has to hold.
+// below). There is no onboarding step behind this; the tick is the front
+// gate, and lib/legal/termsGate.ts re-checks the same rule on every
+// surface a session can reach, so a leak past this screen no longer ends
+// with someone inside the app.
 
 const TEAL = '#15A89E';
 
@@ -162,13 +164,24 @@ export default function SignupEntry() {
   // already inside. Mirrors /login's shortcut: getSession() reads the
   // cookie the browser client already holds (no round trip) and is a
   // convenience, never the security boundary — /dashboard re-checks.
+  //
+  // NOT when we arrived here as a REFUSAL (`bounce`). This shortcut was
+  // the carrier in the reported bug: a refused OAuth arrival whose
+  // sign-out had silently failed landed on this screen still holding a
+  // session, and this effect forwarded it to /dashboard, which forwarded
+  // it into an onboarding step. The refusal now clears the cookies
+  // properly and the gate re-checks downstream, so this is the third
+  // layer — but it is the layer that makes a bounce LOOP impossible, and
+  // it is right on its own terms: the one screen whose job is to demand a
+  // tick must not usher an existing session past it.
   useEffect(() => {
+    if (bounce) return;
     let cancelled = false;
     createClient().auth.getSession().then(({ data: { session } }) => {
       if (!cancelled && session) window.location.href = '/dashboard';
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [bounce]);
 
   return (
     // Not `centred`: the form view is tall enough to scroll on a small
