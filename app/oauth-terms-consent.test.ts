@@ -292,8 +292,13 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // the address already exists. Untreated it walked into the stamp,
     // found no row for an id that was never real, and told the visitor we
     // could not record their agreement — for an email already registered.
+    // TWO shapes, not one. The field report quoted reference NOUSER,
+    // which was the OTHER one: `{ user: null, error: null }`, the
+    // anti-enumeration SILENT response. It was read as an internal
+    // failure and reported as a terms problem on every attempt, forever.
+    expect(SIGNUP_SRC).toMatch(/const alreadyRegistered = !newUser/);
     expect(SIGNUP_SRC).toMatch(/newUser\.identities\.length === 0/);
-    expect(SIGNUP_SRC).toMatch(/if \(isObfuscated\) \{/);
+    expect(SIGNUP_SRC).toMatch(/if \(alreadyRegistered\) \{/);
   });
 
   it('there is NO terms onboarding step, on any path', () => {

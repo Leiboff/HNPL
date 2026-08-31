@@ -372,25 +372,40 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   // alternative is leaving an unaccepted account behind and telling the
   // customer to try again, which would then hit "an account with this
   // email already exists" and strand them permanently.
-  // ── The obfuscated "user already exists" response ────────────────────
+  // ── signUp's TWO ways of saying "that email already exists" ──────────
   //
-  // With BOTH Confirm-email and Confirm-phone enabled, signUp on an
-  // existing CONFIRMED email does not error — GoTrue returns a fake user
-  // object to prevent enumeration, identified by an EMPTY identities
-  // array (documented in @supabase/auth-js's own signUp remarks). With
-  // only Confirm-email on it errors with "User already registered"
-  // instead, which the branch above already surfaces.
+  // Neither is an error, and neither used to be handled. Both mean the
+  // same thing and get the same answer.
   //
-  // Untreated, the fake user walked straight into the stamp below, which
-  // found no profile row for an id that was never real, and the visitor
-  // was told we could not record their agreement — for an email that was
-  // simply already registered. findExistingAuthUser is supposed to catch
-  // this first; this is the backstop for when it does not, and it is
-  // cheap enough that it should have been here anyway.
+  //   • data.user = null, error = null — the anti-enumeration SILENT
+  //     RESPONSE. This is the one that reached production: the visitor
+  //     saw "We couldn't record your agreement to the terms" on every
+  //     attempt, forever, because the code read a null user as an
+  //     internal failure and rolled back an account that was never
+  //     created. lib/auth/findExistingAuthUser.ts predicted this
+  //     precisely — "the caller misreads it as 'shouldn't happen', and
+  //     the user can never sign up again with that email" — and it is
+  //     what the NOUSER reference in a field report turned out to be.
+  //
+  //   • data.user set with an EMPTY identities array — the obfuscated
+  //     fake user GoTrue returns when both Confirm-email and
+  //     Confirm-phone are enabled (documented in @supabase/auth-js's own
+  //     signUp remarks).
+  //
+  // findExistingAuthUser is supposed to catch an existing address BEFORE
+  // we get here, and with migration 0119 it finally can — its auth.users
+  // fallback could never work, which is how the address got into this
+  // state unseen. This is the backstop for when it still does not, and it
+  // must never again be reported as a problem with the acceptance stamp.
   const newUser = signUpData.user;
-  const isObfuscated = !!newUser && Array.isArray(newUser.identities) && newUser.identities.length === 0;
-  if (isObfuscated) {
-    return { error: 'An account with this email already exists. Please sign in instead.', success: false };
+  const alreadyRegistered = !newUser
+    || (Array.isArray(newUser.identities) && newUser.identities.length === 0);
+  if (alreadyRegistered) {
+    return {
+      error: 'An account with this email already exists. Please sign in instead — '
+        + 'or use "Forgot password" if you can\'t get in.',
+      success: false,
+    };
   }
 
   const newUserId = newUser?.id;
