@@ -1,5 +1,3 @@
-import { createClient as createServiceClient } from '@supabase/supabase-js';
-
 // ─── findExistingAuthUser ────────────────────────────────────────────────────
 //
 // Looks up a Supabase auth user by email — covering BOTH normal lookups and
@@ -73,44 +71,45 @@ export async function findExistingAuthUser(
     }
   }
 
-  // Fallback: schema-scoped read against auth.users directly. Service-role
-  // bypasses RLS on the auth schema, so this returns the row even when no
-  // matching profile exists (the AUTH_ONLY orphan case).
+  // Fallback: the AUTH_ONLY orphan — an auth user whose profile row is
+  // gone, so the lookup above has nothing to find.
   //
-  // ─── THIS FALLBACK NEEDS THE auth SCHEMA EXPOSED ──────────────────────
+  // ─── THIS USED TO BE UNABLE TO WORK ──────────────────────────────────
   //
-  // PostgREST only serves schemas listed in its `db-schemas` setting, and
-  // a Supabase project ships with `public, graphql_public` — NOT `auth`.
-  // Where that has not been changed, the query below comes back as
-  // PGRST106 ("The schema must be one of the following…") and finds
-  // nothing, no matter who exists.
+  // It built a PostgREST client with `db: { schema: 'auth' }` and queried
+  // auth.users. PostgREST only serves schemas in its `db-schemas` setting,
+  // and a Supabase project ships with `public, graphql_public` — NOT
+  // `auth`. So the query returned PGRST106 ("The schema must be one of the
+  // following…"), the error was discarded, and "no row" was
+  // indistinguishable from "no user". The fallback was inert from the day
+  // it was written.
   //
-  // The error used to be discarded, so the whole fallback could be inert
-  // in production and look exactly like "no such user" — and the caller
-  // would go on to create a second account for an email that already had
-  // one. It is logged now. If you see PGRST106 here, either expose the
-  // auth schema to PostgREST or move this lookup to a SECURITY DEFINER
-  // RPC in the public schema; do not leave it reading as an absence.
-  const authClient = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      auth: { autoRefreshToken: false, persistSession: false },
-      db:   { schema: 'auth' },
-    },
-  );
-  const { data: authUser, error: authErr } = await authClient
-    .from('users')
-    .select('id, email_confirmed_at')
-    .ilike('email', normalized)
-    .maybeSingle();
-  if (authErr) {
-    console.error('[findExistingAuthUser] auth.users fallback unavailable', authErr.message);
+  // The consequence is the one this file's header predicted: signUp
+  // returns the anti-enumeration silent response (data.user = null,
+  // error = null) and the visitor can never sign up with that address
+  // again. It reached production, twice, as "We couldn't record your
+  // agreement to the terms" — a message about the acceptance stamp, for a
+  // failure that was neither about acceptance nor about the stamp.
+  //
+  // Now it goes through find_auth_user_by_email (migration 0119): a
+  // SECURITY DEFINER function in `public`, EXECUTE granted to service_role
+  // alone. No schema exposure, one indexed lookup, and an error that is
+  // an error rather than an absence.
+  const { data: rpcRows, error: rpcErr } = await svc
+    .rpc('find_auth_user_by_email', { p_email: normalized });
+
+  if (rpcErr) {
+    // Loudly. A failure here is the difference between "recover this
+    // half-finished signup" and "this address can never be used again".
+    console.error('[findExistingAuthUser] find_auth_user_by_email failed', rpcErr.message);
+    return null;
   }
-  if (authUser) {
+
+  const found = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
+  if (found?.id) {
     return {
-      id:                 authUser.id as string,
-      email_confirmed_at: (authUser.email_confirmed_at as string | null) ?? null,
+      id:                 found.id as string,
+      email_confirmed_at: (found.email_confirmed_at as string | null) ?? null,
     };
   }
 

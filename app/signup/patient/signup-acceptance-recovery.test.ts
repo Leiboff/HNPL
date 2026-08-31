@@ -335,12 +335,74 @@ describe('the failure names itself', () => {
     expect(res.error).not.toMatch(/new-user-id/);
   });
 
-  it('says NOUSER when signUp returned no user at all', async () => {
+  // The NOUSER case is gone from this section on purpose: a null user is
+  // no longer an acceptance failure at all. See the section below.
+});
+
+// ─── The failure that was actually happening ───────────────────────────
+//
+// A field report quoted reference NOUSER, which meant signUp had returned
+// `{ user: null, error: null }` — Supabase's anti-enumeration SILENT
+// RESPONSE for an address that already exists. The code read a null user
+// as an internal failure and reported it as "We couldn't record your
+// agreement to the terms", on every attempt, forever.
+//
+// lib/auth/findExistingAuthUser.ts predicted this in its own header: "the
+// caller misreads it as 'shouldn't happen', and the user can never sign up
+// again with that email." It reached production because the fallback meant
+// to prevent it — a PostgREST query against the auth schema — could never
+// work, since Supabase does not expose that schema. Migration 0119
+// replaces it with a SECURITY DEFINER RPC.
+
+describe('signUp says "that email exists" without erroring', () => {
+  it('the SILENT RESPONSE (user: null) is an existing account, not a failure', async () => {
     signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
 
     const res = await signUpPatient(VALID);
 
     expect(res.success).toBe(false);
-    expect(res.error).toMatch(/NOUSER/);
+    expect(res.error).toMatch(/already exists/i);
+    expect(res.error).toMatch(/sign in/i);
+    // The regression this guards: it must NOT be reported as a terms
+    // failure, and must NOT quote an internal reference.
+    expect(res.error).not.toMatch(/agreement to the terms/i);
+    expect(res.error).not.toMatch(/NOUSER|reference/i);
+  });
+
+  it('offers the recovery route, since they may not recall signing up', async () => {
+    signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
+    const res = await signUpPatient(VALID);
+    expect(res.error).toMatch(/forgot password/i);
+  });
+
+  it('creates nothing and deletes nothing on that branch', async () => {
+    signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
+
+    await signUpPatient(VALID);
+
+    // No account was made, so there is nothing to roll back — the old
+    // code called deleteUser on an id it never had.
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+    expect(insertSpy).not.toHaveBeenCalled();
+  });
+
+  it('the obfuscated fake user (identities: []) gets the same answer', async () => {
+    signUpSpy.mockResolvedValue({ data: { user: { id: 'fake', identities: [] } }, error: null });
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.error).toMatch(/already exists/i);
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+
+  it('a real new user is still a real new user', async () => {
+    // The guard must key on the ABSENCE of an identity, not merely on
+    // truthiness, or every genuine signup would be refused.
+    row = { id: 'new-user-id', terms_accepted_at: null };
+    signUpSpy.mockResolvedValue(freshUser());
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.success).toBe(true);
   });
 });

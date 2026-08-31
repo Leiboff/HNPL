@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
 // ─── Signup forms — shared-hook + required-set regression ────────────────────
 //
@@ -201,10 +202,32 @@ describe('signup actions — OTP-abandon recovery branch', () => {
     const src = readSrc('lib/auth/findExistingAuthUser.ts');
     // Profile-by-email cheap path.
     expect(src).toMatch(/\.from\(\s*['"]profiles['"]\s*\)/);
-    // Schema-scoped fallback to auth.users — this is the load-bearing piece
-    // that catches AUTH_ONLY orphans.
-    expect(src).toMatch(/schema:\s*['"]auth['"]/);
-    expect(src).toMatch(/\.from\(\s*['"]users['"]\s*\)/);
+
+    // The AUTH_ONLY-orphan fallback. This assertion used to pin
+    // `schema: 'auth'` + `.from('users')` — a PostgREST query against the
+    // auth schema, which Supabase does not expose to PostgREST. It could
+    // never return a row, and the test passed anyway, because it checked
+    // that the code was PRESENT rather than that it could WORK. That is
+    // how an inert fallback survived to production, where it cost every
+    // affected address the ability to sign up ever again.
+    //
+    // It now goes through the SECURITY DEFINER RPC from migration 0119.
+    expect(src).toMatch(/\.rpc\(\s*['"]find_auth_user_by_email['"]/);
+    // Comment-stripped: the file explains the old broken mechanism by
+    // name, and the explanation is worth keeping.
+    expect(stripComments(src)).not.toMatch(/schema:\s*['"]auth['"]/);
+
+    // And the RPC exists, service-role only — the grant is the whole
+    // safety story for a function that answers an enumeration question.
+    const migration = readSrc('supabase/migrations/0119_find_auth_user_by_email.sql');
+    expect(migration).toMatch(/CREATE OR REPLACE FUNCTION public\.find_auth_user_by_email/);
+    expect(migration).toMatch(/SECURITY DEFINER/);
+    expect(migration).toMatch(/REVOKE ALL\s+ON FUNCTION public\.find_auth_user_by_email\(TEXT\) FROM PUBLIC/);
+    expect(migration).toMatch(/FROM anon/);
+    expect(migration).toMatch(/FROM authenticated/);
+    expect(migration).toMatch(/GRANT\s+EXECUTE ON FUNCTION public\.find_auth_user_by_email\(TEXT\) TO\s+service_role/);
+    // Case-insensitive, or it repeats the profiles path's own miss.
+    expect(migration).toMatch(/lower\(u\.email\) = lower\(btrim\(p_email\)\)/);
   });
 
   it.each([
