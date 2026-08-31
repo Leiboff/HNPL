@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import AuthSurface from '@/app/_components/AuthSurface';
+import AuthWordmark from '@/app/_components/AuthWordmark';
 import PatientSignupForm from '@/app/signup/patient/PatientSignupForm';
 
 // ─── /signup — the auth entry screen ───────────────────────────────────
@@ -182,11 +183,7 @@ export default function SignupEntry() {
             visitor could mistake for a quote, and it bought nothing the
             headline doesn't already say. The brand, the promise, and
             the way in — nothing between them. */}
-        <div className="text-center">
-          <span className="text-[46px] font-bold leading-none tracking-[-0.04em] text-white">
-            better<span style={{ color: 'var(--auth-accent)' }}>now</span>
-          </span>
-        </div>
+        <AuthWordmark size="lg" href={null} />
 
         {/* ── The promise ───────────────────────────────────────────── */}
         <h1 className="mt-10 text-center text-[31px] font-semibold leading-[1.2] tracking-[-0.03em] text-white">
@@ -329,11 +326,7 @@ export default function SignupEntry() {
       ) : (
         /* ─── The form: same screen-swap as /login's email view ─────── */
         <div key="form" className={`auth-view-${viewDir}`} data-testid="signup-view-form">
-          <div className="text-center">
-            <span className="text-[46px] font-bold leading-none tracking-[-0.04em] text-white">
-              better<span style={{ color: 'var(--auth-accent)' }}>now</span>
-            </span>
-          </div>
+          <AuthWordmark size="lg" href={null} />
 
           <button
             type="button"

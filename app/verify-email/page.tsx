@@ -1,5 +1,13 @@
 import Link from 'next/link';
 import VerifyEmailForm from './VerifyEmailForm';
+import AuthSurface from '@/app/_components/AuthSurface';
+import AuthWordmark from '@/app/_components/AuthWordmark';
+import {
+  AUTH_TITLE_CLS,
+  AUTH_SUBTITLE_CLS,
+  AUTH_LINK_CLS,
+  AUTH_HELP_CLS,
+} from '@/app/_components/authFormStyles';
 
 // ─── /verify-email ───────────────────────────────────────────────────────────
 //
@@ -13,6 +21,10 @@ import VerifyEmailForm from './VerifyEmailForm';
 //   email — required, the address Supabase emailed the code to
 //   next  — required, where to send the user after a successful verify
 //          (e.g. /patient, /practice)
+//
+// Sits on the shared auth surface, like /login, /signup and every
+// /onboarding step: this screen arrives seconds after the signup form and
+// used to arrive as a white card, which read as a different product.
 
 type Props = {
   searchParams: Promise<{ email?: string; next?: string }>;
@@ -23,61 +35,44 @@ export default async function VerifyEmailPage({ searchParams }: Props) {
 
   if (!email || !next) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gray-50">
-        <div className="w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Missing verification context</h1>
-          <p className="text-sm text-gray-500 mb-6">
-            We can&apos;t verify your email without knowing which address it was sent to.
-            Please sign up again.
-          </p>
-          <Link href="/signup" className="font-semibold text-[#15A89E] hover:underline">
-            Sign up →
-          </Link>
-        </div>
-      </div>
+      <AuthSurface centred>
+        <AuthWordmark size="md" />
+        <h1 className={`mt-9 text-center ${AUTH_TITLE_CLS}`}>Missing verification context</h1>
+        <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
+          We can&apos;t verify your email without knowing which address it was sent to.
+          Please sign up again.
+        </p>
+        <p className="mt-7 text-center">
+          <Link href="/signup" className={AUTH_LINK_CLS}>Sign up →</Link>
+        </p>
+      </AuthSurface>
     );
   }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4 py-12"
-      style={{
-        background: '#f7fbfb',
-        backgroundImage:
-          'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), '
-          + 'radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
-      }}
-    >
-      <div className="w-full max-w-md">
+    <AuthSurface>
+      <AuthWordmark size="md" />
 
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-block text-2xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-          </Link>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8">
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold" style={{ color: '#13294B', fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-              Verify your email
-            </h1>
-            <p className="mt-2 text-sm text-gray-500">
-              We&apos;ve emailed a 6-digit code to{' '}
-              <span className="font-medium text-gray-800">{email}</span>.
-              {' '}It&apos;s valid for 10 minutes.
-            </p>
-          </div>
-
-          <VerifyEmailForm email={email} next={next} />
-        </div>
-
-        <p className="mt-6 text-center text-xs text-gray-400">
-          Wrong email?{' '}
-          <Link href="/signup" className="font-semibold hover:underline" style={{ color: '#13294B' }}>
-            Sign up again
-          </Link>
+      <div className="mt-9">
+        <h1 className={AUTH_TITLE_CLS}>Verify your email</h1>
+        <p className={`mt-2.5 ${AUTH_SUBTITLE_CLS}`}>
+          We&apos;ve emailed a 6-digit code to{' '}
+          <span className="font-semibold text-white">{email}</span>.
+          {' '}It&apos;s valid for 10 minutes.
         </p>
       </div>
-    </div>
+
+      {/* The form pins its CTA with mt-auto, so it needs a column with a
+          floor to pin against — the same contract, and the same floor,
+          OnboardingShell gives the step bodies. */}
+      <div className="mt-8 flex flex-col" style={{ minHeight: 280 }}>
+        <VerifyEmailForm email={email} next={next} />
+      </div>
+
+      <p className={`mt-8 text-center ${AUTH_HELP_CLS}`}>
+        Wrong email?{' '}
+        <Link href="/signup" className={AUTH_LINK_CLS}>Sign up again</Link>
+      </p>
+    </AuthSurface>
   );
 }

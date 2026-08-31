@@ -4,7 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import { ShieldIcon } from '@/app/_landing/icons';
 import { submitIdentityForVerification, refreshOnboardingState } from '@/lib/onboarding/actions';
 import { validateSaId, saIdAge } from '@/lib/validation';
-import { INPUT_CLS, BUTTON_CLS } from '@/app/onboarding/formStyles';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_INPUT_CLS,
+  AUTH_PRIMARY_CLS,
+  AUTH_ERROR_CLS,
+  AUTH_WARNING_CLS,
+  AUTH_SUCCESS_CLS,
+  AUTH_HELP_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── Identity step (client) ────────────────────────────────────────────
 //
@@ -117,10 +126,10 @@ export default function IdentityStepClient({
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-12" data-testid="onboarding-identity-polling">
         <div
-          className="h-8 w-8 animate-spin rounded-full border-[3px] border-[#E2E8EE] border-t-[#15A89E]"
+          className="h-8 w-8 animate-spin rounded-full border-[3px] border-[var(--auth-edge)] border-t-[var(--auth-accent)]"
           aria-hidden="true"
         />
-        <p className="text-center text-[14px]" style={{ color: '#41556F' }}>
+        <p className="text-center text-[14px] text-[var(--auth-muted)]">
           Confirming your verification…
         </p>
       </div>
@@ -142,28 +151,28 @@ export default function IdentityStepClient({
     <div className="flex flex-1 flex-col gap-8">
       <form onSubmit={handleVerify} className="flex flex-col gap-4" data-testid="onboarding-identity-verify">
         <div className="flex items-start gap-2">
-          <span className="mt-px inline-flex shrink-0" style={{ color: '#15A89E' }} aria-hidden="true">
+          <span className="mt-px inline-flex shrink-0 text-[var(--auth-accent)]" aria-hidden="true">
             <ShieldIcon size={16} />
           </span>
-          <p className="text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
+          <p className={AUTH_HELP_CLS}>
             We use your ID number and a quick selfie to confirm it&apos;s really you. Your selfie is checked against your official identity photo.
           </p>
         </div>
 
         {verified && (
-          <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700" data-testid="onboarding-identity-verified">
+          <p className={AUTH_SUCCESS_CLS} data-testid="onboarding-identity-verified">
             Identity verified.
           </p>
         )}
 
         {inReview && (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700" role="status">
+          <p className={AUTH_WARNING_CLS} role="status">
             Your verification is under review. We&apos;ll email you once it&apos;s done.
           </p>
         )}
 
         {declined && (
-          <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+          <p className={AUTH_ERROR_CLS} role="alert">
             {identityVerificationReason === 'id_already_registered'
               ? DUPLICATE_ID_MESSAGE
               : identityVerificationReason === 'dha_deceased' || identityVerificationReason === 'dha_id_blocked'
@@ -174,8 +183,8 @@ export default function IdentityStepClient({
 
         {!verified && !notActionable && (
           <>
-            <div className="flex flex-col gap-2">
-              <label htmlFor="sa-id" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
+            <div>
+              <label htmlFor="sa-id" className={AUTH_LABEL_CLS}>
                 South African ID number
               </label>
               <input
@@ -188,7 +197,7 @@ export default function IdentityStepClient({
                 onChange={(e) => setSaId(e.target.value.replace(/\D/g, ''))}
                 data-testid="onboarding-sa-id"
                 placeholder="13-digit ID number"
-                className={INPUT_CLS}
+                className={`${AUTH_INPUT_CLS} tracking-[0.06em]`}
               />
             </div>
 
@@ -208,20 +217,31 @@ export default function IdentityStepClient({
               POPIA requires naming the specific third party, and if so
               whether this copy must change when the provider does.
             */}
-            <label className="flex items-start gap-2 text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
+            <label className={`flex items-start gap-2.5 ${AUTH_HELP_CLS}`}>
               <input
                 type="checkbox"
                 checked={consent}
                 onChange={(e) => setConsent(e.target.checked)}
                 data-testid="onboarding-dha-consent"
-                className="mt-0.5 shrink-0"
+                className="mt-0.5 h-[17px] w-[17px] shrink-0 accent-[#15A89E]"
+                // The two properties that make a NATIVE checkbox belong on
+                // the navy. color-scheme is forced light app-wide
+                // (app/globals.css) so the UA would otherwise paint a
+                // solid white box here — a bright chip on a dark screen;
+                // 'dark' on this one element gives it the dark box with a
+                // light edge instead, and changes nothing else. accent
+                // then paints the tick in brand teal rather than the UA's
+                // own blue. Kept as a real checkbox — a hand-rolled one
+                // would lose the platform's own a11y and tap behaviour on
+                // the one control that records a POPIA consent.
+                style={{ colorScheme: 'dark' }}
               />
               I consent to BetterNow retrieving my identity photograph from official identity
               records, via its verification partners, to confirm my identity.
             </label>
 
             {verifyError && (
-              <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+              <p className={AUTH_ERROR_CLS} role="alert">
                 {verifyError}
               </p>
             )}
@@ -230,8 +250,8 @@ export default function IdentityStepClient({
               type="submit"
               disabled={verifyLoading}
               data-testid="onboarding-identity-verify-button"
-              className={BUTTON_CLS}
-              style={{ background: '#15A89E', boxShadow: verifyLoading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
+              className={`mt-2 ${AUTH_PRIMARY_CLS}`}
+              style={authPrimaryStyle(verifyLoading)}
             >
               {verifyLoading ? 'Verifying…' : declined || inReview ? 'Try again' : 'Verify my identity'}
             </button>

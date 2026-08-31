@@ -1,5 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import AuthSurface from '@/app/_components/AuthSurface';
+import AuthWordmark from '@/app/_components/AuthWordmark';
+import {
+  AUTH_TITLE_CLS,
+  AUTH_SUBTITLE_CLS,
+  AUTH_LINK_CLS,
+  AUTH_HELP_CLS,
+} from '@/app/_components/authFormStyles';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import VerifyPhoneClient from './VerifyPhoneClient';
@@ -105,39 +113,17 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
   );
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4 py-12"
-      style={{
-        background: '#f7fbfb',
-        backgroundImage:
-          'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), '
-          + 'radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
-      }}
-    >
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Link
-            href="/"
-            className="inline-block text-2xl font-bold tracking-tight"
-            style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
-          >
-            <span style={{ color: '#13294B' }}>better</span>
-            <span style={{ color: '#15A89E' }}>now</span>
-          </Link>
-        </div>
+    <AuthSurface>
+      <AuthWordmark size="md" />
 
-        <div className="mb-6 text-center">
-          <h1
-            className="text-2xl font-semibold"
-            style={{ color: '#13294B', fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
-          >
-            Verify your phone
-          </h1>
-          <p className="mt-2 text-sm text-gray-500">
-            One last step — we&apos;ll text a 6-digit code to confirm your number.
-          </p>
-        </div>
+      <div className="mt-9 text-center">
+        <h1 className={AUTH_TITLE_CLS}>Verify your phone</h1>
+        <p className={`mt-2.5 ${AUTH_SUBTITLE_CLS}`}>
+          One last step — we&apos;ll text a 6-digit code to confirm your number.
+        </p>
+      </div>
 
+      <div className="mt-8">
         <VerifyPhoneClient
           phoneDisplay={profile.phone}
           smsConfigured={smsConfigured}
@@ -146,18 +132,14 @@ export default async function VerifyPhonePage({ searchParams }: Props) {
           verifyPhoneOtpForUser={verifyPhoneOtpForUser}
           skipPhoneVerificationIfNoSms={skipPhoneVerificationIfNoSms}
         />
-
-        <p className="mt-6 text-center text-xs text-gray-400">
-          Wrong number?{' '}
-          <Link
-            href="/patient/account/personal"
-            className="font-semibold hover:underline"
-            style={{ color: '#13294B' }}
-          >
-            Update it in your account after sign-in
-          </Link>
-        </p>
       </div>
-    </div>
+
+      <p className={`mt-7 text-center ${AUTH_HELP_CLS}`}>
+        Wrong number?{' '}
+        <Link href="/patient/account/personal" className={AUTH_LINK_CLS}>
+          Update it in your account after sign-in
+        </Link>
+      </p>
+    </AuthSurface>
   );
 }

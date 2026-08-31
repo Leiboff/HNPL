@@ -51,6 +51,18 @@ const PULSE = 'motion-safe:animate-pulse';
 const FILL = 'bg-gray-200/80';
 
 /**
+ * The one placeholder tone for the navy auth surface. Grey on navy reads
+ * as a hole punched in the screen; white at low alpha reads as a lighter
+ * navy, which is exactly what the real controls on that surface are (see
+ * the .auth-surface token block in app/globals.css).
+ *
+ * Two steps only — a block and its label — so the dark skeletons cannot
+ * grow their own private ramp.
+ */
+export const SKELETON_ON_DARK      = 'bg-white/10';
+export const SKELETON_ON_DARK_FAINT = 'bg-white/[.07]';
+
+/**
  * Wrap every skeleton in one of these.
  *
  * This is the only element that talks to assistive technology, and it is
@@ -90,12 +102,23 @@ export function SkeletonLine({
   w = 'w-full',
   h = 'h-4',
   className = '',
+  fill = FILL,
+  radius = 'rounded',
 }: {
   w?: string;
   h?: string;
   className?: string;
+  /**
+   * The placeholder tone. Defaults to the grey that suits the app's light
+   * surfaces; pass SKELETON_ON_DARK for the navy auth surface. A prop
+   * rather than an `!important` class override in the caller, so both
+   * tones are written down in one place.
+   */
+  fill?: string;
+  /** Match the radius of the real control this stands in for. */
+  radius?: string;
 }) {
-  return <div aria-hidden className={`${h} ${w} rounded ${FILL} ${PULSE} ${className}`} />;
+  return <div aria-hidden className={`${h} ${w} ${radius} ${fill} ${PULSE} ${className}`} />;
 }
 
 /** A solid rectangle — a chart, a QR, an image, a map. */

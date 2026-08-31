@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
+import { AUTH_WARNING_CLS } from '@/app/_components/authFormStyles';
 import type {
   PhoneOtpStartResultForUser,
   PhoneOtpVerifyResultForUser,
@@ -70,14 +71,15 @@ export default function VerifyPhoneClient({
           // Hard nav so SSR picks up phone_verified_at on the next page.
           window.location.href = target;
         }}
+        tone="onDark"
       />
 
       {!smsConfigured && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 space-y-2">
-          <p className="font-medium">
+        <div className={`${AUTH_WARNING_CLS} space-y-2`}>
+          <p className="font-semibold">
             SMS isn’t set up in this environment.
           </p>
-          <p className="text-amber-700">
+          <p className="text-amber-100/80">
             You can continue without phone verification — your phone will remain unverified
             until SMS is configured. This is intended for dev / staging only.
           </p>
@@ -85,17 +87,17 @@ export default function VerifyPhoneClient({
             type="button"
             onClick={handleSkip}
             disabled={skipState === 'skipping'}
-            className="w-full mt-1 rounded-lg px-4 py-2 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 disabled:opacity-60 transition-colors"
+            className="mt-1 w-full rounded-full border-[1.5px] border-amber-300/40 bg-amber-400/15 px-4 py-2.5 text-[13px] font-semibold text-amber-100 transition-colors hover:bg-amber-400/25 focus:outline-none focus-visible:ring-4 focus-visible:ring-amber-300/30 disabled:opacity-60"
           >
             {skipState === 'skipping' ? 'Continuing…' : 'Continue without phone verification'}
           </button>
           {skipState === 'refused' && (
-            <p className="text-xs text-amber-900">
+            <p className="text-xs text-amber-200">
               SMS is configured in this environment — verification cannot be skipped.
             </p>
           )}
           {skipState === 'error' && (
-            <p className="text-xs text-amber-900">
+            <p className="text-xs text-amber-200">
               Couldn’t complete the skip. Please try again.
             </p>
           )}

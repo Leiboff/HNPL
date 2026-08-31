@@ -115,8 +115,13 @@ describe('clampSalaryDateForMonth', () => {
 
 describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
   // Post the "slim signup" pass, salary-day capture moved OUT of the
-  // signup form + action and INTO the /onboarding/identity step. The
-  // signup surfaces here reflect the current model — every place that
+  // signup form + action and INTO the /onboarding flow; the combined
+  // identity+salary step was then split, and the salary half became its
+  // own step at /onboarding/salary. That split is why the entry below is
+  // SalaryStepClient and not IdentityStepClient — the identity step has
+  // asked for nothing but an ID number and consent since.
+  //
+  // The surfaces here reflect the current model — every place that
   // renders or writes a salary_day must depend on the canonical set.
   const surfaces = [
     'app/patient/profile/SalaryDaySection.tsx',
@@ -126,7 +131,7 @@ describe('ALLOWED_SALARY_DAYS is the single source of truth', () => {
     // only renders SalaryDaySection, which itself imports lib/salaryDates;
     // app/patient/account/actions.ts is where the direct import now lives.
     'app/patient/account/actions.ts',
-    'app/onboarding/identity/IdentityStepClient.tsx',
+    'app/onboarding/salary/SalaryStepClient.tsx',
     'lib/onboarding/actions.ts',
   ];
 

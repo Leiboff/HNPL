@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import SalaryDayPicker, { pillLabel } from './SalaryDayPicker';
+import SalaryDayPicker, { pillLabel, type PickerTone } from './SalaryDayPicker';
 
 // Pure-function test for the label mapping (incl. "Last day" → 31).
 
@@ -42,10 +42,12 @@ function Harness({
   initial = null,
   currentDay = null,
   onChangeSpy,
+  tone,
 }: {
   initial?: number | null;
   currentDay?: number | null;
   onChangeSpy?: (d: number) => void;
+  tone?: PickerTone;
 }) {
   const [value, setValue] = useState<number | null>(initial);
   return (
@@ -53,6 +55,7 @@ function Harness({
       value={value}
       onChange={(d) => { setValue(d); onChangeSpy?.(d); }}
       currentDay={currentDay}
+      tone={tone}
     />
   );
 }
@@ -173,15 +176,20 @@ describe('SalaryDayPicker — keyboard navigation', () => {
   });
 });
 
-describe('SalaryDayPicker — selected-state styling (v2)', () => {
-  it('selected pill carries the teal 2px border + a tinted inline fill (not a solid CTA fill)', () => {
+describe('SalaryDayPicker — selected-state styling (light tone)', () => {
+  it('selected pill carries the teal 2px border + a TINTED fill (not a solid CTA fill)', () => {
     render(<Harness initial={25} />);
     const selected = screen.getByRole('radio', { name: /^25th$/ });
     expect(selected.className).toMatch(/\bborder-2\b/);
     expect(selected.className).toMatch(/border-\[#15A89E\]/);
-    // Tinted teal fill + teal-dark label applied inline; the primary CTA
-    // remains the only solid-teal element on the screen.
-    expect(selected.getAttribute('style')).toBeTruthy();
+    // Tinted teal fill + teal-dark label. The tint moved from an inline
+    // style to a class when the picker gained its dark tone (both tones
+    // are now table-driven, see TONES in SalaryDayPicker.tsx) — what
+    // matters is that it is a TINT: the primary CTA stays the only
+    // solid-teal element on the screen.
+    expect(selected.className).toMatch(/bg-\[#15A89E\]\/10/);
+    expect(selected.className).toMatch(/text-\[#0F766E\]/);
+    expect(selected.className).not.toMatch(/bg-\[#15A89E\](?!\/)/);
   });
 
   it('unselected pill uses the hairline border + faint fill + body-slate text', () => {
@@ -191,8 +199,13 @@ describe('SalaryDayPicker — selected-state styling (v2)', () => {
     expect(unselected.className).toMatch(/border-\[#E2E8EE\]/);
     expect(unselected.className).toMatch(/bg-\[#FBFCFD\]/);
     expect(unselected.className).toMatch(/text-\[#41556F\]/);
-    // No inline tint on the unselected state.
-    expect(unselected.getAttribute('style')).toBeFalsy();
+  });
+
+  it('no pill in either tone carries an inline style (the palette is class-driven)', () => {
+    render(<Harness initial={25} />);
+    for (const name of [/^25th$/, /^15th$/]) {
+      expect(screen.getByRole('radio', { name }).getAttribute('style')).toBeFalsy();
+    }
   });
 
   it('"Last day" pill spans three columns in the 4-col grid', () => {
@@ -221,5 +234,57 @@ describe('SalaryDayPicker — ARIA wiring', () => {
     const unselected = screen.getByRole('radio', { name: /^20th$/ });
     expect(selected).toHaveAttribute('tabIndex',   '0');
     expect(unselected).toHaveAttribute('tabIndex', '-1');
+  });
+});
+
+// ─── Dark tone ──────────────────────────────────────────────────────────────
+//
+// The /onboarding salary step renders the picker on the navy auth
+// surface. Same component, same radiogroup — only the palette differs,
+// and every dark value must come from the .auth-surface tokens rather
+// than a hex the picker invented for itself.
+
+describe('SalaryDayPicker — tone="onDark"', () => {
+  it('selected pill uses the auth accent, tinted (still not a solid fill)', () => {
+    render(<Harness initial={25} tone="onDark" />);
+    const selected = screen.getByRole('radio', { name: /^25th$/ });
+    expect(selected.className).toMatch(/border-2/);
+    expect(selected.className).toMatch(/border-\[var\(--auth-accent\)\]/);
+    expect(selected.className).toMatch(/bg-\[var\(--auth-accent-tint\)\]/);
+    expect(selected.className).toMatch(/text-white/);
+  });
+
+  it('unselected pill uses the auth edge + raised fill + muted text', () => {
+    render(<Harness initial={25} tone="onDark" />);
+    const unselected = screen.getByRole('radio', { name: /^15th$/ });
+    expect(unselected.className).toMatch(/border-\[var\(--auth-edge\)\]/);
+    expect(unselected.className).toMatch(/bg-\[var\(--auth-fill-raised\)\]/);
+    expect(unselected.className).toMatch(/text-\[var\(--auth-muted\)\]/);
+  });
+
+  it('no light-ground hex leaks into the dark tone', () => {
+    render(<Harness initial={25} tone="onDark" />);
+    for (const name of [/^25th$/, /^15th$/, /Last day/]) {
+      const cls = screen.getByRole('radio', { name }).className;
+      expect(cls).not.toMatch(/#E2E8EE|#FBFCFD|#41556F|#0F766E|#F1F5F6/);
+    }
+  });
+
+  it('pins the focus ring offset to the navy, so focus draws no white halo', () => {
+    render(<Harness initial={25} tone="onDark" />);
+    const selected = screen.getByRole('radio', { name: /^25th$/ });
+    expect(selected.className).toMatch(/focus-visible:ring-offset-\[#0E2140\]/);
+  });
+
+  it('behaviour is identical in both tones — clicking still reports the day', async () => {
+    const onChange = vi.fn();
+    render(<Harness tone="onDark" onChangeSpy={onChange} />);
+    await userEvent.setup().click(screen.getByRole('radio', { name: /^20th$/ }));
+    expect(onChange).toHaveBeenCalledWith(20);
+  });
+
+  it('defaults to the light tone when no tone is passed', () => {
+    render(<Harness initial={25} />);
+    expect(screen.getByRole('radio', { name: /^25th$/ }).className).toMatch(/border-\[#15A89E\]/);
   });
 });

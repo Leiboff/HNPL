@@ -1,12 +1,27 @@
-import Link from 'next/link';
 import type { OnboardingStep } from '@/lib/onboarding/state';
+import AuthSurface from '@/app/_components/AuthSurface';
+import AuthWordmark from '@/app/_components/AuthWordmark';
+import { AUTH_TITLE_CLS, AUTH_SUBTITLE_CLS } from '@/app/_components/authFormStyles';
 
-// ─── Shared onboarding shell (v2 visual refresh) ────────────────────────
+// ─── Shared onboarding shell ───────────────────────────────────────────
 //
-// One card per screen. The card header row carries the wordmark (left)
-// and "Step n of total" (right); directly under it a SEGMENTED progress
-// rail — one filled segment per completed-or-current step. Then the
-// title / description, then the step body.
+// v3: the steps moved onto the SAME ground as /login and /signup.
+//
+// They used to be a white card on a pale blue-grey wash — a good-looking
+// screen, but a different app from the one the patient had just signed up
+// in. The journey went navy → white → navy, and the two halves shared
+// nothing but the wordmark. Now the whole account journey is one surface:
+// AuthSurface for the ground, the .auth-surface tokens for the palette,
+// and app/_components/authFormStyles.ts for the controls.
+//
+// What each screen carries, top to bottom:
+//   • the wordmark, centred — the one piece of chrome every screen in the
+//     journey shares, including /login and /signup, so moving between
+//     them reads as travel inside one app;
+//   • the step counter and a SEGMENTED progress rail — one filled segment
+//     per completed-or-current step;
+//   • the title / description, left-aligned;
+//   • the step body.
 //
 // The rail is COUNT-AGNOSTIC: it renders exactly `steps.length` segments,
 // so it reads "of 3" today and grows automatically to "of 4"/"of 5" if
@@ -14,9 +29,11 @@ import type { OnboardingStep } from '@/lib/onboarding/state';
 // model change is needed for the refresh — the visual is independent of
 // the count (see lib/onboarding/state.ts, deliberately untouched).
 //
-// Layout contract for step bodies: the card is a flex column with a min
-// height; `children` render inside a `flex-1 flex flex-col` region, so a
-// step pins its primary action to the card bottom with `mt-auto`.
+// Layout contract for step bodies (unchanged from v2): `children` render
+// inside a `flex flex-col` region with a minimum height, so a step can
+// pin its primary action to the bottom of that region with `mt-auto`.
+// NOTE the change of reference: `minHeight` is now the BODY's height, not
+// the whole card's, so it no longer has to include the chrome above it.
 
 type Props = {
   /** Full path-fixed list for this user (stepListFor). Stable across the journey. */
@@ -25,19 +42,17 @@ type Props = {
   currentStep:  OnboardingStep;
   title:        string;
   description?: string;
-  /** Card min height in px. Integration-seam steps (credit/liveness) use 560. */
+  /** Minimum height of the BODY region in px — what `mt-auto` pins against. */
   minHeight?:   number;
   children:     React.ReactNode;
 };
-
-const POPPINS = 'var(--font-poppins), Poppins, system-ui, sans-serif';
 
 export default function OnboardingShell({
   steps,
   currentStep,
   title,
   description,
-  minHeight = 640,
+  minHeight = 280,
   children,
 }: Props) {
   const idx = steps.indexOf(currentStep);
@@ -47,70 +62,56 @@ export default function OnboardingShell({
   const total        = steps.length;
 
   return (
-    <div className="min-h-full flex justify-center px-4 py-8 sm:py-14" style={{ background: '#E9EFF1' }}>
-      <div className="w-full max-w-[428px]">
-        <section
-          className="flex flex-col gap-7 overflow-hidden rounded-[28px] border bg-white"
-          style={{
-            borderColor: 'rgba(19,41,75,0.07)',
-            boxShadow:   '0 24px 48px -28px rgba(15,31,58,.28), 0 2px 6px rgba(15,31,58,.04)',
-            padding:     '30px 28px 32px',
-            minHeight,
-          }}
-        >
-          {/* Header row — wordmark + step counter. */}
-          <div className="flex items-center justify-between">
-            <Link href="/" className="text-[22px] font-bold tracking-tight" style={{ fontFamily: POPPINS }}>
-              <span style={{ color: '#13294B' }}>better</span>
-              <span style={{ color: '#15A89E' }}>now</span>
-            </Link>
-            <span
-              data-testid="onboarding-progress-label"
-              className="text-xs font-semibold tracking-[0.02em]"
-              style={{ color: '#41556F' }}
-            >
-              Step {currentIndex} of {total}
-            </span>
-          </div>
+    <AuthSurface>
+      {/* No link home on the mark here, unlike /login: mid-signup, a tap
+          that leaves for the marketing site abandons a half-finished
+          account. The mark is identity, not navigation. */}
+      <AuthWordmark size="md" href={null} />
 
-          {/* Segmented rail — filled up to and including the current step. */}
-          <div
-            data-testid="onboarding-progress"
-            className="flex gap-[7px]"
-            role="progressbar"
-            aria-valuenow={currentIndex}
-            aria-valuemin={1}
-            aria-valuemax={total}
-            aria-label={`Step ${currentIndex} of ${total}`}
+      {/* Progress — counter above, rail below. */}
+      <div className="mt-9">
+        <div className="flex items-center justify-between">
+          <span
+            data-testid="onboarding-progress-label"
+            className="text-[12px] font-semibold tracking-[0.02em] text-[var(--auth-muted)]"
           >
-            {Array.from({ length: total }).map((_, i) => (
-              <div
-                key={i}
-                className="h-[5px] flex-1 rounded-full"
-                style={{ background: i < currentIndex ? '#15A89E' : '#E4EAEF' }}
-              />
-            ))}
-          </div>
+            Step {currentIndex} of {total}
+          </span>
+        </div>
 
-          {/* Title + description. */}
-          <div>
-            <h1
-              className="text-[28px] font-semibold leading-[1.18] tracking-[-0.025em]"
-              style={{ color: '#13294B', fontFamily: POPPINS }}
-            >
-              {title}
-            </h1>
-            {description && (
-              <p className="mt-2.5 text-[15px] leading-[1.55]" style={{ color: '#6B7C93' }}>
-                {description}
-              </p>
-            )}
-          </div>
-
-          {/* Body — grows so a step can pin its CTA to the card bottom. */}
-          <div className="flex flex-1 flex-col">{children}</div>
-        </section>
+        <div
+          data-testid="onboarding-progress"
+          className="mt-2.5 flex gap-[7px]"
+          role="progressbar"
+          aria-valuenow={currentIndex}
+          aria-valuemin={1}
+          aria-valuemax={total}
+          aria-label={`Step ${currentIndex} of ${total}`}
+        >
+          {Array.from({ length: total }).map((_, i) => (
+            <div
+              key={i}
+              className="h-[5px] flex-1 rounded-full"
+              // Filled in the brand accent; the rest is white at alpha,
+              // which over the navy ground is simply a lighter navy and
+              // so cannot drift out of the family.
+              style={{ background: i < currentIndex ? 'var(--auth-accent)' : 'rgba(255,255,255,.16)' }}
+            />
+          ))}
+        </div>
       </div>
-    </div>
+
+      {/* Title + description. Left-aligned, matching the email sign-in
+          screen on /login — the other place in the journey where the job
+          is "fill this in" rather than "choose one of these". */}
+      <div className="mt-8">
+        <h1 className={AUTH_TITLE_CLS}>{title}</h1>
+        {description && <p className={`mt-2.5 ${AUTH_SUBTITLE_CLS}`}>{description}</p>}
+      </div>
+
+      {/* Body — a flex column with a floor, so a step can pin its CTA to
+          the bottom with `mt-auto`. */}
+      <div className="mt-8 flex flex-col" style={{ minHeight }}>{children}</div>
+    </AuthSurface>
   );
 }

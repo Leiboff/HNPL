@@ -7,6 +7,12 @@ import {
   verifyPhoneOtpForUser,
 } from '@/app/(auth)/verify-phone/actions';
 import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_PRIMARY_CLS,
+  AUTH_ERROR_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── Phone step (client) — canonical OTP look/feel ─────────────────────
 //
@@ -23,11 +29,17 @@ import PhoneOtpStep from '@/app/_otp/PhoneOtpStep';
 // pass a `shell` render-prop to PhoneOtpStep so it renders inline
 // (body + change-number action) without adding its own card.
 //
-// v2 refresh: the cell number is a large centred hero field (74px, 28px
-// digits) with an on-screen numeric keypad tray bled to the card edges.
-// The keypad is a convenience surface — it appends to the same field the
-// OS keyboard writes to; `normalizePhoneZA` still does the +27 conversion
-// server-side (untouched).
+// The cell number is a large centred hero field (74px, 28px digits) with
+// an on-screen numeric keypad below it. The keypad is a convenience
+// surface — it appends to the same field the OS keyboard writes to;
+// `normalizePhoneZA` still does the +27 conversion server-side
+// (untouched).
+//
+// v3 moved both onto the dark auth surface. The keypad used to bleed to
+// the edges of a white card and be clipped by its radius; with the card
+// gone it is a contained panel of its own — a lighter navy (white at
+// alpha over the ground) with white-at-alpha keys, so it still reads as
+// a tray sitting under the field rather than as ten more buttons.
 
 type Stage = 'phone-entry' | 'otp';
 
@@ -63,8 +75,8 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
 
     return (
       <form onSubmit={handlePhoneSubmit} className="flex flex-1 flex-col">
-        <div className="flex flex-col gap-[9px]">
-          <label htmlFor="phone" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
+        <div>
+          <label htmlFor="phone" className={AUTH_LABEL_CLS}>
             Cell number
           </label>
           <input
@@ -76,13 +88,13 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
             onChange={(e) => setPhone(e.target.value)}
             data-testid="onboarding-phone-input"
             placeholder="082 000 0000"
-            className="h-[74px] w-full rounded-[18px] bg-white text-center text-[28px] font-semibold tabular-nums tracking-[0.04em] outline-none placeholder:text-[#A8B4C2]"
-            style={{ color: '#13294B', border: '1.5px solid #15A89E', boxShadow: '0 0 0 4px rgba(21,168,158,0.13)' }}
+            className="h-[74px] w-full rounded-[20px] border-[1.5px] border-[var(--auth-accent)] bg-[var(--auth-fill-raised)] text-center text-[28px] font-semibold tabular-nums tracking-[0.04em] text-white outline-none transition-all placeholder:font-normal placeholder:text-white/30 focus:bg-[var(--auth-fill-hover)]"
+            style={{ boxShadow: '0 0 0 4px var(--auth-accent-ring)' }}
           />
         </div>
 
         {phoneError && (
-          <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+          <p className={`mt-4 ${AUTH_ERROR_CLS}`} role="alert">
             {phoneError}
           </p>
         )}
@@ -92,18 +104,17 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
             type="submit"
             disabled={phoneLoading}
             data-testid="onboarding-phone-submit"
-            className="flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
-            style={{ background: '#15A89E', boxShadow: phoneLoading ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)' }}
+            className={AUTH_PRIMARY_CLS}
+            style={authPrimaryStyle(phoneLoading)}
           >
             {phoneLoading ? 'Saving…' : 'Send me a code'}
           </button>
 
-          {/* On-screen numeric keypad — a convenience surface bled to the
-              card edges. The card's overflow-hidden clips it to the 28px
-              radius. It appends to the same field the OS keyboard uses. */}
+          {/* On-screen numeric keypad — a convenience surface, not the
+              only way in: the field above takes the OS keyboard too, and
+              every key here appends to that same controlled value. */}
           <div
-            className="grid grid-cols-3 gap-[9px]"
-            style={{ margin: '0 -28px -32px', padding: '16px 18px 22px', background: '#F1F5F6', borderTop: '1px solid #E4EAEF' }}
+            className="grid grid-cols-3 gap-[9px] rounded-[24px] border border-[var(--auth-hairline)] bg-[var(--auth-fill)] p-3.5"
             aria-hidden="true"
           >
             {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
@@ -112,8 +123,7 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
                 type="button"
                 tabIndex={-1}
                 onClick={() => appendDigit(d)}
-                className="flex h-[50px] items-center justify-center rounded-xl bg-white text-[23px] font-medium"
-                style={{ color: '#13294B', boxShadow: '0 1px 1px rgba(15,31,58,0.10)' }}
+                className="flex h-[50px] items-center justify-center rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill-raised)] text-[23px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
               >
                 {d}
               </button>
@@ -123,8 +133,7 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
               type="button"
               tabIndex={-1}
               onClick={() => appendDigit('0')}
-              className="flex h-[50px] items-center justify-center rounded-xl bg-white text-[23px] font-medium"
-              style={{ color: '#13294B', boxShadow: '0 1px 1px rgba(15,31,58,0.10)' }}
+              className="flex h-[50px] items-center justify-center rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill-raised)] text-[23px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
             >
               0
             </button>
@@ -132,8 +141,7 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
               type="button"
               tabIndex={-1}
               onClick={backspace}
-              className="flex h-[50px] items-center justify-center"
-              style={{ color: '#5B6E86' }}
+              className="flex h-[50px] items-center justify-center rounded-2xl text-[var(--auth-muted)] transition-colors hover:text-white"
             >
               <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M20 5H9.5L3 12l6.5 7H20a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z" />
@@ -149,8 +157,9 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
 
   // stage === 'otp' — delegate to the canonical shared PhoneOtpStep.
   // The `shell` render-prop bypasses its default card (OnboardingShell
-  // already provides one). We fill the card body and pin "Change number"
-  // to the bottom with mt-auto.
+  // already provides the step chrome). We fill the body region and pin
+  // "Change number" to the bottom of it with mt-auto. `tone` puts the
+  // shared step's controls into their dark-surface variant.
   const inlineShell = (body: ReactNode, actions: ReactNode): ReactNode => (
     <div className="flex flex-1 flex-col gap-5">
       {body}
@@ -166,6 +175,7 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
       onVerified={() => { window.location.href = '/onboarding'; }}
       onChangeNumber={() => setStage('phone-entry')}
       shell={inlineShell}
+      tone="onDark"
     />
   );
 }

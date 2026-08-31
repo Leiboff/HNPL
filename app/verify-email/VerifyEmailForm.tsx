@@ -4,6 +4,12 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { resendConfirmation } from '@/app/auth/resend/actions';
 import OtpInput, { OTP_LENGTH } from '@/components/OtpInput';
+import {
+  AUTH_PRIMARY_CLS,
+  AUTH_ERROR_CLS,
+  AUTH_TEXT_ACTION_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── VerifyEmailForm ─────────────────────────────────────────────────────────
 //
@@ -21,6 +27,13 @@ import OtpInput, { OTP_LENGTH } from '@/components/OtpInput';
 //   3. Error states. Wrong code, expired code, and the Supabase rate-limit
 //      response each map to a distinct user-facing message with the resend
 //      path as the recovery action.
+//
+// Dark-surface only, deliberately without a `tone` prop: BOTH of its call
+// sites — /verify-email and the /onboarding verify-email step — render
+// inside <AuthSurface>, so a light branch here would be a variant nothing
+// asks for and nobody would ever look at again. (The components it sits
+// on top of, OtpInput and PhoneOtpStep, DO carry a tone, because they are
+// also used on the white checkout cards.)
 
 type Props = {
   email: string;
@@ -160,13 +173,14 @@ export default function VerifyEmailForm({ email, next }: Props) {
         disabled={disabled}
         hasError={phase === 'error'}
         autoFocus
+        tone="onDark"
       />
 
       {phase === 'error' && errorKey && (
         <div
           role="alert"
           data-testid="otp-error"
-          className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className={`mt-5 ${AUTH_ERROR_CLS}`}
         >
           {ERROR_TEXT[errorKey]}
         </div>
@@ -177,24 +191,20 @@ export default function VerifyEmailForm({ email, next }: Props) {
           type="button"
           onClick={() => verify(code)}
           disabled={ctaDisabled}
-          className="flex h-[54px] w-full items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all disabled:opacity-45 disabled:cursor-not-allowed"
-          style={{
-            background: '#15A89E',
-            boxShadow:  ctaDisabled ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)',
-          }}
+          className={AUTH_PRIMARY_CLS}
+          style={authPrimaryStyle(ctaDisabled)}
         >
           {phase === 'verifying' ? 'Verifying…' : phase === 'success' ? 'Verified ✓' : 'Verify email'}
         </button>
 
-        <div className="text-center text-[14px]" style={{ color: '#6B7C93' }}>
+        <div className="text-center text-[14px] text-[var(--auth-muted)]">
           Didn&apos;t get the code?{' '}
           <button
             type="button"
             onClick={handleResend}
             disabled={cooldown > 0 || resendState === 'sending' || phase === 'success'}
             data-testid="otp-resend"
-            className="font-semibold hover:underline disabled:no-underline disabled:cursor-not-allowed"
-            style={{ color: cooldown > 0 ? '#94a3b8' : '#13294B' }}
+            className={AUTH_TEXT_ACTION_CLS}
           >
             {resendState === 'sending'
               ? 'Sending…'

@@ -5,8 +5,22 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { checkPassword } from '@/lib/validation';
 import { usePendingAction } from '@/components/loading/usePendingAction';
+import AuthWordmark from '@/app/_components/AuthWordmark';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_INPUT_CLS,
+  AUTH_PRIMARY_CLS,
+  AUTH_ERROR_CLS,
+  AUTH_TITLE_CLS,
+  AUTH_SUBTITLE_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── Set a new password (post-recovery-link form) ─────────────────────
+//
+// Rendered inside <AuthSurface> by the page: same ground, same controls
+// and same wordmark as /login, which is where this flow started and where
+// it hands back if the link has gone stale.
 //
 // Reuses the shared checkPassword() validator + the same "≥8 chars"
 // floor the signup surfaces enforce. Same rules, same errors — this
@@ -121,54 +135,57 @@ export default function UpdatePasswordForm({ email }: Props) {
 
   if (showRecoveryError) {
     return (
-      <Card>
-        <div className="w-14 h-14 mx-auto rounded-full flex items-center justify-center bg-amber-50 text-amber-800 mb-4">
+      <>
+        <div
+          className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-amber-300/30 bg-amber-400/[.10] text-amber-200"
+          aria-hidden
+        >
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
             <circle cx="12" cy="12" r="9" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v5M12 16.25h.008" />
           </svg>
         </div>
-        <h1 className="text-xl font-semibold text-center" style={{ color: '#13294B' }}>
+        <h1 className={`text-center ${AUTH_TITLE_CLS}`}>
           This link isn&apos;t valid any more
         </h1>
-        <p className="mt-2 text-sm text-gray-600 text-center leading-relaxed">
+        <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
           The reset link has expired or already been used. Request a fresh one
           and we&apos;ll email you a new link.
         </p>
-        <div className="mt-6">
+        <div className="mt-8">
           <Link
             href="/forgot-password"
             data-testid="update-password-request-new-link"
-            className="block w-full text-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            className={AUTH_PRIMARY_CLS}
+            style={authPrimaryStyle()}
           >
             Request a new link
           </Link>
         </div>
-      </Card>
+      </>
     );
   }
 
   return (
-    <Card>
-      <Brand />
-      <h1 className="mt-6 text-2xl font-semibold text-center" style={{ color: '#13294B' }}>
+    <>
+      <AuthWordmark size="md" />
+      <h1 className={`mt-9 text-center ${AUTH_TITLE_CLS}`}>
         Set a new password
       </h1>
-      <p className="mt-1 text-sm text-gray-500 text-center">
+      <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
         You&apos;re resetting the password for{' '}
-        <span className="font-medium text-gray-700">{email}</span>.
+        <span className="font-semibold text-white">{email}</span>.
       </p>
 
       {error && (
-        <div className="mt-5 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700" role="alert">
+        <div className={`mt-6 ${AUTH_ERROR_CLS}`} role="alert">
           {error}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+      <form onSubmit={handleSubmit} className="mt-8 space-y-4" noValidate>
         <div>
-          <label htmlFor="up-password" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="up-password" className={AUTH_LABEL_CLS}>
             New password
           </label>
           <input
@@ -180,13 +197,13 @@ export default function UpdatePasswordForm({ email }: Props) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             data-testid="update-password-new"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
+            className={AUTH_INPUT_CLS}
             placeholder="At least 8 characters"
           />
         </div>
 
         <div>
-          <label htmlFor="up-confirm" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="up-confirm" className={AUTH_LABEL_CLS}>
             Confirm password
           </label>
           <input
@@ -198,7 +215,7 @@ export default function UpdatePasswordForm({ email }: Props) {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             data-testid="update-password-confirm"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
+            className={AUTH_INPUT_CLS}
             placeholder="Repeat password"
           />
         </div>
@@ -207,30 +224,12 @@ export default function UpdatePasswordForm({ email }: Props) {
           type="submit"
           disabled={pending.disabled}
           data-testid="update-password-submit"
-          className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+          className={AUTH_PRIMARY_CLS}
+          style={authPrimaryStyle(pending.disabled)}
         >
           {pending.showLabel ? 'Updating…' : 'Update password'}
         </button>
       </form>
-    </Card>
-  );
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8">
-      {children}
-    </div>
-  );
-}
-
-function Brand() {
-  return (
-    <div className="text-center">
-      <Link href="/" className="inline-block text-2xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-        <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-      </Link>
-    </div>
+    </>
   );
 }
