@@ -48,7 +48,7 @@ type Props = {
 
 const INPUT_CLS =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
-  'focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]';
+  'focus:border-[var(--portal-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--portal-accent)]';
 
 export default function TeamSection({ practiceId, members, actions }: Props) {
   const router = useRouter();
@@ -104,7 +104,7 @@ export default function TeamSection({ practiceId, members, actions }: Props) {
       className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm p-5 space-y-4"
     >
       <div className="flex items-center justify-between gap-3">
-        <h2 id="branch-team-heading" className="text-sm font-semibold" style={{ color: '#13294B' }}>
+        <h2 id="branch-team-heading" className="text-sm font-semibold" style={{ color: 'var(--portal-ink)' }}>
           Team
         </h2>
         {!adding && (
@@ -113,7 +113,7 @@ export default function TeamSection({ practiceId, members, actions }: Props) {
             onClick={() => { setAdding(true); setFlashErr(null); setFlashOk(null); }}
             data-testid="brand-add-team-member"
             className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
           >
             + Add a team member
           </button>
@@ -374,7 +374,7 @@ function TeamRow({
                 disabled={isPending || wouldDemoteLastAdmin}
                 data-testid={`team-save-${member.memberId}`}
                 className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
               >
                 {isPending ? 'Saving…' : 'Save'}
               </button>
@@ -387,7 +387,7 @@ function TeamRow({
                   onClick={onEdit}
                   data-testid={`team-edit-${member.memberId}`}
                   className="text-xs font-semibold underline underline-offset-2"
-                  style={{ color: '#13294B' }}
+                  style={{ color: 'var(--portal-ink)' }}
                 >
                   Edit
                 </button>

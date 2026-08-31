@@ -419,7 +419,7 @@ export default function CounterSessionForm({
                         // input above is still selectable by hand.
                       }
                     }}
-                    className="flex-none rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-medium text-white"
+                    className="flex-none rounded-lg bg-[var(--portal-ink)] px-3 py-1.5 text-xs font-medium text-white"
                   >
                     {linkCopied ? 'Copied' : 'Copy'}
                   </button>
@@ -431,7 +431,7 @@ export default function CounterSessionForm({
         <button
           type="button"
           onClick={handleStartNext}
-          className="inline-flex items-center justify-center rounded-lg bg-[#13294B] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow"
+          className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow"
         >
           Start next patient
         </button>
@@ -508,7 +508,7 @@ export default function CounterSessionForm({
               key={opt.value}
               data-testid={`pos-delivery-${opt.value}`}
               className={`flex-1 cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                delivery === opt.value ? 'border-[#13294B] bg-[#F4F7FC]' : 'border-gray-300'
+                delivery === opt.value ? 'border-[var(--portal-ink)] bg-[var(--portal-wash)]' : 'border-gray-300'
               }`}
             >
               <input
@@ -581,7 +581,7 @@ export default function CounterSessionForm({
       <button
         type="submit"
         disabled={isPending}
-        className="w-full inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
+        className="w-full inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
       >
         {delivery === 'email'
           ? (isPending ? 'Sending…' : 'Email the bill')

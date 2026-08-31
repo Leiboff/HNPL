@@ -76,7 +76,13 @@
   --portal-sheet:      #F4F7F8;
   --portal-wash:       #F1F5F6;
   --portal-hairline:   #EEF2F5;
+  /* Two border weights, and only two. --line is the one you can see: a
+   * control track, a toggle's off state, a dot. --line-soft is the quiet
+   * edge of a card or an input. They are 13 points apart, which reads as
+   * a deliberate difference at the length of a card border and as noise
+   * anywhere else — so a third weight is drift, not a new idea. */
   --portal-line:       #D8DEE8;
+  --portal-line-soft:  #E5E9F0;
   --portal-ink:        var(--brand-navy);
   --portal-ink-2:      #42546F;
   --portal-muted:      #5F6D85;
@@ -100,6 +106,7 @@
   --color-portal-wash:       var(--portal-wash);
   --color-portal-hairline:   var(--portal-hairline);
   --color-portal-line:       var(--portal-line);
+  --color-portal-line-soft:  var(--portal-line-soft);
   --color-portal-ink:        var(--portal-ink);
   --color-portal-ink-2:      var(--portal-ink-2);
   --color-portal-muted:      var(--portal-muted);

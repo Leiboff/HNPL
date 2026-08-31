@@ -109,7 +109,7 @@ export default function RevenueClient({
         <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
           Net to provider (after commission)
         </p>
-        <p className="mt-2 text-3xl font-semibold" style={{ color: '#13294B' }} data-testid="revenue-headline">
+        <p className="mt-2 text-3xl font-semibold" style={{ color: 'var(--portal-ink)' }} data-testid="revenue-headline">
           {formatRand(summary.totalNet)}
         </p>
         <p className="mt-1 text-xs text-gray-500">
@@ -168,7 +168,7 @@ function BreakdownTable({
                   {r.count} active plan{r.count === 1 ? '' : 's'}
                 </p>
               </div>
-              <p className="text-sm font-semibold" style={{ color: '#13294B' }}>
+              <p className="text-sm font-semibold" style={{ color: 'var(--portal-ink)' }}>
                 {formatRand(r.net)}
               </p>
             </li>

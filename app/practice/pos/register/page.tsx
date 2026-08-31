@@ -15,7 +15,7 @@ export default function RegisterTillPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+            <span style={{ color: 'var(--portal-ink)' }}>better</span><span style={{ color: 'var(--portal-accent)' }}>now</span>
           </span>
           <p className="mt-2 text-sm text-gray-500">Register this till</p>
         </div>

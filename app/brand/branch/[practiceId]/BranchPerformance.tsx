@@ -45,11 +45,11 @@ export default function BranchPerformance({
         <p
           id="branch-performance-heading"
           className="text-xs font-semibold uppercase tracking-widest"
-          style={{ color: '#13294B', opacity: 0.55 }}
+          style={{ color: 'var(--portal-ink)', opacity: 0.55 }}
         >
           {branchName} — active plans
         </p>
-        <p className="text-3xl font-semibold mt-2" style={{ color: '#13294B' }} data-testid="branch-hero-total">
+        <p className="text-3xl font-semibold mt-2" style={{ color: 'var(--portal-ink)' }} data-testid="branch-hero-total">
           {formatRand(totalNet)}
         </p>
         <p className="text-xs text-gray-500 mt-1">
@@ -60,7 +60,7 @@ export default function BranchPerformance({
       <BrandMonthlyChart points={monthly} />
 
       <div>
-        <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#13294B', opacity: 0.55 }}>
+        <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: 'var(--portal-ink)', opacity: 0.55 }}>
           By doctor
         </p>
         {sortedDoctors.length === 0 ? (
@@ -75,7 +75,7 @@ export default function BranchPerformance({
                     {d.count} active {d.count === 1 ? 'plan' : 'plans'}
                   </p>
                 </div>
-                <p className="text-sm font-semibold whitespace-nowrap" style={{ color: '#13294B' }}>
+                <p className="text-sm font-semibold whitespace-nowrap" style={{ color: 'var(--portal-ink)' }}>
                   {formatRand(d.net)}
                 </p>
               </li>

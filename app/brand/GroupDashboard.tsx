@@ -174,7 +174,7 @@ export default function GroupDashboard({
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Revenue</h2>
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--portal-ink)' }}>Revenue</h2>
         <p className="text-sm text-gray-500 mt-1">
           Revenue across every practice you run. Per-doctor performance is below; tap a practice
           in the payouts list above to open its own dashboard.
@@ -189,11 +189,11 @@ export default function GroupDashboard({
         <p
           id="group-revenue-hero"
           className="text-xs font-semibold uppercase tracking-widest"
-          style={{ color: '#13294B', opacity: 0.55 }}
+          style={{ color: 'var(--portal-ink)', opacity: 0.55 }}
         >
           Group revenue — active plans
         </p>
-        <p className="text-3xl font-semibold mt-2" style={{ color: '#13294B' }} data-testid="group-hero-total">
+        <p className="text-3xl font-semibold mt-2" style={{ color: 'var(--portal-ink)' }} data-testid="group-hero-total">
           {formatRand(summary.totalNet)}
         </p>
         <p className="text-xs text-gray-500 mt-1">
@@ -254,7 +254,7 @@ export default function GroupDashboard({
                     rangeMonths === m ? 'text-white' : 'text-gray-500'
                   }`}
                   style={rangeMonths === m
-                    ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }
+                    ? { background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }
                     : {}}
                 >
                   {m}m
@@ -287,7 +287,7 @@ export default function GroupDashboard({
         <h2
           id="group-doctors-heading"
           className="text-xs font-semibold uppercase tracking-widest"
-          style={{ color: '#13294B', opacity: 0.55 }}
+          style={{ color: 'var(--portal-ink)', opacity: 0.55 }}
         >
           By doctor
         </h2>
@@ -305,7 +305,7 @@ export default function GroupDashboard({
                     {d.count} active {d.count === 1 ? 'plan' : 'plans'}
                   </p>
                 </div>
-                <p className="text-sm font-semibold whitespace-nowrap" style={{ color: '#13294B' }}>
+                <p className="text-sm font-semibold whitespace-nowrap" style={{ color: 'var(--portal-ink)' }}>
                   {formatRand(d.net)}
                 </p>
               </li>

@@ -68,12 +68,12 @@ type Props = {
 
 // ─── Primitive UI helpers ─────────────────────────────────────────────────────
 
-const INPUT_CLS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#15A89E]/30 focus:border-[#15A89E] transition-colors';
+const INPUT_CLS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/30 focus:border-[var(--portal-accent)] transition-colors';
 const SELECT_CLS = INPUT_CLS;
 
 function RolePill({ role }: { role: 'admin' | 'provider' }) {
   return role === 'provider'
-    ? <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[#13294B] text-white">Doctor / Practitioner</span>
+    ? <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-[var(--portal-ink)] text-white">Doctor / Practitioner</span>
     : <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">Admin staff</span>;
 }
 
@@ -383,7 +383,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="font-semibold text-gray-900">{name}</p>
                 {opts.isMe && (
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[#15A89E] bg-[#15A89E]/10 rounded-full px-2 py-0.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--portal-accent)] bg-[var(--portal-accent)]/10 rounded-full px-2 py-0.5">
                     You
                   </span>
                 )}
@@ -405,7 +405,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               {isManager && (
                 <button
                   onClick={() => isEditing ? closeEdit() : openEdit(m)}
-                  className="text-xs font-medium text-[#15A89E] hover:text-[#13294B] transition-colors px-2 py-1 rounded-lg hover:bg-[#15A89E]/10"
+                  className="text-xs font-medium text-[var(--portal-accent)] hover:text-[var(--portal-ink)] transition-colors px-2 py-1 rounded-lg hover:bg-[var(--portal-accent)]/10"
                 >
                   {isEditing ? 'Cancel' : 'Edit'}
                 </button>
@@ -415,7 +415,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                 <button
                   onClick={() => setInvitingId(isInviting ? null : m.id)}
                   data-testid="invite-login-toggle"
-                  className="text-xs font-medium text-[#15A89E] hover:text-[#13294B] transition-colors px-2 py-1 rounded-lg hover:bg-[#15A89E]/10"
+                  className="text-xs font-medium text-[var(--portal-accent)] hover:text-[var(--portal-ink)] transition-colors px-2 py-1 rounded-lg hover:bg-[var(--portal-accent)]/10"
                 >
                   {isInviting ? 'Cancel invite' : 'Give login'}
                 </button>
@@ -613,7 +613,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
             onClick={() => handleSaveEdit(m)}
             disabled={editLoading || wouldLoseLastManager}
             className="px-5 py-2 text-white text-sm font-semibold rounded-lg disabled:opacity-50 transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
           >
             {editLoading ? 'Saving…' : 'Save changes'}
           </button>
@@ -651,7 +651,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
               onClick={() => { setShowAddProvider(true); setShowAdd(false); closeEdit(); setConfirmingId(null); }}
               data-testid="add-provider-toggle"
               className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
             >
               + Add practitioner
             </button>
@@ -659,7 +659,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
           {isManager && !showAdd && (
             <button
               onClick={() => { setShowAdd(true); setShowAddProvider(false); closeEdit(); setConfirmingId(null); }}
-              className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-semibold text-[#13294B] transition-colors hover:bg-gray-50 hover:border-gray-400"
+              className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-semibold text-[var(--portal-ink)] transition-colors hover:bg-gray-50 hover:border-gray-400"
             >
               + Invite team member
             </button>
@@ -759,7 +759,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                     <button
                       onClick={() => { setShowAdd(true); closeEdit(); setConfirmingId(null); }}
                       data-testid="admin-staff-empty-add"
-                      className="mt-3 inline-flex rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-[#13294B] transition-colors hover:bg-gray-100 hover:border-gray-400"
+                      className="mt-3 inline-flex rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-[var(--portal-ink)] transition-colors hover:bg-gray-100 hover:border-gray-400"
                     >
                       Add your first admin staff member
                     </button>

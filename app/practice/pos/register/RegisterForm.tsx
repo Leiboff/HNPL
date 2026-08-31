@@ -92,7 +92,7 @@ export default function RegisterForm({ redeemDeviceRegistrationCode }: Props) {
       <button
         type="submit"
         disabled={isPending || code.length !== 8 || trimmedName.length === 0}
-        className="w-full inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
+        className="w-full inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
       >
         {isPending ? 'Registering…' : 'Register this till'}
       </button>

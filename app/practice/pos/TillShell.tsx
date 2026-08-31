@@ -165,7 +165,7 @@ export default function TillShell({
           <button
             type="submit"
             disabled={unlocking || pin.length < 4}
-            className="w-full inline-flex items-center justify-center rounded-lg bg-[#13294B] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
+            className="w-full inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] px-6 py-3 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
           >
             {unlocking ? 'Unlocking…' : 'Unlock'}
           </button>
@@ -183,7 +183,7 @@ export default function TillShell({
       <header className="bg-white border-b border-gray-200">
         <div className="mx-auto max-w-3xl px-6 py-4">
           <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+            <span style={{ color: 'var(--portal-ink)' }}>better</span><span style={{ color: 'var(--portal-accent)' }}>now</span>
           </span>
           <span className="ml-2 text-sm text-gray-400">— {practiceName} · Counter</span>
         </div>

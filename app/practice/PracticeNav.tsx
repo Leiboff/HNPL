@@ -89,7 +89,7 @@ export default function PracticeNav({
               className={[
                 'px-3 py-2 text-sm font-medium rounded-lg transition-colors',
                 active
-                  ? 'bg-[#13294B]/10 text-[#13294B]'
+                  ? 'bg-[var(--portal-ink)]/10 text-[var(--portal-ink)]'
                   : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
               ].join(' ')}
             >

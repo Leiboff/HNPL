@@ -49,7 +49,7 @@ export default async function BrandGroupSettingsPage() {
     <BrandShell brandName={(group.name as string) ?? null} brandCount={1}>
       <div className="max-w-xl space-y-6">
         <header>
-          <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Brand settings</h2>
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--portal-ink)' }}>Brand settings</h2>
           <p className="text-sm text-gray-500 mt-1">
             The name and logo your patients see across your practices.
           </p>

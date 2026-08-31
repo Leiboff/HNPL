@@ -32,7 +32,7 @@ const EMPTY: AddProviderDraft = { firstName: '', lastName: '', specialty: '', hp
 
 const INPUT_CLS =
   'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
-  'focus:outline-none focus:ring-2 focus:ring-[#15A89E]/30 focus:border-[#15A89E] transition-colors';
+  'focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/30 focus:border-[var(--portal-accent)] transition-colors';
 
 export default function AddProviderForm({
   onSubmit,
@@ -131,7 +131,7 @@ export default function AddProviderForm({
           type="submit"
           disabled={loading || !complete}
           className="rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 transition-opacity"
-          style={{ backgroundColor: '#13294B' }}
+          style={{ backgroundColor: 'var(--portal-ink)' }}
         >
           {loading ? 'Adding…' : 'Add practitioner'}
         </button>

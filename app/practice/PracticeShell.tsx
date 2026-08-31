@@ -51,7 +51,7 @@ export default function PracticeShell({
   brandPracticeCount = 0,
 }: Props) {
   return (
-    <div className="min-h-screen bg-[#f7fbfb]">
+    <div className="min-h-screen bg-background">
       <PracticeHeader
         practiceName={practiceName}
         practiceId={practiceId}

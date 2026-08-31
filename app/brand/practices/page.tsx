@@ -55,7 +55,7 @@ export default async function BrandPracticesPage() {
       brandCount={viewer.brands.length}
     >
       <header>
-        <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Practices</h2>
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--portal-ink)' }}>Practices</h2>
         <p className="text-sm text-gray-500 mt-1">
           Every practice in your brand and how far its setup has got. Open a practice to
           finish anything outstanding.

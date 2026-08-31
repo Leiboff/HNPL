@@ -148,6 +148,20 @@ describe('the portal text ramp is legible on the grounds it is used on', () => {
     expect(block).toMatch(/DECORATION ONLY/);
   });
 
+  it('there are exactly two border weights, and --line is the darker one', () => {
+    // app/practice carried #E5E9F0 for card and input edges while the patient
+    // portal used #D8DEE8 for control tracks. Both survive, named by role, so
+    // that the difference is a decision someone can read — but the ordering
+    // is pinned, because two tokens whose values crossed over would be worse
+    // than one.
+    expect(relativeLuminance(token('portal-line-soft')))
+      .toBeGreaterThan(relativeLuminance(token('portal-line')));
+    // And both stay lighter than the lightest text step, or they are not
+    // borders any more.
+    expect(relativeLuminance(token('portal-line')))
+      .toBeGreaterThan(relativeLuminance(token('portal-faint')));
+  });
+
   it('the ramp is monotonic — each step is lighter than the one before', () => {
     const steps = ['portal-ink', 'portal-ink-2', 'portal-muted', 'portal-faint']
       .map(n => relativeLuminance(token(n)));
@@ -180,16 +194,56 @@ describe('the portal text ramp is legible on the grounds it is used on', () => {
 const ALLOWED_HEX = new Set([
   '#FFFFFF',                                             // white
   // Overdue / failed / declined
-  '#B42318', '#8A1F1F', '#7A1F1F', '#8A2B22', '#FF6B5A', '#FEF6F5', '#FCEAEA',
+  '#B42318', '#8A1F1F', '#7A1F1F', '#8A2B22', '#E07A7A', '#FF6B5A', '#FEF6F5', '#FCEAEA',
   // Attention / pending amber
-  '#B45309', '#8A5A11', '#F5A524', '#F59E0B', '#F5D49A', '#FBE5C8', '#EDE0C6',
+  '#B45309', '#8A5A11', '#C8841C', '#F5A524', '#F59E0B', '#F5D49A', '#FBE5C8', '#EDE0C6',
   // Paid / success green
-  '#1E7A45', '#16A34A', '#059669', '#F0FDF4', '#E7F6EC',
+  '#1E7A45', '#1E9E55', '#16A34A', '#059669', '#047857', '#F0FDF4', '#E7F6EC',
   // Processing / due today / upcoming — the info-blue status pair. Shares a
-  // hue with brand navy, which is why the guard below is an allowlist and
-  // not a hue test: no classifier can tell these from the brand.
+  // hue with brand navy, which is why this guard is an allowlist and not a
+  // hue test: no classifier can tell these from the brand.
   '#EAF1FB', '#2B5FA8',
+  // Print-document greys are NOT here — see LITERAL_BY_NECESSITY.
 ]);
+
+// ─── A finding this list makes visible ─────────────────────────────────
+//
+// Written down rather than fixed, because it is a design decision and not a
+// refactor. Across app/patient, app/practice and app/brand the state colours
+// have drifted the same way the brand ones did:
+//
+//   greens  #047857  #059669  #16A34A  #1E7A45  #1E9E55   — five "success"
+//   ambers  #8A5A11  #B45309  #C8841C  #F59E0B  #F5A524   — five "attention"
+//   reds    #7A1F1F  #8A1F1F  #8A2B22  #B42318  #E07A7A  #FF6B5A
+//
+// Nobody chose five greens. Each surface picked one when it needed one, the
+// same way each surface picked a navy. Consolidating them means deciding
+// which green IS the success green — including its contrast on the sheet, on
+// white and on its own tint background — and then accepting a visible change
+// on every status pill in the app. That is a deliberate piece of work with a
+// design review attached, not a mechanical pass, so it is recorded here
+// instead of being smuggled into a palette migration.
+//
+// Until then, the allowlist at least makes a SIXTH green impossible to add
+// without noticing.
+
+// Every surface that runs on the light portal vocabulary. The dark auth
+// screens are covered by app/(auth)/login/login-auth-surface.test.ts and are
+// deliberately not in this list.
+const PORTAL_ROOTS = ['app/patient', 'app/practice', 'app/brand'];
+
+/**
+ * Files whose colours must stay literal, with the reason. An entry here is a
+ * claim that CSS custom properties genuinely cannot reach the code — not that
+ * migrating it was inconvenient.
+ */
+const LITERAL_BY_NECESSITY: Record<string, string> = {
+  // Builds a complete standalone `<!DOCTYPE html>` document for the print /
+  // export window. That document has no :root of ours, so a var() in it
+  // resolves to nothing and the export would render colourless. Its React
+  // JSX was migrated; only the embedded stylesheet string is exempt.
+  'app/practice/BillsBlock.tsx': 'standalone print document',
+};
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap(entry => {
@@ -199,11 +253,27 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-describe('no raw hex survives in the patient portal', () => {
-  const files = sourceFiles('app/patient');
+describe('no raw hex survives on the portal surfaces', () => {
+  const files = PORTAL_ROOTS.flatMap(sourceFiles)
+    .filter(f => !(f in LITERAL_BY_NECESSITY));
 
-  it('finds the portal source (a broken walk would pass everything trivially)', () => {
-    expect(files.length).toBeGreaterThan(40);
+  it('finds all three portal trees (a broken walk would pass everything trivially)', () => {
+    expect(files.length).toBeGreaterThan(100);
+    for (const root of PORTAL_ROOTS) {
+      expect(files.some(f => f.startsWith(root + '/')), `${root} contributed no files`).toBe(true);
+    }
+  });
+
+  it('the print document keeps its literals and takes no tokens', () => {
+    // Both halves matter: a var() reaching that string is a silent bug (it
+    // renders colourless), and losing its literals is the same bug arriving
+    // by deletion.
+    const src = readFileSync('app/practice/BillsBlock.tsx', 'utf8');
+    const doc = src.slice(src.indexOf('<!DOCTYPE html>'));
+    expect(doc).toMatch(/#6b7280/);
+    expect(doc).not.toMatch(/var\(--portal|var\(--brand/);
+    // ...while the component's own JSX is on the tokens like anything else.
+    expect(src.slice(0, src.indexOf('<!DOCTYPE html>'))).not.toMatch(/#13294B/i);
   });
 
   it.each(files)('%s uses tokens for every brand and ramp colour', file => {

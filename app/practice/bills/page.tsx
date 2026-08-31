@@ -155,7 +155,7 @@ export default async function PracticeBillsPage({
       <main className="px-4 sm:px-6 py-6 sm:py-10 space-y-6">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-semibold" style={{ color: '#13294B' }}>
+            <h1 className="text-xl sm:text-2xl font-semibold" style={{ color: 'var(--portal-ink)' }}>
               Bills
             </h1>
             <p className="mt-1 text-sm text-gray-500">
