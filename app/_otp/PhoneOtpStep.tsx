@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import OtpInput, { OTP_LENGTH } from '@/components/OtpInput';
+import OtpInput, { OTP_LENGTH, type OtpTone } from '@/components/OtpInput';
 
 // ─── PhoneOtpStep ────────────────────────────────────────────────────────
 //
@@ -26,7 +26,53 @@ import OtpInput, { OTP_LENGTH } from '@/components/OtpInput';
 //   { ok: true } | { ok: false; code: string }
 // where `code` is the stable coded-error string from the action.
 
+// ── Two grounds ────────────────────────────────────────────────────────
+//
+// Checkout and the patient's own profile ask for the code on a white
+// card; signup and the /onboarding phone step ask for it on the navy
+// auth surface. `tone` swaps the palette and nothing else — same state
+// machine, same copy, same auto-send and cooldown — so the two cannot
+// drift into being two different steps. Defaults to 'light'.
+//
+// The dark values are the .auth-surface tokens (app/globals.css) and the
+// shared control vocabulary in app/_components/authFormStyles.ts, which
+// is why the dark branch can only be rendered inside <AuthSurface>.
+
 const OTP_RESEND_COOLDOWN_MS = 30 * 1000;
+
+type ToneSet = {
+  body:     string;   // the "we sent a code to…" line
+  strong:   string;   // the number inside it
+  error:    string;   // the inline OTP error
+  meta:     string;   // sending / countdown / expiry copy
+  metaBold: string;   // the countdown seconds
+  resend:   string;   // the resend action
+  change:   string;   // the "change number" action
+  card:     string;   // the default (no-shell) card chrome
+};
+
+const TONES: Record<OtpTone, ToneSet> = {
+  light: {
+    body:     'text-[15px] leading-[1.6] text-[#6B7C93]',
+    strong:   'font-semibold tabular-nums text-[#13294B]',
+    error:    'text-center text-xs text-[#D14141]',
+    meta:     'text-[14px] text-[#7A8AA0]',
+    metaBold: 'font-semibold tabular-nums text-[#41556F]',
+    resend:   'text-[14px] font-semibold text-[#13294B] hover:underline focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors',
+    change:   'rounded-full bg-[#F1F5F6] px-5 py-[11px] text-[14px] font-semibold text-[#41556F] transition-colors focus:outline-none focus-visible:underline disabled:opacity-60',
+    card:     'rounded-[20px] border border-[#E5E9F0] bg-white p-6 sm:p-8 shadow-[0_1px_2px_rgba(15,31,58,0.04)] space-y-5',
+  },
+  onDark: {
+    body:     'text-[15px] leading-[1.6] text-[var(--auth-muted)]',
+    strong:   'font-semibold tabular-nums text-white',
+    error:    'text-center text-xs text-red-300',
+    meta:     'text-[14px] text-[var(--auth-dim)]',
+    metaBold: 'font-semibold tabular-nums text-white',
+    resend:   'text-[14px] font-semibold text-[var(--auth-accent)] underline-offset-[3px] hover:underline focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors',
+    change:   'rounded-full border-[1.5px] border-[var(--auth-edge-strong)] bg-[var(--auth-fill)] px-5 py-[11px] text-[14px] font-semibold text-white transition-colors hover:bg-[var(--auth-fill-hover)] focus:outline-none focus-visible:underline disabled:opacity-60',
+    card:     'rounded-[20px] border border-[var(--auth-hairline)] bg-[var(--auth-fill)] p-6 sm:p-8 space-y-5',
+  },
+};
 
 export type PhoneOtpRequestResult =
   | { ok: true }
@@ -51,6 +97,8 @@ type Props = {
    *  inside its StepShell; signup page passes nothing and gets the default
    *  card chrome. */
   shell?:         (body: ReactNode, actions: ReactNode) => ReactNode;
+  /** Which ground this step is rendered on. See the note above. */
+  tone?:          OtpTone;
 };
 
 // Coded errors from both keying paths share the same vocabulary. We
@@ -84,7 +132,9 @@ export default function PhoneOtpStep({
   onVerified,
   onChangeNumber,
   shell,
+  tone = 'light',
 }: Props) {
+  const t = TONES[tone];
   const [code,           setCode]           = useState('');
   const [otpError,       setOtpError]       = useState<string | null>(null);
   const [sending,        setSending]        = useState(false);
@@ -189,9 +239,9 @@ export default function PhoneOtpStep({
 
   const body = (
     <>
-      <p className="text-[15px] leading-[1.6]" style={{ color: '#6B7C93' }}>
+      <p className={t.body}>
         We sent a 6-digit code to{' '}
-        <span className="font-semibold tabular-nums" style={{ color: '#13294B' }}>{phoneDisplay || 'your number'}</span>.
+        <span className={t.strong}>{phoneDisplay || 'your number'}</span>.
       </p>
 
       <OtpInput
@@ -201,34 +251,34 @@ export default function PhoneOtpStep({
         disabled={verifying || smsUnavailable}
         hasError={!!otpError}
         autoFocus
+        tone={tone}
       />
 
       {otpError && (
-        <p role="alert" className="text-center text-xs" style={{ color: '#D14141' }}>{otpError}</p>
+        <p role="alert" className={t.error}>{otpError}</p>
       )}
 
       <div className="flex flex-col items-center gap-2 text-center">
         {!smsUnavailable && (
           sending ? (
-            <span className="text-[14px]" style={{ color: '#7A8AA0' }}>Sending code…</span>
+            <span className={t.meta}>Sending code…</span>
           ) : remaining > 0 ? (
-            <span className="text-[14px]" style={{ color: '#7A8AA0' }}>
+            <span className={t.meta}>
               Didn’t arrive? Resend in{' '}
-              <span className="font-semibold tabular-nums" style={{ color: '#41556F' }}>{remaining}s</span>
+              <span className={t.metaBold}>{remaining}s</span>
             </span>
           ) : (
             <button
               type="button"
               onClick={handleResend}
               disabled={verifying}
-              className="text-[14px] font-semibold hover:underline focus:outline-none focus-visible:underline disabled:opacity-60 transition-colors"
-              style={{ color: '#13294B' }}
+              className={t.resend}
             >
               Didn’t arrive? Resend code
             </button>
           )
         )}
-        <p className="text-[12px]" style={{ color: '#93A2B4' }}>
+        <p className={tone === 'onDark' ? 'text-[12px] text-[var(--auth-dim)]' : 'text-[12px] text-[#93A2B4]'}>
           The code expires in 10 minutes.
         </p>
       </div>
@@ -241,8 +291,7 @@ export default function PhoneOtpStep({
         type="button"
         onClick={onChangeNumber}
         disabled={verifying}
-        className="rounded-full px-5 py-[11px] text-[14px] font-semibold transition-colors focus:outline-none focus-visible:underline disabled:opacity-60"
-        style={{ color: '#41556F', background: '#F1F5F6' }}
+        className={t.change}
       >
         ← Change number
       </button>
@@ -254,7 +303,7 @@ export default function PhoneOtpStep({
   if (shell) return <>{shell(body, actions)}</>;
 
   return (
-    <div className="rounded-[20px] border border-[#E5E9F0] bg-white p-6 sm:p-8 shadow-[0_1px_2px_rgba(15,31,58,0.04)] space-y-5">
+    <div className={t.card}>
       {body}
       {actions}
     </div>

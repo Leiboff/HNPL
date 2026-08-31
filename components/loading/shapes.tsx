@@ -17,6 +17,8 @@
  */
 
 import {
+  SKELETON_ON_DARK,
+  SKELETON_ON_DARK_FAINT,
   SkeletonRegion,
   SkeletonCard,
   SkeletonLine,
@@ -123,16 +125,14 @@ export function DetailShape({
 }
 
 /**
- * AUTH CARD — a narrow centred card on the tinted auth background.
- * /login, /signup/patient, /update-password, /verify-email, /verify-phone,
- * /auth/confirmed.
+ * AUTH CARD — a narrow centred card on the tinted LIGHT auth background.
  *
- * A separate shape from FormShape because the auth surfaces are not pages
- * with a heading and a form on them — they are a single centred card on a
- * gradient wash, and using the wide page shape here would flash a
- * full-width layout that never appears. The background and radial
- * gradients are copied from the real shells so only the card contents are
- * grey.
+ * What remains on the light ground: /dev/passkey-smoke. Everything else
+ * that used to be here — /login, /signup, /verify-email, /verify-phone,
+ * /update-password, /auth/confirmed — moved to the navy auth surface and
+ * uses AuthSurfaceShape below. Kept rather than deleted because the
+ * light-card auth layout is still a real layout; if the last caller goes,
+ * so should this.
  */
 export function AuthCardShape({
   label = 'Loading',
@@ -161,6 +161,77 @@ export function AuthCardShape({
             <SkeletonLine w="w-64" h="h-3" className="mx-auto" />
           </div>
           <SkeletonFormFields fields={fields} />
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
+/**
+ * AUTH SURFACE — the account journey's own shape: no card, a centred
+ * wordmark, a title block and a stack of fields, directly on the navy.
+ * /verify-email, /verify-phone, /update-password, /auth/confirmed, the
+ * /onboarding steps, /signup/patient.
+ *
+ * A skeleton's whole job is to hold the shape of what is coming, and a
+ * white card that resolves into a navy screen does the opposite of that —
+ * it flashes the wrong app for as long as the server takes. The ground
+ * here is the same gradient AuthSurface paints (app/_components/
+ * AuthSurface.tsx); the grey atoms are inverted to white-at-alpha so
+ * they read as placeholders on it rather than as holes.
+ *
+ * `progress` adds the segmented step rail for the /onboarding fallbacks.
+ */
+export function AuthSurfaceShape({
+  label = 'Loading',
+  fields = 2,
+  progress = false,
+}: {
+  label?: string;
+  fields?: number;
+  progress?: boolean;
+}) {
+  return (
+    <SkeletonRegion
+      label={label}
+      className="flex min-h-screen flex-col px-5 py-12"
+      style={{
+        background: 'linear-gradient(180deg, #0E2140 0%, #13294B 100%)',
+        backgroundImage:
+          'radial-gradient(58% 44% at 86% 2%, rgba(21,168,158,.30), transparent 70%), '
+          + 'radial-gradient(52% 44% at 2% 92%, rgba(255,255,255,.10), transparent 72%), '
+          + 'linear-gradient(180deg, #0E2140 0%, #13294B 100%)',
+      }}
+    >
+      <div className="mx-auto w-full max-w-[420px] space-y-8">
+        <div className="flex justify-center">
+          <SkeletonLine w="w-40" h="h-8" fill={SKELETON_ON_DARK} />
+        </div>
+
+        {progress && (
+          <div className="space-y-2.5">
+            <SkeletonLine w="w-20" h="h-3" fill={SKELETON_ON_DARK} />
+            <div className="flex gap-[7px]">
+              {[0, 1, 2].map((i) => (
+                <SkeletonLine key={i} w="w-full" h="h-[5px]" fill={SKELETON_ON_DARK} className="flex-1" />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-2.5">
+          <SkeletonLine w="w-56" h="h-7" fill={SKELETON_ON_DARK} />
+          <SkeletonLine w="w-full" h="h-4" fill={SKELETON_ON_DARK_FAINT} />
+        </div>
+
+        <div className="space-y-4">
+          {Array.from({ length: fields }).map((_, i) => (
+            <div key={i} className="space-y-2">
+              <SkeletonLine w="w-24" h="h-3" fill={SKELETON_ON_DARK_FAINT} />
+              <SkeletonLine w="w-full" h="h-[52px]" fill={SKELETON_ON_DARK} radius="rounded-2xl" />
+            </div>
+          ))}
+          <SkeletonLine w="w-full" h="h-[54px]" fill={SKELETON_ON_DARK} radius="rounded-full" />
         </div>
       </div>
     </SkeletonRegion>

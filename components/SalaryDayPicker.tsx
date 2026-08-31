@@ -3,6 +3,51 @@
 import { useId, useMemo, useRef } from 'react';
 import { ALLOWED_SALARY_DAYS, isAllowedSalaryDay } from '@/lib/salaryDates';
 
+// ── Two grounds ────────────────────────────────────────────────────────
+//
+// The picker is asked for on a white card (checkout) and on the navy auth
+// surface (the /onboarding salary step). `tone` swaps the palette and
+// nothing else — same pills, same radiogroup, same keyboard model.
+// Defaults to 'light', the ground every pre-existing caller is on.
+//
+// The dark values are the .auth-surface tokens (app/globals.css), so the
+// dark branch has to be rendered inside <AuthSurface>.
+
+export type PickerTone = 'light' | 'onDark';
+
+type ToneSet = {
+  groupLabel: string;
+  selected:   string;
+  unselected: string;
+  disabled:   string;
+  badge:      string;
+  badgeOn:    string;
+  focus:      string;
+};
+
+const TONES: Record<PickerTone, ToneSet> = {
+  light: {
+    groupLabel: 'text-[14px] font-semibold text-[#13294B]',
+    selected:   'border-2 border-[#15A89E] bg-[#15A89E]/10 text-[#0F766E] font-semibold',
+    unselected: 'border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD] text-[#41556F] hover:border-[#CBD6E0]',
+    disabled:   'border-[1.5px] border-[#E2E8EE] bg-[#F1F5F6] text-[#8496AA] cursor-not-allowed',
+    badge:      'bg-gray-200 text-gray-700',
+    badgeOn:    'bg-[#15A89E]/15 text-[#0F766E]',
+    focus:      'focus-visible:ring-[#15A89E] focus-visible:ring-offset-2',
+  },
+  onDark: {
+    groupLabel: 'text-[13px] font-medium text-[var(--auth-muted)]',
+    selected:   'border-2 border-[var(--auth-accent)] bg-[var(--auth-accent-tint)] text-white font-semibold',
+    unselected: 'border-[1.5px] border-[var(--auth-edge)] bg-[var(--auth-fill-raised)] text-[var(--auth-muted)] hover:bg-[var(--auth-fill-hover)] hover:text-white',
+    disabled:   'border-[1.5px] border-[var(--auth-hairline)] bg-[var(--auth-fill)] text-[var(--auth-dim)] cursor-not-allowed',
+    badge:      'bg-white/10 text-[var(--auth-muted)]',
+    badgeOn:    'bg-[var(--auth-accent-tint)] text-[var(--auth-accent)]',
+    // ring-offset defaults to white, which would draw a white halo on the
+    // navy. Pin it to the ground's darkest stop instead.
+    focus:      'focus-visible:ring-[var(--auth-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0E2140]',
+  },
+};
+
 /**
  * Display label for a salary day. `1` and `31` get human-readable copy;
  * everything else gets a standard ordinal suffix.
@@ -30,6 +75,8 @@ type Props = {
   currentDay?: number | null;
   /** Optional id prefix for ARIA labelling. Auto-generated if omitted. */
   idPrefix?: string;
+  /** Which ground this sits on. See the note above. */
+  tone?: PickerTone;
 };
 
 export default function SalaryDayPicker({
@@ -37,7 +84,9 @@ export default function SalaryDayPicker({
   onChange,
   currentDay = null,
   idPrefix,
+  tone = 'light',
 }: Props) {
+  const t = TONES[tone];
   const autoId       = useId();
   const idBase       = idPrefix ?? autoId;
   const groupLabelId = `${idBase}-group-label`;
@@ -96,11 +145,7 @@ export default function SalaryDayPicker({
 
   return (
     <div>
-      <p
-        id={groupLabelId}
-        className="text-[14px] font-semibold"
-        style={{ color: '#13294B' }}
-      >
+      <p id={groupLabelId} className={t.groupLabel}>
         When is your salary usually paid?
       </p>
 
@@ -118,6 +163,7 @@ export default function SalaryDayPicker({
             selected={value === d}
             onSelect={() => onChange(d)}
             tabIndex={value === d ? 0 : -1}
+            tone={t}
             // With nine numeric days + "Last day" in a 4-col grid, the
             // 30th lands alone at the start of the last row; "Last day"
             // spans the remaining three columns to fill it cleanly.
@@ -135,6 +181,7 @@ export default function SalaryDayPicker({
             selected={value === currentDay}
             onSelect={grandfatheredActive ? () => onChange(currentDay) : undefined}
             tabIndex={value === currentDay ? 0 : -1}
+            tone={t}
             currentBadge
           />
         </div>
@@ -155,9 +202,11 @@ type PillProps = {
   currentBadge?: boolean;
   /** Span three grid columns ("Last day" in the 4-col layout). */
   wide?: boolean;
+  /** The resolved palette for the ground this picker sits on. */
+  tone: ToneSet;
 };
 
-function Pill({ day, selected, onSelect, tabIndex, currentBadge, wide }: PillProps) {
+function Pill({ day, selected, onSelect, tabIndex, currentBadge, wide, tone }: PillProps) {
   const disabled = !onSelect;
 
   // Colour-only state change — the primary CTA stays the only solid-teal
@@ -165,11 +214,7 @@ function Pill({ day, selected, onSelect, tabIndex, currentBadge, wide }: PillPro
   //   Selected:   2px teal border, teal tint, teal-dark 600 text, leading ✓
   //   Unselected: 1.5px hairline border, faint fill, body-slate text
   //   Disabled:   dimmed (grandfathered pill once user moves off it)
-  const stateClass = selected
-    ? 'border-2 border-[#15A89E] font-semibold'
-    : disabled
-      ? 'border-[1.5px] border-[#E2E8EE] bg-[#F1F5F6] text-[#8496AA] cursor-not-allowed'
-      : 'border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD] text-[#41556F] hover:border-[#CBD6E0]';
+  const stateClass = selected ? tone.selected : disabled ? tone.disabled : tone.unselected;
 
   const layoutClass = wide ? 'col-span-3' : '';
 
@@ -183,8 +228,7 @@ function Pill({ day, selected, onSelect, tabIndex, currentBadge, wide }: PillPro
       data-day={day}
       disabled={disabled}
       onClick={onSelect}
-      className={`${layoutClass} flex h-[46px] w-full items-center justify-center gap-2 rounded-[14px] text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2 ${stateClass}`}
-      style={selected ? { background: 'rgba(21,168,158,0.10)', color: '#0F766E' } : undefined}
+      className={`${layoutClass} flex h-[46px] w-full items-center justify-center gap-2 rounded-[14px] text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 ${tone.focus} ${stateClass}`}
     >
       {selected && (
         <svg
@@ -202,7 +246,7 @@ function Pill({ day, selected, onSelect, tabIndex, currentBadge, wide }: PillPro
       )}
       <span>{pillLabel(day)}</span>
       {currentBadge && (
-        <span className={`text-[10px] font-semibold uppercase tracking-wider rounded px-1.5 py-0.5 ${selected ? 'bg-[#15A89E]/15 text-[#0F766E]' : 'bg-gray-200 text-gray-700'}`}>
+        <span className={`text-[10px] font-semibold uppercase tracking-wider rounded px-1.5 py-0.5 ${selected ? tone.badgeOn : tone.badge}`}>
           current
         </span>
       )}

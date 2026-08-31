@@ -3,17 +3,40 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { resendConfirmation } from '@/app/auth/resend/actions';
+import AuthSurface from '@/app/_components/AuthSurface';
+import AuthWordmark from '@/app/_components/AuthWordmark';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_INPUT_CLS,
+  AUTH_PRIMARY_CLS,
+  AUTH_SECONDARY_CLS,
+  AUTH_TITLE_CLS,
+  AUTH_SUBTITLE_CLS,
+  AUTH_SUCCESS_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
-function CheckCircleIcon() {
+// ─── Email-confirmed landing (client) ──────────────────────────────────
+//
+// Two outcomes, one screen: the link worked, or it didn't. Both now sit
+// on the shared auth surface — this is the screen a patient lands on
+// straight from their inbox, mid-signup, and it used to be the one grey
+// gov-form-looking page in an otherwise navy journey.
+//
+// The old icons were drawn in #0F4C75, a blue that appears nowhere in the
+// brand palette (app/landing.css) and had drifted in from an earlier
+// design. Success is the brand accent; the failure state is the same
+// amber the rest of the journey warns in.
+
+function MailCheckIcon() {
   return (
     <svg
-      className="w-16 h-16"
+      className="h-8 w-8"
       fill="none"
       viewBox="0 0 24 24"
-      strokeWidth={1.5}
+      strokeWidth={1.6}
       stroke="currentColor"
       aria-hidden
-      style={{ color: '#0F4C75' }}
     >
       <path
         strokeLinecap="round"
@@ -27,10 +50,10 @@ function CheckCircleIcon() {
 function WarningIcon() {
   return (
     <svg
-      className="w-16 h-16 text-amber-400"
+      className="h-8 w-8"
       fill="none"
       viewBox="0 0 24 24"
-      strokeWidth={1.5}
+      strokeWidth={1.6}
       stroke="currentColor"
       aria-hidden
     >
@@ -40,6 +63,18 @@ function WarningIcon() {
         d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
       />
     </svg>
+  );
+}
+
+/** The round badge above the headline. Accent for success, amber for failure. */
+function StatusBadge({ tone, children }: { tone: 'accent' | 'amber'; children: React.ReactNode }) {
+  const cls = tone === 'accent'
+    ? 'border-[var(--auth-accent-edge)] bg-[var(--auth-accent-tint)] text-[var(--auth-accent)]'
+    : 'border-amber-300/30 bg-amber-400/[.10] text-amber-200';
+  return (
+    <div className={`mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border ${cls}`}>
+      {children}
+    </div>
   );
 }
 
@@ -72,98 +107,100 @@ export default function ConfirmedView({ destination }: { destination: string }) 
 
   if (state === 'loading') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-gray-200 border-t-[#0F4C75] animate-spin" />
-      </div>
+      <AuthSurface centred>
+        <div className="flex justify-center">
+          <div
+            className="h-8 w-8 animate-spin rounded-full border-[3px] border-[var(--auth-edge)] border-t-[var(--auth-accent)]"
+            aria-hidden
+          />
+        </div>
+      </AuthSurface>
     );
   }
 
   if (state === 'error') {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-200 p-10 text-center">
-          <div className="flex justify-center mb-6">
-            <WarningIcon />
-          </div>
-          <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+      <AuthSurface centred>
+        <AuthWordmark size="md" />
+
+        <div className="mt-9">
+          <StatusBadge tone="amber"><WarningIcon /></StatusBadge>
+          <h1 className={`text-center ${AUTH_TITLE_CLS}`}>
             Link expired or invalid
           </h1>
-          <p className="text-sm text-gray-500 mb-6">
+          <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
             This confirmation link has expired or has already been used.
             Please sign in, or sign up again to receive a new link.
           </p>
+        </div>
 
-          {/* Resend section */}
-          <div className="mb-6 text-left space-y-2">
-            <p className="text-sm font-medium text-gray-700">
-              Or enter your email to resend the confirmation link:
-            </p>
+        <div className="mt-8 space-y-3">
+          <div>
+            <label htmlFor="confirmed-resend-email" className={AUTH_LABEL_CLS}>
+              Or enter your email to resend the confirmation link
+            </label>
             <input
+              id="confirmed-resend-email"
               type="email"
               value={resendEmail}
               onChange={(e) => setResendEmail(e.target.value)}
-              placeholder="your@email.com"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="you@example.com"
+              className={AUTH_INPUT_CLS}
             />
-            {resendState === 'sent' && (
-              <p className="text-sm font-medium text-green-700">
-                If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={handleResend}
-              disabled={resendState === 'sending' || resendState === 'sent' || !resendEmail.trim()}
-              className="w-full rounded-xl px-6 py-3 text-sm font-semibold text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{ backgroundColor: '#0F4C75' }}
-            >
-              {resendState === 'sending'
-                ? 'Sending…'
-                : resendState === 'sent'
-                  ? 'Sent ✓'
-                  : 'Resend confirmation email'}
-            </button>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <Link
-              href="/login"
-              className="inline-flex items-center justify-center w-full rounded-xl px-6 py-3 text-sm font-semibold text-gray-700 border border-gray-300 hover:bg-gray-50 transition-colors"
-            >
-              Go to sign in
-            </Link>
-            <Link
-              href="/signup"
-              className="inline-flex items-center justify-center w-full rounded-xl border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              Sign up again
-            </Link>
-          </div>
+          {resendState === 'sent' && (
+            <p className={AUTH_SUCCESS_CLS}>
+              If that email needs confirming, we&apos;ve sent a new link. Please check your inbox.
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={resendState === 'sending' || resendState === 'sent' || !resendEmail.trim()}
+            className={AUTH_PRIMARY_CLS}
+            style={authPrimaryStyle(resendState !== 'idle' || !resendEmail.trim())}
+          >
+            {resendState === 'sending'
+              ? 'Sending…'
+              : resendState === 'sent'
+                ? 'Sent ✓'
+                : 'Resend confirmation email'}
+          </button>
         </div>
-      </div>
+
+        <div className="mt-8 flex flex-col gap-3 border-t border-[var(--auth-hairline)] pt-7">
+          <Link href="/login" className={AUTH_SECONDARY_CLS}>
+            Go to sign in
+          </Link>
+          <Link href="/signup" className={AUTH_SECONDARY_CLS}>
+            Sign up again
+          </Link>
+        </div>
+      </AuthSurface>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-200 p-10 text-center">
-        <div className="flex justify-center mb-6">
-          <CheckCircleIcon />
-        </div>
-        <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+    <AuthSurface centred>
+      <AuthWordmark size="md" />
+
+      <div className="mt-9">
+        <StatusBadge tone="accent"><MailCheckIcon /></StatusBadge>
+        <h1 className={`text-center ${AUTH_TITLE_CLS}`}>
           Email confirmed
         </h1>
-        <p className="text-sm text-gray-500 mb-8">
+        <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
           Your BetterNow account is ready.
         </p>
-        <Link
-          href={destination}
-          className="inline-flex items-center justify-center w-full rounded-xl px-6 py-3 text-sm font-semibold text-white transition-colors"
-          style={{ backgroundColor: '#0F4C75' }}
-        >
+      </div>
+
+      <div className="mt-9">
+        <Link href={destination} className={AUTH_PRIMARY_CLS} style={authPrimaryStyle()}>
           Continue to dashboard
         </Link>
       </div>
-    </div>
+    </AuthSurface>
   );
 }

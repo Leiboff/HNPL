@@ -4,7 +4,14 @@ import { useState } from 'react';
 import SalaryDayPicker from '@/components/SalaryDayPicker';
 import { saveSalaryDetails } from '@/lib/onboarding/actions';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
-import { INPUT_CLS, BUTTON_CLS } from '@/app/onboarding/formStyles';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_INPUT_CLS,
+  AUTH_PRIMARY_CLS,
+  AUTH_ERROR_CLS,
+  AUTH_HELP_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── Salary step (client) ──────────────────────────────────────────────
 //
@@ -23,6 +30,9 @@ import { INPUT_CLS, BUTTON_CLS } from '@/app/onboarding/formStyles';
 // auto-passes the credit check when ENABLE_CREDIT_CHECK is off. The
 // nextPath it returns is authoritative for where the patient goes next —
 // this component never hardcodes the following step.
+//
+// Styling comes from the shared auth vocabulary rather than a local set,
+// so this form is the same object as the sign-in form one screen back.
 
 type Props = {
   salaryDay:    number | null;
@@ -37,8 +47,6 @@ export default function SalaryStepClient({
   const [salaryAmount, setSalaryAmount] = useState(initialSalaryAmount != null ? String(initialSalaryAmount) : '');
   const [error,        setError]        = useState<string | null>(null);
   const [saving,       setSaving]       = useState(false);
-
-  const alreadySaved = initialSalaryDay != null && initialSalaryAmount != null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -74,17 +82,16 @@ export default function SalaryStepClient({
       className="flex flex-1 flex-col gap-6"
       data-testid="onboarding-salary-form"
     >
-      <SalaryDayPicker value={salaryDay} onChange={(d) => setSalaryDay(d)} />
+      <SalaryDayPicker value={salaryDay} onChange={(d) => setSalaryDay(d)} tone="onDark" />
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="salary-amount" className="text-[13px] font-medium" style={{ color: '#41556F' }}>
+      <div>
+        <label htmlFor="salary-amount" className={AUTH_LABEL_CLS}>
           Monthly income
         </label>
         <div className="relative">
           <span
             aria-hidden
-            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[16px]"
-            style={{ color: '#A8B4C2' }}
+            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[15px] text-[var(--auth-dim)]"
           >
             R
           </span>
@@ -99,16 +106,16 @@ export default function SalaryStepClient({
             onChange={(e) => setSalaryAmount(e.target.value)}
             data-testid="onboarding-salary-amount"
             placeholder="15,000"
-            className={INPUT_CLS + ' pl-8'}
+            className={AUTH_INPUT_CLS + ' pl-8'}
           />
         </div>
-        <p className="text-[12px] leading-[1.5]" style={{ color: '#8496AA' }}>
+        <p className={`mt-2 ${AUTH_HELP_CLS}`}>
           What you take home a month, before any instalments. Used for the affordability check.
         </p>
       </div>
 
       {error && (
-        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+        <p className={AUTH_ERROR_CLS} role="alert">
           {error}
         </p>
       )}
@@ -117,13 +124,10 @@ export default function SalaryStepClient({
         type="submit"
         disabled={saving}
         data-testid="onboarding-salary-submit"
-        className={BUTTON_CLS}
-        style={{
-          background: '#15A89E',
-          boxShadow: saving ? 'none' : '0 10px 22px -12px rgba(21,168,158,0.9)',
-        }}
+        className={`mt-auto ${AUTH_PRIMARY_CLS}`}
+        style={authPrimaryStyle(saving)}
       >
-        {saving ? 'Saving…' : alreadySaved ? 'Continue' : 'Continue'}
+        {saving ? 'Saving…' : 'Continue'}
       </button>
     </form>
   );

@@ -13,6 +13,12 @@ import {
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
 import { usePendingAction } from '@/components/loading/usePendingAction';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_PRIMARY_CLS,
+  authInputClass,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── PatientSignupForm — account-only ─────────────────────────────────
 //
@@ -51,22 +57,18 @@ type Props = {
   termsAccepted: boolean;
 };
 
-// Dark-surface field styling, identical to the email sign-in screen on
-// /login — same height, radius, fill, focus ring and label colour — so
-// the two halves of the auth flow are the same component vocabulary
-// rather than two designs that merely share a background.
-const INPUT_BASE = 'h-[52px] w-full rounded-2xl border-[1.5px] px-4 text-[15px] text-white outline-none transition-all placeholder:text-white/35';
-const INPUT_OK   = 'border-[var(--auth-edge)] bg-[var(--auth-fill-raised)] focus:border-[var(--auth-accent)] focus:bg-[var(--auth-fill-hover)] focus:ring-4 focus:ring-[var(--auth-accent-ring)]';
-const INPUT_ERR  = 'border-red-400/70 bg-red-500/10 focus:border-red-400 focus:ring-4 focus:ring-red-400/20';
-const LABEL_CLS  = 'block text-[13px] font-medium text-[var(--auth-muted)] mb-[7px]';
-
-function inputClass(hasError: boolean) {
-  return `${INPUT_BASE} ${hasError ? INPUT_ERR : INPUT_OK}`;
-}
+// Field styling is the shared dark-surface vocabulary — the same
+// height, radius, fill, focus ring and label colour as the email sign-in
+// screen on /login and every /onboarding step, so the whole account
+// journey is one component vocabulary rather than several designs that
+// merely share a background. It lived here as a local copy until the
+// onboarding steps needed the same set; see
+// app/_components/authFormStyles.ts.
+const inputClass = authInputClass;
 
 function FieldLabel({ label, required }: { label: string; required?: boolean }) {
   return (
-    <label className={LABEL_CLS}>
+    <label className={AUTH_LABEL_CLS}>
       {label}
       {required && <span aria-hidden className="ml-0.5 text-red-300">*</span>}
     </label>
@@ -286,8 +288,8 @@ export default function PatientSignupForm({ invitation, token, termsAccepted }: 
         <button
           type="submit"
           disabled={pending.disabled}
-          className="flex h-[54px] w-full items-center justify-center rounded-full text-[16px] font-semibold text-[var(--auth-on-teal)] transition-transform active:scale-[.985] disabled:cursor-not-allowed disabled:opacity-45"
-          style={{ background: '#15A89E', boxShadow: pending.disabled ? 'none' : '0 14px 30px -12px rgba(21,168,158,.75)' }}
+          className={AUTH_PRIMARY_CLS}
+          style={authPrimaryStyle(pending.disabled)}
         >
           {pending.showLabel ? 'Creating account…' : 'Next'}
         </button>

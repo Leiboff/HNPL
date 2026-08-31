@@ -131,7 +131,14 @@ describe('a signed-in visitor is not shown a front door', () => {
 
 describe('brand', () => {
   it('uses the betternow wordmark, not a generic heading', () => {
-    expect(ENTRY).toMatch(/better<span/);
+    // The two spans were extracted into a shared component when the
+    // /onboarding steps joined this surface and needed the same mark —
+    // see app/_components/AuthWordmark.tsx, which is where "better" +
+    // accent-coloured "now" is now written down, once.
+    expect(ENTRY).toMatch(/from '@\/app\/_components\/AuthWordmark'/);
+    expect(ENTRY).toMatch(/<AuthWordmark\b/);
+    // And not a re-grown local copy of the mark.
+    expect(ENTRY).not.toMatch(/better<span/);
   });
 
   it('sits on the shared auth surface rather than its own copy of the gradient', () => {
@@ -205,8 +212,16 @@ describe('the signup form is a view here, not a route of its own', () => {
     expect(FORM).not.toMatch(/text-\[#13294B\]/);
     expect(FORM).not.toMatch(/bg-\[#FBFCFD\]/);
     expect(FORM).not.toMatch(/text-gray-500|text-gray-600/);
-    // Same field geometry as the sign-in email screen.
-    expect(FORM).toMatch(/h-\[52px\] w-full rounded-2xl/);
+    // Same field geometry as the sign-in email screen — and now the same
+    // SOURCE for it. The classes were a local copy here until the
+    // /onboarding steps needed the identical set; they live in
+    // app/_components/authFormStyles.ts, which is what this form and
+    // every screen in the journey draws from. See
+    // app/account-journey-surface.test.ts for the journey-wide pins.
+    expect(FORM).toMatch(/from '@\/app\/_components\/authFormStyles'/);
+    expect(FORM).toMatch(/authInputClass/);
+    // And no re-grown local copy of the geometry beside the shared one.
+    expect(FORM).not.toMatch(/const INPUT_BASE\s*=/);
   });
 
   it('nothing in the app still links to the retired route', () => {

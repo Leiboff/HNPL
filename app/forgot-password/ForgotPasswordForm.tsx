@@ -5,6 +5,19 @@ import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { isValidEmail } from '@/lib/validation';
+import AuthWordmark from '@/app/_components/AuthWordmark';
+import {
+  AUTH_LABEL_CLS,
+  AUTH_INPUT_CLS,
+  AUTH_PRIMARY_CLS,
+  AUTH_ERROR_CLS,
+  AUTH_WARNING_CLS,
+  AUTH_LINK_CLS,
+  AUTH_TITLE_CLS,
+  AUTH_SUBTITLE_CLS,
+  AUTH_HELP_CLS,
+  authPrimaryStyle,
+} from '@/app/_components/authFormStyles';
 
 // ─── Forgot-password request form (enumeration-safe) ───────────────────
 //
@@ -16,6 +29,11 @@ import { isValidEmail } from '@/lib/validation';
 //     raw error.
 //   • Client-side email format check only blocks obviously-bad input
 //     (missing @, etc.). It does NOT reveal existence.
+//
+// Rendered inside <AuthSurface> by the page — every control here comes
+// from the shared dark vocabulary in app/_components/authFormStyles.ts,
+// so this screen and the sign-in screen that links to it are built from
+// the same parts.
 //
 // Recovery link redirect target: `/auth/callback?next=/update-password`.
 // The callback route exchanges the PKCE code, sets cookies, and lands
@@ -89,66 +107,69 @@ export default function ForgotPasswordForm() {
   // matched or not.
   if (submitted) {
     return (
-      <Card>
-        <div className="w-14 h-14 mx-auto rounded-full flex items-center justify-center bg-emerald-50 text-emerald-700 mb-4">
+      <>
+        <div
+          className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-[var(--auth-accent-edge)] bg-[var(--auth-accent-tint)] text-[var(--auth-accent)]"
+          aria-hidden
+        >
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
             <path d="M4 6l8 6 8-6" strokeLinecap="round" strokeLinejoin="round" />
             <rect x="4" y="5" width="16" height="14" rx="2" />
           </svg>
         </div>
-        <h1 className="text-xl font-semibold text-center" style={{ color: '#13294B' }}>
+        <h1 className={`text-center ${AUTH_TITLE_CLS}`}>
           Check your inbox
         </h1>
-        <p className="mt-2 text-sm text-gray-600 text-center leading-relaxed">
+        <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
           If an account exists for that email, we&apos;ve sent a reset link.
           Open it on this device to set a new password. The link expires
           in an hour.
         </p>
-        <p className="mt-4 text-xs text-gray-400 text-center">
+        <p className={`mt-5 text-center ${AUTH_HELP_CLS}`}>
           Can&apos;t see it? Check your spam folder. Still nothing?{' '}
           <button
             type="button"
             onClick={() => { setSubmitted(false); setDismissedExpired(true); }}
-            className="underline underline-offset-2 hover:text-gray-600"
+            className="underline underline-offset-[3px] hover:text-white"
           >
             Try a different email
           </button>
           .
         </p>
-        <div className="mt-6 text-center">
-          <Link href="/login" className="text-sm font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+        <div className="mt-8 border-t border-[var(--auth-hairline)] pt-7 text-center">
+          <Link href="/login" className={AUTH_LINK_CLS}>
             Back to sign in
           </Link>
         </div>
-      </Card>
+      </>
     );
   }
 
   return (
-    <Card>
-      <Brand />
-      <h1 className="mt-6 text-2xl font-semibold text-center" style={{ color: '#13294B' }}>
+    <>
+      <AuthWordmark size="md" />
+      <h1 className={`mt-9 text-center ${AUTH_TITLE_CLS}`}>
         Reset your password
       </h1>
-      <p className="mt-1 text-sm text-gray-500 text-center">
+      <p className={`mt-3 text-center ${AUTH_SUBTITLE_CLS}`}>
         Enter the email you signed up with. We&apos;ll send you a link to set a new password.
       </p>
 
       {linkExpired && (
-        <div className="mt-5 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900" role="alert" data-testid="forgot-password-link-expired">
+        <div className={`mt-6 ${AUTH_WARNING_CLS}`} role="alert" data-testid="forgot-password-link-expired">
           Your previous reset link has expired or already been used. Request a new one below.
         </div>
       )}
 
       {error && (
-        <div className="mt-5 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700" role="alert">
+        <div className={`mt-6 ${AUTH_ERROR_CLS}`} role="alert">
           {error}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-8 space-y-4">
         <div>
-          <label htmlFor="fp-email" className="block text-sm font-medium text-gray-700 mb-1">
+          <label htmlFor="fp-email" className={AUTH_LABEL_CLS}>
             Email
           </label>
           <input
@@ -159,7 +180,7 @@ export default function ForgotPasswordForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             data-testid="forgot-password-email"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
+            className={AUTH_INPUT_CLS}
             placeholder="you@example.com"
           />
         </div>
@@ -168,36 +189,18 @@ export default function ForgotPasswordForm() {
           type="submit"
           disabled={loading}
           data-testid="forgot-password-submit"
-          className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+          className={AUTH_PRIMARY_CLS}
+          style={authPrimaryStyle(loading)}
         >
           {loading ? 'Sending…' : 'Send reset link'}
         </button>
       </form>
 
-      <div className="mt-6 text-center">
-        <Link href="/login" className="text-sm font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+      <div className="mt-8 border-t border-[var(--auth-hairline)] pt-7 text-center">
+        <Link href="/login" className={AUTH_LINK_CLS}>
           Back to sign in
         </Link>
       </div>
-    </Card>
-  );
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8">
-      {children}
-    </div>
-  );
-}
-
-function Brand() {
-  return (
-    <div className="text-center">
-      <Link href="/" className="inline-block text-2xl font-bold tracking-tight" style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}>
-        <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
-      </Link>
-    </div>
+    </>
   );
 }

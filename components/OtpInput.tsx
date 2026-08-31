@@ -27,8 +27,46 @@ import { useEffect, useRef, useState } from 'react';
 //
 // API kept stable so the consumers (PhoneOtpStep + VerifyEmailForm)
 // pick this up with zero call-site changes.
+//
+// ── Two grounds, one component ─────────────────────────────────────────
+//
+// The same six cells are asked for on a white card (checkout, the
+// patient's own profile) and on the navy auth surface (signup, the
+// /onboarding steps, /verify-email). `tone` picks the palette; nothing
+// else about the component changes, so the paste / autofill / caret
+// behaviour above cannot diverge between the two places we ask for a
+// code. Defaults to 'light' — the ground every pre-existing caller is on.
 
 const LENGTH = 6;
+
+export type OtpTone = 'light' | 'onDark';
+
+/**
+ * Cell palettes. Four states each: error, filled, active (next to be
+ * typed) and resting. The dark set is drawn from the .auth-surface
+ * tokens in app/globals.css, so it stays in family with every other
+ * control on that surface.
+ */
+const CELL: Record<OtpTone, { error: string; filled: string; active: string; resting: string; dot: string; caret: string; ring: string }> = {
+  light: {
+    error:   'border-2 border-red-400 bg-red-50 text-red-700',
+    filled:  'border-2 border-[#15A89E] bg-white text-[#13294B]',
+    active:  'border-2 border-[#15A89E] bg-white',
+    resting: 'border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD]',
+    dot:     'text-[#C9D3DD]',
+    caret:   'bg-[#15A89E]',
+    ring:    '0 0 0 4px rgba(21,168,158,0.13)',
+  },
+  onDark: {
+    error:   'border-2 border-red-400/70 bg-red-500/10 text-red-200',
+    filled:  'border-2 border-[var(--auth-accent)] bg-[var(--auth-fill-hover)] text-white',
+    active:  'border-2 border-[var(--auth-accent)] bg-[var(--auth-fill-hover)] text-white',
+    resting: 'border-[1.5px] border-[var(--auth-edge)] bg-[var(--auth-fill-raised)] text-white',
+    dot:     'text-white/25',
+    caret:   'bg-[var(--auth-accent)]',
+    ring:    '0 0 0 4px var(--auth-accent-ring)',
+  },
+};
 
 type Props = {
   value:        string;             // 0..LENGTH digits
@@ -38,6 +76,8 @@ type Props = {
   hasError?:    boolean;
   autoFocus?:   boolean;
   idPrefix?:    string;
+  /** Which ground this sits on. See the note above. */
+  tone?:        OtpTone;
 };
 
 export default function OtpInput({
@@ -48,7 +88,9 @@ export default function OtpInput({
   hasError  = false,
   autoFocus = false,
   idPrefix  = 'otp',
+  tone      = 'light',
 }: Props) {
+  const palette = CELL[tone];
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [focused, setFocused] = useState(false);
 
@@ -110,19 +152,19 @@ export default function OtpInput({
             'relative flex flex-1 aspect-[1/1.25] items-center justify-center '
             + 'rounded-2xl text-2xl font-semibold tabular-nums transition-colors '
             + (hasError
-                ? 'border-2 border-red-400 bg-red-50 text-red-700'
+                ? palette.error
               : filled
-                ? 'border-2 border-[#15A89E] bg-white text-[#13294B]'
+                ? palette.filled
               : isActive
-                ? 'border-2 border-[#15A89E] bg-white'
-                : 'border-[1.5px] border-[#E2E8EE] bg-[#FBFCFD]');
+                ? palette.active
+                : palette.resting);
 
           return (
             <div
               key={i}
               data-testid={`otp-cell-${i}`}
               className={cellClass}
-              style={isActive && !hasError ? { boxShadow: '0 0 0 4px rgba(21,168,158,0.13)' } : undefined}
+              style={isActive && !hasError ? { boxShadow: palette.ring } : undefined}
             >
               {filled ? (
                 ch
@@ -130,11 +172,11 @@ export default function OtpInput({
                 // Caret-like indicator on the next-to-be-typed cell.
                 // motion-safe keeps this respectful of reduced-motion.
                 <span
-                  className="block h-[26px] w-[2px] rounded bg-[#15A89E] motion-safe:animate-pulse"
+                  className={`block h-[26px] w-[2px] rounded ${palette.caret} motion-safe:animate-pulse`}
                   aria-hidden="true"
                 />
               ) : (
-                <span className="text-[22px] leading-none text-[#C9D3DD]">·</span>
+                <span className={`text-[22px] leading-none ${palette.dot}`}>·</span>
               )}
             </div>
           );

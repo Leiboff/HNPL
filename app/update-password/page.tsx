@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import UpdatePasswordForm from './UpdatePasswordForm';
+import AuthSurface from '@/app/_components/AuthSurface';
 
 // ─── /update-password ──────────────────────────────────────────────────
 //
@@ -32,16 +33,8 @@ export default async function UpdatePasswordPage() {
   }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4 py-12"
-      style={{
-        background: '#f7fbfb',
-        backgroundImage: 'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
-      }}
-    >
-      <div className="w-full max-w-md">
-        <UpdatePasswordForm email={user.email ?? ''} />
-      </div>
-    </div>
+    <AuthSurface centred>
+      <UpdatePasswordForm email={user.email ?? ''} />
+    </AuthSurface>
   );
 }

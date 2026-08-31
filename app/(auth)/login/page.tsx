@@ -13,6 +13,7 @@ import InstallCallout from '@/app/_pwa/InstallCallout';
 import ContinueWithGoogleButton from '@/app/_components/ContinueWithGoogleButton';
 import LastUsedPill from '@/app/_components/LastUsedPill';
 import AuthSurface from '@/app/_components/AuthSurface';
+import AuthWordmark from '@/app/_components/AuthWordmark';
 import AuthConsentNote from '@/app/_components/AuthConsentNote';
 import { getLastSignInMethod, setLastSignInMethod, type LastSignInMethod } from '@/lib/auth/lastSignInMethod';
 
@@ -234,12 +235,9 @@ export default function LoginPage() {
 
       {/* Brand mark — the one piece of chrome both views share, so the
           screen change reads as movement inside one app rather than a
-          jump somewhere else. */}
-      <div className="text-center">
-        <Link href="/" className="inline-block text-[46px] font-bold leading-none tracking-[-0.04em]">
-          <span style={{ color: '#FFFFFF' }}>better</span><span style={{ color: 'var(--auth-accent)' }}>now</span>
-        </Link>
-      </div>
+          jump somewhere else. Shared with /signup and every screen in the
+          account journey; see app/_components/AuthWordmark.tsx. */}
+      <AuthWordmark size="lg" />
 
       {/* Banners live above the view switch: a passkey error is raised on
           the chooser, a password error on the email screen, and the
