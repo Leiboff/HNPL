@@ -8,7 +8,8 @@ import {
   type MemberUpdates, type NewMemberInput,
 } from './actions';
 import SelfAsProviderCard from './SelfAsProviderCard';
-import AddMemberForm, { SPECIALTIES } from './AddMemberForm';
+import AddMemberForm from './AddMemberForm';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 import AddProviderForm, { type AddProviderDraft } from './AddProviderForm';
 import InviteLoginForm from './InviteLoginForm';
 
@@ -61,10 +62,10 @@ type Props = {
   practiceName:  string;
 };
 
-// SPECIALTIES lives in AddMemberForm (shared with the brand surface), so
-// the edit-mode dropdown below uses the same list. BANKS was only ever
-// needed for the per-provider personal-banking fields, which are gone —
-// practice banking is edited on /practice/details.
+// The edit-mode specialty dropdown below renders <SpecialtyOptions>, the
+// one vocabulary every surface shares (lib/specialties.ts). BANKS was
+// only ever needed for the per-provider personal-banking fields, which
+// are gone — practice banking is edited on /practice/details.
 
 // ─── Primitive UI helpers ─────────────────────────────────────────────────────
 
@@ -566,8 +567,7 @@ export default function MembersView({ members: initialMembers, currentUserId, is
                 onChange={e => patchDraft({ specialty: e.target.value })}
                 className={SELECT_CLS}
               >
-                <option value="">Select specialty</option>
-                {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+                <SpecialtyOptions placeholder="Select specialty" current={editDraft.specialty} />
               </select>
             </FormField>
 

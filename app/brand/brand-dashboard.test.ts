@@ -517,12 +517,17 @@ describe('Shared AddMemberForm — imported by BOTH practice and brand surfaces'
     expect(TEAM).toMatch(/<AddMemberForm/);
   });
 
-  it('AddMemberForm exports the SPECIALTIES list that both surfaces reuse', () => {
-    expect(ADD_FORM).toMatch(/export const SPECIALTIES/);
-    // The two surfaces MUST reference the exported list, not
-    // hardcode their own copies.
+  it('both surfaces render the shared specialty vocabulary, not their own copy', () => {
+    // The list moved out of AddMemberForm into lib/specialties.ts,
+    // reaching every dropdown through <SpecialtyOptions> — four files
+    // needed it, which made this form the wrong owner.
+    expect(ADD_FORM).not.toMatch(/const SPECIALTIES = \[/);
+    for (const src of [ADD_FORM, MEMBERS_VIEW, TEAM]) {
+      expect(src).toMatch(/from ['"]@\/components\/SpecialtyOptions['"]/);
+      expect(src).toMatch(/<SpecialtyOptions/);
+      expect(src).not.toMatch(/const SPECIALTIES = \[/);
+    }
     expect(MEMBERS_VIEW).toMatch(/from ['"]\.\/AddMemberForm['"]/);
-    expect(TEAM).toMatch(/SPECIALTIES/);
   });
 
   it('BANKS is still exported, though nothing consumes it now', () => {

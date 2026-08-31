@@ -93,7 +93,7 @@ describe('(a) happy path', () => {
       contactName:  'Alice Smith',
       phone:        '+27 82 111 2222',
       email:        'alice@rosebank.co.za',
-      specialty:    'Dentistry',
+      specialty:    'General Dental Practitioner',
       suburb:       'Rosebank',
       message:      'Interested in learning more',
       website:      '',

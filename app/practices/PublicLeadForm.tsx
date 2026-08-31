@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { SPECIALTIES } from '@/lib/specialties';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 import { submitPublicLead } from './publicLeadAction';
 
 // ─── Public lead capture form ────────────────────────────────────────
@@ -80,8 +80,7 @@ export default function PublicLeadForm() {
             <label className="text-xs text-gray-700">
               <span className="block font-medium mb-1">Specialty</span>
               <select name="specialty" className={inp}>
-                <option value="">Choose a specialty</option>
-                {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+                <SpecialtyOptions placeholder="Choose a specialty" />
               </select>
             </label>
             <label className="text-xs text-gray-700 sm:col-span-2">

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { NewMemberInput } from './actions';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 
 // ─── Shared "Add team member" form ────────────────────────────────────
 //
@@ -18,17 +19,14 @@ import type { NewMemberInput } from './actions';
 // inviteMemberIntoPractice under the hood.
 //
 // Extracted from MembersView so the two surfaces stay in lockstep. If
-// you add a specialty or a payout field here, both surfaces get it.
+// you add a payout field here, both surfaces get it.
 
-// Kept in this module (rather than a separate constants file) because
-// they define the semantic surface of the form; a change here is a
-// change to both surfaces at once, which is exactly what we want.
-export const SPECIALTIES = [
-  'General Practice', 'Dentistry', 'Physiotherapy', 'Optometry',
-  'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
-] as const;
+// The specialty vocabulary lives in lib/specialties.ts and reaches
+// every dropdown through <SpecialtyOptions>. It used to be declared
+// here and re-exported to the other surfaces; that made this form the
+// de-facto owner of a list four other files needed, so it moved out.
 
-// Retained deliberately, though nothing in this file consumes it any more:
+// BANKS: retained deliberately, though nothing in this file consumes it any more:
 // the per-provider personal-banking sub-form that used it is gone (payouts
 // always go to the practice account). Kept rather than deleted because it is
 // the only canonical SA bank list in the codebase and the practice banking
@@ -242,7 +240,7 @@ export default function AddMemberForm({
               data-testid="add-member-specialty"
             >
               <option value="">Select specialty</option>
-              {SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+              <SpecialtyOptions />
             </select>
           </FormField>
           <FormField label="HPCSA number (optional)">

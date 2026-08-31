@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import AddMemberForm, { SPECIALTIES } from '@/app/practice/members/AddMemberForm';
+import AddMemberForm from '@/app/practice/members/AddMemberForm';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 import type {
   AddTeamMemberInput,
   UpdateTeamMemberInput,
@@ -308,8 +309,7 @@ function TeamRow({
                       onChange={(e) => setSpecialty(e.target.value)}
                       data-testid={`team-edit-specialty-${member.memberId}`}
                     >
-                      <option value="">Select specialty</option>
-                      {SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      <SpecialtyOptions placeholder="Select specialty" current={specialty} />
                     </select>
                   </Field>
                   <Field label="HPCSA number">

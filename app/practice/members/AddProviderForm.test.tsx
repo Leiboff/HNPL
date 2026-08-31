@@ -20,7 +20,7 @@ function setup(onSubmit: ReturnType<typeof vi.fn<SubmitFn>> = vi.fn<SubmitFn>(as
 async function fill(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('First name'), 'Naledi');
   await user.type(screen.getByLabelText('Last name'),  'Khumalo');
-  await user.selectOptions(screen.getByLabelText('Specialty'), 'Dentistry');
+  await user.selectOptions(screen.getByLabelText('Specialty'), 'General Dental Practitioner');
   await user.type(screen.getByLabelText('HPCSA number'), 'MP0123456');
 }
 
@@ -59,7 +59,7 @@ describe('the roster form asks for four things', () => {
 
     const expected: AddProviderDraft = {
       firstName: 'Naledi', lastName: 'Khumalo',
-      specialty: 'Dentistry', hpcsaNumber: 'MP0123456',
+      specialty: 'General Dental Practitioner', hpcsaNumber: 'MP0123456',
     };
     expect(onSubmit).toHaveBeenCalledWith(expected);
     // No fifth key smuggled in.
@@ -85,7 +85,7 @@ describe('the form guards its own inputs', () => {
     const { user } = setup();
     await user.type(screen.getByLabelText('First name'), 'Naledi');
     await user.type(screen.getByLabelText('Last name'),  'Khumalo');
-    await user.selectOptions(screen.getByLabelText('Specialty'), 'Dentistry');
+    await user.selectOptions(screen.getByLabelText('Specialty'), 'General Dental Practitioner');
     // Everything but HPCSA.
     expect((screen.getByRole('button', { name: 'Add practitioner' }) as HTMLButtonElement).disabled).toBe(true);
   });

@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
-import { SPECIALTIES } from '@/lib/specialties';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 import { formatDateTime, timeAgo } from '@/app/admin/_lib/format';
 import {
   updateLead, moveLeadStage, logActivity, scheduleFollowup, markFollowupDone,
@@ -384,7 +384,7 @@ export default function LeadDetailClient({
         <h2 className="text-sm font-semibold text-gray-900">Lead details</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <FieldText label="Practice name"     value={lead.practice_name}            onSave={v => saveField('practice_name', v)}      pending={pending} required />
-          <FieldSelect label="Specialty"       value={lead.specialty ?? ''}          options={['', ...SPECIALTIES]} onSave={v => saveField('specialty', v || null)} pending={pending} />
+          <FieldSpecialty value={lead.specialty ?? ''} onSave={v => saveField('specialty', v || null)} pending={pending} />
           <FieldSelect label="Source"          value={lead.source}                   options={[...SOURCES]} labels={SOURCE_LABELS}     onSave={v => saveField('source', v)} pending={pending} />
           <FieldText
             label="Estimated monthly billings"
@@ -690,6 +690,29 @@ function FieldSelect({
         className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#15A89E]/40 focus:border-[#15A89E] disabled:opacity-60"
       >
         {options.map(o => <option key={o || '(none)'} value={o}>{o ? (labels?.[o] ?? o) : '(none)'}</option>)}
+      </select>
+    </label>
+  );
+}
+
+// Specialty gets its own field rather than a FieldSelect options list:
+// the register is grouped into <optgroup>s, and a lead imported with a
+// free-text specialty must keep it (see SpecialtyOptions' `current`).
+function FieldSpecialty({
+  value, onSave, pending,
+}: {
+  value: string; onSave: (v: string) => void; pending: boolean;
+}) {
+  return (
+    <label className="text-xs">
+      <span className="block font-medium text-gray-700 mb-1">Specialty</span>
+      <select
+        value={value}
+        onChange={e => onSave(e.target.value)}
+        disabled={pending}
+        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#15A89E]/40 focus:border-[#15A89E] disabled:opacity-60"
+      >
+        <SpecialtyOptions placeholder="(none)" current={value} />
       </select>
     </label>
   );

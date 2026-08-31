@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { parseCsv, validateLeadRows, MAX_IMPORT_ROWS, type RowError, type CsvLeadDraft } from '@/lib/crm/csv';
 import { normaliseEmail, normalisePhone } from '@/lib/crm/dedupe';
+import { normaliseSpecialty } from '@/lib/specialties';
 
 // ─── Server-side guard: sales OR admin ───────────────────────────────
 
@@ -113,7 +114,11 @@ export async function commitImport(
         contact_first_name: d.contact_first_name,
         contact_last_name:  d.contact_last_name,
         role_at_practice:   d.role_at_practice,
-        specialty:          d.specialty,
+        // Same normalisation the quick import applies (quickActions.ts):
+        // a source writing "Dentist" or "GP" means a register entry, and
+        // two labels for one specialty split the leads filter in two.
+        // Anything unrecognised is kept verbatim, never bucketed.
+        specialty:          normaliseSpecialty(d.specialty),
         phone:              d.phone,
         email:              d.email,
         street_address:     d.street_address,
