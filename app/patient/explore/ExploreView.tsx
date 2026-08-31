@@ -198,7 +198,7 @@ function ResultsView({
         href="/patient/explore"
         data-testid="results-back-to-landing"
         className="inline-flex items-center gap-1 text-xs font-semibold"
-        style={{ color: '#13294B' }}
+        style={{ color: 'var(--portal-ink)' }}
       >
         ← Browse by specialty
       </Link>
@@ -210,7 +210,7 @@ function ResultsView({
             <svg
               aria-hidden
               className="absolute left-3 top-1/2 -translate-y-1/2"
-              width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A8AA0" strokeWidth={2}
+              width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
             >
               <circle cx="11" cy="11" r="7" />
               <path d="m20 20-3.5-3.5" strokeLinecap="round" />
@@ -220,7 +220,7 @@ function ResultsView({
               placeholder="Search practitioners…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none focus:ring-2 focus:ring-[#15A89E]/15"
+              className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[var(--portal-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/15"
             />
           </div>
           <button
@@ -228,14 +228,14 @@ function ResultsView({
             onClick={() => setFiltersOpen((o) => !o)}
             data-testid="filters-toggle"
             aria-expanded={filtersOpen}
-            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[#13294B] hover:bg-gray-50"
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[var(--portal-ink)] hover:bg-gray-50"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M4 6h16M7 12h10M10 18h4" strokeLinecap="round" />
             </svg>
             Filters
             {activeFilterCount > 0 && (
-              <span className="ml-0.5 inline-flex items-center justify-center min-w-4.5 h-4.5 rounded-full bg-[#15A89E] text-white text-[10px] font-semibold px-1">
+              <span className="ml-0.5 inline-flex items-center justify-center min-w-4.5 h-4.5 rounded-full bg-[var(--portal-accent)] text-white text-[10px] font-semibold px-1">
                 {activeFilterCount}
               </span>
             )}
@@ -260,9 +260,9 @@ function ResultsView({
                       onClick={() => setRadiusKm(km)}
                       data-testid={`filter-radius-${km}`}
                       className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                        active ? 'text-white' : 'text-[#13294B] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
+                        active ? 'text-white' : 'text-[var(--portal-ink)] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
                       }`}
-                      style={active ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
+                      style={active ? { background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' } : undefined}
                     >
                       {km} km
                     </button>
@@ -340,9 +340,9 @@ function SpecialtyChip({
       className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
         active
           ? 'text-white'
-          : 'text-[#13294B] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
+          : 'text-[var(--portal-ink)] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
       }`}
-      style={active ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' } : undefined}
+      style={active ? { background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' } : undefined}
     >
       {children}
     </button>

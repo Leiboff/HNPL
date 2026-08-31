@@ -49,14 +49,14 @@ export default function PatientContactForm() {
   if (sent) {
     return (
       <div
-        className="rounded-[22px] bg-white p-[18px]"
+        className="rounded-card bg-white p-[18px]"
         style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         data-testid="patient-contact-sent"
       >
-        <p className="text-[15px] font-semibold" style={{ color: '#13294B' }}>
+        <p className="text-[15px] font-semibold" style={{ color: 'var(--portal-ink)' }}>
           Thanks — your message is on its way.
         </p>
-        <p className="mt-1.5 text-[13px] leading-[1.55]" style={{ color: '#8496AA' }}>
+        <p className="mt-1.5 text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
           We reply during office hours, usually within one working day. If it&rsquo;s urgent,{' '}
           {SUPPORT_EMAIL} reaches the same inbox.
         </p>
@@ -65,7 +65,7 @@ export default function PatientContactForm() {
           onClick={() => setSent(false)}
           data-testid="patient-contact-again"
           className="mt-[14px] text-[13px] font-semibold underline underline-offset-2"
-          style={{ color: '#0F766E' }}
+          style={{ color: 'var(--portal-accent-ink)' }}
         >
           Send another message
         </button>
@@ -75,7 +75,7 @@ export default function PatientContactForm() {
 
   return (
     <div
-      className="rounded-[22px] bg-white p-[18px]"
+      className="rounded-card bg-white p-[18px]"
       style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
     >
       <form ref={formRef} onSubmit={onSubmit} data-testid="patient-contact-form" noValidate>
@@ -87,8 +87,8 @@ export default function PatientContactForm() {
             name="message"
             rows={5}
             required
-            className="rounded-[14px] px-[14px] py-[12px] text-[14px]"
-            style={{ border: '1px solid #E2E8EE', color: '#13294B' }}
+            className="rounded-tile px-[14px] py-[12px] text-[14px]"
+            style={{ border: '1px solid var(--portal-line)', color: 'var(--portal-ink)' }}
             data-testid="patient-contact-message"
           />
         </label>
@@ -103,8 +103,8 @@ export default function PatientContactForm() {
           type="submit"
           disabled={pending.disabled}
           data-testid="patient-contact-submit"
-          className="mt-[16px] w-full rounded-[14px] py-[13px] text-[14.5px] font-semibold text-white disabled:opacity-60"
-          style={{ background: '#13294B' }}
+          className="mt-[16px] w-full rounded-tile py-[13px] text-[14.5px] font-semibold text-white disabled:opacity-60"
+          style={{ background: 'var(--portal-ink)' }}
         >
           {pending.showLabel ? 'Sending…' : 'Send message'}
         </button>

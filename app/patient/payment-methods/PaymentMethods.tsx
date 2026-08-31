@@ -299,7 +299,7 @@ export default function PaymentMethods({
                       {card.is_default && (
                         <span
                           className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                          style={{ background: 'rgba(21,168,158,.12)', color: '#15A89E' }}
+                          style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent)' }}
                         >
                           Default
                         </span>
@@ -333,7 +333,7 @@ export default function PaymentMethods({
                         disabled={loading}
                         title="Use this card for new plans. Existing plans are unaffected."
                         className="text-xs font-medium disabled:opacity-60 transition-colors"
-                        style={{ color: '#15A89E' }}
+                        style={{ color: 'var(--portal-accent)' }}
                       >
                         Make default
                       </button>
@@ -406,7 +406,7 @@ export default function PaymentMethods({
       {/* No-charge card verification note — accurate for the Flow B
           zero-amount PA recipe. No debit, no refund. */}
       <div
-        className="rounded-xl px-4 py-3 text-xs text-[#13294B]"
+        className="rounded-xl px-4 py-3 text-xs text-[var(--portal-ink)]"
         style={{ background: 'rgba(19,41,75,.05)', border: '1px solid rgba(19,41,75,.10)' }}
       >
         We verify your card with your bank — no money is taken.
@@ -423,7 +423,7 @@ export default function PaymentMethods({
         onClick={handleAddCard}
         disabled={addLoading || loading}
         className="flex items-center justify-center gap-2 w-full rounded-2xl border border-dashed px-5 py-3.5 text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        style={{ borderColor: 'rgba(21,168,158,.4)', color: '#13294B' }}
+        style={{ borderColor: 'rgba(21,168,158,.4)', color: 'var(--portal-ink)' }}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden>
           <path d="M12 5v14M5 12h14" />

@@ -22,7 +22,7 @@
 export default function PasswordSection() {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[12.5px] leading-[1.55]" style={{ color: '#8496AA' }}>
+      <p className="text-[12.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
         We&rsquo;ll email you a secure link to set a new password. The link works once and
         expires. Signing in on your other devices isn&rsquo;t affected until you use it.
       </p>
@@ -31,7 +31,7 @@ export default function PasswordSection() {
         href="/forgot-password"
         data-testid="account-password-reset"
         className="inline-flex w-fit items-center gap-1.5 rounded-xl border px-3.5 py-2 text-[13px] font-semibold transition-colors hover:bg-gray-50"
-        style={{ borderColor: 'rgba(19,41,75,.14)', color: '#13294B' }}
+        style={{ borderColor: 'rgba(19,41,75,.14)', color: 'var(--portal-ink)' }}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <rect x="4" y="10.5" width="16" height="10" rx="2.5" />
@@ -40,7 +40,7 @@ export default function PasswordSection() {
         Email me a reset link
       </a>
 
-      <p className="text-[11.5px] leading-[1.5]" style={{ color: '#A3B1C2' }}>
+      <p className="text-[11.5px] leading-[1.5]" style={{ color: 'var(--portal-muted)' }}>
         Prefer not to type a password at all? Add a passkey above and sign in with your
         face, fingerprint or device PIN.
       </p>

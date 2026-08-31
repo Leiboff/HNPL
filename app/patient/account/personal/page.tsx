@@ -88,7 +88,7 @@ export default async function PersonalDetailsPage() {
   return (
     <PatientScreen header={<SubScreenHeader title="Personal details" />} sheetClassName="px-[18px] pt-5 pb-6">
       <div
-        className="rounded-[22px] bg-white p-[18px] divide-y divide-gray-100"
+        className="rounded-card bg-white p-[18px] divide-y divide-gray-100"
         style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
       >
         <LockedField icon="name" label="Full name" value={fullName} />
@@ -109,7 +109,7 @@ export default async function PersonalDetailsPage() {
 
         <SalaryAmountSection current={salaryAmount} saveSalaryAmount={saveSalaryAmount} />
 
-        <p className="text-xs py-4 first:pt-0 last:pb-0" style={{ color: '#A3B1C2' }}>
+        <p className="text-xs py-4 first:pt-0 last:pb-0" style={{ color: 'var(--portal-muted)' }}>
           Locked fields protect your account.{' '}
           <a href="mailto:support@betternow.co.za" className="underline underline-offset-2 hover:text-gray-600 transition-colors">
             Contact support

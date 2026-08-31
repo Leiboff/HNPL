@@ -17,7 +17,7 @@ import { logoutAndRedirect } from '@/lib/auth/logout';
 export default function ProfileLogoutSection() {
   return (
     <div className="flex flex-col gap-3" data-testid="profile-logout-section">
-      <p className="text-[12.5px] leading-[1.55]" style={{ color: '#8496AA' }}>
+      <p className="text-[12.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
         You&rsquo;re signed in on this device. Signing out here doesn&rsquo;t affect your
         other devices, and your saved cards and plans are untouched.
       </p>

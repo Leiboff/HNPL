@@ -33,28 +33,28 @@ function getPracticeName(plan: PlanRow): string {
 function ResumePaymentCard({ plan }: { plan: PlanRow }) {
   return (
     <div
-      className="rounded-[22px] bg-white p-[18px] flex flex-col gap-[13px]"
+      className="rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
       style={{ border: '1px solid #F5D49A', boxShadow: '0 2px 6px -2px rgba(15,31,58,.08)' }}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-[15.5px] font-semibold truncate" style={{ color: '#13294B' }}>{getPracticeName(plan)}</h3>
+          <h3 className="text-[15.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</h3>
           {plan.invoice_number && (
-            <p className="font-mono text-[12px] mt-0.5 truncate" style={{ color: '#8496AA' }}>{plan.invoice_number}</p>
+            <p className="font-mono text-[12px] mt-0.5 truncate" style={{ color: 'var(--portal-muted)' }}>{plan.invoice_number}</p>
           )}
         </div>
         <span className="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: '#FBE5C8', color: '#B45309' }}>
           Payment not finished
         </span>
       </div>
-      <p className="text-[13.5px]" style={{ color: '#8496AA' }}>
+      <p className="text-[13.5px]" style={{ color: 'var(--portal-muted)' }}>
         Your first instalment wasn&apos;t completed and no money was taken. Pick up where you left off — it only takes a tap.
       </p>
       <Link
         href={`/patient/orders/${plan.id}/confirm`}
         data-testid="resume-payment-link"
-        className="inline-flex items-center justify-center rounded-[14px] px-5 py-[14px] text-[14.5px] font-semibold text-white"
-        style={{ background: '#15A89E' }}
+        className="inline-flex items-center justify-center rounded-tile px-5 py-[14px] text-[14.5px] font-semibold text-white"
+        style={{ background: 'var(--portal-accent)' }}
       >
         Resume payment →
       </Link>
@@ -65,12 +65,12 @@ function ResumePaymentCard({ plan }: { plan: PlanRow }) {
 function ProcessingCard({ plan }: { plan: PlanRow }) {
   return (
     <div
-      className="rounded-[22px] bg-white p-[18px] flex items-center justify-between gap-3"
+      className="rounded-card bg-white p-[18px] flex items-center justify-between gap-3"
       style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
     >
       <div className="min-w-0">
-        <p className="text-[15.5px] font-semibold truncate" style={{ color: '#13294B' }}>{getPracticeName(plan)}</p>
-        <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>Setting up your first payment…</p>
+        <p className="text-[15.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
+        <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Setting up your first payment…</p>
       </div>
       <span className="shrink-0 inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold" style={{ background: '#EAF1FB', color: '#2B5FA8' }}>
         Processing
@@ -83,7 +83,7 @@ function SectionHeading({ label, tone = 'muted' }: { label: string; tone?: 'mute
   return (
     <p
       className="text-[11px] font-semibold uppercase"
-      style={{ letterSpacing: '.14em', color: tone === 'amber' ? '#B45309' : '#8496AA' }}
+      style={{ letterSpacing: '.14em', color: tone === 'amber' ? '#B45309' : 'var(--portal-muted)' }}
     >
       {label}
     </p>
@@ -112,15 +112,15 @@ function PayingOffCard({ plan, today }: { plan: PlanRow; today: string }) {
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
-      className="block rounded-[22px] bg-white p-[18px]"
+      className="block rounded-card bg-white p-[18px]"
       style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[15.5px] font-semibold truncate" style={{ color: '#13294B' }}>{getPracticeName(plan)}</p>
-          <p className="mt-1 text-[12.5px]" style={{ color: '#8496AA' }}>Started {formatDate(plan.created_at.slice(0, 10))}</p>
+          <p className="text-[15.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
+          <p className="mt-1 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Started {formatDate(plan.created_at.slice(0, 10))}</p>
         </div>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#B6C1CD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none mt-0.5" aria-hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none mt-0.5" aria-hidden>
           <path d="m9 6 6 6-6 6" />
         </svg>
       </div>
@@ -128,14 +128,14 @@ function PayingOffCard({ plan, today }: { plan: PlanRow; today: string }) {
         <InstalmentLadder segments={ladderFromCounts(total, prog.paidCount)} />
       </div>
       <div className="mt-[13px] flex items-center justify-between gap-3 tabular-nums">
-        <span className="text-[12.5px]" style={{ color: next?.overdue ? '#B42318' : '#8496AA' }}>
+        <span className="text-[12.5px]" style={{ color: next?.overdue ? '#B42318' : 'var(--portal-muted)' }}>
           {next
             ? next.overdue
               ? `${formatRand(next.amount)} overdue since ${formatDayMonth(next.date)}`
               : `${formatRand(next.amount)} on ${formatDayMonth(next.date)}`
             : `${prog.paidCount} of ${total} paid`}
         </span>
-        <span className="text-[13.5px] font-semibold" style={{ color: '#13294B' }}>
+        <span className="text-[13.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>
           {prog.isPaidInFull ? 'Paid in full' : `${formatRand(prog.remainingAmount)} left`}
         </span>
       </div>
@@ -152,7 +152,7 @@ function FinishedRow({ plan }: { plan: PlanRow }) {
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
-      className="flex items-center gap-3 rounded-[22px] bg-white px-[18px] py-[16px]"
+      className="flex items-center gap-3 rounded-card bg-white px-[18px] py-[16px]"
       style={{ border: '1px solid rgba(19,41,75,.06)' }}
     >
       <span className="flex-none w-7 h-7 rounded-full flex items-center justify-center" style={{ background: '#F0FDF4' }}>
@@ -161,12 +161,12 @@ function FinishedRow({ plan }: { plan: PlanRow }) {
         </svg>
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-[14.5px] font-semibold" style={{ color: '#13294B' }}>{getPracticeName(plan)}</p>
-        <p className="mt-0.5 text-[12.5px] tabular-nums" style={{ color: '#8496AA' }}>
+        <p className="text-[14.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
+        <p className="mt-0.5 text-[12.5px] tabular-nums" style={{ color: 'var(--portal-muted)' }}>
           {formatRand(Number(plan.total_amount))} · {settledLabel}
         </p>
       </div>
-      <span className="flex-none text-[13px] font-semibold" style={{ color: '#0F766E' }}>Receipt</span>
+      <span className="flex-none text-[13px] font-semibold" style={{ color: 'var(--portal-accent-ink)' }}>Receipt</span>
     </Link>
   );
 }
@@ -177,21 +177,21 @@ function DeclinedRow({ plan }: { plan: PlanRow }) {
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
-      className="flex items-center gap-3 rounded-[22px] bg-white px-[18px] py-[16px]"
+      className="flex items-center gap-3 rounded-card bg-white px-[18px] py-[16px]"
       style={{ border: '1px solid rgba(19,41,75,.06)' }}
     >
-      <span className="flex-none w-7 h-7 rounded-full flex items-center justify-center" style={{ background: '#F1F5F6' }}>
-        <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="#8496AA" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <span className="flex-none w-7 h-7 rounded-full flex items-center justify-center" style={{ background: 'var(--portal-wash)' }}>
+        <svg viewBox="0 0 20 20" width="12" height="12" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M6 6l8 8M14 6l-8 8" />
         </svg>
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-[14.5px] font-semibold truncate" style={{ color: '#13294B' }}>{getPracticeName(plan)}</p>
-        <p className="mt-0.5 text-[12.5px] tabular-nums" style={{ color: '#8496AA' }}>
+        <p className="text-[14.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
+        <p className="mt-0.5 text-[12.5px] tabular-nums" style={{ color: 'var(--portal-muted)' }}>
           {formatRand(Number(plan.total_amount))} · declined
         </p>
       </div>
-      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#B6C1CD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
         <path d="m9 6 6 6-6 6" />
       </svg>
     </Link>
@@ -228,14 +228,14 @@ export default function OrdersView({
   if (nothing) {
     return (
       <div
-        className="rounded-[22px] bg-white p-[18px] text-center"
+        className="rounded-card bg-white p-[18px] text-center"
         style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
       >
-        <p className="text-[14px]" style={{ color: '#41556F' }}>You don&rsquo;t have any plans yet.</p>
+        <p className="text-[14px]" style={{ color: 'var(--portal-ink-2)' }}>You don&rsquo;t have any plans yet.</p>
         <Link
           href="/patient/explore"
-          className="mt-3 inline-flex items-center rounded-[14px] px-4 py-2.5 text-[13.5px] font-semibold text-white"
-          style={{ background: '#15A89E' }}
+          className="mt-3 inline-flex items-center rounded-tile px-4 py-2.5 text-[13.5px] font-semibold text-white"
+          style={{ background: 'var(--portal-accent)' }}
         >
           Find care →
         </Link>

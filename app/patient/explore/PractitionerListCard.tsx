@@ -81,7 +81,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
         href={`/patient/practitioner/${card.representativeMemberId}`}
         data-testid={`practitioner-card-${card.id}-view`}
         aria-label={`View ${card.fullName}`}
-        className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E]/40"
+        className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)]/40"
       />
 
       <div className="relative px-5 py-4 space-y-3">
@@ -91,7 +91,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
           <div
             aria-hidden
             className="shrink-0 h-11 w-11 rounded-full flex items-center justify-center text-sm font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
           >
             {initialsOf(card)}
           </div>
@@ -124,7 +124,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
               {distText && (
                 <p
                   className="text-xs font-medium pl-4.75"
-                  style={{ color: '#15A89E' }}
+                  style={{ color: 'var(--portal-accent)' }}
                   data-testid={`practitioner-card-${card.id}-distance`}
                 >
                   {distText} away
@@ -148,7 +148,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
                 href={`tel:${nearest.phone}`}
                 data-testid={`practitioner-card-${card.id}-call`}
                 className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white shadow-sm hover:shadow"
-                style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                   <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" strokeLinecap="round" strokeLinejoin="round" />
@@ -162,7 +162,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid={`practitioner-card-${card.id}-directions`}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-[#13294B] hover:bg-gray-50"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-[var(--portal-ink)] hover:bg-gray-50"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                   <path d="M3 11l18-7-7 18-2.5-7.5L3 11z" strokeLinecap="round" strokeLinejoin="round" />

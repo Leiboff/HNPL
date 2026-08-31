@@ -91,8 +91,8 @@ export default function NotificationsToggle() {
   return (
     <div className="flex items-start justify-between gap-4 py-3">
       <div className="min-w-0">
-        <p className="text-sm font-medium text-[#0F1F3A]">Notifications</p>
-        <p className="mt-0.5 text-xs text-[#7A8AA0]">
+        <p className="text-sm font-medium text-[var(--portal-ink)]">Notifications</p>
+        <p className="mt-0.5 text-xs text-[var(--portal-muted)]">
           Get notified about your plan, payments, and account. One switch for all — per-category preferences may come later.
         </p>
         {isBlocked && (
@@ -101,10 +101,10 @@ export default function NotificationsToggle() {
           </p>
         )}
         {isUnsupported && (
-          <p className="mt-2 text-xs text-[#7A8AA0]">
+          <p className="mt-2 text-xs text-[var(--portal-muted)]">
             Your browser doesn&apos;t support push notifications.
             {' '}
-            <span className="text-[#3A4B66]">
+            <span className="text-[var(--portal-ink-2)]">
               Install BetterNow to your home screen on iOS, or open this in Chrome on Android.
             </span>
           </p>
@@ -123,8 +123,8 @@ export default function NotificationsToggle() {
           aria-disabled={isBlocked || isLoading || busy}
           disabled={isBlocked || isLoading || busy}
           onClick={toggle}
-          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[#15A89E]/25 disabled:cursor-not-allowed disabled:opacity-60 ${
-            isOn ? 'bg-[#15A89E]' : 'bg-[#D8DEE8]'
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-[var(--portal-accent)]/25 disabled:cursor-not-allowed disabled:opacity-60 ${
+            isOn ? 'bg-[var(--portal-accent)]' : 'bg-[var(--portal-line)]'
           }`}
         >
           <span

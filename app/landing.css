@@ -7,10 +7,13 @@
 ──────────────────────────────────────────────────────────────────────────── */
 
 .lp-root {
-  --navy:     #13294B;
-  --navy-deep:#0E2140;
-  --teal:     #15A89E;
-  --teal-bright:#19c2b6;
+  /* Referenced from the primitives in app/globals.css :root — these were
+   * the app's only statement of the brand, and every other surface copied
+   * the hex codes by hand. */
+  --navy:       var(--brand-navy);
+  --navy-deep:  var(--brand-navy-deep);
+  --teal:       var(--brand-teal);
+  --teal-bright:var(--brand-teal-bright);
   --ink:      #1c2b40;
   --muted:    #5b6b80;
   --bg:       #f7fbfb;

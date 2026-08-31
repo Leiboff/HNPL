@@ -258,18 +258,28 @@ describe('the auth palette is the BRAND palette', () => {
     }
   });
 
-  it('every hex in the token block is a colour the brand already defines', () => {
-    const brand = new Set(
-      (LANDING.match(/#[0-9A-Fa-f]{6}/g) ?? []).map((h) => h.toUpperCase()),
-    );
-    const used = (AUTH.match(/#[0-9A-Fa-f]{6}/g) ?? []).map((h) => h.toUpperCase());
-    expect(used.length).toBeGreaterThan(0);
-    for (const h of used) {
-      // --auth-muted / --auth-dim are the one legitimate addition: a
-      // light-on-navy ramp the brand simply does not have. Everything
-      // else must already exist in app/landing.css.
-      if (['#9FB3CC', '#8AA0BC'].includes(h)) continue;
-      expect(brand).toContain(h);
+  it('the token block states no brand colour literally — it references the primitives', () => {
+    // This pin used to compare the auth block's hexes against the set of
+    // hexes in app/landing.css, because `.lp-root` was the app's only
+    // statement of the brand and everything else copied it by hand. That
+    // copying is what produced a navy in the patient portal (#0B1F3A)
+    // belonging to no palette at all.
+    //
+    // The brand now lives once, in :root of app/globals.css, and both
+    // `.auth-surface` and `.lp-root` reference it. So the invariant is
+    // stronger than "matches landing.css": the block may contain NO brand
+    // literal whatsoever.
+    const block = AUTH.slice(0, AUTH.indexOf('}'));
+    const used = (stripComments(block).match(/#[0-9A-Fa-f]{6}/g) ?? [])
+      .map((h) => h.toUpperCase());
+
+    // --auth-muted / --auth-dim remain the one legitimate addition: a
+    // light-on-navy ramp the brand simply does not have.
+    expect(used.sort()).toEqual(['#8AA0BC', '#9FB3CC']);
+
+    // And the brand values arrive by reference.
+    for (const ref of ['--brand-navy-deep', '--brand-navy', '--brand-teal', '--brand-teal-bright']) {
+      expect(block).toContain(`var(${ref})`);
     }
   });
 
@@ -287,8 +297,12 @@ describe('the auth palette is the BRAND palette', () => {
   });
 
   it('the accent is the brand teal-bright, not a second bright teal', () => {
-    expect(AUTH).toMatch(/--auth-accent:\s*#19C2B6/);
-    expect(LANDING).toMatch(/--teal-bright:#19c2b6/);
+    // Both surfaces now reach the same value through the same primitive,
+    // which is what makes "a second bright teal" impossible rather than
+    // merely discouraged.
+    expect(AUTH).toMatch(/--auth-accent:\s*var\(--brand-teal-bright\)/);
+    expect(LANDING).toMatch(/--teal-bright:\s*var\(--brand-teal-bright\)/);
+    expect(CSS).toMatch(/--brand-teal-bright:\s*#19C2B6/i);
     // The invented one is retired everywhere, pill included.
     const all = [CSS, codeOf('app/_components/LastUsedPill.tsx'),
                  codeOf('app/(auth)/login/page.tsx'),

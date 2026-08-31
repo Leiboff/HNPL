@@ -39,8 +39,8 @@ export default function PatientNav() {
         className="px-4 py-4 text-lg font-semibold tracking-tight"
         style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
       >
-        <span style={{ color: '#13294B' }}>better</span>
-        <span style={{ color: '#15A89E' }}>now</span>
+        <span style={{ color: 'var(--portal-ink)' }}>better</span>
+        <span style={{ color: 'var(--portal-accent)' }}>now</span>
       </Link>
       <div className="flex flex-col p-3 space-y-0.5">
         {NAV_LINKS.map(({ href, label }) => {
@@ -56,7 +56,7 @@ export default function PatientNav() {
               className={[
                 'flex items-center w-full min-h-[44px] px-3 text-sm font-medium rounded-lg transition-colors',
                 active
-                  ? 'bg-[#13294B]/10 text-[#13294B]'
+                  ? 'bg-[var(--portal-ink)]/10 text-[var(--portal-ink)]'
                   : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
               ].join(' ')}
             >

@@ -48,7 +48,7 @@ const BADGE_STYLE: Record<InstalmentStatus, { bg: string; fg: string }> = {
   due_today:   { bg: '#EAF1FB', fg: '#2B5FA8' },
   upcoming:    { bg: '#EAF1FB', fg: '#2B5FA8' },
   overdue:     { bg: '#FCEAEA', fg: '#B42318' },
-  written_off: { bg: '#F1F5F6', fg: '#64748B' },
+  written_off: { bg: 'var(--portal-wash)', fg: 'var(--portal-muted)' },
 };
 
 function ScheduleBadge({ derived }: { derived: InstalmentStatus }) {
@@ -185,14 +185,14 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
 
         {/* Schedule timeline */}
         <div
-          className="rounded-[22px] bg-white overflow-hidden"
+          className="rounded-card bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           <div className="px-[18px] pt-[15px] pb-[13px] text-[11px] font-semibold uppercase" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>
             Schedule
           </div>
           {payments.length === 0 ? (
-            <p className="px-[18px] pb-[16px] text-[13px]" style={{ color: '#8496AA' }}>No schedule yet.</p>
+            <p className="px-[18px] pb-[16px] text-[13px]" style={{ color: 'var(--portal-muted)' }}>No schedule yet.</p>
           ) : payments.map((p) => {
             const derived   = deriveInstalmentStatus(p, today);
             const collected = derived === 'paid';
@@ -206,14 +206,14 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
               ? formatDate((p.collected_at ?? p.due_date).slice(0, 10))
               : `${overdue ? 'Was due' : 'Due'} ${formatDate(effDate)}`;
             const emphasise = isNext || overdue;
-            const ring      = overdue ? '#B42318' : isNext ? '#15A89E' : '#E2E8EE';
-            const dateColor = overdue ? '#B42318' : '#8496AA';
-            const amtColor  = emphasise ? '#13294B' : '#8496AA';
+            const ring      = overdue ? '#B42318' : isNext ? 'var(--portal-accent)' : 'var(--portal-line)';
+            const dateColor = overdue ? '#B42318' : 'var(--portal-muted)';
+            const amtColor  = emphasise ? 'var(--portal-ink)' : 'var(--portal-muted)';
             return (
               <div
                 key={p.id}
                 className="flex items-center gap-3 px-[18px] py-[13px]"
-                style={{ borderTop: '1px solid #EEF2F5', background: overdue ? '#FEF6F5' : isNext ? '#F5FCFB' : undefined }}
+                style={{ borderTop: '1px solid var(--portal-hairline)', background: overdue ? '#FEF6F5' : isNext ? 'var(--portal-wash)' : undefined }}
               >
                 {collected ? (
                   <span className="flex-none w-6 h-6 rounded-full flex items-center justify-center" style={{ background: '#F0FDF4' }}>
@@ -240,15 +240,15 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
 
         {/* Card + receipt */}
         <div
-          className="rounded-[22px] bg-white overflow-hidden"
+          className="rounded-card bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           <div className="flex items-center gap-3 px-[18px] py-[16px]">
-            <span className="flex-none w-10 h-7 rounded-[7px] flex items-center justify-center text-[9.5px] font-bold" style={{ background: '#F1F5F6', color: '#41556F', letterSpacing: '.06em' }}>
+            <span className="flex-none w-10 h-7 rounded-chip flex items-center justify-center text-[9.5px] font-bold" style={{ background: 'var(--portal-wash)', color: 'var(--portal-ink-2)', letterSpacing: '.06em' }}>
               {cardBrandLabel(chargeCard?.card_brand)}
             </span>
             <div className="flex-1 min-w-0">
-              <p className="text-[14px] font-semibold tabular-nums" style={{ color: '#13294B' }}>
+              <p className="text-[14px] font-semibold tabular-nums" style={{ color: 'var(--portal-ink)' }}>
                 {chargeCard?.last_four ? `···· ${chargeCard.last_four}` : 'No card on file'}
               </p>
               {/* No "Change" here — this plan collects from the card it was set
@@ -256,7 +256,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
                   default card on /patient/account/pay only applies to plans
                   created afterwards, so a link here would promise something
                   this screen can't do. */}
-              <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>Used to collect this plan&rsquo;s instalments</p>
+              <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Used to collect this plan&rsquo;s instalments</p>
             </div>
           </div>
           <PlanReceiptSheet
@@ -270,13 +270,13 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
         </div>
 
         {refSegments.length > 0 && (
-          <p className="text-center text-[11.5px]" style={{ color: '#A8B4C2' }}>{refSegments.join(' · ')}</p>
+          <p className="text-center text-[11.5px]" style={{ color: 'var(--portal-muted)' }}>{refSegments.join(' · ')}</p>
         )}
 
         {/* Pay actions (active plans only). */}
         {isActive && nextOut && (
           <div
-            className="rounded-[22px] bg-white px-[18px] py-[16px]"
+            className="rounded-card bg-white px-[18px] py-[16px]"
             style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
           >
             <PlanSettleAffordance

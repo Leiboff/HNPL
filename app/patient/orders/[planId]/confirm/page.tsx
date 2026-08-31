@@ -91,7 +91,7 @@ export default async function ConfirmPage({
             <Link
               href="/patient/account/personal"
               className="inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
             >
               Go to account →
             </Link>

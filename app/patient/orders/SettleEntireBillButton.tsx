@@ -118,7 +118,7 @@ export default function SettleEntireBillButton({
         onClick={() => setConfirming(true)}
         disabled={pending.disabled}
         className={buttonCls}
-        style={isMenuItem ? { color: '#13294B' } : undefined}
+        style={isMenuItem ? { color: 'var(--portal-ink)' } : undefined}
       >
         {pending.showLabel
           ? 'Settling…'

@@ -192,7 +192,7 @@ export default function ScanView() {
   return (
     <div className="flex flex-col gap-4">
       <div
-        className="relative w-full overflow-hidden rounded-[22px] bg-[#0B1F3A]"
+        className="relative w-full overflow-hidden rounded-card bg-[var(--brand-navy-deep)]"
         style={{ aspectRatio: '3 / 4' }}
       >
         <video
@@ -206,7 +206,7 @@ export default function ScanView() {
         {status === 'scanning' && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div
-              className="h-[62%] w-[62%] rounded-[18px]"
+              className="h-[62%] w-[62%] rounded-card"
               style={{
                 border: `3px solid ${wrongCodeHint ? '#F5A524' : 'rgba(255,255,255,.85)'}`,
                 boxShadow: '0 0 0 999px rgba(0,0,0,.28)',
@@ -256,7 +256,7 @@ export default function ScanView() {
         )}
       </div>
 
-      <p className="text-center text-[13px]" style={{ color: '#7A8AA0' }}>
+      <p className="text-center text-[13px]" style={{ color: 'var(--portal-muted)' }}>
         Point your camera at the QR code on your bill or the practice&apos;s till screen.
       </p>
 
@@ -269,13 +269,13 @@ export default function ScanView() {
             value={manual}
             onChange={(e) => { setManual(e.target.value); setManualError(null); }}
             placeholder="Code from your bill"
-            className="flex-1 rounded-[14px] border px-4 py-3 text-[15px]"
+            className="flex-1 rounded-tile border px-4 py-3 text-[15px]"
             style={{ borderColor: 'rgba(19,41,75,.15)' }}
           />
           <button
             type="submit"
-            className="rounded-[14px] px-5 text-[15px] font-semibold text-white"
-            style={{ background: '#15A89E' }}
+            className="rounded-tile px-5 text-[15px] font-semibold text-white"
+            style={{ background: 'var(--portal-accent)' }}
           >
             Go
           </button>

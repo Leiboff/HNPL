@@ -23,7 +23,7 @@ export default function PatientWelcomeBanner({ firstName }: { firstName: string 
     >
       <span
         className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold"
-        style={{ background: 'rgba(21,168,158,.12)', color: '#0F766E' }}
+        style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent-ink)' }}
       >
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M5 10.5l3 3 7-7" />
@@ -31,7 +31,7 @@ export default function PatientWelcomeBanner({ firstName }: { firstName: string 
         Verified
       </span>
 
-      <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]" style={{ color: '#13294B' }}>
+      <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]" style={{ color: 'var(--portal-ink)' }}>
         You&rsquo;re all set, {name}
       </h2>
       <p className="mt-1 text-sm text-gray-500">
@@ -42,14 +42,14 @@ export default function PatientWelcomeBanner({ firstName }: { firstName: string 
         <Link
           href="/patient/explore"
           className="flex h-[52px] flex-1 items-center justify-center rounded-2xl text-[15px] font-semibold text-white transition-all"
-          style={{ background: '#15A89E', boxShadow: '0 10px 22px -12px rgba(21,168,158,0.9)' }}
+          style={{ background: 'var(--portal-accent)', boxShadow: '0 10px 22px -12px rgba(21,168,158,0.9)' }}
         >
           Find care near me
         </Link>
         <Link
           href="/patient"
           className="flex h-[52px] flex-1 items-center justify-center rounded-2xl text-[15px] font-semibold"
-          style={{ background: '#F1F5F6', color: '#13294B' }}
+          style={{ background: 'var(--portal-wash)', color: 'var(--portal-ink)' }}
         >
           Go to my dashboard
         </Link>

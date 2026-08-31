@@ -89,7 +89,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
       >
         <p
           className="text-xs font-semibold uppercase tracking-widest"
-          style={{ color: '#13294B', opacity: 0.6 }}
+          style={{ color: 'var(--portal-ink)', opacity: 0.6 }}
         >
           Your Plans
         </p>
@@ -103,7 +103,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
           <Link
             href="/patient/explore"
             className="mt-3 inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
             data-testid="merged-plans-find-care"
           >
             Find care →
@@ -112,7 +112,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
         {totalCount > activeCount && (
           <Link
             href="/patient/orders"
-            className="mt-3 inline-flex text-xs font-medium text-[#13294B] underline underline-offset-2"
+            className="mt-3 inline-flex text-xs font-medium text-[var(--portal-ink)] underline underline-offset-2"
             data-testid="merged-plans-past-link"
           >
             See {totalCount - activeCount} past plan{totalCount - activeCount === 1 ? '' : 's'} →
@@ -171,12 +171,12 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
             type="button"
             onClick={() => setOpen(true)}
             data-testid="merged-plans-headline"
-            className="w-full text-left p-5 sm:p-6 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-offset-2"
+            className="w-full text-left p-5 sm:p-6 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)] focus-visible:ring-offset-2"
           >
             <div className="flex items-start justify-between gap-2">
               <p
                 className={`text-xs font-semibold uppercase tracking-widest ${isUrgent ? 'text-red-600' : ''}`}
-                style={isUrgent ? undefined : { color: '#13294B', opacity: 0.6 }}
+                style={isUrgent ? undefined : { color: 'var(--portal-ink)', opacity: 0.6 }}
               >
                 {labelText}
               </p>
@@ -187,7 +187,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
             <p
               className={`mt-3 text-4xl sm:text-5xl font-bold tabular-nums ${isUrgent ? 'text-red-600' : ''}`}
               data-testid="merged-plans-headline-amount"
-              style={isUrgent ? undefined : { color: '#13294B' }}
+              style={isUrgent ? undefined : { color: 'var(--portal-ink)' }}
             >
               {formatRand(headline.total)}
             </p>
@@ -197,7 +197,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
           <div className="p-5 sm:p-6 pb-3">
             <p
               className="text-xs font-semibold uppercase tracking-widest"
-              style={{ color: '#13294B', opacity: 0.6 }}
+              style={{ color: 'var(--portal-ink)', opacity: 0.6 }}
             >
               Your Plans
             </p>
@@ -223,14 +223,14 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
                 <div className="flex items-center justify-between gap-3">
                   <p
                     className="text-sm font-semibold truncate min-w-0"
-                    style={{ color: '#13294B' }}
+                    style={{ color: 'var(--portal-ink)' }}
                     data-testid="merged-plans-row-name"
                   >
                     {r.practiceName}
                   </p>
                   <p
                     className="text-sm font-semibold tabular-nums shrink-0"
-                    style={{ color: '#13294B' }}
+                    style={{ color: 'var(--portal-ink)' }}
                     data-testid="merged-plans-row-amount"
                   >
                     {r.nextAmount != null ? formatRand(r.nextAmount) : '—'}
@@ -257,8 +257,8 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
                     style={{
                       width:      `${r.percent}%`,
                       background: r.isPaidInFull
-                        ? '#15A89E'
-                        : 'linear-gradient(90deg, #13294B 0%, #15A89E 100%)',
+                        ? 'var(--portal-accent)'
+                        : 'linear-gradient(90deg, var(--portal-ink) 0%, var(--portal-accent) 100%)',
                     }}
                   />
                 </div>
@@ -273,7 +273,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
             {overflow > 0 ? (
               <Link
                 href="/patient/orders"
-                className="font-medium text-[#13294B] underline underline-offset-2"
+                className="font-medium text-[var(--portal-ink)] underline underline-offset-2"
                 data-testid="merged-plans-view-all"
               >
                 View all {activeCount} →
@@ -282,7 +282,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
             {historic > 0 && (
               <Link
                 href="/patient/orders"
-                className="font-medium text-[#13294B] underline underline-offset-2"
+                className="font-medium text-[var(--portal-ink)] underline underline-offset-2"
                 data-testid="merged-plans-past-link"
               >
                 See {historic} past plan{historic === 1 ? '' : 's'} →

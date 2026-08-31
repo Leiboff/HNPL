@@ -259,7 +259,7 @@ function Item({ testid, title, body, done, action, error }: ItemProps) {
             onClick={action.onClick}
             disabled={action.busy}
             className="shrink-0 rounded-lg text-xs font-semibold text-white px-3 py-2 disabled:opacity-60"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
           >
             {action.label}
           </button>

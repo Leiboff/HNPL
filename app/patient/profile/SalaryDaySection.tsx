@@ -41,7 +41,7 @@ import ProfileFieldRow from '@/components/ProfileFieldRow';
 
 const inputCls =
   'rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
-  'focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]';
+  'focus:border-[var(--portal-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--portal-accent)]';
 
 function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -124,7 +124,7 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
               disabled={isPending}
               data-testid="profile-salary-day-save"
               className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
             >
               {isPending ? 'Saving…' : 'Save'}
             </button>

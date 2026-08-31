@@ -26,6 +26,63 @@
   color-scheme: light;
   --background: #f7fbfb;
   --foreground: #171717;
+
+  /* ── Brand primitives — THE source of truth ────────────────────────────
+   *
+   * These five values are the brand. Everything else in the app derives
+   * from them; nothing else may state them literally.
+   *
+   * They used to live in `.lp-root` (app/landing.css), scoped to the
+   * landing page, which meant every other surface re-typed the hex codes
+   * from memory. That is how the app arrived at three navies (#13294B,
+   * #0E2140 and a #0B1F3A that exists nowhere in the brand), three teals,
+   * and six blue-greys — none of them shared between the auth screens and
+   * the patient portal. `.auth-surface` below and `.lp-root` now both
+   * reference these, so a brand change is one edit.
+   *
+   * --brand-teal-ink is the one addition: brand teal is 2.74:1 on the
+   * portal's light sheet, so it cannot carry text there. This is the same
+   * teal scaled to 70% luminance — 5.08:1, and legible. The portal had
+   * already reached for Tailwind's teal-800 (#0F766E) for exactly this
+   * job; #0F766F IS our teal at 70%, so the value barely moves and it
+   * stops being someone else's colour. */
+  --brand-navy:        #13294B;
+  --brand-navy-deep:   #0E2140;
+  --brand-teal:        #15A89E;
+  --brand-teal-bright: #19C2B6;
+  --brand-teal-ink:    #0F766F;
+
+  /* ── Portal vocabulary — the light app on a navy header ────────────────
+   *
+   * The logged-in app is deliberately NOT the dark auth surface: a screen
+   * of balances and instalment tables should be light. So it needs its own
+   * text ramp, because the auth ramp is built for a navy ground and would
+   * be invisible here (--auth-muted is 1.99:1 on the sheet).
+   *
+   * Every step below is brand navy mixed toward white, so the ramp cannot
+   * drift out of the family, and every step carries its measured contrast
+   * against the sheet. The ratios are the point, not decoration:
+   *
+   *   ink     13.49:1  — primary text, headings, amounts
+   *   ink-2    7.15:1  — secondary text
+   *   muted    4.86:1  — muted body text. AA at 12px, which the values it
+   *                      replaces were not: the portal's most-used muted
+   *                      colour (#8496AA, 28 call sites, all of it 11–13.5px
+   *                      help text, dates and amounts) sat at 2.82:1, and
+   *                      #A3B1C2 text at 2.03:1.
+   *   faint    2.85:1  — DECORATION ONLY. Icon strokes and dividers, never
+   *                      text. Kept as a token precisely so that "the light
+   *                      grey one" has a name that says what it is not for. */
+  --portal-sheet:      #F4F7F8;
+  --portal-wash:       #F1F5F6;
+  --portal-hairline:   #EEF2F5;
+  --portal-line:       #D8DEE8;
+  --portal-ink:        var(--brand-navy);
+  --portal-ink-2:      #42546F;
+  --portal-muted:      #5F6D85;
+  --portal-faint:      #8994A5;
+  --portal-accent:     var(--brand-teal);
+  --portal-accent-ink: var(--brand-teal-ink);
 }
 
 @theme inline {
@@ -33,6 +90,30 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Portal tokens as Tailwind utilities, so new code can write
+   * `text-portal-muted` / `stroke-portal-faint` rather than reaching for
+   * a hex. The existing portal code sets colours through inline `style`,
+   * and was migrated to `var(--portal-*)` in place — both routes resolve
+   * to the same custom property, so the two styles cannot disagree. */
+  --color-portal-sheet:      var(--portal-sheet);
+  --color-portal-wash:       var(--portal-wash);
+  --color-portal-hairline:   var(--portal-hairline);
+  --color-portal-line:       var(--portal-line);
+  --color-portal-ink:        var(--portal-ink);
+  --color-portal-ink-2:      var(--portal-ink-2);
+  --color-portal-muted:      var(--portal-muted);
+  --color-portal-faint:      var(--portal-faint);
+  --color-portal-accent:     var(--portal-accent);
+  --color-portal-accent-ink: var(--portal-accent-ink);
+
+  /* The portal's radius scale. It had five values (22, 18, 15, 14, 7px);
+   * 22/14/7 is a real progression — card, tile, small chip — and 18 and 15
+   * were each within a couple of px of a step that already existed, which
+   * is drift rather than intent. */
+  --radius-card: 22px;
+  --radius-tile: 14px;
+  --radius-chip: 7px;
 }
 
 body {
@@ -189,11 +270,13 @@ body {
  * Defined once here rather than inline, because three files pasting the
  * same navy gradient is exactly how this drifted the first time. */
 .auth-surface {
-  /* Brand, from app/landing.css */
-  --auth-ground-from:  #0E2140;              /* --navy-deep  */
-  --auth-ground-to:    #13294B;              /* --navy       */
-  --auth-teal:         #15A89E;              /* --teal       */
-  --auth-accent:       #19C2B6;              /* --teal-bright — 6.52:1 */
+  /* Brand — REFERENCED, not restated. These four used to be literal hex
+   * copied out of app/landing.css, which is how the app ended up with a
+   * navy in the patient portal (#0B1F3A) that matched neither of these. */
+  --auth-ground-from:  var(--brand-navy-deep);
+  --auth-ground-to:    var(--brand-navy);
+  --auth-teal:         var(--brand-teal);
+  --auth-accent:       var(--brand-teal-bright);   /* 6.52:1 on the ground */
 
   /* Brand teal at alpha, for rings and tints */
   --auth-accent-soft:  rgba(25, 194, 182, .5);
@@ -204,7 +287,7 @@ body {
   /* Text on the navy ground */
   --auth-muted:        #9FB3CC;              /* 6.77:1 — sub-headings, labels */
   --auth-dim:          #8AA0BC;              /* 5.42:1 — fine print          */
-  --auth-on-teal:      #0E2140;              /* 5.44:1 on --auth-teal        */
+  --auth-on-teal:      var(--brand-navy-deep); /* 5.44:1 on --auth-teal       */
 
   /* Neutral structure. White at alpha over navy = a lighter navy, so
    * these need no hue of their own and can never drift out of family. */

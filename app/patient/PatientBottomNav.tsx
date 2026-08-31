@@ -107,7 +107,7 @@ export default function PatientBottomNav() {
               // min-h-[44px] as a floor. Icon + label + padding are all one
               // hit area.
               className="flex-1 flex flex-col items-center justify-center gap-[5px] h-full min-h-[44px]"
-              style={{ color: active ? '#15A89E' : '#94A3B8', transition: 'color 0.15s' }}
+              style={{ color: active ? 'var(--portal-accent)' : 'var(--portal-muted)', transition: 'color 0.15s' }}
             >
               {isScan ? (
                 // Centre tab is a raised circular button, Payflex-style —
@@ -120,7 +120,7 @@ export default function PatientBottomNav() {
                     width: 46,
                     height: 46,
                     marginTop: -20,
-                    background: '#15A89E',
+                    background: 'var(--portal-accent)',
                     color: '#ffffff',
                     boxShadow: '0 6px 16px -4px rgba(11,31,58,0.45)',
                     border: '3px solid #ffffff',
@@ -133,7 +133,7 @@ export default function PatientBottomNav() {
               )}
               <span
                 className="text-[10.5px] leading-none font-semibold"
-                style={{ color: isScan ? '#13294B' : active ? '#13294B' : '#94A3B8', transition: 'color 0.15s' }}
+                style={{ color: isScan ? 'var(--portal-ink)' : active ? 'var(--portal-ink)' : 'var(--portal-muted)', transition: 'color 0.15s' }}
               >
                 {label}
               </span>

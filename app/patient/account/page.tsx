@@ -49,7 +49,7 @@ import { getRequestUser } from '@/lib/auth/requestUser';
 function Provenance({ children }: { children?: string | null }) {
   if (!children) return null;
   return (
-    <p className="text-[11.5px]" style={{ color: '#A3B1C2' }} data-testid="provenance">
+    <p className="text-[11.5px]" style={{ color: 'var(--portal-muted)' }} data-testid="provenance">
       {children}
     </p>
   );
@@ -131,16 +131,16 @@ export default async function AccountPage() {
 
         {/* Your record */}
         <div
-          className="rounded-[22px] bg-white p-[18px] flex flex-col gap-[14px]"
+          className="rounded-card bg-white p-[18px] flex flex-col gap-[14px]"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>Your record</p>
-              <p className="mt-2 text-[17px] font-semibold" style={{ color: '#13294B' }}>{recordHeading}</p>
+              <p className="mt-2 text-[17px] font-semibold" style={{ color: 'var(--portal-ink)' }}>{recordHeading}</p>
             </div>
             {cleanRecord && (
-              <span className="flex-none w-[34px] h-[34px] rounded-full flex items-center justify-center" style={{ background: 'rgba(21,168,158,.13)', color: '#0F766E' }}>
+              <span className="flex-none w-[34px] h-[34px] rounded-full flex items-center justify-center" style={{ background: 'rgba(21,168,158,.13)', color: 'var(--portal-accent-ink)' }}>
                 <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <path d="M5 10.5l3 3 7-7" />
                 </svg>
@@ -158,7 +158,7 @@ export default async function AccountPage() {
           ) : (
             <>
               <InstalmentLadder segments={recordSegments} />
-              <p className="text-[13px] leading-[1.55]" style={{ color: '#8496AA' }}>
+              <p className="text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
                 Every payment you keep on time builds your record with betternow.
               </p>
             </>
@@ -197,7 +197,7 @@ export default async function AccountPage() {
             href="/contact"
             data-testid="account-get-help"
             className="text-[13px] font-semibold underline underline-offset-2 transition-colors hover:opacity-70"
-            style={{ color: '#13294B' }}
+            style={{ color: 'var(--portal-ink)' }}
           >
             Get help
           </a>

@@ -256,7 +256,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
             </span>
           </p>
           <div className="mt-[18px] h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,.14)' }}>
-            <div className="h-full rounded-full" style={{ width: `${usedPct}%`, background: 'linear-gradient(90deg,#5CD9CE,#15A89E)' }} />
+            <div className="h-full rounded-full" style={{ width: `${usedPct}%`, background: 'linear-gradient(90deg,var(--brand-teal-bright),var(--portal-accent))' }} />
           </div>
           <p className="mt-[10px] text-[13px] tabular-nums" style={{ color: 'rgba(255,255,255,.6)' }}>
             {formatRand(used)} in use · {formatRand(approvedLimit)} limit
@@ -299,7 +299,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Next payment — the soonest instalment coming off the card. */}
         {nextPayment && (
           <div
-            className="rounded-[22px] bg-white p-[18px] flex flex-col gap-[16px]"
+            className="rounded-card bg-white p-[18px] flex flex-col gap-[16px]"
             style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
           >
             <div className="flex items-start justify-between gap-3">
@@ -307,7 +307,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
                 <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: nextPayment.overdue ? '#B42318' : 'rgba(19,41,75,.5)' }}>
                   {nextPayment.overdue ? 'Payment overdue' : 'Next payment'}
                 </p>
-                <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: '#13294B', letterSpacing: '-.04em' }}>
+                <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: 'var(--portal-ink)', letterSpacing: '-.04em' }}>
                   {formatRand(overdueAll ? overdueAll.amount : nextPayment.amount)}
                 </p>
               </div>
@@ -315,14 +315,14 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
                 className="flex-none text-[12px] font-semibold rounded-full px-3 py-2"
                 style={nextPayment.overdue
                   ? { background: 'rgba(180,35,24,.1)', color: '#B42318' }
-                  : { background: 'rgba(21,168,158,.13)', color: '#0F766E' }}
+                  : { background: 'rgba(21,168,158,.13)', color: 'var(--portal-accent-ink)' }}
               >
                 {nextPayment.overdue
                   ? (overdueAll ? `${overdueAll.count} overdue` : 'Overdue')
                   : relativeDay(nextPayment.date, today)}
               </span>
             </div>
-            <p className="text-[13.5px]" style={{ color: nextPayment.overdue ? '#B42318' : '#8496AA' }}>
+            <p className="text-[13.5px]" style={{ color: nextPayment.overdue ? '#B42318' : 'var(--portal-muted)' }}>
               {overdueAll
                 ? <>{overdueAll.count} overdue payments across your plans · pay them all to catch up</>
                 : nextPayment.overdue
@@ -331,8 +331,8 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
             </p>
             <Link
               href={overdueAll ? '/patient/orders' : (nextPayment.planId ? `/patient/orders/${nextPayment.planId}` : '/patient/orders')}
-              className="text-center text-[14.5px] font-semibold text-white rounded-[14px] py-[14px]"
-              style={{ background: '#0B1F3A' }}
+              className="text-center text-[14.5px] font-semibold text-white rounded-tile py-[14px]"
+              style={{ background: 'var(--brand-navy-deep)' }}
             >
               View &amp; pay
             </Link>
@@ -342,30 +342,30 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Your plans — one row per active plan, ladder + next line. */}
         {planRows.length > 0 && (
           <div
-            className="rounded-[22px] bg-white overflow-hidden"
+            className="rounded-card bg-white overflow-hidden"
             style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
           >
             <div className="flex items-center justify-between gap-3 px-[18px] pt-[16px] pb-[14px]">
-              <span className="text-[14.5px] font-semibold" style={{ color: '#13294B' }}>Your plans</span>
-              <Link href="/patient/orders" className="text-[13px] font-semibold" style={{ color: '#0F766E' }}>See all</Link>
+              <span className="text-[14.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Your plans</span>
+              <Link href="/patient/orders" className="text-[13px] font-semibold" style={{ color: 'var(--portal-accent-ink)' }}>See all</Link>
             </div>
             {planRows.map((r) => (
               <Link
                 key={r.id}
                 href={`/patient/orders/${r.id}`}
                 className="block px-[18px] py-[15px] hover:bg-gray-50 transition-colors"
-                style={{ borderTop: '1px solid #EEF2F5' }}
+                style={{ borderTop: '1px solid var(--portal-hairline)' }}
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-[14.5px] font-semibold truncate min-w-0" style={{ color: '#13294B' }}>{r.practiceName}</span>
-                  <span className="text-[14.5px] font-semibold tabular-nums shrink-0" style={{ color: '#13294B' }}>
+                  <span className="text-[14.5px] font-semibold truncate min-w-0" style={{ color: 'var(--portal-ink)' }}>{r.practiceName}</span>
+                  <span className="text-[14.5px] font-semibold tabular-nums shrink-0" style={{ color: 'var(--portal-ink)' }}>
                     {formatRand(r.remaining)} left
                   </span>
                 </div>
                 <div className="mt-[11px]">
                   <InstalmentLadder segments={ladderFromCounts(r.total, r.paid)} />
                 </div>
-                <p className="mt-[11px] text-[12.5px] tabular-nums" style={{ color: r.nextOverdue ? '#B42318' : '#8496AA' }}>
+                <p className="mt-[11px] text-[12.5px] tabular-nums" style={{ color: r.nextOverdue ? '#B42318' : 'var(--portal-muted)' }}>
                   {r.isPaidInFull ? 'Paid in full' : `${r.paid} of ${r.total} paid`}
                   {r.nextAmount != null && r.nextDate
                     ? r.nextOverdue
@@ -381,10 +381,10 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Empty state — no plans yet. */}
         {planRows.length === 0 && pendingPlans.length === 0 && (
           <div
-            className="rounded-[22px] bg-white p-[18px] text-center"
+            className="rounded-card bg-white p-[18px] text-center"
             style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
           >
-            <p className="text-[14px]" style={{ color: '#41556F' }}>
+            <p className="text-[14px]" style={{ color: 'var(--portal-ink-2)' }}>
               {totalCount === 0 ? 'No payment plans yet.' : 'Nothing outstanding right now.'}
             </p>
           </div>
@@ -393,16 +393,16 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Find care row. */}
         <Link
           href="/patient/explore"
-          className="rounded-[22px] bg-white p-[17px] flex items-center gap-[14px]"
+          className="rounded-card bg-white p-[17px] flex items-center gap-[14px]"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           <div className="flex-1 min-w-0">
-            <p className="text-[14.5px] font-semibold" style={{ color: '#13294B' }}>Find care near you</p>
-            <p className="mt-1 text-[12.5px]" style={{ color: '#8496AA' }}>Dentists, physios and optometrists near you</p>
+            <p className="text-[14.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Find care near you</p>
+            <p className="mt-1 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Dentists, physios and optometrists near you</p>
           </div>
           <span
             className="flex-none w-9 h-9 rounded-full flex items-center justify-center"
-            style={{ background: 'rgba(21,168,158,.12)', color: '#0F766E' }}
+            style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent-ink)' }}
             aria-hidden
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">

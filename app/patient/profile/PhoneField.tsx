@@ -67,7 +67,7 @@ type Props = {
 
 const inputCls =
   'rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
-  'focus:border-[#15A89E] focus:outline-none focus:ring-1 focus:ring-[#15A89E]';
+  'focus:border-[var(--portal-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--portal-accent)]';
 
 function startErrorCopy(code: string): string {
   switch (code) {
@@ -85,7 +85,7 @@ function StatePill({ verified }: { verified: boolean }) {
       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold"
       style={
         verified
-          ? { background: 'rgba(21,168,158,.12)', color: '#0F766E' }
+          ? { background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent-ink)' }
           : { background: 'rgba(200,132,28,.12)', color: '#8A5A11' }
       }
       data-testid={verified ? 'phone-state-verified' : 'phone-state-unverified'}
@@ -217,7 +217,7 @@ export default function PhoneField({
               disabled={isPending}
               data-testid="profile-phone-save"
               className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
             >
               {isPending ? 'Sending…' : 'Send code'}
             </button>
@@ -254,7 +254,7 @@ export default function PhoneField({
       )}
 
       {mode === 'editing' && (
-        <p className="mt-1.5 text-[11.5px]" style={{ color: '#A3B1C2' }}>
+        <p className="mt-1.5 text-[11.5px]" style={{ color: 'var(--portal-muted)' }}>
           We&rsquo;ll text a 6-digit code to the new number. Your current number stays in use
           until you enter it.
         </p>

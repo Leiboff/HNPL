@@ -151,7 +151,7 @@ export default function InstalmentBreakdownModal({
               <span className="text-sm font-semibold text-gray-700">Total outstanding</span>
               <span
                 className={`text-lg font-bold tabular-nums ${isUrgent ? 'text-red-600' : ''}`}
-                style={isUrgent ? undefined : { color: '#13294B' }}
+                style={isUrgent ? undefined : { color: 'var(--portal-ink)' }}
               >
                 {formatRand(total)}
               </span>
