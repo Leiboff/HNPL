@@ -40,9 +40,17 @@ describe('signup records acceptance server-side', () => {
   it('stamps profiles.terms_accepted_at + terms_version + privacy_version after signUp', () => {
     expect(SIGNUP).toMatch(/from '@\/lib\/legal\/terms'/);
     expect(SIGNUP).toMatch(/from '@\/lib\/legal\/privacy'/);
+    // The three columns are written from ONE place now — the same payload
+    // is needed by the stamp, the unfiltered retry, and the defensive
+    // provision, and three inline copies of a legal record is how one of
+    // them comes to be missing a column.
     expect(SIGNUP).toMatch(
-      /\.from\('profiles'\)\s*\.update\(\{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION,\s*\}\)/,
+      /function consentColumns\(\) \{\s*return \{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION,\s*\};/,
     );
+    expect(SIGNUP).toMatch(/\.from\('profiles'\)\s*\.update\(consentColumns\(\)\)/);
+    // …and the provisioned row carries them too, or a signup could exist
+    // with a profile and no acceptance.
+    expect(SIGNUP).toMatch(/\.insert\(\{[\s\S]*?\.\.\.consentColumns\(\),[\s\S]*?\}\)/);
   });
 });
 
