@@ -10,6 +10,7 @@ import {
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
+import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -102,7 +103,25 @@ type ProfileSeed = {
 
 type AcceptanceOutcome =
   | { ok: true;  how: 'stamped' | 'already-on-record' | 'provisioned' }
-  | { ok: false; why: string };
+  | { ok: false; why: string; ref: string };
+
+/**
+ * A short reference shown to the person in front of the screen.
+ *
+ * The failure this covers has now been reported twice and diagnosed
+ * neither time, because the screen said the same sentence whatever the
+ * cause and the reason only existed in a server log nobody was reading. A
+ * tester can read this off the page and quote it.
+ *
+ * Deliberately coarse: an operation and a SQLSTATE. No table names, no
+ * ids, no key material, nothing about who exists.
+ */
+function ref(operation: string, error?: unknown): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const code = (error as any)?.code;
+  const suffix = typeof code === 'string' && /^[A-Za-z0-9]{1,8}$/.test(code) ? `-${code}` : '';
+  return `${operation}${suffix}`.toUpperCase();
+}
 
 function consentColumns() {
   return {
@@ -157,7 +176,7 @@ async function recordAcceptance(
     // A refused write. Fatal — we do not know what state the row is in
     // and we are not going to guess on a legal record.
     console.error('[signup] terms acceptance UPDATE refused', { userId, error: describe(updateErr) });
-    return { ok: false, why: `update refused: ${describe(updateErr)}` };
+    return { ok: false, why: `update refused: ${describe(updateErr)}`, ref: ref('upd', updateErr) };
   }
   if (stamped?.length) return { ok: true, how: 'stamped' };
 
@@ -165,7 +184,7 @@ async function recordAcceptance(
   const state = await acceptanceOnRecord(svc, userId);
   if (state.error) {
     console.error('[signup] terms acceptance read-back failed', { userId, error: state.error });
-    return { ok: false, why: `read-back failed: ${state.error}` };
+    return { ok: false, why: `read-back failed: ${state.error}`, ref: ref('read') };
   }
 
   // (1) Already accepted — write-once did its job.
@@ -185,7 +204,7 @@ async function recordAcceptance(
         userId,
         error: retryErr ? describe(retryErr) : 'update matched no rows',
       });
-      return { ok: false, why: 'retry did not land' };
+      return { ok: false, why: 'retry did not land', ref: ref('retry', retryErr) };
     }
     return { ok: true, how: 'stamped' };
   }
@@ -211,7 +230,7 @@ async function recordAcceptance(
     const again = await acceptanceOnRecord(svc, userId);
     if (again.accepted) return { ok: true, how: 'already-on-record' };
     console.error('[signup] defensive profile provision failed', { userId, error: describe(insertErr) });
-    return { ok: false, why: `provision failed: ${describe(insertErr)}` };
+    return { ok: false, why: `provision failed: ${describe(insertErr)}`, ref: ref('prov', insertErr) };
   }
 
   return { ok: true, how: 'provisioned' };
@@ -241,6 +260,25 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
       success: false,
     };
   }
+
+  // ── Can this process write past RLS at all? ─────────────────────────
+  //
+  // Checked BEFORE an account is created, because the alternative is what
+  // happened twice: signUp succeeds, every privileged read comes back
+  // empty (RLS returns zero rows rather than an error — see
+  // lib/supabase/serviceRoleKey.ts), the acceptance cannot be recorded,
+  // and the account is rolled back with a message that describes the
+  // symptom and names nothing. A misconfigured key is not a signup
+  // failure and must not be reported as one.
+  //
+  // It does NOT block the signup: a key shape this cannot recognise may
+  // still be perfectly valid, and refusing every signup over a guess about
+  // a string would be worse than the bug. It logs, loudly, and rides along
+  // in the reference if the acceptance then fails — so the next report
+  // arrives with the answer attached.
+  const keyKind  = currentServiceKeyKind();
+  const keyFault = serviceKeyProblem(keyKind);
+  if (keyFault) console.error('[signup] PRIVILEGED KEY MISCONFIGURED —', keyFault);
 
   const svc      = createServiceClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
   const supabase = await createClient();
@@ -288,8 +326,9 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
     // ever proved they own this address, it carries no data, and the
     // person in front of us is asking for this exact email right now.
     console.error('[signup] could not record acceptance on an unconfirmed account', {
-      userId: existing.id,
-      why:    recovered.why,
+      userId:  existing.id,
+      why:     recovered.why,
+      keyKind,
     });
     const { error: orphanErr } = await svc.auth.admin.deleteUser(existing.id);
     if (orphanErr) {
@@ -358,15 +397,23 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   const accepted = newUserId ? await recordAcceptance(svc, newUserId, seed) : null;
   if (!newUserId || !accepted?.ok) {
     console.error('[signup] rolling back an account with no acceptance', {
-      userId: newUserId ?? '(no user returned by signUp)',
-      why:    accepted && !accepted.ok ? accepted.why : 'signUp returned no user id',
+      userId:  newUserId ?? '(no user returned by signUp)',
+      why:     accepted && !accepted.ok ? accepted.why : 'signUp returned no user id',
+      keyKind,
     });
     if (newUserId) {
       const { error: delErr } = await svc.auth.admin.deleteUser(newUserId);
       if (delErr) console.error('rollback of unaccepted signup failed:', delErr.message);
     }
+    // The reference is the whole point of this branch existing twice. It
+    // is what turns "please try again" — which two testers correctly read
+    // as "this is broken" — into something diagnosable from a screenshot.
+    const reference = [accepted && !accepted.ok ? accepted.ref : 'NOUSER', keyFault ? `KEY-${keyKind.toUpperCase()}` : null]
+      .filter(Boolean)
+      .join('/');
     return {
-      error: 'We couldn\'t record your agreement to the terms, so your account wasn\'t created. Please try again.',
+      error: 'We couldn\'t record your agreement to the terms, so your account wasn\'t created. '
+        + `Please try again, and quote reference ${reference} if it happens again.`,
       success: false,
     };
   }

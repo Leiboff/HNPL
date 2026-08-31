@@ -276,3 +276,71 @@ describe('the abandoned-at-OTP account', () => {
     expect(res.success).toBe(false);
   });
 });
+
+// ─── The reference on the screen ───────────────────────────────────────
+//
+// This failure was reported twice and diagnosed neither time, because the
+// screen said the same sentence whatever the cause and the reason lived
+// only in a server log. A tester can now read a reference off the page.
+
+describe('the failure names itself', () => {
+  it('a refused provision quotes the operation and the SQLSTATE', async () => {
+    row = null;
+    insertError = { code: '42501', message: 'permission denied for table profiles' };
+    signUpSpy.mockResolvedValue(freshUser());
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.error).toMatch(/quote reference/i);
+    expect(res.error).toMatch(/PROV-42501/);
+  });
+
+  it('a refused update is distinguishable from a refused provision', async () => {
+    row = { id: 'new-user-id', terms_accepted_at: null };
+    updateError = { code: '42501', message: 'permission denied' };
+    signUpSpy.mockResolvedValue(freshUser());
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.error).toMatch(/UPD-42501/);
+    expect(res.error).not.toMatch(/PROV/);
+  });
+
+  it('carries the privileged-key diagnosis when the key is not usable', async () => {
+    // The suite runs without SUPABASE_SERVICE_ROLE_KEY set, which is the
+    // same class of misconfiguration as holding an anon key: nothing can
+    // bypass RLS. That fact rides along in the reference, so a screenshot
+    // is enough to tell "the database refused us" from "this deployment
+    // has the wrong key".
+    row = null;
+    insertError = { code: '42501', message: 'permission denied' };
+    signUpSpy.mockResolvedValue(freshUser());
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.error).toMatch(/KEY-MISSING/);
+  });
+
+  it('leaks nothing beyond an operation, a SQLSTATE and the key KIND', async () => {
+    row = null;
+    insertError = { code: '42501', message: 'permission denied for table profiles', details: 'user=anon' };
+    signUpSpy.mockResolvedValue(freshUser());
+
+    const res = await signUpPatient(VALID);
+
+    // No table names, no PostgREST prose, no ids, no key material.
+    expect(res.error).not.toMatch(/profiles/);
+    expect(res.error).not.toMatch(/permission denied/);
+    expect(res.error).not.toMatch(/user=anon/);
+    expect(res.error).not.toMatch(/new-user-id/);
+  });
+
+  it('says NOUSER when signUp returned no user at all', async () => {
+    signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/NOUSER/);
+  });
+});
