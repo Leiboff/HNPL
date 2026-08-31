@@ -94,9 +94,28 @@ vi.mock('@supabase/supabase-js', () => ({
  */
 const currentRow = (): Row => row;
 
-let existingUser: { id: string; email_confirmed_at: string | null } | null = null;
+type AuthUser = { id: string; email_confirmed_at: string | null } | null;
+
+/**
+ * The action calls findExistingAuthUser TWICE, for two different jobs:
+ *
+ *   1. before signUp — "does this address already have an account?"
+ *   2. after signUp  — "what id did the account we just made get?", the
+ *      resolution that exists because auth-js hands back a null user on
+ *      every confirm-email signup.
+ *
+ * They need different answers, so the mock counts calls rather than
+ * returning one value to both.
+ */
+let existingUser: AuthUser = null;             // answer to (1)
+let existingUserAfterSignUp: AuthUser = null;  // answer to (2)
+let lookupCalls = 0;
+
 vi.mock('@/lib/auth/findExistingAuthUser', () => ({
-  findExistingAuthUser: async () => existingUser,
+  findExistingAuthUser: async () => {
+    lookupCalls += 1;
+    return lookupCalls === 1 ? existingUser : existingUserAfterSignUp;
+  },
 }));
 
 const { signUpPatient } = await import('./actions');
@@ -124,6 +143,8 @@ beforeEach(() => {
   selectError = null;
   insertError = null;
   existingUser = null;
+  existingUserAfterSignUp = null;
+  lookupCalls = 0;
 });
 
 describe('the happy path still works', () => {
@@ -341,68 +362,96 @@ describe('the failure names itself', () => {
 
 // ─── The failure that was actually happening ───────────────────────────
 //
-// A field report quoted reference NOUSER, which meant signUp had returned
-// `{ user: null, error: null }` — Supabase's anti-enumeration SILENT
-// RESPONSE for an address that already exists. The code read a null user
-// as an internal failure and reported it as "We couldn't record your
-// agreement to the terms", on every attempt, forever.
+// Two wrong diagnoses of mine, one wrong fix, and then the reference read
+// NOUSER for an address that had never been used — which is the fact that
+// ruled out "the email already exists" and pointed at the real cause.
 //
-// lib/auth/findExistingAuthUser.ts predicted this in its own header: "the
-// caller misreads it as 'shouldn't happen', and the user can never sign up
-// again with that email." It reached production because the fallback meant
-// to prevent it — a PostgREST query against the auth schema — could never
-// work, since Supabase does not expose that schema. Migration 0119
-// replaces it with a SECURITY DEFINER RPC.
+// @supabase/auth-js parses /signup with `_sessionResponse`, whose whole
+// user extraction is `data.user ?? null`. GoTrue nests the user under
+// `user` only when it creates a SESSION; when email confirmation is
+// required it returns the User model at the TOP LEVEL and there is no
+// `user` key to read. So auth-js yields `{ user: null, session: null }`
+// with no error — on EVERY confirm-email signup, which is every signup
+// this project performs. The account was created; we never learned its id,
+// so the acceptance was never stamped.
+//
+// The fix is to stop trusting the response shape: signUp returned no
+// error, so the user exists — resolve the id by looking it up.
 
-describe('signUp says "that email exists" without erroring', () => {
-  it('the SILENT RESPONSE (user: null) is an existing account, not a failure', async () => {
-    signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
+describe('signUp returns no user id on a confirm-email signup', () => {
+  it('resolves the id by email and completes the signup', async () => {
+    // The exact production shape: no error, no user.
+    signUpSpy.mockResolvedValue({ data: { user: null, session: null }, error: null });
+    // The handle_new_user trigger created the row; the lookup finds it.
+    existingUserAfterSignUp = { id: 'resolved-user-id', email_confirmed_at: null };
+    row = { id: 'resolved-user-id', terms_accepted_at: null };
+
+    const res = await signUpPatient(VALID);
+
+    expect(res).toEqual({ error: null, success: true });
+    expect(currentRow()?.terms_accepted_at).toBeTruthy();
+    expect(deleteUserSpy).not.toHaveBeenCalled();
+  });
+
+  it('is NOT reported as a duplicate account — the regression this replaced', async () => {
+    // A previous fix of mine read a null user as "already registered".
+    // With this response shape that is EVERY signup, so every new
+    // customer would have been told their account already existed.
+    signUpSpy.mockResolvedValue({ data: { user: null, session: null }, error: null });
+    existingUserAfterSignUp = { id: 'resolved-user-id', email_confirmed_at: null };
+    row = { id: 'resolved-user-id', terms_accepted_at: null };
+
+    const res = await signUpPatient(VALID);
+
+    // error is null on success, so assert the success and the absence of
+    // the duplicate wording separately.
+    expect(res.success).toBe(true);
+    expect(res.error ?? '').not.toMatch(/already exists/i);
+  });
+
+  it('provisions the profile row when the lookup finds the user but the row is gone', async () => {
+    signUpSpy.mockResolvedValue({ data: { user: null, session: null }, error: null });
+    existingUserAfterSignUp = { id: 'resolved-user-id', email_confirmed_at: null };
+    row = null;
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.success).toBe(true);
+    expect(insertSpy).toHaveBeenCalled();
+  });
+
+  it('fails with NOUSER only when the id cannot be resolved at all', async () => {
+    signUpSpy.mockResolvedValue({ data: { user: null, session: null }, error: null });
+    existingUserAfterSignUp = null;
 
     const res = await signUpPatient(VALID);
 
     expect(res.success).toBe(false);
-    expect(res.error).toMatch(/already exists/i);
-    expect(res.error).toMatch(/sign in/i);
-    // The regression this guards: it must NOT be reported as a terms
-    // failure, and must NOT quote an internal reference.
-    expect(res.error).not.toMatch(/agreement to the terms/i);
-    expect(res.error).not.toMatch(/NOUSER|reference/i);
-  });
-
-  it('offers the recovery route, since they may not recall signing up', async () => {
-    signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
-    const res = await signUpPatient(VALID);
-    expect(res.error).toMatch(/forgot password/i);
-  });
-
-  it('creates nothing and deletes nothing on that branch', async () => {
-    signUpSpy.mockResolvedValue({ data: { user: null }, error: null });
-
-    await signUpPatient(VALID);
-
-    // No account was made, so there is nothing to roll back — the old
-    // code called deleteUser on an id it never had.
+    expect(res.error).toMatch(/NOUSER/);
+    // Nothing to roll back — we never had an id.
     expect(deleteUserSpy).not.toHaveBeenCalled();
-    expect(insertSpy).not.toHaveBeenCalled();
   });
 
-  it('the obfuscated fake user (identities: []) gets the same answer', async () => {
+  it('a nested user (session created) is still used directly, no lookup needed', async () => {
+    row = { id: 'new-user-id', terms_accepted_at: null };
+    signUpSpy.mockResolvedValue(freshUser());
+    existingUserAfterSignUp = null;   // the lookup must not be needed
+
+    const res = await signUpPatient(VALID);
+
+    expect(res.success).toBe(true);
+  });
+
+  it('the obfuscated fake user (identities: []) IS a duplicate', async () => {
+    // This one is a real anti-enumeration marker: a user object whose
+    // identities array is empty. Distinct from a null user.
     signUpSpy.mockResolvedValue({ data: { user: { id: 'fake', identities: [] } }, error: null });
 
     const res = await signUpPatient(VALID);
 
     expect(res.error).toMatch(/already exists/i);
+    expect(res.error).toMatch(/forgot password/i);
     expect(deleteUserSpy).not.toHaveBeenCalled();
-  });
-
-  it('a real new user is still a real new user', async () => {
-    // The guard must key on the ABSENCE of an identity, not merely on
-    // truthiness, or every genuine signup would be refused.
-    row = { id: 'new-user-id', terms_accepted_at: null };
-    signUpSpy.mockResolvedValue(freshUser());
-
-    const res = await signUpPatient(VALID);
-
-    expect(res.success).toBe(true);
+    expect(insertSpy).not.toHaveBeenCalled();
   });
 });

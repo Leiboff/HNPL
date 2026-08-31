@@ -292,13 +292,20 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
     // the address already exists. Untreated it walked into the stamp,
     // found no row for an id that was never real, and told the visitor we
     // could not record their agreement — for an email already registered.
-    // TWO shapes, not one. The field report quoted reference NOUSER,
-    // which was the OTHER one: `{ user: null, error: null }`, the
-    // anti-enumeration SILENT response. It was read as an internal
-    // failure and reported as a terms problem on every attempt, forever.
-    expect(SIGNUP_SRC).toMatch(/const alreadyRegistered = !newUser/);
+    // The duplicate signal is an EMPTY identities array on a user object
+    // — GoTrue's obfuscated fake user.
     expect(SIGNUP_SRC).toMatch(/newUser\.identities\.length === 0/);
-    expect(SIGNUP_SRC).toMatch(/if \(alreadyRegistered\) \{/);
+
+    // A NULL user is emphatically NOT that signal. auth-js's
+    // _sessionResponse reads `data.user ?? null`, and GoTrue returns the
+    // user at the TOP LEVEL when it creates no session — i.e. on every
+    // confirm-email signup — so a null user is the normal case here. An
+    // earlier fix of mine read it as "already registered", which would
+    // have told every new customer their account already existed.
+    expect(SIGNUP_SRC).not.toMatch(/alreadyRegistered = !newUser/);
+    // The id is resolved by lookup instead of inferred from the shape.
+    expect(SIGNUP_SRC).toMatch(/let newUserId: string \| null = newUser\?\.id \?\? null;/);
+    expect(SIGNUP_SRC).toMatch(/created = await findExistingAuthUser\(svc, normalizedEmail\)/);
   });
 
   it('there is NO terms onboarding step, on any path', () => {
