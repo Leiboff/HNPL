@@ -48,6 +48,19 @@ describe('claim before send', () => {
     expect(CODE).toMatch(/if \(claimErr\)/);
     expect(CODE).toMatch(/Claim failed/);
   });
+
+  it('treats a missing function as "not deployed yet", not as a fault', () => {
+    // Code and migrations ship together but do not go live together: the
+    // deploy is automatic, applying 0120 is manual. In that window a 500
+    // and an error log every five minutes — 288 a day — would be noise
+    // about an expected state. Still recorded in cron_runs so the gap is
+    // visible rather than silent.
+    expect(CODE).toMatch(/PGRST202/);
+    expect(CODE).toMatch(/could not find the function/i);
+    expect(CODE).toMatch(/migration_0120_not_applied/);
+    // Reported as ok, so Vercel does not surface it as a failing job.
+    expect(CODE).toMatch(/ok: true, skipped/);
+  });
 });
 
 describe('sending', () => {

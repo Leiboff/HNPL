@@ -89,6 +89,33 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   });
 
   if (claimErr) {
+    // ── The migration has not been applied yet ──────────────────────────
+    //
+    // Code and migrations ship in the same PR, but they do not go live at
+    // the same instant: Vercel deploys on merge, and 0120 is applied by
+    // hand. In that window the function does not exist, and PostgREST
+    // answers PGRST202.
+    //
+    // Treated as "nothing to do" rather than an error, because the
+    // alternative is a 500 and an error log every five minutes — 288 a
+    // day — for a state that is expected, temporary, and not a fault. The
+    // run is still recorded in cron_runs, so the gap is visible to anyone
+    // looking, and it says so out loud once per run at info level.
+    const notDeployedYet =
+      claimErr.code === 'PGRST202' ||
+      /could not find the function/i.test(claimErr.message ?? '');
+
+    if (notDeployedYet) {
+      console.log('[cron/onboarding-nudge] claim_onboarding_nudges not present — migration 0120 not applied yet; skipping');
+      await svc.from('cron_runs').insert({
+        job_name:    'onboarding-nudge',
+        started_at:  startedAt.toISOString(),
+        finished_at: new Date().toISOString(),
+        summary:     { skipped: 'migration_0120_not_applied' },
+      });
+      return NextResponse.json({ ok: true, skipped: 'migration_0120_not_applied' });
+    }
+
     console.error('[cron/onboarding-nudge] claim failed', claimErr.message);
     return NextResponse.json({ error: 'Claim failed', detail: claimErr.message }, { status: 500 });
   }
