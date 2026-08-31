@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
+import { computeOnboarding, stepListFor, pathAfterStep, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
@@ -80,7 +80,10 @@ export default async function VerifyEmailStep({ searchParams }: Props) {
         title="Verify your email"
         description="We sent a 6-digit code to your email. Enter it below to continue."
       >
-        <VerifyEmailStepClient email={(profile.email as string) ?? user.email ?? ''} />
+        <VerifyEmailStepClient
+          email={(profile.email as string) ?? user.email ?? ''}
+          next={pathAfterStep(steps, 'verify-email')}
+        />
       </OnboardingShell>
     );
   }
@@ -103,7 +106,7 @@ export default async function VerifyEmailStep({ searchParams }: Props) {
       title="Verify your email"
       description="We sent a 6-digit code to your email. Enter it below to continue."
     >
-      <VerifyEmailStepClient email={emailParam} />
+      <VerifyEmailStepClient email={emailParam} next={pathAfterStep(steps, 'verify-email')} />
     </OnboardingShell>
   );
 }

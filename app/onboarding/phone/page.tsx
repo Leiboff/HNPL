@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { computeOnboarding, stepListFor, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
+import { computeOnboarding, stepListFor, pathAfterStep, type ProfileForOnboarding, type UserForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
@@ -53,7 +53,10 @@ export default async function PhoneStep() {
       title="Add your cell number"
       description="We'll send a code to confirm it's really you. Standard SMS rates apply."
     >
-      <PhoneStepClient existingPhone={(profile.phone as string | null) ?? null} />
+      <PhoneStepClient
+        existingPhone={(profile.phone as string | null) ?? null}
+        nextPath={pathAfterStep(steps, 'phone')}
+      />
     </OnboardingShell>
   );
 }

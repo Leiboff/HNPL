@@ -81,7 +81,23 @@ function displayNumber(nationalDigits: string): string {
   return `${ZA_DIAL_CODE} ${formatNationalZA(nationalDigits)}`;
 }
 
-export default function PhoneStepClient({ existingPhone }: { existingPhone: string | null }) {
+export default function PhoneStepClient({
+  existingPhone,
+  nextPath,
+}: {
+  existingPhone: string | null;
+  /**
+   * Where a verified phone goes next — the NEXT STEP'S path, resolved by
+   * the page from the path-fixed step list, not "/onboarding".
+   *
+   * Sending everyone back to the router cost a whole extra server
+   * execution per step: getUser() is a network round trip to Supabase
+   * Auth, then a profile read, then a 307, and then the step page did
+   * getUser() and the read again. See pathAfterStep() in
+   * lib/onboarding/state.ts.
+   */
+  nextPath: string;
+}) {
   const [stage,        setStage]        = useState<Stage>(existingPhone ? 'otp' : 'phone-entry');
   // The NINE national digits, never the dial code and never the trunk 0.
   // Seeded from a stored number so "Change number" returns to a filled
@@ -208,7 +224,7 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
       phoneDisplay={displayPhone}
       requestCode={requestPhoneOtpForUser}
       verifyCode={verifyPhoneOtpForUser}
-      onVerified={() => { window.location.href = '/onboarding'; }}
+      onVerified={() => { window.location.href = nextPath; }}
       onChangeNumber={() => setStage('phone-entry')}
       shell={inlineShell}
       tone="onDark"

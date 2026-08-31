@@ -8,6 +8,8 @@ import {
   stepListFor,
   stepsFor,
   STEP_PATH,
+  pathAfterStep,
+  type OnboardingStep,
   type ProfileForOnboarding,
   type UserForOnboarding,
 } from '@/lib/onboarding/state';
@@ -690,7 +692,9 @@ describe('Onboarding OTP unification — canonical OtpInput on both steps', () =
 
   it('email step delegates to the canonical VerifyEmailForm (which uses OtpInput)', () => {
     expect(EMAIL_STEP).toMatch(/from ['"]@\/app\/verify-email\/VerifyEmailForm['"]/);
-    expect(EMAIL_STEP).toMatch(/<VerifyEmailForm[\s\S]*?next="\/onboarding"/);
+    // `next` is threaded from the page rather than hardcoded to
+    // "/onboarding" — see the on-success test below for why.
+    expect(EMAIL_STEP).toMatch(/<VerifyEmailForm[\s\S]*?next=\{next\}/);
   });
 
   it('phone step delegates to the canonical PhoneOtpStep (which uses OtpInput)', () => {
@@ -726,11 +730,36 @@ describe('Onboarding OTP unification — canonical OtpInput on both steps', () =
     expect(PHONE_STEP).not.toMatch(/maxLength=\{6\}/);
   });
 
-  it('on-success behaviour redirects to /onboarding (router recomputes state)', () => {
-    // Server actions + resume behaviour rely on landing back on
-    // /onboarding after every step — not going straight into /patient.
-    expect(EMAIL_STEP).toMatch(/next="\/onboarding"/);
-    expect(PHONE_STEP).toMatch(/window\.location\.href\s*=\s*['"]\/onboarding['"]/);
+  it('on-success behaviour goes to the NEXT STEP, never straight into /patient', () => {
+    // The rule this protects is unchanged: a finished step hands off to
+    // another STEP (or to the router), never into /patient — resume
+    // behaviour depends on every step being re-entered through a guard.
+    //
+    // What changed is which step. Both of these used to navigate to
+    // "/onboarding" and let the router work out where to go, which cost an
+    // extra server execution each time: getUser() is a network round trip
+    // to Supabase Auth, then a profile read, then a 307, and then the step
+    // page did getUser() and the read AGAIN. Reported from the field as
+    // "it loaded quite a while to get to the cell number one".
+    //
+    // The step list is path-fixed, so the page rendering step N already
+    // knows step N+1. pathAfterStep() hands it over, and falls back to
+    // "/onboarding" when there is no next step.
+    for (const src of [EMAIL_STEP, PHONE_STEP]) {
+      expect(src).not.toMatch(/\/patient/);
+    }
+    expect(EMAIL_STEP).toMatch(/next=\{next\}/);
+    expect(PHONE_STEP).toMatch(/window\.location\.href\s*=\s*nextPath;/);
+
+    // …and the pages resolve it from the shared model rather than
+    // hardcoding a step name.
+    for (const step of ['verify-email', 'phone']) {
+      const page = readFileSync(resolve(ROOT, `app/onboarding/${step}/page.tsx`), 'utf8');
+      expect(page, step).toMatch(/pathAfterStep\(steps, '/);
+    }
+    const STATE = readFileSync(resolve(ROOT, 'lib/onboarding/state.ts'), 'utf8');
+    expect(STATE).toMatch(/export function pathAfterStep\(/);
+    expect(STATE).toMatch(/return next \? STEP_PATH\[next\] : '\/onboarding';/);
   });
 });
 
@@ -941,6 +970,47 @@ describe('Diff scope — onboarding + auth surfaces + the acceptance gate only',
     for (const mod of FORBIDDEN) {
       expect(ACTIONS_TS).not.toContain(`from '${mod}`);
       expect(ACTIONS_TS).not.toContain(`from "${mod}`);
+    }
+  });
+});
+
+// ─── pathAfterStep — the hand-off that skips the router ────────────────
+
+describe('pathAfterStep', () => {
+  const EMAIL_PATH = ['verify-email', 'phone', 'salary', 'identity'] as const;
+
+  it('returns the following step\'s path', () => {
+    expect(pathAfterStep(EMAIL_PATH, 'verify-email')).toBe('/onboarding/phone');
+    expect(pathAfterStep(EMAIL_PATH, 'phone')).toBe('/onboarding/salary');
+    expect(pathAfterStep(EMAIL_PATH, 'salary')).toBe('/onboarding/identity');
+  });
+
+  it('falls back to the router on the LAST step, which finalises and dispatches', () => {
+    expect(pathAfterStep(EMAIL_PATH, 'identity')).toBe('/onboarding');
+  });
+
+  it('falls back to the router for a step outside the list (a wiring bug)', () => {
+    expect(pathAfterStep(EMAIL_PATH, 'credit-check')).toBe('/onboarding');
+  });
+
+  it('follows the USER\'S list, not a global order — Google users skip verify-email', () => {
+    const googlePath = ['phone', 'salary', 'identity'] as const;
+    expect(pathAfterStep(googlePath, 'phone')).toBe('/onboarding/salary');
+    // …and asking about a step that is not on their path yields the router
+    // rather than a screen they should never see.
+    expect(pathAfterStep(googlePath, 'verify-email')).toBe('/onboarding');
+  });
+
+  it('routes through the flagged step when the credit check is on', () => {
+    const withCredit = ['verify-email', 'phone', 'salary', 'identity', 'credit-check'] as const;
+    expect(pathAfterStep(withCredit, 'identity')).toBe('/onboarding/credit-check');
+    expect(pathAfterStep(withCredit, 'credit-check')).toBe('/onboarding');
+  });
+
+  it('only ever returns a real step path or the router', () => {
+    const valid = new Set([...Object.values(STEP_PATH), '/onboarding']);
+    for (const step of Object.keys(STEP_PATH) as OnboardingStep[]) {
+      expect(valid.has(pathAfterStep(EMAIL_PATH, step)), step).toBe(true);
     }
   });
 });
