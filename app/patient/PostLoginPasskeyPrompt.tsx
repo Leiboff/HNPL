@@ -87,7 +87,7 @@ export default function PostLoginPasskeyPrompt({ serverAllows }: Props) {
         <div
           aria-hidden
           className="w-14 h-14 rounded-2xl flex items-center justify-center text-white"
-          style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+          style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
         >
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
             <rect x="4" y="10" width="16" height="10" rx="2" />
@@ -97,7 +97,7 @@ export default function PostLoginPasskeyPrompt({ serverAllows }: Props) {
         </div>
 
         <div>
-          <h2 className="text-xl font-semibold" style={{ color: '#13294B' }}>
+          <h2 className="text-xl font-semibold" style={{ color: 'var(--portal-ink)' }}>
             Sign in faster next time
           </h2>
           <p className="mt-2 text-sm text-gray-600 leading-relaxed">
@@ -119,7 +119,7 @@ export default function PostLoginPasskeyPrompt({ serverAllows }: Props) {
             disabled={busy}
             data-testid="post-login-passkey-setup"
             className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
           >
             {busy ? 'Setting up…' : 'Set up passkey'}
           </button>

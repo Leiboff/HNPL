@@ -124,7 +124,7 @@ export default function PlanSettleAffordance({
         aria-haspopup="menu"
         className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
         style={{
-          background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)',
+          background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)',
         }}
       >
         Manage payments

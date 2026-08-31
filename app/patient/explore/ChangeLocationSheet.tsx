@@ -210,7 +210,7 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-4 pb-3 md:pt-6">
-          <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--portal-ink)' }}>
             Change location
           </h2>
           <button
@@ -256,22 +256,22 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
             aria-pressed={useCurrentSelected}
             className={`w-full text-left rounded-xl border px-4 py-3 flex items-start gap-3 transition-colors ${
               useCurrentSelected
-                ? 'border-[#15A89E] bg-[rgba(21,168,158,.06)]'
+                ? 'border-[var(--portal-accent)] bg-[rgba(21,168,158,.06)]'
                 : 'border-gray-200 bg-white hover:bg-gray-50'
             }`}
           >
             <span
               className={`mt-0.5 shrink-0 h-4 w-4 rounded-full border-2 flex items-center justify-center ${
-                useCurrentSelected ? 'border-[#15A89E]' : 'border-gray-300'
+                useCurrentSelected ? 'border-[var(--portal-accent)]' : 'border-gray-300'
               }`}
               aria-hidden
             >
               {useCurrentSelected && (
-                <span className="h-2 w-2 rounded-full" style={{ background: '#15A89E' }} />
+                <span className="h-2 w-2 rounded-full" style={{ background: 'var(--portal-accent)' }} />
               )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold" style={{ color: '#13294B' }}>
+              <span className="block text-sm font-semibold" style={{ color: 'var(--portal-ink)' }}>
                 Use current location
               </span>
               <span className="mt-0.5 block text-xs text-gray-500" data-testid="change-location-use-current-detail">
@@ -293,13 +293,13 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
           {/* Draft summary (only when a suburb has been picked) */}
           {draft.kind === 'suburb' && (
             <div
-              className="rounded-xl border border-[#15A89E]/30 bg-[rgba(21,168,158,.06)] px-4 py-3"
+              className="rounded-xl border border-[var(--portal-accent)]/30 bg-[rgba(21,168,158,.06)] px-4 py-3"
               data-testid="change-location-draft-suburb"
             >
               <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
                 Selected
               </p>
-              <p className="mt-0.5 text-sm font-semibold" style={{ color: '#13294B' }}>
+              <p className="mt-0.5 text-sm font-semibold" style={{ color: 'var(--portal-ink)' }}>
                 {draft.label}
               </p>
             </div>
@@ -312,7 +312,7 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
             disabled={!canConfirm}
             data-testid="change-location-confirm"
             className="w-full rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
           >
             Select location
           </button>

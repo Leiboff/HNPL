@@ -16,14 +16,14 @@ export type LadderSegment = 'paid' | 'next' | 'coming' | 'pending';
 
 const SEGMENT_STYLE: Record<'light' | 'dark', Record<LadderSegment, React.CSSProperties>> = {
   light: {
-    paid:    { background: '#15A89E' },
-    next:    { background: 'rgba(21,168,158,.28)', boxShadow: 'inset 0 0 0 2px #15A89E' },
-    coming:  { background: '#DEE6EB' },
+    paid:    { background: 'var(--portal-accent)' },
+    next:    { background: 'rgba(21,168,158,.28)', boxShadow: 'inset 0 0 0 2px var(--portal-accent)' },
+    coming:  { background: 'var(--portal-line)' },
     pending: { background: '#EDE0C6' },
   },
   dark: {
-    paid:    { background: '#5CD9CE' },
-    next:    { background: 'rgba(92,217,206,.3)', boxShadow: 'inset 0 0 0 2px #5CD9CE' },
+    paid:    { background: 'var(--brand-teal-bright)' },
+    next:    { background: 'rgba(92,217,206,.3)', boxShadow: 'inset 0 0 0 2px var(--brand-teal-bright)' },
     coming:  { background: 'rgba(255,255,255,.16)' },
     // No unaccepted-bill state on navy — pending ladders only render on
     // the white sheet. Fall back to the "to come" treatment defensively.

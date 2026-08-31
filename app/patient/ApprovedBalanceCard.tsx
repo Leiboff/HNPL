@@ -41,7 +41,10 @@ export default function ApprovedBalanceCard({ limit, available }: Props) {
       <div
         className="rounded-2xl shadow-sm border border-[rgba(19,41,75,.08)] p-5 sm:p-6"
         style={{
-          background: 'linear-gradient(135deg, #13294B 0%, #1B3A6C 60%, #15A89E 145%)',
+          // The two navies are now the SAME pair, in the same order, as the auth
+          // screens' ground (AuthSurface's NAVY_GROUND) — the mid-stop was a
+          // literal #1B3A6C, a fourth navy invented for this one card.
+          background: 'linear-gradient(135deg, var(--brand-navy-deep) 0%, var(--brand-navy) 60%, var(--portal-accent) 145%)',
           color:      '#ffffff',
         }}
         data-testid="approved-balance-card"

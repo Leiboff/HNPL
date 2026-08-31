@@ -114,7 +114,7 @@ export default function PayNowButton({
   // menuItem renders the label in the brand teal-on-navy gradient text
   // so it reads as "the actionable thing" while staying visually lighter
   // than a full button.
-  const labelStyle = variant === 'menuItem' ? { color: '#13294B' } : undefined;
+  const labelStyle = variant === 'menuItem' ? { color: 'var(--portal-ink)' } : undefined;
 
   return (
     <>

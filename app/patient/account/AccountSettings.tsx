@@ -40,7 +40,7 @@ import ProfileLogoutSection from '@/app/patient/profile/ProfileLogoutSection';
 // prior header this replaced for the full reasoning): ProfileLogoutSection
 // renders directly below the cards rather than behind its own screen.
 
-const NAVY = '#13294B';
+const NAVY = 'var(--portal-ink)';
 
 function GroupCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -59,7 +59,7 @@ function GroupCard({ title, children }: { title: string; children: React.ReactNo
 }
 
 const ROW_CLASS =
-  'w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E] focus-visible:ring-inset transition-colors min-h-15';
+  'w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)] focus-visible:ring-inset transition-colors min-h-15';
 
 const ChevronRight = (
   <svg

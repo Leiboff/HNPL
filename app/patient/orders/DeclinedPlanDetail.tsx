@@ -13,7 +13,7 @@ import { formatRand } from '@/app/patient/_format';
 
 function Chevron() {
   return (
-    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#B6C1CD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
       <path d="m9 6 6 6-6 6" />
     </svg>
   );
@@ -76,40 +76,40 @@ export default function DeclinedPlanDetail({
 
         {/* What happened */}
         <div
-          className="rounded-[22px] bg-white p-[18px]"
+          className="rounded-card bg-white p-[18px]"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
-          <p className="text-[15px] font-semibold" style={{ color: '#13294B' }}>What happened</p>
-          <p className="mt-2 text-[13.5px] leading-[1.55]" style={{ color: '#5B6B7F' }}>
+          <p className="text-[15px] font-semibold" style={{ color: 'var(--portal-ink)' }}>What happened</p>
+          <p className="mt-2 text-[13.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
             You told us this bill from {practice} wasn&rsquo;t yours, so we didn&rsquo;t set up a
-            payment plan and <span className="font-semibold" style={{ color: '#13294B' }}>no money was taken</span>.
+            payment plan and <span className="font-semibold" style={{ color: 'var(--portal-ink)' }}>no money was taken</span>.
           </p>
         </div>
 
         {/* What to do next */}
         <div
-          className="rounded-[22px] bg-white overflow-hidden"
+          className="rounded-card bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           <div className="px-[18px] pt-[16px] pb-[4px] text-[11px] font-semibold uppercase" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>
             What to do next
           </div>
-          <p className="px-[18px] pb-[15px] text-[13.5px] leading-[1.55]" style={{ color: '#5B6B7F' }}>
+          <p className="px-[18px] pb-[15px] text-[13.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
             If you declined this by mistake, ask {practice} to send it again — or get in touch and
             we&rsquo;ll help sort it out.
           </p>
           <a
             href="mailto:support@betternow.co.za?subject=Declined bill"
             className="flex items-center justify-between gap-3 px-[18px] py-[16px]"
-            style={{ borderTop: '1px solid #EEF2F5' }}
+            style={{ borderTop: '1px solid var(--portal-hairline)' }}
           >
-            <span className="text-[14px] font-semibold" style={{ color: '#13294B' }}>Contact support</span>
+            <span className="text-[14px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Contact support</span>
             <Chevron />
           </a>
         </div>
 
         {refSegments.length > 0 && (
-          <p className="text-center text-[11.5px]" style={{ color: '#A8B4C2' }}>{refSegments.join(' · ')}</p>
+          <p className="text-center text-[11.5px]" style={{ color: 'var(--portal-muted)' }}>{refSegments.join(' · ')}</p>
         )}
 
       </div>

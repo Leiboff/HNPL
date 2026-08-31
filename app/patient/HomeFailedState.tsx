@@ -21,18 +21,18 @@ function StepRow({ n, children }: { n: number; children: React.ReactNode }) {
     <div className="flex gap-3">
       <span
         className="flex-none w-[26px] h-[26px] rounded-full flex items-center justify-center text-[12px] font-bold"
-        style={{ background: '#F1F5F6', color: '#41556F' }}
+        style={{ background: 'var(--portal-wash)', color: 'var(--portal-ink-2)' }}
       >
         {n}
       </span>
-      <p className="text-[14px] leading-[1.55]" style={{ color: '#41556F' }}>{children}</p>
+      <p className="text-[14px] leading-[1.55]" style={{ color: 'var(--portal-ink-2)' }}>{children}</p>
     </div>
   );
 }
 
 function Chevron() {
   return (
-    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#B6C1CD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none" aria-hidden>
       <path d="m9 6 6 6-6 6" />
     </svg>
   );
@@ -95,7 +95,7 @@ export default function HomeFailedState({
 
         {/* What happens now */}
         <div
-          className="rounded-[22px] bg-white p-[18px] flex flex-col gap-[14px]"
+          className="rounded-card bg-white p-[18px] flex flex-col gap-[14px]"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>
@@ -118,14 +118,14 @@ export default function HomeFailedState({
 
         {/* Two ways out */}
         <div
-          className="rounded-[22px] bg-white overflow-hidden"
+          className="rounded-card bg-white overflow-hidden"
           style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
         >
           {altCard && (
             <Link href="/patient/account" className="flex items-center justify-between gap-3 p-[16px] hover:bg-gray-50 transition-colors">
               <div className="min-w-0">
-                <p className="text-[14px] font-semibold" style={{ color: '#13294B' }}>Use a different card</p>
-                <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>
+                <p className="text-[14px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Use a different card</p>
+                <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>
                   {altCard.brand} ···· {altCard.last4} is on file
                 </p>
               </div>
@@ -135,11 +135,11 @@ export default function HomeFailedState({
           <a
             href="mailto:support@betternow.co.za"
             className={`flex items-center justify-between gap-3 p-[16px] hover:bg-gray-50 transition-colors ${altCard ? 'border-t' : ''}`}
-            style={altCard ? { borderColor: '#EEF2F5' } : undefined}
+            style={altCard ? { borderColor: 'var(--portal-hairline)' } : undefined}
           >
             <div className="min-w-0">
-              <p className="text-[14px] font-semibold" style={{ color: '#13294B' }}>Can&rsquo;t pay right now?</p>
-              <p className="mt-0.5 text-[12.5px]" style={{ color: '#8496AA' }}>Talk to us — we&rsquo;ll work something out</p>
+              <p className="text-[14px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Can&rsquo;t pay right now?</p>
+              <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Talk to us — we&rsquo;ll work something out</p>
             </div>
             <Chevron />
           </a>
@@ -148,8 +148,8 @@ export default function HomeFailedState({
         {/* Pay now */}
         <Link
           href={planId ? `/patient/orders/${planId}` : '/patient/orders'}
-          className="block text-center text-[15px] font-semibold text-white rounded-[15px] py-[15px] tabular-nums"
-          style={{ background: '#15A89E' }}
+          className="block text-center text-[15px] font-semibold text-white rounded-tile py-[15px] tabular-nums"
+          style={{ background: 'var(--portal-accent)' }}
         >
           Pay {formatRand(amount)} now
         </Link>

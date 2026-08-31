@@ -59,7 +59,7 @@ export default function Landing({ categories, locationRow, hideHeading = false }
       {/* Hero — suppressed under the v4 navy header (which owns the title). */}
       {!hideHeading && (
         <header className="space-y-1">
-          <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>Find care</h1>
+          <h1 className="text-2xl font-semibold" style={{ color: 'var(--portal-ink)' }}>Find care</h1>
           <p className="text-sm text-gray-500">
             Pay-later at any of these practitioners. Browse by specialty.
           </p>
@@ -72,7 +72,7 @@ export default function Landing({ categories, locationRow, hideHeading = false }
           <svg
             aria-hidden
             className="absolute left-3 top-1/2 -translate-y-1/2"
-            width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7A8AA0" strokeWidth={2}
+            width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
           >
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" strokeLinecap="round" />
@@ -83,7 +83,7 @@ export default function Landing({ categories, locationRow, hideHeading = false }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             data-testid="landing-search"
-            className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none focus:ring-2 focus:ring-[#15A89E]/15"
+            className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[var(--portal-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/15"
           />
         </div>
 
@@ -120,7 +120,7 @@ export default function Landing({ categories, locationRow, hideHeading = false }
                 <span
                   aria-hidden
                   className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-full text-white transition-transform group-hover:translate-x-0.5"
-                  style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+                  style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
                     <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />

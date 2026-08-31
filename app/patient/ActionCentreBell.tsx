@@ -47,7 +47,7 @@ export default function ActionCentreBell({ onDark = false }: { onDark?: boolean 
         className={
           onDark
             ? 'relative flex items-center justify-center w-10 h-10 rounded-full text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60'
-            : 'relative rounded-lg p-2 text-gray-700 hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#15A89E]/60'
+            : 'relative rounded-lg p-2 text-gray-700 hover:bg-gray-100 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)]/60'
         }
         style={onDark ? { background: 'rgba(255,255,255,.12)' } : undefined}
       >
@@ -63,7 +63,7 @@ export default function ActionCentreBell({ onDark = false }: { onDark?: boolean 
                 ? 'absolute top-[7px] right-[8px] block w-[9px] h-[9px] rounded-full'
                 : 'absolute top-1.5 right-1.5 block w-2 h-2 rounded-full bg-red-500 ring-2 ring-white'
             }
-            style={onDark ? { background: '#FF6B5A', boxShadow: '0 0 0 2px #16304F' } : undefined}
+            style={onDark ? { background: '#FF6B5A', boxShadow: '0 0 0 2px var(--brand-navy-deep)' } : undefined}
             aria-hidden
           />
         )}

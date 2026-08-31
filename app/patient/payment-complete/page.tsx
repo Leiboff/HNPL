@@ -69,7 +69,7 @@ function SuccessCard({ amountCents }: { amountCents: number }) {
       <Link
         href="/patient/orders"
         className="inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+        style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
       >
         View my plan →
       </Link>
@@ -111,8 +111,8 @@ function FailedCard({ abandoned }: { abandoned?: boolean }) {
 function PendingCard() {
   return (
     <ResultCard>
-      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[#13294B]/10 mx-auto">
-        <svg className="w-7 h-7 text-[#13294B] animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--portal-ink)]/10 mx-auto">
+        <svg className="w-7 h-7 text-[var(--portal-ink)] animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
         </svg>
@@ -125,7 +125,7 @@ function PendingCard() {
       </div>
       <Link
         href="/patient/orders"
-        className="text-sm font-medium text-[#13294B] hover:text-[#0E2140] transition-colors"
+        className="text-sm font-medium text-[var(--portal-ink)] hover:text-[var(--brand-navy-deep)] transition-colors"
       >
         Check my orders →
       </Link>

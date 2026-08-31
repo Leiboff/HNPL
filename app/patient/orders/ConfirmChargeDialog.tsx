@@ -108,7 +108,7 @@ export default function ConfirmChargeDialog({
             <h2
               id="confirm-charge-headline"
               className="text-xl md:text-base font-semibold leading-tight"
-              style={{ color: '#13294B' }}
+              style={{ color: 'var(--portal-ink)' }}
             >
               {headline}
             </h2>
@@ -120,7 +120,7 @@ export default function ConfirmChargeDialog({
               onClick={onConfirm}
               disabled={isPending}
               className="inline-flex items-center justify-center rounded-lg px-5 py-3 md:py-2 text-base md:text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
             >
               {isPending ? 'Charging…' : `Confirm — pay ${formatRandCents(amountCents)}`}
             </button>

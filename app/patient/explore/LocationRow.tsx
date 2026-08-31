@@ -8,7 +8,7 @@
 //   [Location]                     [📍 Choose location] (teal)
 //
 // Tapping anywhere on the row opens ChangeLocationSheet (owned by the
-// parent). Value color is always teal (#15A89E) so the row reads as
+// parent). Value color is always teal (var(--portal-accent)) so the row reads as
 // interactive — never blends into the background.
 
 type Props = {
@@ -25,15 +25,15 @@ export default function LocationRow({ label, onOpen }: Props) {
       type="button"
       onClick={onOpen}
       data-testid="location-row"
-      className="w-full rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#15A89E]/25"
+      className="w-full rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/25"
       aria-label={`Change location. Current: ${value}`}
     >
-      <span className="text-sm font-semibold" style={{ color: '#13294B' }}>
+      <span className="text-sm font-semibold" style={{ color: 'var(--portal-ink)' }}>
         Location
       </span>
       <span
         className="inline-flex items-center gap-1.5 text-sm font-semibold truncate"
-        style={{ color: '#15A89E' }}
+        style={{ color: 'var(--portal-accent)' }}
         data-testid="location-row-value"
       >
         <PinIcon />

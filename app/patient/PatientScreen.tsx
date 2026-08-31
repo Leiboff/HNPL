@@ -6,8 +6,15 @@
 // sheet; the global bottom nav (patient layout) floats below.
 //
 // Tones:
-//   navy  — the default brand canvas (#0B1F3A)
-//   fail  — the missed-payment state (#7A1F1F), red glow, used once
+//   navy  — the default brand canvas (--brand-navy-deep). This used to be
+//           a literal #0B1F3A: a navy that appeared nowhere else in the
+//           brand — not --navy (#13294B), not --navy-deep (#0E2140). The
+//           most visible surface in the portal was off-palette by a shade
+//           nobody had chosen. It is now the same navy that sits at the
+//           top edge of the auth screens, which is what this band is the
+//           logged-in equivalent of.
+//   fail  — the missed-payment state (#7A1F1F), red glow, used once. Left
+//           as a literal on purpose: a semantic state colour, not brand.
 //
 // The header content varies per screen (balance hero, a title, a back
 // row, a profile row) so it comes in as `header`. Presentational only —
@@ -21,7 +28,7 @@
 // void). Every patient screen flows through here, so the width is uniform.
 
 const CANVAS = {
-  navy: { bg: '#0B1F3A', glow: 'radial-gradient(72% 88% at 96% -8%, rgba(21,168,158,.34), transparent 62%)' },
+  navy: { bg: 'var(--brand-navy-deep)', glow: 'radial-gradient(72% 88% at 96% -8%, rgba(21,168,158,.34), transparent 62%)' },
   fail: { bg: '#7A1F1F', glow: 'radial-gradient(72% 88% at 96% -8%, rgba(255,107,90,.40), transparent 62%)' },
 } as const;
 
@@ -42,7 +49,7 @@ export default function PatientScreen({
 }) {
   const canvas = CANVAS[tone];
   return (
-    <div style={{ background: '#F4F7F8', minHeight: '100%' }}>
+    <div style={{ background: 'var(--portal-sheet)', minHeight: '100%' }}>
       <div className="mx-auto w-full max-w-md md:max-w-3xl lg:max-w-5xl">
 
         {/* Navy header — runs to the top edge, teal glow overlay. */}
@@ -59,7 +66,7 @@ export default function PatientScreen({
         <div
           className={`relative ${sheetClassName}`}
           style={{
-            background: '#F4F7F8',
+            background: 'var(--portal-sheet)',
             borderRadius: '30px 30px 0 0',
             marginTop: -sheetOverlap,
           }}

@@ -57,7 +57,7 @@ export default function HomeBillCard({
 
   return (
     <div
-      className="rounded-[22px] bg-white p-[18px] flex flex-col gap-[13px]"
+      className="rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
       style={{ border: '1px solid #F5D49A', boxShadow: '0 2px 6px -2px rgba(15,31,58,.08)' }}
       data-testid="home-bill-card"
     >
@@ -69,11 +69,11 @@ export default function HomeBillCard({
       </div>
 
       <div>
-        <p className="text-[16px] font-semibold leading-[1.4]" style={{ color: '#13294B' }}>
+        <p className="text-[16px] font-semibold leading-[1.4]" style={{ color: 'var(--portal-ink)' }}>
           {practiceName} sent a bill for{' '}
           <span className="tabular-nums">{formatRand(total)}</span>
         </p>
-        <p className="mt-1.5 text-[13.5px]" style={{ color: '#8496AA' }}>
+        <p className="mt-1.5 text-[13.5px]" style={{ color: 'var(--portal-muted)' }}>
           {perInstalment != null
             ? <>{planType} instalments of <span className="tabular-nums">{formatRand(perInstalment)}</span> · interest-free</>
             : 'Interest-free payment plan'}
@@ -98,16 +98,16 @@ export default function HomeBillCard({
         {blocked ? (
           <span
             aria-disabled="true"
-            className="flex-1 text-center text-[14.5px] font-semibold rounded-[14px] py-[14px] cursor-not-allowed select-none"
-            style={{ background: '#F1F5F6', color: '#94A3B8' }}
+            className="flex-1 text-center text-[14.5px] font-semibold rounded-tile py-[14px] cursor-not-allowed select-none"
+            style={{ background: 'var(--portal-wash)', color: 'var(--portal-muted)' }}
           >
             Review bill
           </span>
         ) : (
           <Link
             href={`/patient/orders/${planId}/confirm`}
-            className="flex-1 text-center text-[14.5px] font-semibold text-white rounded-[14px] py-[14px]"
-            style={{ background: '#15A89E' }}
+            className="flex-1 text-center text-[14.5px] font-semibold text-white rounded-tile py-[14px]"
+            style={{ background: 'var(--portal-accent)' }}
           >
             Review bill
           </Link>
@@ -116,8 +116,8 @@ export default function HomeBillCard({
           type="button"
           onClick={handleDecline}
           disabled={declining}
-          className="text-[14.5px] font-semibold rounded-[14px] px-[18px] py-[14px] disabled:opacity-50"
-          style={{ background: '#F1F5F6', color: '#41556F' }}
+          className="text-[14.5px] font-semibold rounded-tile px-[18px] py-[14px] disabled:opacity-50"
+          style={{ background: 'var(--portal-wash)', color: 'var(--portal-ink-2)' }}
         >
           {declining ? 'Declining…' : 'Not mine'}
         </button>

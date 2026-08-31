@@ -26,7 +26,7 @@ export default async function PatientContactPage() {
   return (
     <PatientScreen header={<SubScreenHeader title="Contact us" />} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
-        <p className="text-[13px] leading-[1.55]" style={{ color: '#8496AA' }}>
+        <p className="text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
           We already have your name, email, phone number and ID on file, so there&rsquo;s no need
           to type them again — we&rsquo;ll include them automatically. Just tell us what&rsquo;s up.
         </p>

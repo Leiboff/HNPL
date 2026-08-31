@@ -127,13 +127,13 @@ function PasskeyRow({
                 if (e.key === 'Enter')  handleSave();
                 if (e.key === 'Escape') { setDraft(passkey.friendly_name); setEditing(false); }
               }}
-              className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm outline-none focus:border-[#15A89E] focus:ring-2 focus:ring-[#15A89E]/20"
+              className="flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm outline-none focus:border-[var(--portal-accent)] focus:ring-2 focus:ring-[var(--portal-accent)]/20"
             />
             <button
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="text-xs font-medium text-[#13294B] hover:underline disabled:opacity-50"
+              className="text-xs font-medium text-[var(--portal-ink)] hover:underline disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -149,7 +149,7 @@ function PasskeyRow({
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="font-medium text-sm text-gray-900 hover:text-[#13294B] truncate text-left"
+            className="font-medium text-sm text-gray-900 hover:text-[var(--portal-ink)] truncate text-left"
           >
             {passkey.friendly_name || 'Unnamed passkey'}
           </button>

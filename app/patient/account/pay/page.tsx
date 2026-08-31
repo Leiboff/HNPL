@@ -60,7 +60,7 @@ export default async function PaymentCardsPage() {
   return (
     <PatientScreen header={<SubScreenHeader title="Payment cards" />} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[10px]">
-        <p className="text-[12.5px] leading-[1.5]" style={{ color: '#8496AA' }}>
+        <p className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--portal-muted)' }}>
           Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS
           certified payment partner. We only keep a secure reference to collect your instalments.
         </p>
