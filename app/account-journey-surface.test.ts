@@ -201,6 +201,33 @@ describe('Account journey — controls come from the shared vocabulary', () => {
   });
 });
 
+// ─── The phone step is built like the email one ───────────────────────
+
+describe('Phone step — the same shape as the email-confirmation screen', () => {
+  const PHONE = read('app/onboarding/phone/PhoneStepClient.tsx');
+
+  it('has no bespoke on-screen keypad', () => {
+    // A tray of ten digit buttons under the field. It duplicated the OS
+    // keyboard that inputMode="numeric" already raises, and it made this
+    // the one screen in the journey with a widget of its own.
+    const src = PHONE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).not.toMatch(/'1',\s*'2',\s*'3'/);
+    expect(src).not.toMatch(/appendDigit/);
+    expect(src).not.toMatch(/grid-cols-3/);
+  });
+
+  it('raises the numeric pad through the field itself', () => {
+    expect(PHONE).toMatch(/inputMode="numeric"/);
+    expect(PHONE).toMatch(/type="tel"/);
+    expect(PHONE).toMatch(/autoComplete="tel"/);
+  });
+
+  it('pins its CTA to the body floor, as the email screen does', () => {
+    expect(PHONE).toMatch(/mt-auto/);
+    expect(read('app/verify-email/VerifyEmailForm.tsx')).toMatch(/mt-auto/);
+  });
+});
+
 // ─── The shared components serve both grounds ─────────────────────────
 //
 // OtpInput, PhoneOtpStep and SalaryDayPicker are used BOTH in the journey

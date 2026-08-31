@@ -25,21 +25,25 @@ import {
 //      (@/app/_otp/PhoneOtpStep) — the same shared OTP component the
 //      pre-existing /verify-phone flow and the checkout flow use.
 //
-// OnboardingShell already provides the outer card + progress rail; we
+// OnboardingShell already provides the outer chrome + progress rail; we
 // pass a `shell` render-prop to PhoneOtpStep so it renders inline
 // (body + change-number action) without adding its own card.
 //
-// The cell number is a large centred hero field (74px, 28px digits) with
-// an on-screen numeric keypad below it. The keypad is a convenience
-// surface — it appends to the same field the OS keyboard writes to;
-// `normalizePhoneZA` still does the +27 conversion server-side
-// (untouched).
+// BOTH sub-stages are built like the email-confirmation screen: one
+// centred, large-digit control, then the primary action pinned to the
+// bottom of the shell's body region. The cell number is a 74px field
+// with 28px digits, which is the same type treatment as the OTP cells
+// the patient meets on the next screen and on /onboarding/verify-email.
+// `normalizePhoneZA` still does the +27 conversion server-side.
 //
-// v3 moved both onto the dark auth surface. The keypad used to bleed to
-// the edges of a white card and be clipped by its radius; with the card
-// gone it is a contained panel of its own — a lighter navy (white at
-// alpha over the ground) with white-at-alpha keys, so it still reads as
-// a tray sitting under the field rather than as ten more buttons.
+// There WAS an on-screen numeric keypad under the field — a tray of
+// ten buttons that appended to the same value. It is gone. Phones
+// already raise a numeric pad for inputMode="numeric", so it duplicated
+// the OS keyboard, and a bespoke keypad is not a control anyone expects
+// on a web form: it read as part of the page rather than as a keyboard,
+// and it made this the only screen in the journey with a widget of its
+// own. Nothing else depended on it — it was aria-hidden and
+// tabIndex={-1}, i.e. never in the keyboard or screen-reader path.
 
 type Stage = 'phone-entry' | 'otp';
 
@@ -67,12 +71,6 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
   }
 
   if (stage === 'phone-entry') {
-    // The keypad writes into the same controlled value as the OS keyboard.
-    // Cap the raw digit count so a fat-fingered hold can't run away.
-    const appendDigit = (d: string) =>
-      setPhone((p) => (p.replace(/\D/g, '').length >= 12 ? p : p + d));
-    const backspace = () => setPhone((p) => p.slice(0, -1));
-
     return (
       <form onSubmit={handlePhoneSubmit} className="flex flex-1 flex-col">
         <div>
@@ -84,6 +82,7 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
             type="tel"
             inputMode="numeric"
             autoComplete="tel"
+            autoFocus
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             data-testid="onboarding-phone-input"
@@ -99,58 +98,17 @@ export default function PhoneStepClient({ existingPhone }: { existingPhone: stri
           </p>
         )}
 
-        <div className="mt-auto flex flex-col gap-5 pt-8">
-          <button
-            type="submit"
-            disabled={phoneLoading}
-            data-testid="onboarding-phone-submit"
-            className={AUTH_PRIMARY_CLS}
-            style={authPrimaryStyle(phoneLoading)}
-          >
-            {phoneLoading ? 'Saving…' : 'Send me a code'}
-          </button>
-
-          {/* On-screen numeric keypad — a convenience surface, not the
-              only way in: the field above takes the OS keyboard too, and
-              every key here appends to that same controlled value. */}
-          <div
-            className="grid grid-cols-3 gap-[9px] rounded-[24px] border border-[var(--auth-hairline)] bg-[var(--auth-fill)] p-3.5"
-            aria-hidden="true"
-          >
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => (
-              <button
-                key={d}
-                type="button"
-                tabIndex={-1}
-                onClick={() => appendDigit(d)}
-                className="flex h-[50px] items-center justify-center rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill-raised)] text-[23px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
-              >
-                {d}
-              </button>
-            ))}
-            <div className="h-[50px]" />
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={() => appendDigit('0')}
-              className="flex h-[50px] items-center justify-center rounded-2xl border border-[var(--auth-hairline)] bg-[var(--auth-fill-raised)] text-[23px] font-medium text-white transition-colors hover:bg-[var(--auth-fill-hover)]"
-            >
-              0
-            </button>
-            <button
-              type="button"
-              tabIndex={-1}
-              onClick={backspace}
-              className="flex h-[50px] items-center justify-center rounded-2xl text-[var(--auth-muted)] transition-colors hover:text-white"
-            >
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M20 5H9.5L3 12l6.5 7H20a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z" />
-                <path d="M16 9.5l-5 5" />
-                <path d="M11 9.5l5 5" />
-              </svg>
-            </button>
-          </div>
-        </div>
+        {/* Pinned to the bottom of the shell's body region, exactly as
+            the email-confirmation screen pins "Verify email". */}
+        <button
+          type="submit"
+          disabled={phoneLoading}
+          data-testid="onboarding-phone-submit"
+          className={`mt-auto ${AUTH_PRIMARY_CLS}`}
+          style={authPrimaryStyle(phoneLoading)}
+        >
+          {phoneLoading ? 'Saving…' : 'Send me a code'}
+        </button>
       </form>
     );
   }
