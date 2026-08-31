@@ -67,7 +67,7 @@ export default async function NewPracticeForOwnBrandPage() {
   return (
     <div className="mx-auto max-w-xl px-4 sm:px-6 py-6 sm:py-10 space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>
+        <h1 className="text-2xl font-semibold" style={{ color: 'var(--portal-ink)' }}>
           {isSolo ? 'Add another practice' : `Add a practice to ${groupName ?? 'your brand'}`}
         </h1>
         <p className="text-sm text-gray-500 mt-1">

@@ -86,18 +86,18 @@ function SuccessPanel({
     <div className="space-y-4">
       {/* ── Heading row ───────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-3 px-1">
-        <h2 className="text-2xl font-semibold tracking-[-0.01em] text-[#0F1F3A]">
+        <h2 className="text-2xl font-semibold tracking-[-0.01em] text-[var(--portal-ink)]">
           {heading}
         </h2>
-        <span className="font-mono text-[11px] rounded-full bg-[#FAFBFD] border border-[#E5E9F0] px-2.5 py-1 text-[#3A4B66] shrink-0">
+        <span className="font-mono text-[11px] rounded-full bg-white border border-[var(--portal-line-soft)] px-2.5 py-1 text-[var(--portal-ink-2)] shrink-0">
           {summary.invoiceNumber}
         </span>
       </div>
 
       {/* ── Email failure callout (only when applicable) ─────────── */}
       {emailFailed && (isInvite ? inviteDelivery : existingDelivery) && (
-        <div className="rounded-[20px] border border-[#E07A7A] bg-[#FCEAEA] p-5 space-y-1.5">
-          <p className="text-sm font-medium text-[#0F1F3A]">
+        <div className="rounded-card border border-[#E07A7A] bg-[#FCEAEA] p-5 space-y-1.5">
+          <p className="text-sm font-medium text-[var(--portal-ink)]">
             We couldn&apos;t email{' '}
             <span className="font-semibold">
               {(isInvite ? inviteDelivery : existingDelivery)!.to}
@@ -106,7 +106,7 @@ function SuccessPanel({
           <p className="text-xs text-[#8A1F1F]">
             {(isInvite ? inviteDelivery : existingDelivery)!.error ?? 'Email service error.'}
           </p>
-          <p className="text-xs text-[#3A4B66] pt-1">
+          <p className="text-xs text-[var(--portal-ink-2)] pt-1">
             {isInvite
               ? 'The patient cannot reach checkout until this email is delivered. Check the address and re-send.'
               : 'The bill is on the patient\'s dashboard. Reach out directly, or correct the email and re-send.'}
@@ -124,15 +124,15 @@ function SuccessPanel({
 
       {/* ── Delivery confirmation (sent OK) ──────────────────────── */}
       {!emailFailed && isInvite && summary.invitation && (
-        <p className="text-sm text-[#3A4B66] px-1">
+        <p className="text-sm text-[var(--portal-ink-2)] px-1">
           Checkout link sent to{' '}
-          <span className="font-medium text-[#0F1F3A]">{summary.invitation.email}</span>.{' '}
-          <span className="text-[#7A8AA0]">Valid until {formatDate(summary.invitation.expiresAt)}.</span>
+          <span className="font-medium text-[var(--portal-ink)]">{summary.invitation.email}</span>.{' '}
+          <span className="text-[var(--portal-muted)]">Valid until {formatDate(summary.invitation.expiresAt)}.</span>
         </p>
       )}
       {!emailFailed && isExisting && summary.existingAccount && (
-        <p className="text-sm text-[#3A4B66] px-1">
-          <span className="font-medium text-[#0F1F3A]">{summary.patientName}</span> already has an account — the bill is on their dashboard, and we&apos;ve nudged them by email.
+        <p className="text-sm text-[var(--portal-ink-2)] px-1">
+          <span className="font-medium text-[var(--portal-ink)]">{summary.patientName}</span> already has an account — the bill is on their dashboard, and we&apos;ve nudged them by email.
         </p>
       )}
 
@@ -160,22 +160,22 @@ function SuccessPanel({
           matters to the practice; we let it carry visual weight
           via type size + a divider above. Smaller text + softer
           colours than the headline numbers above. */}
-      <div className="rounded-[20px] border border-[#E5E9F0] bg-white p-5 sm:p-6">
-        <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#7A8AA0] mb-3">
+      <div className="rounded-card border border-[var(--portal-line-soft)] bg-white p-5 sm:p-6">
+        <p className="text-xs uppercase tracking-[0.08em] font-medium text-[var(--portal-muted)] mb-3">
           Payout
         </p>
         <dl className="space-y-2 text-sm">
           <div className="flex items-baseline justify-between">
-            <dt className="text-[#3A4B66]">Gross</dt>
-            <dd className="tabular-nums text-[#3A4B66]">{formatRand(summary.gross)}</dd>
+            <dt className="text-[var(--portal-ink-2)]">Gross</dt>
+            <dd className="tabular-nums text-[var(--portal-ink-2)]">{formatRand(summary.gross)}</dd>
           </div>
           <div className="flex items-baseline justify-between">
-            <dt className="text-[#3A4B66]">BetterNow fee · {feePercent}%</dt>
-            <dd className="tabular-nums text-[#3A4B66]">−{formatRand(summary.fee)}</dd>
+            <dt className="text-[var(--portal-ink-2)]">BetterNow fee · {feePercent}%</dt>
+            <dd className="tabular-nums text-[var(--portal-ink-2)]">−{formatRand(summary.fee)}</dd>
           </div>
-          <div className="pt-3 mt-1 border-t border-[#E5E9F0] flex items-baseline justify-between">
-            <dt className="text-[15px] font-medium text-[#0F1F3A]">Net to practice</dt>
-            <dd className="text-xl font-semibold tabular-nums text-[#0F1F3A]">{formatRand(summary.net)}</dd>
+          <div className="pt-3 mt-1 border-t border-[var(--portal-line-soft)] flex items-baseline justify-between">
+            <dt className="text-[15px] font-medium text-[var(--portal-ink)]">Net to practice</dt>
+            <dd className="text-xl font-semibold tabular-nums text-[var(--portal-ink)]">{formatRand(summary.net)}</dd>
           </div>
         </dl>
       </div>
@@ -191,14 +191,14 @@ function SuccessPanel({
         <button
           onClick={onReset}
           data-testid="create-another-bill"
-          className="text-sm font-medium text-[#13294B] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline transition-colors"
+          className="text-sm font-medium text-[var(--portal-ink)] hover:text-[var(--portal-ink)] focus:outline-none focus-visible:underline transition-colors"
         >
           Create another bill →
         </button>
         <a
           href={dashboardHref}
           data-testid="back-to-dashboard"
-          className="text-sm font-medium text-[#3A4B66] hover:text-[#0F1F3A] focus:outline-none focus-visible:underline transition-colors"
+          className="text-sm font-medium text-[var(--portal-ink-2)] hover:text-[var(--portal-ink)] focus:outline-none focus-visible:underline transition-colors"
         >
           ← Back to dashboard
         </a>
@@ -453,7 +453,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
                 data-testid={`delivery-${opt.value}`}
                 className={`flex-1 cursor-pointer rounded-lg border px-3 py-2.5 text-left transition-colors ${
                   delivery === opt.value
-                    ? 'border-[#13294B] bg-[#F4F7FC]'
+                    ? 'border-[var(--portal-ink)] bg-[var(--portal-wash)]'
                     : 'border-gray-300 hover:border-gray-400'
                 }`}
               >
@@ -589,8 +589,8 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
         type="submit"
         disabled={pending.disabled}
         data-testid="submit-bill"
-        className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+        className="w-full rounded-lg px-4 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)] focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
+        style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
       >
         {pending.showLabel ? 'Sending bill…' : 'Send bill to patient'}
       </button>

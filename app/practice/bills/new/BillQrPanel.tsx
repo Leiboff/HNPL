@@ -55,7 +55,7 @@ export default function BillQrPanel({
   return (
     <div
       data-testid="bill-qr-panel"
-      className="rounded-[20px] border border-[#E5E9F0] bg-white p-5 sm:p-6 space-y-3 text-center"
+      className="rounded-card border border-[var(--portal-line-soft)] bg-white p-5 sm:p-6 space-y-3 text-center"
     >
       {expired ? (
         <p data-testid="bill-qr-expired" className="text-sm font-medium text-[#8A1F1F]">
@@ -67,7 +67,7 @@ export default function BillQrPanel({
         </p>
       ) : (
         <>
-          <p className="text-sm text-[#3A4B66]">Ask the patient to scan this with their phone camera.</p>
+          <p className="text-sm text-[var(--portal-ink-2)]">Ask the patient to scan this with their phone camera.</p>
           {qrDataUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -78,7 +78,7 @@ export default function BillQrPanel({
             />
           )}
           {secondsLeft !== null && (
-            <p data-testid="bill-qr-countdown" className="text-xs tabular-nums text-[#7A8AA0]">
+            <p data-testid="bill-qr-countdown" className="text-xs tabular-nums text-[var(--portal-muted)]">
               Expires in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
             </p>
           )}
@@ -91,14 +91,14 @@ export default function BillQrPanel({
               fallback path. */}
           {checkoutUrl && (
             <div className="pt-1 text-left">
-              <p className="text-xs text-[#7A8AA0]">Can&apos;t scan? Send this link instead</p>
+              <p className="text-xs text-[var(--portal-muted)]">Can&apos;t scan? Send this link instead</p>
               <div className="mt-1.5 flex gap-2">
                 <input
                   readOnly
                   value={checkoutUrl}
                   data-testid="bill-qr-link"
                   onFocus={(e) => e.currentTarget.select()}
-                  className="min-w-0 flex-1 rounded-lg border border-[#E5E9F0] bg-[#F7FAFA] px-2.5 py-1.5 font-mono text-[11px] text-[#3A4B66]"
+                  className="min-w-0 flex-1 rounded-lg border border-[var(--portal-line-soft)] bg-[var(--portal-wash)] px-2.5 py-1.5 font-mono text-[11px] text-[var(--portal-ink-2)]"
                 />
                 <button
                   type="button"
@@ -112,7 +112,7 @@ export default function BillQrPanel({
                       // input above is still selectable by hand.
                     }
                   }}
-                  className="flex-none rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-medium text-white"
+                  className="flex-none rounded-lg bg-[var(--portal-ink)] px-3 py-1.5 text-xs font-medium text-white"
                 >
                   {copied ? 'Copied' : 'Copy'}
                 </button>

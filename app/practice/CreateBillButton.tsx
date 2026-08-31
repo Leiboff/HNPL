@@ -23,11 +23,11 @@ import type { TradingGateResult } from '@/lib/practice/tradingGate';
 
 const VARIANT_CLASSES: Record<Variant, { base: string; gated: string }> = {
   primary: {
-    base: 'shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#15A89E] focus:ring-offset-2 transition-all hover:shadow-lg',
+    base: 'shrink-0 rounded-lg px-4 py-2 sm:px-5 sm:py-2.5 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)] focus:ring-offset-2 transition-all hover:shadow-lg',
     gated: 'opacity-50 cursor-not-allowed hover:shadow-none',
   },
   subtle: {
-    base: 'text-sm font-medium text-[#15A89E] hover:text-[#13294B] transition-colors',
+    base: 'text-sm font-medium text-[var(--portal-accent)] hover:text-[var(--portal-ink)] transition-colors',
     gated: 'text-gray-400 cursor-not-allowed hover:text-gray-400',
   },
   cta: {
@@ -36,7 +36,7 @@ const VARIANT_CLASSES: Record<Variant, { base: string; gated: string }> = {
   },
 };
 
-const GRADIENT_BG = 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)';
+const GRADIENT_BG = 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)';
 
 type Variant = 'primary' | 'subtle' | 'cta';
 

@@ -50,7 +50,7 @@ export type NextPayoutHeroProps = {
   };
 };
 
-const NAVY = '#13294B';
+const NAVY = 'var(--portal-ink)';
 
 export default function NextPayoutHero({ data, dates }: NextPayoutHeroProps) {
   const { next } = data;

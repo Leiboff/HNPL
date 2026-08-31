@@ -217,7 +217,7 @@ export default async function PracticeSettingsPage({
     >
       <main className="px-4 sm:px-6 py-6 sm:py-10 max-w-3xl space-y-8">
         <header>
-          <h1 className="text-2xl font-semibold" style={{ color: '#13294B' }}>
+          <h1 className="text-2xl font-semibold" style={{ color: 'var(--portal-ink)' }}>
             Settings
           </h1>
           <p className="mt-1 text-sm text-gray-500">{practiceName}</p>
@@ -252,7 +252,7 @@ export default async function PracticeSettingsPage({
                   href={`#${sec.anchor}`}
                   data-testid={`settings-jump:${sec.key}`}
                   className="font-semibold underline underline-offset-2"
-                  style={{ color: '#13294B' }}
+                  style={{ color: 'var(--portal-ink)' }}
                 >
                   {sec.title}
                 </a>
@@ -272,7 +272,7 @@ export default async function PracticeSettingsPage({
           >
             <p>
               Add banking below to enable billing.{' '}
-              <a href="#banking" className="font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+              <a href="#banking" className="font-semibold underline underline-offset-2" style={{ color: 'var(--portal-ink)' }}>
                 Jump to Banking →
               </a>
             </p>
@@ -319,7 +319,7 @@ export default async function PracticeSettingsPage({
         {showTill && devices !== null && (
           <section id="till" data-testid="settings-section:till">
             <div className="mb-5">
-              <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--portal-ink)' }}>
                 Till devices
               </h2>
               <p className="mt-1 text-sm text-gray-500">

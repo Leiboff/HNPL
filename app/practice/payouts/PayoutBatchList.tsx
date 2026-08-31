@@ -53,7 +53,7 @@ type Props = {
   history: PayoutHistory;
 };
 
-const NAVY = '#13294B';
+const NAVY = 'var(--portal-ink)';
 
 export default function PayoutBatchList({ history }: Props) {
   if (history.entries.length === 0) return <EmptyState />;

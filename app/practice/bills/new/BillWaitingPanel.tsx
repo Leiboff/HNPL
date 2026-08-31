@@ -74,10 +74,10 @@ function stateClasses(status: BillLifecycleStatus): {
 } {
   switch (status) {
     case 'paid':    return { card: 'bg-[#E7F6EC] border-[#1E9E55]/25' };
-    case 'viewed':  return { card: 'bg-[#15A89E]/8 border-[#15A89E]/25' };
-    case 'expired': return { card: 'bg-[#EEF1F6] border-[#D8DEE8]' };
+    case 'viewed':  return { card: 'bg-[var(--portal-accent)]/8 border-[var(--portal-accent)]/25' };
+    case 'expired': return { card: 'bg-[var(--portal-hairline)] border-[var(--portal-line)]' };
     case 'sent':
-    default:        return { card: 'bg-[#FAFBFD] border-[#E5E9F0]' };
+    default:        return { card: 'bg-white border-[var(--portal-line-soft)]' };
   }
 }
 
@@ -224,17 +224,17 @@ export default function BillWaitingPanel({
       <div
         role="status"
         aria-live="polite"
-        className={`rounded-[20px] border p-7 sm:p-8 text-center transition-colors duration-300 ${tone.card}`}
+        className={`rounded-card border p-7 sm:p-8 text-center transition-colors duration-300 ${tone.card}`}
       >
         <div className="flex justify-center mb-4">
           <StepMedallion icon="tick" tone="green" />
         </div>
         <p className="text-xs uppercase tracking-[0.08em] font-medium text-[#1E7A45]">Collected</p>
-        <p className="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-[#0F1F3A]">
+        <p className="mt-2 text-4xl sm:text-5xl font-semibold tabular-nums text-[var(--portal-ink)]">
           {formatRand(amount)}
         </p>
-        <p className="mt-3 text-sm text-[#3A4B66]">
-          from <span className="font-medium text-[#0F1F3A]">{patientLabel}</span>
+        <p className="mt-3 text-sm text-[var(--portal-ink-2)]">
+          from <span className="font-medium text-[var(--portal-ink)]">{patientLabel}</span>
         </p>
       </div>
     );
@@ -246,13 +246,13 @@ export default function BillWaitingPanel({
       <div
         role="status"
         aria-live="polite"
-        className={`rounded-[20px] border p-6 sm:p-7 text-center transition-colors duration-300 ${tone.card}`}
+        className={`rounded-card border p-6 sm:p-7 text-center transition-colors duration-300 ${tone.card}`}
       >
         <div className="flex justify-center mb-4">
           <StepMedallion icon="clock" tone="muted" />
         </div>
-        <p className="text-lg font-semibold text-[#0F1F3A]">Link expired</p>
-        <p className="mt-1 text-sm text-[#3A4B66]">
+        <p className="text-lg font-semibold text-[var(--portal-ink)]">Link expired</p>
+        <p className="mt-1 text-sm text-[var(--portal-ink-2)]">
           {patientLabel} didn&apos;t pay before the link expired.
         </p>
       </div>
@@ -278,7 +278,7 @@ export default function BillWaitingPanel({
     <div
       role="status"
       aria-live="polite"
-      className={`rounded-[20px] border p-6 sm:p-7 text-center transition-colors duration-300 ${tone.card}`}
+      className={`rounded-card border p-6 sm:p-7 text-center transition-colors duration-300 ${tone.card}`}
     >
       <div className="flex justify-center mb-4">
         <span className="relative inline-flex">
@@ -288,24 +288,24 @@ export default function BillWaitingPanel({
           <span
             aria-hidden
             className={`absolute inset-0 rounded-full motion-safe:animate-ping ${
-              isViewed ? 'bg-[#15A89E]/25' : 'bg-[#C8841C]/25'
+              isViewed ? 'bg-[var(--portal-accent)]/25' : 'bg-[#C8841C]/25'
             }`}
             style={{ animationDuration: '2.4s' }}
           />
         </span>
       </div>
-      <p className="text-lg font-semibold text-[#0F1F3A]">{headline}</p>
-      <p className="mt-1 text-sm text-[#3A4B66]">{sub}</p>
-      <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-white border border-[#E5E9F0] px-3 py-1">
+      <p className="text-lg font-semibold text-[var(--portal-ink)]">{headline}</p>
+      <p className="mt-1 text-sm text-[var(--portal-ink-2)]">{sub}</p>
+      <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-white border border-[var(--portal-line-soft)] px-3 py-1">
         <span
           aria-hidden
-          className={`h-1.5 w-1.5 rounded-full ${isViewed ? 'bg-[#15A89E]' : 'bg-[#C8841C]'}`}
+          className={`h-1.5 w-1.5 rounded-full ${isViewed ? 'bg-[var(--portal-accent)]' : 'bg-[#C8841C]'}`}
         />
-        <span className="text-xs font-medium text-[#3A4B66]" title={chip.hint}>
+        <span className="text-xs font-medium text-[var(--portal-ink-2)]" title={chip.hint}>
           {chip.label}
         </span>
-        <span className="text-xs text-[#7A8AA0]">·</span>
-        <span className="text-xs tabular-nums font-medium text-[#0F1F3A]">{formatRand(amount)}</span>
+        <span className="text-xs text-[var(--portal-muted)]">·</span>
+        <span className="text-xs tabular-nums font-medium text-[var(--portal-ink)]">{formatRand(amount)}</span>
       </div>
     </div>
   );

@@ -285,7 +285,7 @@ export default async function PracticeDashboardPage({
         {/* Heading */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-semibold truncate" style={{ color: '#13294B' }}>
+            <h1 className="text-xl sm:text-2xl font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>
               {practiceName || 'Dashboard'}
             </h1>
             <p className="mt-1 text-sm text-gray-500">
@@ -295,11 +295,11 @@ export default async function PracticeDashboardPage({
                 link, no brand wording — the auto-created brand stays invisible. */}
             <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
               {practiceCount >= 2 && (
-                <a href="/brand" className="font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+                <a href="/brand" className="font-semibold underline underline-offset-2" style={{ color: 'var(--portal-ink)' }}>
                   See all my practices ({practiceCount})
                 </a>
               )}
-              <a href="/brand/new-practice" className="font-semibold underline underline-offset-2" style={{ color: '#13294B' }}>
+              <a href="/brand/new-practice" className="font-semibold underline underline-offset-2" style={{ color: 'var(--portal-ink)' }}>
                 {practiceCount === 1 ? '+ Add another practice' : '+ Add a practice'}
               </a>
             </div>
@@ -352,7 +352,7 @@ export default async function PracticeDashboardPage({
               <a
                 href="/practice/members"
                 className="mt-2 inline-block font-semibold underline underline-offset-2"
-                style={{ color: '#13294B' }}
+                style={{ color: 'var(--portal-ink)' }}
               >
                 Go to Team →
               </a>
@@ -371,7 +371,7 @@ export default async function PracticeDashboardPage({
               <a
                 href={`/practice/details?practiceId=${practiceId}#banking`}
                 className="mt-2 inline-block font-semibold underline underline-offset-2"
-                style={{ color: '#13294B' }}
+                style={{ color: 'var(--portal-ink)' }}
               >
                 Go to Banking →
               </a>

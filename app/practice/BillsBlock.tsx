@@ -269,7 +269,7 @@ export default function BillsBlock({
             <a
               href={seeAllHref}
               data-testid="bills-see-all"
-              className="text-sm font-medium text-gray-500 hover:text-[#13294B] transition-colors"
+              className="text-sm font-medium text-gray-500 hover:text-portal-ink transition-colors"
             >
               See all →
             </a>
@@ -337,7 +337,7 @@ export default function BillsBlock({
                 <a
                   href={seeAllHref}
                   data-testid="bills-see-all-footer"
-                  className="text-sm font-medium text-gray-500 hover:text-[#13294B] transition-colors"
+                  className="text-sm font-medium text-gray-500 hover:text-portal-ink transition-colors"
                 >
                   See all {plans.length} bills →
                 </a>

@@ -122,7 +122,7 @@ export default async function BrandRevenuePage({
   if (practiceIds.length === 0) {
     return (
       <BrandShell brandName={brandName} brandCount={brandCount}>
-        <h2 className="text-lg font-semibold mb-1" style={{ color: '#13294B' }}>Group revenue</h2>
+        <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--portal-ink)' }}>Group revenue</h2>
         <p className="text-sm text-gray-500 mb-6">Active-plan revenue across your group.</p>
         <div className="rounded-2xl border border-dashed border-gray-200 py-14 text-center">
           <p className="font-medium text-gray-500">No practices in your brand yet.</p>
@@ -189,7 +189,7 @@ export default async function BrandRevenuePage({
   return (
     <BrandShell brandName={brandName} brandCount={brandCount}>
       <header>
-        <h2 className="text-lg font-semibold" style={{ color: '#13294B' }}>Group revenue</h2>
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--portal-ink)' }}>Group revenue</h2>
         <p className="text-sm text-gray-500 mt-1">
           Active-plan revenue across your group. Gross is the bill value; net is what you receive after BetterNow&apos;s commission.
           Collection of patient instalments is handled by BetterNow.

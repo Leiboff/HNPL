@@ -119,7 +119,7 @@ export default function BillsBrowser({
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search patient, invoice or your reference"
           data-testid="bills-search"
-          className="min-w-0 flex-1 sm:max-w-xs rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 placeholder:text-gray-400 focus:border-[#15A89E] focus:outline-none"
+          className="min-w-0 flex-1 sm:max-w-xs rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 placeholder:text-gray-400 focus:border-[var(--portal-accent)] focus:outline-none"
         />
 
         <div className="relative">

@@ -65,7 +65,7 @@ const BLANK: AddDraft = {
 
 const INPUT_CLS =
   'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 ' +
-  'focus:outline-none focus:ring-2 focus:ring-[#15A89E]/30 focus:border-[#15A89E] transition-colors';
+  'focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/30 focus:border-[var(--portal-accent)] transition-colors';
 const SELECT_CLS = INPUT_CLS;
 
 type Props = {
@@ -155,11 +155,11 @@ export default function AddMemberForm({
               data-testid={`add-member-role-${opt.value}`}
               className={`rounded-xl border p-4 text-left transition-colors ${
                 draft.memberRole === opt.value
-                  ? 'border-[#13294B] bg-[#13294B]/5'
+                  ? 'border-[var(--portal-ink)] bg-[var(--portal-ink)]/5'
                   : 'border-gray-200 hover:border-gray-300'
               }`}
             >
-              <p className={`text-sm font-semibold ${draft.memberRole === opt.value ? 'text-[#13294B]' : 'text-gray-800'}`}>{opt.label}</p>
+              <p className={`text-sm font-semibold ${draft.memberRole === opt.value ? 'text-[var(--portal-ink)]' : 'text-gray-800'}`}>{opt.label}</p>
               <p className="text-xs text-gray-400 mt-0.5">{opt.sub}</p>
             </button>
           ))}
@@ -278,7 +278,7 @@ export default function AddMemberForm({
         disabled={loading}
         data-testid="add-member-submit"
         className="w-full py-2.5 text-white text-sm font-semibold rounded-xl disabled:opacity-50 transition-all hover:shadow-lg"
-        style={{ background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }}
+        style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
       >
         {loading ? 'Sending invitation…' : submitLabel}
       </button>

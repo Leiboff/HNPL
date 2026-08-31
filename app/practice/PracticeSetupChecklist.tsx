@@ -42,7 +42,7 @@ import { ASK_A_MANAGER_NOTE } from '@/lib/practice/setupChecklist';
 // No state, no effects, no interactivity — it renders on the server as part
 // of the dashboard, which is why every item's state is as fresh as the page.
 
-const NAVY = '#13294B';
+const NAVY = 'var(--portal-ink)';
 
 export type PracticeSetupChecklistProps = {
   checklist:  SetupChecklist;
@@ -99,7 +99,7 @@ export default function PracticeSetupChecklist({
             className="h-full rounded-full transition-[width]"
             style={{
               width: `${pct}%`,
-              background: 'linear-gradient(90deg, #13294B 0%, #15A89E 145%)',
+              background: 'linear-gradient(90deg, var(--portal-ink) 0%, var(--portal-accent) 145%)',
             }}
           />
         </div>
@@ -260,7 +260,7 @@ function Row({
               }
               style={
                 emphasised
-                  ? { background: 'linear-gradient(135deg, #13294B 0%, #15A89E 145%)' }
+                  ? { background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }
                   : { color: NAVY }
               }
             >

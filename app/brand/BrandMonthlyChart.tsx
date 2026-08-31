@@ -78,7 +78,7 @@ export default function BrandMonthlyChart({ points, mode = 'net', title }: Props
     <div className="bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm p-6">
       <p
         className="text-xs font-semibold uppercase tracking-widest mb-5"
-        style={{ color: '#13294B', opacity: 0.55 }}
+        style={{ color: 'var(--portal-ink)', opacity: 0.55 }}
       >
         {heading}
       </p>
@@ -86,8 +86,8 @@ export default function BrandMonthlyChart({ points, mode = 'net', title }: Props
       <svg viewBox={`0 0 ${VW} ${VH}`} className="w-full" style={{ height: 'auto' }} aria-hidden>
         <defs>
           <linearGradient id="brandBarGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"   stopColor="#15A89E" stopOpacity={0.9} />
-            <stop offset="100%" stopColor="#13294B" stopOpacity={0.8} />
+            <stop offset="0%"   stopColor="var(--portal-accent)" stopOpacity={0.9} />
+            <stop offset="100%" stopColor="var(--portal-ink)" stopOpacity={0.8} />
           </linearGradient>
         </defs>
 

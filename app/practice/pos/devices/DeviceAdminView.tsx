@@ -174,9 +174,9 @@ export default function DeviceAdminView({
           and can only be used once.
         </p>
         {codeResult?.code ? (
-          <div className="rounded-lg bg-[#13294B]/5 border border-[#13294B]/20 px-4 py-3">
+          <div className="rounded-lg bg-[var(--portal-ink)]/5 border border-[var(--portal-ink)]/20 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">One-time code</p>
-            <p className="text-3xl font-mono font-bold tabular-nums text-[#13294B]" data-testid="registration-code">
+            <p className="text-3xl font-mono font-bold tabular-nums text-[var(--portal-ink)]" data-testid="registration-code">
               {codeResult.code}
             </p>
             <p className="mt-1 text-xs text-gray-500">
@@ -188,7 +188,7 @@ export default function DeviceAdminView({
             type="button"
             onClick={handleGenerateCode}
             disabled={isPending}
-            className="inline-flex items-center justify-center rounded-lg bg-[#13294B] px-5 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
+            className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] px-5 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
           >
             Generate code
           </button>
@@ -233,7 +233,7 @@ export default function DeviceAdminView({
               type="submit"
               disabled={isPending}
               data-testid="till-pin-submit"
-              className="inline-flex items-center justify-center rounded-lg bg-[#13294B] px-5 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
+              className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] px-5 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-shadow disabled:opacity-60"
             >
               {pinConfigured ? 'Reset PIN' : 'Set PIN'}
             </button>
@@ -254,7 +254,7 @@ export default function DeviceAdminView({
             data-testid="tab-active"
             aria-pressed={tab === 'active'}
             className={`pb-2 text-sm font-semibold border-b-2 transition-colors ${
-              tab === 'active' ? 'border-[#13294B] text-[#13294B]' : 'border-transparent text-gray-500 hover:text-gray-700'
+              tab === 'active' ? 'border-[var(--portal-ink)] text-[var(--portal-ink)]' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             Active ({activeDevices.length})
@@ -265,7 +265,7 @@ export default function DeviceAdminView({
             data-testid="tab-revoked"
             aria-pressed={tab === 'revoked'}
             className={`pb-2 text-sm font-semibold border-b-2 transition-colors ${
-              tab === 'revoked' ? 'border-[#13294B] text-[#13294B]' : 'border-transparent text-gray-500 hover:text-gray-700'
+              tab === 'revoked' ? 'border-[var(--portal-ink)] text-[var(--portal-ink)]' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             Revoked ({revokedDevices.length})
@@ -297,7 +297,7 @@ export default function DeviceAdminView({
                             onClick={() => handleRenameSave(d.id)}
                             disabled={isPending}
                             data-testid={`rename-save-${d.id}`}
-                            className="rounded-lg bg-[#13294B] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                            className="rounded-lg bg-[var(--portal-ink)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
                           >
                             Save
                           </button>
@@ -328,7 +328,7 @@ export default function DeviceAdminView({
                         onClick={() => startRename(d)}
                         disabled={isPending}
                         data-testid={`rename-${d.id}`}
-                        className="text-sm font-semibold text-[#15A89E] hover:text-[#13294B] disabled:opacity-60"
+                        className="text-sm font-semibold text-[var(--portal-accent)] hover:text-[var(--portal-ink)] disabled:opacity-60"
                       >
                         Rename
                       </button>
