@@ -7,6 +7,7 @@ import { weightedPipelineValue, hasEnoughData } from '@/lib/crm/pipeline';
 import { formatRand } from '@/app/admin/_lib/format';
 import { STAGES } from '@/lib/crm/stages';
 import TodayCallsToLog from './TodayCallsToLog';
+import { contactDisplayName } from '@/lib/crm/nameSplit';
 
 // ─── /crm — My Day (default landing) ─────────────────────────────────
 //
@@ -193,7 +194,7 @@ export default async function CrmHomePage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-900 truncate">{r.practice_name}</p>
                     <p className="text-xs text-gray-500 truncate">
-                      {r.contact_first_name} {r.contact_last_name}
+                      {contactDisplayName(r.contact_first_name, r.contact_last_name)}
                       {(r.suburb || r.city) && ` · ${[r.suburb, r.city].filter(Boolean).join(', ')}`}
                     </p>
                   </div>

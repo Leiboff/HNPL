@@ -37,3 +37,25 @@ export function splitFullName(raw: string): SplitName {
   const firstName = tokens.slice(0, -1).join(' ');
   return { title, firstName, lastName };
 }
+
+// ─── Join first/last back into something displayable ───────────────────
+//
+// contact_first_name / contact_last_name are NOT NULL in crm_leads
+// (migration 0069), but the new-lead form stopped requiring a contact
+// name — only practice name, address and phone are compulsory there —
+// so a lead created without one stores empty strings rather than
+// needing the columns nulled and every consumer's type widened.
+//
+// Rendering `{first} {last}` for such a lead prints a lone space, which
+// reads as a broken row. Every surface that shows a contact name goes
+// through this instead and gets an explicit "no name on file" marker.
+
+export const NO_CONTACT_NAME = '—';
+
+export function contactDisplayName(
+  first: string | null | undefined,
+  last:  string | null | undefined,
+): string {
+  const joined = [first, last].map(p => (p ?? '').trim()).filter(Boolean).join(' ');
+  return joined || NO_CONTACT_NAME;
+}

@@ -48,6 +48,14 @@ export default function NewLeadForm({
 
   function submit(confirmDupe: boolean) {
     setError(null);
+
+    // Practice name and phone carry native `required`; address cannot
+    // (see the Address field). Guard all three here anyway so the
+    // message is ours and consistent — createLead re-checks server-side.
+    if (!f.practice_name.trim())     { setError('Practice name is required.'); return; }
+    if (!f.phone.trim())             { setError('A contact number is required.'); return; }
+    if (!f.formatted_address.trim()) { setError('An address is required — pick one from the dropdown.'); return; }
+
     startTransition(async () => {
       const res = await createLead({
         practice_name:      f.practice_name,
@@ -90,29 +98,29 @@ export default function NewLeadForm({
       </Field>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Contact first name" required>
-          <input required value={f.contact_first_name} onChange={e => upd('contact_first_name', e.target.value)} className={inp} />
+        <Field label="Contact first name">
+          <input value={f.contact_first_name} onChange={e => upd('contact_first_name', e.target.value)} className={inp} />
         </Field>
-        <Field label="Contact last name" required>
-          <input required value={f.contact_last_name} onChange={e => upd('contact_last_name', e.target.value)} className={inp} />
+        <Field label="Contact last name">
+          <input value={f.contact_last_name} onChange={e => upd('contact_last_name', e.target.value)} className={inp} />
         </Field>
         <Field label="Role at practice">
           <input value={f.role_at_practice} onChange={e => upd('role_at_practice', e.target.value)} placeholder="Owner, Practice Manager, Receptionist…" className={inp} />
         </Field>
         <Field label="Specialty">
           <select value={f.specialty} onChange={e => upd('specialty', e.target.value)} className={inp}>
-            <SpecialtyOptions placeholder="(none)" />
+            <SpecialtyOptions placeholder="Select" />
           </select>
         </Field>
-        <Field label="Phone">
-          <input value={f.phone} onChange={e => upd('phone', e.target.value)} className={inp} placeholder="+27 …" />
+        <Field label="Phone" required>
+          <input required value={f.phone} onChange={e => upd('phone', e.target.value)} className={inp} placeholder="+27 …" />
         </Field>
         <Field label="Email">
           <input type="email" value={f.email} onChange={e => upd('email', e.target.value)} className={inp} />
         </Field>
       </div>
 
-      <Field label="Address">
+      <Field label="Address" required>
         <PlacesAutocomplete
           variant="address"
           inputId="lead-address"
@@ -133,6 +141,13 @@ export default function NewLeadForm({
         />
         {f.formatted_address && (
           <p className="mt-1 text-xs text-gray-500">Picked: {f.formatted_address}</p>
+        )}
+        {/* Address is the one required field the browser cannot check:
+            PlacesAutocomplete only reports a place once it is chosen
+            from the dropdown, so typed-but-unpicked text never reaches
+            our state. Hence the explicit hint + the submit guard. */}
+        {!f.formatted_address && (
+          <p className="mt-1 text-xs text-gray-400">Pick a suggestion from the dropdown to attach the address.</p>
         )}
       </Field>
 

@@ -6,6 +6,7 @@ import { formatDateTime, formatRand } from '@/app/admin/_lib/format';
 import { bulkAssignOwner } from './actions';
 import type { LeadScore } from '@/lib/crm/priorityScore';
 import { INTEREST_LABELS, type Interest } from '@/lib/crm/interest';
+import { contactDisplayName } from '@/lib/crm/nameSplit';
 
 export type LeadRow = {
   id: string;
@@ -156,7 +157,7 @@ export default function LeadsResultsList({
                     {r.suburb && <div className="text-xs text-gray-500">{[r.suburb, r.city].filter(Boolean).join(', ')}</div>}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-600">
-                    <div>{r.contact_first_name} {r.contact_last_name}</div>
+                    <div>{contactDisplayName(r.contact_first_name, r.contact_last_name)}</div>
                     {r.email && <div className="text-gray-500 truncate max-w-[220px]">{r.email}</div>}
                     {r.phone && <div className="text-gray-500">{r.phone}</div>}
                   </td>
@@ -222,7 +223,7 @@ export default function LeadsResultsList({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate">{r.practice_name}</p>
-                    <p className="text-xs text-gray-500 truncate">{r.contact_first_name} {r.contact_last_name}</p>
+                    <p className="text-xs text-gray-500 truncate">{contactDisplayName(r.contact_first_name, r.contact_last_name)}</p>
                   </div>
                   <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs capitalize shrink-0">
                     {r.stage.replace(/_/g, ' ')}
