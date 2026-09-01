@@ -189,15 +189,27 @@ describe('Login page — Forgot-password link + prominent signup CTAs', () => {
     expect(LOGIN).not.toMatch(/href="\/signup\/practice"/);
   });
 
-  it('the practice route it dropped is still reachable from the landing page', () => {
+  it('practices can still reach us from the landing page — as an enquiry', () => {
     // Removing a path from one screen must not remove it from the
-    // product. This is the assertion that would catch that.
+    // product. This is the assertion that would catch that, and it still
+    // is — the destination is what changed, not the principle.
+    //
+    // Practice accounts are now invitation-only: /signup/practice renders
+    // nothing without a CRM-issued token, and createPractice refuses
+    // without one. So the public route in is the lead form on /practices,
+    // and these links must point AT it. If a future change strips the
+    // enquiry CTAs too, a practice would have no way to reach betternow
+    // at all — which is the regression this test exists to prevent.
     const HEADER    = read('app/_landing/SiteHeader.tsx');
     const FOOTER    = read('app/_landing/SiteFooter.tsx');
     const PRACTICES = read('app/practices/PracticesPage.tsx');
     expect(HEADER).toMatch(/href="\/practices"/);
-    expect(PRACTICES).toMatch(/href="\/signup\/practice"/);
-    expect(FOOTER).toMatch(/href="\/signup\/practice"/);
+    expect(PRACTICES).toMatch(/href="#get-in-touch"/);
+    expect(FOOTER).toMatch(/href="\/practices#get-in-touch"/);
+    // And the self-signup route is gone from both, not merely unlinked
+    // from the login page.
+    expect(PRACTICES).not.toMatch(/href="\/signup\/practice/);
+    expect(FOOTER).not.toMatch(/href="\/signup\/practice/);
   });
 
   it('the previous "Don\'t have an account? Sign up → /" footnote is gone', () => {

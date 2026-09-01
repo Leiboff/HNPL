@@ -93,8 +93,12 @@ describe('/practices hero', () => {
     expect(PRACTICES).toMatch(/Get paid upfront and add zero risk or admin/);
   });
 
-  it('hero CTA points to /signup/practice and reads "Offer betternow at your practice"', () => {
-    expect(PRACTICES).toMatch(/href="\/signup\/practice"[^>]*>\s*Offer betternow at your practice/);
+  it('hero CTA points at the ENQUIRY form and reads "Offer betternow at your practice"', () => {
+    // Was /signup/practice. A practice can no longer create its own
+    // account — it sends its details, the team qualifies the lead, and an
+    // invitation is issued from the CRM. The CTA now lands on the lead
+    // form already on this page.
+    expect(PRACTICES).toMatch(/href="#get-in-touch"[^>]*>\s*Offer betternow at your practice/);
   });
 
   it('hero uses the compact stage variant', () => {
@@ -272,10 +276,16 @@ describe('/practices — FAQ (fee present + fold-ins from trimmed cards)', () =>
 // ─── Final CTA ────────────────────────────────────────────────────────
 
 describe('/practices — final CTA', () => {
-  it('final CTA links to /signup/practice', () => {
-    // Two hero-CTA occurrences (top + bottom) both point at signup.
-    const matches = PRACTICES.match(/href="\/signup\/practice"/g) ?? [];
+  it('final CTA links to the enquiry form too', () => {
+    // Both hero-CTA occurrences (top + bottom) point at the lead form.
+    const matches = PRACTICES.match(/href="#get-in-touch"/g) ?? [];
     expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('NOTHING on /practices offers practice self-signup any more', () => {
+    // The whole point of the change: the public page cannot hand anyone a
+    // route to an account. Enquiry only.
+    expect(PRACTICES).not.toMatch(/href="\/signup\/practice/);
   });
 });
 

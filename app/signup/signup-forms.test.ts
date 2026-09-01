@@ -311,3 +311,82 @@ describe('migration 0043 — trading-gate RLS', () => {
     expect(fixture).toMatch(/scenario 3.*approved.*provider/i);
   });
 });
+
+// ─── Practice accounts are INVITATION-ONLY ───────────────────────────────────
+//
+// /signup/practice was an open front door: ?token= was a convenience that
+// pre-filled the form, and no token simply meant no prefill, so anyone who
+// found the URL could raise a practice. Two things follow from closing it.
+//
+// First, the boundary is the SERVER ACTION, not the page. createPractice is a
+// public endpoint reachable by a hand-rolled POST from someone who never
+// loaded the page, so a page that renders no form proves nothing on its own.
+//
+// Second, the token is RE-VERIFIED rather than trusted. The caller supplies
+// input.inviteToken; what decides is what the SECURITY DEFINER RPC says about
+// it, and that RPC returns a row only for a non-expired, unaccepted
+// invitation — so a spent or stale token fails exactly like no token at all.
+
+describe('practice signup is invitation-only', () => {
+  const ACTION = readSrc('app/signup/practice/actions.ts');
+  const PAGE   = readSrc('app/signup/practice/page.tsx');
+
+  it('the SERVER ACTION refuses without a verified invitation', () => {
+    // Gated on the RPC's verdict, not on the caller's assertion.
+    expect(ACTION).toMatch(/const invitation = input\.inviteToken\s*\?\s*await getPracticeInvitationByToken\(input\.inviteToken\)\s*:\s*null;/);
+    expect(ACTION).toMatch(/if \(!invitation\) \{/);
+    expect(ACTION).toMatch(/Practice accounts are set up by invitation/);
+  });
+
+  it('the gate runs BEFORE any account or practice is created', () => {
+    // Order matters: a refusal after signUp() would leave the auth user
+    // behind and strand the next attempt on "already exists".
+    // Match the CALL SITES, not the prose — the file's header comment
+    // describes the signUp flow long before the gate appears, so a bare
+    // substring search finds the comment and reports the gate as too late.
+    const gateAt   = ACTION.indexOf('if (!invitation)');
+    const signUpAt = ACTION.indexOf('await supabase.auth.signUp(');
+    const insertAt = ACTION.indexOf("await svc.from('practices').insert(");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(signUpAt).toBeGreaterThan(gateAt);
+    expect(insertAt).toBeGreaterThan(gateAt);
+  });
+
+  it('the page renders no form without a verified invitation', () => {
+    expect(PAGE).toMatch(/'checking' \| 'invited' \| 'none'/);
+    expect(PAGE).toMatch(/if \(gate !== 'invited'\) \{/);
+    expect(PAGE).toMatch(/data-testid="practice-signup-invite-only"/);
+  });
+
+  it('the refusal sends them to the ENQUIRY form, not a dead end', () => {
+    // The whole point: a practice can still reach us, it just creates a
+    // lead rather than an account.
+    expect(PAGE).toMatch(/href="\/practices#get-in-touch"/);
+    expect(PAGE).toMatch(/data-testid="practice-signup-enquire"/);
+  });
+
+  it('every failing case gets the SAME answer', () => {
+    // No token, malformed, expired, already spent — one branch, one
+    // message. Telling a stranger which it was tells them something about
+    // an invitation that is not theirs.
+    expect(PAGE).toMatch(/if \(!pre \|\| !token\) \{ setGate\('none'\); return; \}/);
+  });
+});
+
+// ─── The public route in is a LEAD, never an account ─────────────────────────
+
+describe('public practice enquiry creates a CRM lead', () => {
+  const LEAD = readSrc('app/practices/publicLeadAction.ts');
+
+  it('inserts a crm_leads row — and creates no account of any kind', () => {
+    expect(LEAD).toMatch(/\.from\('crm_leads'\)\s*\.insert\(insertRow\)/);
+    expect(LEAD).toMatch(/source:\s*'inbound'/);
+    expect(LEAD).toMatch(/stage:\s*'new'/);
+    // The line that must never appear here: this surface is anonymous and
+    // must not be able to mint a user or a practice.
+    expect(LEAD).not.toMatch(/auth\.signUp\(/);
+    expect(LEAD).not.toMatch(/admin\.createUser\(/);
+    expect(LEAD).not.toMatch(/\.from\('practices'\)/);
+  });
+});
+

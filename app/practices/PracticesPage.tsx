@@ -52,7 +52,7 @@ export default function PracticesPage() {
             Get paid upfront and add zero risk or admin to your day — by letting patients spread their shortfall, interest-free.
           </p>
           <div className="ctas">
-            <Link className="btn btn-primary btn-lg" href="/signup/practice">Offer betternow at your practice</Link>
+            <Link className="btn btn-primary btn-lg" href="#get-in-touch">Offer betternow at your practice</Link>
           </div>
         </div>
       </div>
@@ -187,7 +187,7 @@ export default function PracticesPage() {
             <h2>Turn shortfalls into treatments.</h2>
             <p>Get paid upfront. Add zero admin. Let more of your recommended treatments go ahead.</p>
             <div className="ctas">
-              <Link className="btn btn-primary btn-lg" href="/signup/practice">Offer betternow at your practice</Link>
+              <Link className="btn btn-primary btn-lg" href="#get-in-touch">Offer betternow at your practice</Link>
             </div>
           </div>
         </div>

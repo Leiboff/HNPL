@@ -74,8 +74,9 @@ function svcClient() {
 //
 // Anonymous-safe: calls the SECURITY DEFINER RPC that returns at most
 // one row for a non-expired, unaccepted invitation. Returns null for
-// any invalid state; caller renders the form as an open signup in
-// that case.
+// any invalid state — which now means NO SIGNUP, not an open one. Both
+// the page (what it renders) and createPractice (what it accepts) gate
+// on this same verdict.
 
 export type PrefillPayload = {
   email:              string;
@@ -161,6 +162,36 @@ function validate(input: CreatePracticeInput): string | null {
 //   tests in app/signup/signup-forms.test.ts lock that out.
 
 export async function createPractice(input: CreatePracticeInput): Promise<CreatePracticeResult> {
+  // ── Invitation-only, enforced HERE ──────────────────────────────────
+  //
+  // /signup/practice used to be an open front door: the ?token= was a
+  // convenience that pre-filled the form, and `if (!token) return` in the
+  // page meant no token simply meant no prefill. Anyone who found the URL
+  // could raise a practice, and the Provider Agreement tick they gave was
+  // never recorded anywhere (grep this file for terms_accepted_at — there
+  // is nothing).
+  //
+  // Practices are now provisioned by invitation only. The page renders no
+  // form without one, but the page is not the boundary: this is a server
+  // action with a public endpoint, reachable by a hand-rolled POST that
+  // has never loaded the page at all. So the token is re-verified here,
+  // against the same SECURITY DEFINER RPC the page uses, and its verdict
+  // is what decides — never the caller's assertion that it holds one.
+  //
+  // The RPC returns a row only for an invitation that is non-expired AND
+  // unaccepted, so a spent or stale token fails this exactly like no
+  // token at all. accept_practice_invitation below then marks it used,
+  // which is what keeps one invitation worth one practice.
+  const invitation = input.inviteToken
+    ? await getPracticeInvitationByToken(input.inviteToken)
+    : null;
+  if (!invitation) {
+    return {
+      error: 'Practice accounts are set up by invitation. Please contact the betternow team to get started.',
+      success: false,
+    };
+  }
+
   const validationError = validate(input);
   if (validationError) return { error: validationError, success: false };
 

@@ -322,17 +322,23 @@ export default function SignupEntry() {
           </Link>
         </p>
 
-        {/* Practices are invite-provisioned staff accounts, not a Google
-            path — kept as a quiet third door rather than a fourth pill,
-            so the patient stack stays the obvious read. */}
+        {/* Practices are invite-provisioned staff accounts — a quiet third
+            door rather than a fourth pill, so the patient stack stays the
+            obvious read.
+
+            It goes to the ENQUIRY form, not to a signup. A practice can no
+            longer create its own account: it sends its details, the team
+            qualifies the lead, and an invitation is issued from the CRM.
+            The old wording ("Register your practice") promised something
+            this link can no longer deliver. */}
         <p className="mt-3 text-center text-[13px] text-[var(--auth-dim)]">
           Are you a practice?{' '}
           <Link
-            href="/signup/practice"
+            href="/practices#get-in-touch"
             data-testid="signup-entry-practice"
             className="font-medium underline underline-offset-[3px] text-[var(--auth-muted)]"
           >
-            Register your practice
+            Talk to us about betternow
           </Link>
         </p>
         </div>

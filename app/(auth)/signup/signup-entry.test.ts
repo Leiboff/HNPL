@@ -112,9 +112,16 @@ describe('cross-links out', () => {
     expect(ENTRY).toMatch(/href="\/login"/);
   });
 
-  it('practices get their own door — Google is a patient path only', () => {
+  it('practices get their own door — an ENQUIRY, not a signup', () => {
+    // The door is still here (Google is a patient path only), but it no
+    // longer leads to an account. A practice sends its details, the team
+    // qualifies the lead, and an invitation is issued from the CRM — so
+    // the link goes to the lead form and the label stops promising
+    // self-registration.
     expect(ENTRY).toMatch(/data-testid="signup-entry-practice"/);
-    expect(ENTRY).toMatch(/href="\/signup\/practice"/);
+    expect(ENTRY).toMatch(/href="\/practices#get-in-touch"/);
+    expect(ENTRY).not.toMatch(/href="\/signup\/practice"/);
+    expect(ENTRY).not.toMatch(/Register your practice/);
   });
 });
 

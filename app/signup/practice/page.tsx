@@ -159,6 +159,19 @@ export default function PracticeSignupPage() {
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [emailLocked, setEmailLocked] = useState(false);
 
+  // ── Invitation gate ─────────────────────────────────────────────────
+  //
+  // 'checking' until the RPC answers, so a valid invitation never flashes
+  // the refusal screen on the way in. 'none' covers every failing case
+  // equally — no token, a malformed one, an expired one, one already
+  // spent — because telling a stranger which of those it was is telling
+  // them something about an invitation that isn't theirs.
+  //
+  // This is presentation only. createPractice re-verifies the token
+  // server-side and refuses on its own; a hand-rolled POST never reaches
+  // this component.
+  const [gate, setGate] = useState<'checking' | 'invited' | 'none'>('checking');
+
   const schema = useMemo(() => SCHEMA, []);
   const { errors, handleBlur, validateAll } = useFieldValidation(fields, schema);
 
@@ -167,11 +180,15 @@ export default function PracticeSignupPage() {
   // setState directly inside the effect (matches PushSoftAsk pattern).
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const token = new URLSearchParams(window.location.search).get('token');
-    if (!token) return;
     void (async () => {
-      const pre = await getPracticeInvitationByToken(token);
-      if (!pre) return;
+      // One path to one verdict. "No token" and "token the RPC rejects"
+      // are the same answer, so they resolve through the same await
+      // rather than one short-circuiting in the effect body (which is a
+      // synchronous setState, i.e. a cascading render).
+      const token = new URLSearchParams(window.location.search).get('token');
+      const pre   = await (token ? getPracticeInvitationByToken(token) : Promise.resolve(null));
+      if (!pre || !token) { setGate('none'); return; }
+      setGate('invited');
       setInviteToken(token);
       setEmailLocked(true);
       setFields(prev => ({
@@ -248,6 +265,64 @@ export default function PracticeSignupPage() {
     } else {
       window.location.href = '/practice';
     }
+  }
+
+  // ── No invitation, no form ──────────────────────────────────────────
+  //
+  // 'checking' renders nothing rather than a spinner: the RPC is one round
+  // trip, and a flash of "you can't be here" for someone who CAN is worse
+  // than a beat of empty page.
+  if (gate !== 'invited') {
+    return (
+      <div
+        className="min-h-screen py-12 px-4"
+        style={{
+          background: '#f7fbfb',
+          backgroundImage:
+            'radial-gradient(58% 48% at 84% 0%, rgba(21,168,158,.12), transparent 70%), ' +
+            'radial-gradient(48% 42% at 4% 90%, rgba(19,41,75,.07), transparent 70%)',
+        }}
+      >
+        <div className="mx-auto max-w-xl">
+          <Link
+            href="/"
+            className="mb-8 inline-block text-2xl font-bold tracking-tight"
+            style={{ fontFamily: 'var(--font-poppins), Poppins, system-ui, sans-serif' }}
+          >
+            <span style={{ color: '#13294B' }}>better</span><span style={{ color: '#15A89E' }}>now</span>
+          </Link>
+
+          {gate === 'none' && (
+            <div
+              className="rounded-2xl border border-[rgba(19,41,75,.12)] bg-white p-7 shadow-sm"
+              data-testid="practice-signup-invite-only"
+            >
+              <h1 className="text-xl font-semibold text-[#13294B]">
+                Practice accounts are set up with you, not by you
+              </h1>
+              <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                We onboard practices personally — so the agreement, payout details and
+                your team&apos;s access are right before you take a single patient.
+                Send us your details and we&apos;ll be in touch to get you set up.
+              </p>
+              <Link
+                href="/practices#get-in-touch"
+                data-testid="practice-signup-enquire"
+                className="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-[#15A89E] px-6 text-sm font-semibold text-white transition-transform active:scale-[.985]"
+              >
+                Talk to us about your practice
+              </Link>
+              <p className="mt-6 text-sm text-gray-500">
+                Already have an account?{' '}
+                <Link href="/login" className="font-semibold text-[#15A89E] underline underline-offset-[3px]">
+                  Sign in
+                </Link>
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
