@@ -104,7 +104,13 @@ describe('Migration 0054 — practices column-lock (attack-blocked)', () => {
     expect(MIG_0054).toMatch(/IF NEW\.approved_by IS DISTINCT FROM OLD\.approved_by THEN[\s\S]*?RAISE EXCEPTION/);
   });
 
-  it('the BEFORE UPDATE trigger is wired on practices', () => {
+  // SUPERSEDED BY 0135. This asserts what migration 0054 SAYS, and 0054 is
+  // unchanged, so it still passes — but the live trigger is now
+  // `BEFORE INSERT OR UPDATE`. 0054's UPDATE-only wiring is exactly what made
+  // R3-02 possible (status='approved' supplied at INSERT was never seen by
+  // the trigger). The current wiring is pinned in
+  // supabase/migrations/0135_close_insert_surface.rls.test.ts.
+  it('the BEFORE UPDATE trigger is wired on practices (0054 as written)', () => {
     expect(MIG_0054).toMatch(/CREATE TRIGGER trg_protect_practices_columns\s+BEFORE UPDATE ON practices/);
   });
 });
