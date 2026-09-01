@@ -8,6 +8,7 @@ import { checkoutRef } from '@/lib/payments/peach/refs';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import { TERMS_VERSION } from '@/lib/legal/terms';
+import { consentColumns } from '@/lib/legal/documentHash';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import {
   isAllowedSalaryDay,
@@ -839,12 +840,19 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     // Checkout-origin patients never pass through signUpPatient, so this
     // is where their account-level acceptance of the T&Cs + Privacy
     // Policy is recorded — the checkout "I agree" tick, stamped
-    // server-side with both versions. The tick itself is REFUSED at the
-    // top of this action, so reaching here means an agreement the server
-    // actually saw, not one inferred from the form having rendered.
-    terms_accepted_at:  new Date().toISOString(),
-    terms_version:      TERMS_VERSION,
-    privacy_version:    PRIVACY_VERSION,
+    // server-side with both versions AND both document digests. The tick
+    // itself is REFUSED at the top of this action, so reaching here means an
+    // agreement the server actually saw, not one inferred from the form
+    // having rendered.
+    //
+    // No server-issued token on this path, and it does not need one (audit
+    // A-14): the tick arrives in the SAME request as the acceptance, from a
+    // form served by this application at a token this application issued —
+    // so there is no gap between "the documents were shown" and "the
+    // acceptance was recorded" for a parameter to slip into. The OAuth
+    // callback needs the token precisely because its acceptance arrives on a
+    // separate request, after a round trip through Google.
+    ...consentColumns(),
   };
 
   // ── Never overwrite an existing account's identity from a QR token ──

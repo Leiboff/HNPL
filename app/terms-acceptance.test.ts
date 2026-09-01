@@ -61,15 +61,22 @@ describe('signup records acceptance server-side', () => {
   });
 
   it('stamps profiles.terms_accepted_at + terms_version + privacy_version after signUp', () => {
-    expect(SIGNUP).toMatch(/from '@\/lib\/legal\/terms'/);
-    expect(SIGNUP).toMatch(/from '@\/lib\/legal\/privacy'/);
-    // The three columns are written from ONE place now — the same payload
-    // is needed by the stamp, the unfiltered retry, and the defensive
-    // provision, and three inline copies of a legal record is how one of
-    // them comes to be missing a column.
-    expect(SIGNUP).toMatch(
-      /function consentColumns\(\) \{\s*return \{\s*terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION,\s*\};/,
-    );
+    // The version imports moved: this file no longer names TERMS_VERSION
+    // itself, because consentColumns() is what assembles the payload and it
+    // is the module that reads the versions. Asserting the import here would
+    // pin an indirection rather than the property.
+    expect(SIGNUP).toMatch(/from '@\/lib\/legal\/documentHash'/);
+    // The columns are written from ONE place — the same payload is needed by
+    // the stamp, the unfiltered retry, and the defensive provision, and
+    // inline copies of a legal record is how one of them comes to be missing
+    // a column.
+    //
+    // AMENDED 2026-09-02 (audit A-14): that one place moved OUT of this file
+    // to lib/legal/documentHash.ts, because the same argument applies across
+    // the three acceptance points as it did across the three copies here —
+    // and the payload grew two document digests, which is exactly the kind of
+    // addition that lands in two files out of three.
+    expect(SIGNUP).toMatch(/import \{ consentColumns \} from '@\/lib\/legal\/documentHash'/);
     expect(SIGNUP).toMatch(/\.from\('profiles'\)\s*\.update\(consentColumns\(\)\)/);
     // …and the provisioned row carries them too, or a signup could exist
     // with a profile and no acceptance.
@@ -148,9 +155,18 @@ describe('plan activation records acceptance server-side', () => {
   it('checkout also records account-level acceptance (terms + privacy) on the profile upsert', () => {
     // Checkout-origin patients never pass through signUpPatient, so the
     // profile upsert is where their account-level accept is recorded.
-    expect(CHECKOUT).toMatch(
-      /const profileFields = \{[\s\S]*?terms_accepted_at:\s*new Date\(\)\.toISOString\(\),\s*terms_version:\s*TERMS_VERSION,\s*privacy_version:\s*PRIVACY_VERSION,[\s\S]*?\};/,
-    );
+    expect(CHECKOUT).toMatch(/const profileFields = \{[\s\S]*?\.\.\.consentColumns\(\),[\s\S]*?\};/);
+  });
+
+  it('all three acceptance points write the SAME columns, digests included', () => {
+    // Audit A-14 added terms_doc_sha256 / privacy_doc_sha256 — "which text
+    // did they accept", answerable from the row rather than from trusting
+    // that nobody edited a clause without bumping the version. Three inline
+    // literals would have meant three chances to add it to two of them.
+    for (const src of [SIGNUP, CALLBACK, CHECKOUT]) {
+      expect(src).toMatch(/consentColumns\(\)/);
+      expect(src).not.toMatch(/terms_accepted_at:\s*new Date\(\)\.toISOString\(\)/);
+    }
   });
 });
 

@@ -180,15 +180,48 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
   const STATE        = codeOf('lib/onboarding/state.ts');
 
   it('the callback records the tick — and ONLY the tick', () => {
-    // It stamps when the chooser says the box was ticked, and writes
-    // nothing otherwise. The earlier version stamped every OAuth
-    // arrival on the strength of a passive line, which made the record
-    // say more than the visitor had done.
-    expect(CALLBACK_SRC).toMatch(/terms_accepted'\) === '1'/);
+    // It stamps when the box was ticked, and writes nothing otherwise. The
+    // earlier version stamped every OAuth arrival on the strength of a
+    // passive line, which made the record say more than the visitor had done.
     expect(CALLBACK_SRC).toMatch(/if \(needsAcceptance && !consentGiven\) return 'needs-terms';/);
-    // Write-once, and never a hardcoded version.
-    expect(CALLBACK_SRC).toMatch(/terms_version:\s*TERMS_VERSION/);
+    // Write-once, and never a hardcoded version — consentColumns() is the one
+    // shape all three acceptance points write.
+    expect(CALLBACK_SRC).toMatch(/consentColumns\(\)/);
     expect(CALLBACK_SRC).not.toMatch(/terms_version:\s*['"]/);
+  });
+
+  it('AMENDED (audit A-14) — the tick alone is no longer enough', () => {
+    // `consentGiven` used to BE `searchParams.get('terms_accepted') === '1'`,
+    // so the legal record was written on the strength of a parameter the
+    // visitor's own browser supplied. Nobody attacks that — the person doing
+    // it is the person whose consent it is — but it meant the record was not
+    // EVIDENCE, which is the entire value of the column under the NCA and
+    // POPIA §11.
+    //
+    // It is now an httpOnly HMAC-signed token minted by proxy.ts when it
+    // serves the page that renders the acceptance control, carrying both
+    // versions and both document digests, signed.
+    expect(CALLBACK_SRC).toMatch(/const consentGiven\s+= consentVerdict\.ok;/);
+    expect(CALLBACK_SRC).toMatch(/verifyConsentToken\(/);
+    expect(CALLBACK_SRC).toMatch(/request\.cookies\.get\(TERMS_CONSENT_COOKIE\)/);
+  });
+
+  it('a param with no token is logged rather than silently ignored', () => {
+    // `param && !token` is exactly the shape of the old defect, so it is
+    // worth a line in the logs rather than a silent refusal.
+    expect(CALLBACK_SRC).toMatch(/if \(consentParam && !consentGiven\)/);
+    expect(CALLBACK_SRC).toMatch(/terms_accepted param with no valid server token/);
+  });
+
+  it('the token is minted by the server, on the pages that show the documents', () => {
+    const PROXY = read('proxy.ts');
+    expect(PROXY).toMatch(/CONSENT_TOKEN_PATHS/);
+    for (const path of ["'/signup'", "'/login'"]) expect(PROXY).toContain(path);
+    expect(PROXY).toMatch(/issueConsentToken\(\)/);
+    // httpOnly so no script can read or forge it; Lax so it survives the
+    // top-level GET navigation back from Google.
+    expect(PROXY).toMatch(/httpOnly: true/);
+    expect(PROXY).toMatch(/sameSite: 'lax'/);
   });
 
   it('the param is opt-in at the button, so no surface claims consent it never asked for', () => {
