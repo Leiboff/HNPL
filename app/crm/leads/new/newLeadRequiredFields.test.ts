@@ -89,8 +89,21 @@ describe('a nameless lead still renders', () => {
 });
 
 describe('the specialty dropdown prompts rather than saying "(none)"', () => {
-  it('the placeholder reads "Select"', () => {
+  const DETAIL = read('app/crm/leads/[id]/LeadDetailClient.tsx');
+
+  it('the placeholder reads "Select" on the new-lead form', () => {
     expect(FORM).toMatch(/<SpecialtyOptions placeholder="Select" \/>/);
     expect(FORM).not.toMatch(/placeholder="\(none\)"/);
+  });
+
+  it('and the same on the lead-detail field — one dropdown, one wording', () => {
+    expect(DETAIL).toMatch(/<SpecialtyOptions placeholder="Select" current=\{value\} \/>/);
+    expect(DETAIL).not.toMatch(/<SpecialtyOptions placeholder="\(none\)"/);
+  });
+
+  it('picking the empty option still clears a specialty that was set', () => {
+    // "Select" is the prompt AND the way back to no specialty; the
+    // handler maps '' to null so clearing keeps working.
+    expect(DETAIL).toMatch(/onSave=\{v => saveField\('specialty', v \|\| null\)\}/);
   });
 });

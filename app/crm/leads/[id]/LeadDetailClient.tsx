@@ -698,6 +698,11 @@ function FieldSelect({
 // Specialty gets its own field rather than a FieldSelect options list:
 // the register is grouped into <optgroup>s, and a lead imported with a
 // free-text specialty must keep it (see SpecialtyOptions' `current`).
+//
+// The empty option reads "Select", matching the new-lead form rather
+// than the "(none)" the sibling FieldSelects use — one specialty
+// dropdown should not word itself two ways across two screens.
+// Choosing it still clears the specialty; saveField maps '' to null.
 function FieldSpecialty({
   value, onSave, pending,
 }: {
@@ -712,7 +717,7 @@ function FieldSpecialty({
         disabled={pending}
         className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#15A89E]/40 focus:border-[#15A89E] disabled:opacity-60"
       >
-        <SpecialtyOptions placeholder="(none)" current={value} />
+        <SpecialtyOptions placeholder="Select" current={value} />
       </select>
     </label>
   );
