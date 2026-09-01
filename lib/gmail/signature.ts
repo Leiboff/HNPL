@@ -14,6 +14,8 @@
 // Plain-text fallback is either supplied or derived by stripping the
 // HTML — used for the text/plain MIME part.
 
+import { sanitizeHtmlAllowList } from '@/lib/html/sanitizeAllowList';
+
 export type SignatureData = {
   displayName: string;
   title:       string;
@@ -87,44 +89,38 @@ export function escapeHtml(s: string): string {
 
 // ── Sanitiser for user-supplied HTML override ────────────────────
 //
-// Not a full DOMPurify — dependency-free strip of the dangerous
-// primitives an email-signature editor would ever accept:
-//   • <script>, <style>, <iframe>, <object>, <embed>, <link>,
-//     <meta>, <base> tag pairs (contents removed)
-//   • ALL event-handler attributes (on*="…")
-//   • javascript: / vbscript: / data: URLs on any href/src/action
+// REWRITTEN 2026-09-02 (audit A-08). This used to be a sequence of regex
+// deletions — strip these tag names, strip `on*=` attributes, rewrite
+// `javascript:` in href/src — and five bypasses were confirmed against it:
 //
-// We keep formatting tags (b/i/u/strong/em/br/p/div/span/table/…),
-// inline styles, and standard link/image tags — signatures need HTML
-// to render at all.
-
-const BAD_TAGS = ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input', 'button', 'select', 'textarea'];
+//   <img/onerror=alert(1) src=x>    `/` separates attributes, and every on*
+//                                   pattern required whitespace
+//   <svg/onload=alert(1)>           `svg` was not in the tag list at all
+//   <a href="j&#97;vascript:…">     the browser decodes entities AFTER the
+//                                   regex has run
+//   <a href="java&#10;script:…">    browsers strip control characters from a
+//                                   scheme; a regex does not
+//   <script src=…                   an unterminated tag matched neither the
+//                                   paired nor the self-closing pattern and
+//                                   passed through verbatim
+//
+// They are all one bug: a filter written against a simplified grammar,
+// deleting from a string the browser will parse with the real one. Adding a
+// sixth pattern buys a seventh bypass.
+//
+// lib/html/sanitizeAllowList.ts parses instead, and serialises a fresh
+// document from what it understood — so an input it does not understand
+// yields LESS output rather than unfiltered output. See that file's header
+// for the full reasoning; the proofs-turned-closures are in
+// signature.sanitizer-bypass.adversarial.test.ts.
+//
+// The allow-list is scoped to what an email signature is, which is why this
+// wrapper adds nothing to it: no form controls, no `<link>`, no `<meta>`, no
+// `<base>` — those are simply not on it, rather than being named in a list of
+// things to remove.
 
 export function sanitizeSignatureHtml(input: string): string {
-  if (!input) return '';
-
-  let out = input;
-
-  // Strip <TAG …>…</TAG> pairs AND self-closing variants for each bad tag.
-  for (const tag of BAD_TAGS) {
-    const paired = new RegExp(`<${tag}\\b[\\s\\S]*?<\\/${tag}>`, 'gi');
-    out = out.replace(paired, '');
-    const self  = new RegExp(`<${tag}\\b[^>]*\\/?>`, 'gi');
-    out = out.replace(self, '');
-  }
-
-  // Strip event-handler attributes (on*).
-  out = out.replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '');
-  out = out.replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '');
-  out = out.replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, '');
-
-  // Neutralise javascript:, vbscript:, data: URLs on href/src/action.
-  out = out.replace(
-    /(\s(?:href|src|action|formaction)\s*=\s*["'])\s*(?:javascript|vbscript|data):[^"']*(["'])/gi,
-    '$1#$2',
-  );
-
-  return out.trim();
+  return sanitizeHtmlAllowList(input);
 }
 
 // ── Merge fields on a signature body ─────────────────────────────
