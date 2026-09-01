@@ -18,6 +18,7 @@ import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPati
 import {
   requireUnlockedDevice,
   hashTillSecret,
+  verifyTillPin,
   generateDeviceSecret,
   PIN_MAX_ATTEMPTS,
   PIN_LOCKOUT_MS,
@@ -26,6 +27,7 @@ import {
   providerMemberName,
   type ProviderMemberRef,
 } from '@/lib/practice/providerIdentity';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import {
   resolveTodaysTillActivity,
   type TillActivity,
@@ -79,6 +81,24 @@ export async function redeemDeviceRegistrationCode(
   const trimmed = code.trim();
   if (!/^\d{8}$/.test(trimmed)) {
     return { error: 'Enter the 8-digit code exactly as shown on the manager\'s screen.' };
+  }
+
+  // ── Rate limit (audit F-14) ─────────────────────────────────────────
+  //
+  // This is anon-reachable and had no attempt counter of any kind, so the
+  // 8-digit code could be guessed at whatever rate the network allowed.
+  // The keyspace is GLOBAL — the RPC matches code_hash across every
+  // practice — so a blind guesser is not attacking one practice's code,
+  // they are attacking every live code at once, and the hit rate scales
+  // with how many are outstanding platform-wide.
+  //
+  // Spent AFTER the shape check so a mistyped code costs nothing, and
+  // before the RPC so a well-formed guess costs budget whether or not it
+  // matches. A manager registering a till types this once, maybe twice.
+  if (!await consumeAll('till_registration', [
+    [await clientIp(), RATE_LIMITS.till_registration.ip],
+  ])) {
+    return { error: 'Too many registration attempts. Please wait a few minutes and try again.' };
   }
 
   const cleanLabel = (label ?? '').trim();
@@ -162,7 +182,10 @@ export async function unlockTill(deviceSecret: string, pin: string): Promise<{ e
     return { error: 'No till PIN has been set for this practice yet. Ask your manager to set one.' };
   }
 
-  if (hashTillSecret(pin) !== practice.till_pin_hash) {
+  // verifyTillPin handles both the salted-scrypt format and the legacy
+  // bare SHA-256 digest that every pre-audit PIN is stored as, and
+  // compares in constant time either way (audit F-14).
+  if (!verifyTillPin(pin, practice.till_pin_hash as string | null)) {
     const attempts = ((device.pin_attempts as number | null) ?? 0) + 1;
     const patch: Record<string, unknown> = { pin_attempts: attempts };
     if (attempts >= PIN_MAX_ATTEMPTS) {

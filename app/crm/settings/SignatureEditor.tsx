@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { saveMySignature, previewMySignature, type SavedSignature } from './signatureActions';
+import { sanitizeSignatureHtml } from '@/lib/gmail/signature';
 
 // ─── Signature editor ─────────────────────────────────────────────
 //
@@ -154,7 +155,17 @@ export default function SignatureEditor({ initial }: Props) {
       {preview && (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-3" data-testid="signature-preview">
           <p className="text-[11px] font-semibold text-gray-600 mb-2">Preview:</p>
-          <div className="bg-white rounded p-3 border border-gray-100" dangerouslySetInnerHTML={{ __html: preview.html }} />
+          {/* Sanitised AGAIN here, on the way out (audit F-19).
+              previewMySignature already runs sanitizeSignatureHtml over a
+              raw-HTML override, and saveMySignature sanitises at write —
+              so this is defence in depth rather than a fix for a live
+              hole. It is worth having because input-time sanitisation is
+              a property of the paths that exist today: the moment a
+              signature reaches a render site by some path that forgot,
+              this is the difference between a bug and script execution in
+              an authenticated CRM session. Sanitising on OUTPUT is the
+              invariant that does not depend on remembering. */}
+          <div className="bg-white rounded p-3 border border-gray-100" dangerouslySetInnerHTML={{ __html: sanitizeSignatureHtml(preview.html) }} />
           <pre className="mt-3 text-[11px] whitespace-pre-wrap text-gray-600">{preview.text}</pre>
         </div>
       )}

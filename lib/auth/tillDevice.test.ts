@@ -41,7 +41,13 @@ beforeEach(() => {
   deviceRow = null;
 });
 
-import { hashTillSecret, requireUnlockedDevice, TILL_IDLE_TIMEOUT_MS } from './tillDevice';
+import {
+  hashTillSecret,
+  hashTillPin,
+  verifyTillPin,
+  requireUnlockedDevice,
+  TILL_IDLE_TIMEOUT_MS,
+} from './tillDevice';
 
 describe('hashTillSecret', () => {
   it('is deterministic for the same input', () => {
@@ -61,6 +67,70 @@ describe('hashTillSecret', () => {
   it('throws a clear error when the pepper is unset', () => {
     delete process.env.TILL_AUTH_PEPPER;
     expect(() => hashTillSecret('abc')).toThrow('TILL_AUTH_PEPPER');
+  });
+});
+
+// ─── The practice PIN gets a slow, salted hash (audit F-14) ────────────
+//
+// till_pin_hash was SHA-256(pin + pepper) over a 4-6 digit space — one
+// GPU-second to recover every practice PIN in the table if the database
+// and the pepper ever leak together. Unlike the other two secrets this one
+// is long-lived: it persists until a manager rotates it.
+//
+// It is also the only one of the three that is COMPARED rather than looked
+// up (unlockTill has already resolved the device, so it knows which hash to
+// check), which is what makes a per-row salt affordable here and impossible
+// for the other two.
+
+describe('hashTillPin / verifyTillPin', () => {
+  beforeEach(() => { process.env.TILL_AUTH_PEPPER = 'test-pepper'; });
+
+  it('round-trips a PIN', () => {
+    expect(verifyTillPin('1234', hashTillPin('1234'))).toBe(true);
+  });
+
+  it('rejects a wrong PIN', () => {
+    expect(verifyTillPin('1235', hashTillPin('1234'))).toBe(false);
+  });
+
+  it('salts — the same PIN hashes differently every time', () => {
+    // The whole point. Two practices that pick 1234 must not share a
+    // digest, and a rainbow table over 10^4 must not be reusable.
+    const a = hashTillPin('1234');
+    const b = hashTillPin('1234');
+    expect(a).not.toBe(b);
+    expect(verifyTillPin('1234', a)).toBe(true);
+    expect(verifyTillPin('1234', b)).toBe(true);
+  });
+
+  it('records its parameters inline so they can be raised later', () => {
+    expect(hashTillPin('1234')).toMatch(/^scrypt\$\d+\$\d+\$\d+\$[^$]+\$[^$]+$/);
+  });
+
+  it('still accepts a PIN stored in the legacy format', () => {
+    // Every PIN set before this change is a bare SHA-256 digest. Refusing
+    // them would lock every practice out of its own till on deploy; they
+    // upgrade the next time a manager sets one, which is the only moment
+    // the plaintext is ever in hand.
+    const legacy = hashTillSecret('4321');
+    expect(verifyTillPin('4321', legacy)).toBe(true);
+    expect(verifyTillPin('1234', legacy)).toBe(false);
+  });
+
+  it('fails closed on a missing or malformed stored value', () => {
+    // A PIN check is an authentication decision: "the stored hash looks
+    // wrong" has to behave like any other mismatch, not throw.
+    expect(verifyTillPin('1234', null)).toBe(false);
+    expect(verifyTillPin('1234', '')).toBe(false);
+    expect(verifyTillPin('1234', 'scrypt$notanumber$8$1$aaaa$bbbb')).toBe(false);
+    expect(verifyTillPin('1234', 'scrypt$16384$8$1')).toBe(false);
+    expect(verifyTillPin('1234', 'scrypt$16384$8$1$$')).toBe(false);
+  });
+
+  it('is pepper-bound like the other two', () => {
+    const stored = hashTillPin('1234');
+    process.env.TILL_AUTH_PEPPER = 'different-pepper';
+    expect(verifyTillPin('1234', stored)).toBe(false);
   });
 });
 

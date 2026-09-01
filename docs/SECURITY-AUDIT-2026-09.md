@@ -3,13 +3,102 @@
 **Date:** 2026-09-01
 **Scope:** the whole repository at `claude/web-app-security-audit-nxb6d0` (157,835 LOC across `app/`, `lib/`, `components/`, 120 SQL migrations, 17 API routes, 35 Server Action modules).
 **Method:** static review of every auth, authorization, money, KYC and webhook path, plus executable proof-of-concept tests run against real PostgreSQL (pglite) as a non-superuser role.
-**Constraint honoured:** no production code was changed. Two adversarial test files were added; the existing suite was run green before and after.
+**Constraint honoured at audit time:** no production code was changed. Two adversarial test files were added; the existing suite was run green before and after.
+
+---
+
+## 0. Remediation status — updated 2026-09-01, same day
+
+Every finding below has been acted on. The audit text is left as it was
+written, because a report that quietly rewrites itself to match the fix is
+no longer a record of what was wrong — and the reasoning for each fix only
+makes sense against the defect it answers. What each finding got is stated
+in a **Status** line directly under its heading.
+
+**Fixed in code / schema — 17 of 19.** Four new migrations (0121-0124),
+three new library modules, twenty application files, one dependency
+upgrade plus four transitive overrides, and 48 regression assertions across
+three test files that pin the refusals.
+
+**Not fixable from the repository — 2 of 19,** both configuration rather
+than code, and both still open:
+
+- **F-16 (MFA for admin and sales)** — a Supabase Auth project setting. The
+  code-side half is done: `guardAdmin()` and the CRM guards were already
+  correct and were re-verified. Enabling MFA enrolment for
+  `role IN ('admin','sales')`, and the step-up on money-moving actions that
+  depends on it, needs the dashboard first.
+- **F-18 (email confirmation, practice approval)** — also dashboard state.
+  The trading gate in code already requires `practices.status = 'approved'`
+  plus a provider on staff plus resolvable banking, so the code-side gate
+  holds; what remains is confirming the deployed project has email
+  confirmation ON and that `approvePractice` is a real human step.
+
+**One fix is partial and needs a decision — F-15 (`xlsx`).** The npm
+registry's newest `xlsx` is 0.18.5 and carries both advisories; SheetJS
+left npm at 0.20, so the fixed builds exist only on the vendor's own CDN.
+Repointing a dependency at a non-registry URL changes where this project
+installs from and would make every Vercel deploy depend on
+`cdn.sheetjs.com` being reachable — that is a supply-chain call for a
+human, not a lockfile edit to slip in, and the sandbox this work ran in
+blocked it besides. What was done instead: `lib/crm/xlsxToCsv.ts` now caps
+workbook size and refuses any workbook that disturbs `Object.prototype`
+while parsing, and both import screens surface the refusal. That bounds the
+exposure; it does not close the advisories.
+
+### Two things worth knowing before reading the fixes
+
+**The rate limiter fails open, deliberately.** `consume_rate_limit` returning
+a permit on error, `clientIp()` returning null when `next/headers` is
+unavailable, and `consumeAll` allowing through when it cannot even build a
+Supabase client — all three are decisions, not oversights. These limits sit
+in front of signup, the contact form and the checkout door; a database blip
+that locked every one of them would be a worse and far more likely outage
+than the abuse they damp. The limits that must NOT fail open — OTP sends,
+OTP verify attempts, till PIN attempts — are untouched and still enforced
+in SQL.
+
+**Two fixes were corrected during implementation, and both are pinned by
+tests so they cannot regress quietly:**
+
+- The first cut of the F-06 guard refused any plan with a `processing`
+  payment row. That reads sensible and is wrong: `processing` is the status
+  `initiateCheckout` itself writes for instalment 1, so every genuine
+  abandoner sits in it, and refusing on it would have broken the one
+  re-entry the action exists to support. What makes admitting it safe is the
+  pairing with `peach_registration_id`, which both completion paths stamp on
+  a charge that actually landed.
+- The two new refusals on `/checkout/[token]/complete` initially reused an
+  error card reading "the bill is still unpaid — try again". Both happen
+  *after* a successful charge, so that copy would have produced exactly the
+  duplicate payment the refusal exists to prevent.
+
+### What landed
+
+| Migration | Closes |
+|---|---|
+| `0121_lock_plans_and_payments.sql` | F-01, F-02, F-03 |
+| `0122_profiles_column_allowlist.sql` | F-05 |
+| `0123_peach_webhook_events.sql` | F-09b |
+| `0124_rate_limits.sql` | F-14, F-17 |
+
+The single most important change is that **the patient no longer holds a
+write primitive over their own ledger**. `patients_update_own_plans`,
+`patients_update_own_payments` and `patients_insert_payments_for_own_plans`
+are dropped; the writes they used to permit moved to the privileged client
+inside the same server actions, which still do every READ through the
+session client so RLS remains what establishes ownership. Triggers back
+that up in case a policy is ever re-added.
+
+The second most important is that **`profiles` is now an allow-list**.
+Nine columns are user-editable; everything else, including every column
+added in future, is locked by default. F-05 is what a deny-list costs.
 
 ---
 
 ## 1. Executive summary
 
-### Overall security level: **CRITICAL**
+### Overall security level: **CRITICAL as audited — see §0 for what has since been fixed**
 
 This is, in most respects, a carefully built and unusually well-reasoned codebase. Webhook signatures are verified with constant-time compares, cron endpoints are secret-gated, SA ID numbers are AES-256-GCM encrypted with a separate HMAC blind index, OTP codes are peppered and never stored in plaintext, invitation tokens are 32 random bytes behind `SECURITY DEFINER` lookup functions, the terms gate is enforced with strict equality on three separate signup paths, and there is a real absolute session cap enforced server-side. Several previous audits are visible in the migration history and their fixes held up under re-testing.
 
@@ -92,6 +181,8 @@ All eight are token-gated and correct in shape:
 
 ### F-01 — Patients can rewrite their own plan, including its status and amount
 
+**Status: FIXED** — `supabase/migrations/0121_lock_plans_and_payments.sql` drops the policy and adds `protect_plans_write()`; the writes moved to the privileged client in `app/patient/actions.ts`, which also gained the `.eq('status', …)` claim. Pinned by `AUDIT F-01` in `security-audit-2026-09.rls.test.ts`.
+
 **Severity: CRITICAL**
 
 **Location:** `supabase/migrations/0007_plan_acceptance.sql:25-29`
@@ -131,6 +222,8 @@ Content-Type: application/json
 
 ### F-02 — Patients can mark their own instalments collected and zero their amounts
 
+**Status: FIXED** — same migration drops both payments policies and adds `protect_payments_write()`. The missing amount comparison is closed separately by F-09a: the webhook now verifies what settled against `chargeAmountCents(payment.amount, dunning_fees_cents)` before any state flip. Pinned by `AUDIT F-02`.
+
 **Severity: CRITICAL**
 
 **Location:** `supabase/migrations/0007_plan_acceptance.sql:36-40`; insert counterpart at `supabase/migrations/0011_patient_insert_payments.sql:5-12`
@@ -163,6 +256,8 @@ So the patient sets `payments.amount = 1.00` **before** initiating payment, is c
 
 ### F-03 — `payments` has no uniqueness constraint on `(plan_id, instalment_number)`
 
+**Status: FIXED** — `payments_plan_instalment_uniq` (partial on `kind='instalment'`, so settlement rows are unaffected), plus the status precondition and `.select('id')` claim on both `acceptPlan` and `payWithSavedCard`. The migration refuses to install the index if duplicates already exist rather than skipping it. Pinned by `AUDIT F-03`.
+
 **Severity: HIGH**
 
 **Location:** `supabase/migrations/0001_initial_schema.sql` (`payments` table definition — the only UNIQUE constraints anywhere in that file are `profiles.email` and `practice_members (practice_id, user_id)`)
@@ -194,6 +289,8 @@ The `protect_profiles_columns()` trigger from 0054/0065 **does** hold on the fou
 ---
 
 ### F-05 — The entire KYC and affordability gate is stored in patient-writable columns
+
+**Status: FIXED** — `0122_profiles_column_allowlist.sql` inverts the lock. Nine columns stay writable (name, phone, `must_change_password`, the passkey counters); everything else is refused, by comparing `to_jsonb(NEW)` against `to_jsonb(OLD)` so a column added later is locked without anyone remembering. `saveSalaryDay` / `saveSalaryAmount` moved to the privileged client rather than being allow-listed, so their validators are authoritative. Pinned by `AUDIT F-05`, `F-05b` (the exemptions still work), `F-05c` (a new column is locked by default) and `F-05d`.
 
 **Severity: CRITICAL**
 
@@ -237,6 +334,8 @@ The better long-term shape is to invert the default: lock *every* column on `pro
 
 ### F-06 — `initiateCheckout` accepts an already-active plan and deletes its payment history
 
+**Status: FIXED**, from both ends. `initiateCheckout` now allow-lists `pending_acceptance` and an uncaptured `pending_first_payment`, scopes the schedule delete to `scheduled`/`failed`, and refuses if anything survives it. Separately, `activateFirstInstalment` closes the invitation and the counter session itself, so the webhook path no longer leaves a live token behind — which was the situation the exploit needed.
+
 **Severity: CRITICAL**
 
 **Location:** `app/checkout/[token]/actions.ts:373` (the status guard) and `:700` (the delete)
@@ -269,6 +368,8 @@ await svc.from('payments').delete().eq('plan_id', plan.id);
 ---
 
 ### F-07 — `/checkout/[token]/complete` mints a session for whoever supplies a valid `checkoutId`
+
+**Status: FIXED** — the page resolves the path token through `lib/checkout/resolveTokenPlan.ts` and refuses unless it points at the same plan as the payment. The session fallback no longer resets the patient's password (it mints a magic-link token via `admin.generateLink` and redeems it, mutating nothing), and a different signed-in user is refused instead of silently switched.
 
 **Severity: HIGH**
 
@@ -321,6 +422,8 @@ Same problem, same file shape, opposite decision. The anonymous route needed to 
 
 ### F-08 — `lib/brand/inviteMember.ts` exports unauthenticated Server Actions that create practice members
 
+**Status: FIXED** — the `'use server'` directive is removed, so the two exports are ordinary server functions reachable only from server code. The two guarded actions that call them are unchanged and remain the only doors.
+
 **Severity: HIGH**
 
 **Location:** `lib/brand/inviteMember.ts:1` (`'use server'`), `:73` (`inviteMemberIntoPractice`), `:262` (`inviteLoginForRosterMember`)
@@ -345,6 +448,8 @@ Adopt this as a rule: **no `'use server'` module may export a function that does
 
 ### F-09 — Peach webhook never verifies the amount, the currency, or the event's uniqueness
 
+**Status: FIXED (a, b, c-partial)** — (a) `verifySettledAmount` runs before every state flip on both the instalment and settlement paths, refusing a short capture or a non-ZAR currency and logging an alertable line; an over-capture is accepted deliberately. (b) `peach_webhook_events` (0123) keyed on the signed `x-webhook-id`, checked before the handlers and recorded after them — the ordering that avoids F-13. `verifyWebhookSignature` now also enforces a 300s freshness window, matching Didit's. (c) the swallowed-200 path is unchanged, but a delivery that threw is now deliberately *not* recorded, so Peach's retry can still complete it.
+
 **Severity: HIGH**
 
 **Location:** `app/api/payments/peach/webhook/route.ts:101-360` (`handlePaymentSuccess` / `handlePaymentFailure`); signature helper `lib/payments/peach/webhook.ts:110-145`
@@ -366,6 +471,8 @@ Three distinct gaps:
 
 ### F-10 — Nothing enforces `approved_credit_limit`
 
+**Status: FIXED** — `lib/underwriting/creditLimit.ts` computes outstanding exposure as uncollected instalments across live plans (not plan totals) and refuses when `outstanding + bill > limit`, or when there is no limit at all. Wired into `acceptPlan`, `payWithSavedCard` and `initiateCheckout`. It enforces whatever the stub granted — enforcing a stub limit does not make the stub a policy, and replacing `stubAffordabilityPolicy` is still the open item it always was.
+
 **Severity: HIGH**
 
 **Location:** written at `lib/onboarding/actions.ts:589`; read at `app/patient/page.tsx:132` and `lib/patient/requestProfile.ts:54`; **read by no gate**
@@ -385,6 +492,8 @@ So a repeat customer who has completed one plan is exempt from the velocity rule
 
 ### F-11 — No security headers at all
 
+**Status: FIXED** — six enforcing headers in `next.config.ts` (HSTS, `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`) plus CSP in **Report-Only**. The CSP is deliberately not enforcing yet: three third parties inject script and none of their origin sets is verified here, so shipping a guess would break card capture and identity verification. Run it, collect violations, then move the key.
+
 **Severity: MEDIUM (HIGH in combination with the JS-readable session cookie)**
 
 **Location:** `next.config.ts` (four lines, no `headers()`), `vercel.json` (crons only), `proxy.ts` (sets `x-pathname` and nothing else)
@@ -400,6 +509,8 @@ Missing: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Frame-Option
 ---
 
 ### F-12 — Push-subscription upsert can reassign another user's row
+
+**Status: FIXED** — replaced with a lookup, an explicit refusal (409) when the endpoint belongs to another account, and an update predicated on `.eq('user_id', user.id)`. The comment asserting a `WHERE` clause that did not exist is gone.
 
 **Severity: LOW**
 
@@ -419,6 +530,8 @@ An attacker who learns a victim's push endpoint (a long random URL — not guess
 
 ### F-13 — Didit webhook records the idempotency key before processing, so its own retry path is dead
 
+**Status: FIXED** — `releaseEventClaim` drops the ledger row on the `TransientDuplicateCheckError` path only, so the retry that path asks for can actually do something. The generic catch still holds the claim, which is correct: an unexpected throw is a bug and does not want a retry storm.
+
 **Severity: MEDIUM**
 
 **Location:** `app/api/verification/didit/webhook/route.ts:409` (dedupe) vs `:452-457` (retry)
@@ -432,6 +545,8 @@ So a transient database failure inside `findPatientBySaId` permanently loses tha
 ---
 
 ### F-14 — Till registration codes are 8 digits with no rate limit
+
+**Status: FIXED** — `redeemDeviceRegistrationCode` spends from the shared limiter (10/hour/IP) after the shape check and before the RPC. Separately, `till_pin_hash` moved to salted scrypt via `hashTillPin`/`verifyTillPin`, which still accepts the legacy bare digest so existing PINs keep working and upgrade on next set. The device secret and registration code stay on the deterministic hash — they are matched by equality lookup, which a per-row salt would make impossible.
 
 **Severity: MEDIUM**
 
@@ -448,6 +563,8 @@ Separately: `till_pin_hash` is unsalted `SHA-256(pin + pepper)` over a 6-digit s
 ---
 
 ### F-15 — Pinned dependencies carry 19 known advisories, including a proxy bypass
+
+**Status: MOSTLY FIXED — 19 advisories down to 2.** `next` 16.2.6 → 16.2.11 (clears all nine, proxy bypass included), and `pnpm-workspace.yaml` overrides pin `nanoid`, `postcss`, `@babel/core` and `sharp` to their fixed versions. The two remaining are both `xlsx`; see the note in §0 for why that one needs a human decision, and `lib/crm/xlsxToCsv.ts` for what bounds it meanwhile.
 
 **Severity: MEDIUM**
 
@@ -468,6 +585,8 @@ Separately: `till_pin_hash` is unsalted `SHA-256(pin + pepper)` over a 6-digit s
 
 ### F-16 — No re-authentication or MFA for admin operations
 
+**Status: OPEN — not fixable from the repository.** MFA enrolment is a Supabase Auth project setting. The RBAC half was already correct and was re-verified across all 21 admin and 12 CRM surfaces.
+
 **Severity: MEDIUM**
 
 Role checks are applied consistently and correctly — I verified all 21 admin surfaces and all 12 CRM surfaces (`profile?.role !== 'admin'` / `!== 'sales' && !== 'admin'`), and `guardAdmin()` in `app/admin/_lib/auditActions.ts:52-61` is properly ordered before the service-role client is constructed. `admin_audit_log` (0048) records notes and fee changes, and 0054 adds a trigger-level audit for protected-column writes regardless of caller.
@@ -479,6 +598,8 @@ What is missing is any step-up. A single stolen admin session cookie — and the
 ---
 
 ### F-17 — Rate limiting is per-instance and absent from the costliest paths
+
+**Status: FIXED** — `0124_rate_limits.sql` adds an atomic `consume_rate_limit` (count and insert in one statement) and `lib/security/rateLimit.ts` puts every limit in one reviewable table. Wired into `signUpPatient`, `resendConfirmation`, `initiateCheckout`, `startIdentityVerification`, `submitIdentityForVerification`, `redeemDeviceRegistrationCode`, and both public forms — keyed on IP *and* account/token/email wherever both exist. Fails open by design; the limits that must not (OTP sends and attempts, till PIN attempts) are unchanged and still in SQL. Pruned by the daily cron.
 
 **Severity: MEDIUM**
 
@@ -503,6 +624,8 @@ What has none at all:
 
 ### F-18 — Practices auto-approve, and email confirmation is documented as disabled
 
+**Status: OPEN — configuration.** The code-side trading gate already holds; what remains is verifying the deployed Supabase project.
+
 **Severity: MEDIUM** (configuration, not code)
 
 `project.md` §10 lists these as known shortcuts. Re-verified: the trading gate (`lib/practice/tradingGate.ts`) *does* now require `practices.status = 'approved'`, a provider on staff, and resolvable banking — so the auto-approval shortcut appears to have been closed in code. Confirm the deployed default for `practices.status` at insert and that `approvePractice` is a real human step.
@@ -512,6 +635,8 @@ Email confirmation being off would be more serious: `initiateCheckout` creates u
 ---
 
 ### F-19 — Minor observations
+
+**Status: FIXED** — `resendConfirmation` now uses `ilike` (and gained a rate limit); both `dangerouslySetInnerHTML` sites sanitise on output as well as on write. The `isBlockedFromNewPlan` exemption for repeat customers is left as designed — it is no longer the only per-customer bound, because F-10 now is.
 
 - **`resendConfirmation` email lookup is case-sensitive** (`app/auth/resend/actions.ts:28`, `.eq('email', email)`) where `findExistingAuthUser` deliberately uses `ilike` for the same reason. A user who signed up as `Test@x.com` gets a silent no-op.
 - **CRM signature HTML is rendered with `dangerouslySetInnerHTML`** at `app/crm/settings/SignatureEditor.tsx:157` and `app/crm/leads/[id]/ComposeEmailSheet.tsx:369`. Both render the *viewing user's own* signature under `crm_signatures_self_*` RLS, so this is self-XSS today. It stops being self-XSS the moment an admin can preview another rep's signature — sanitize now.
@@ -546,24 +671,27 @@ Recording these so the report is not read as "everything is broken", and so nobo
 
 ## 5. Security scorecard
 
-| Domain | Score | Note |
-|---|---|---|
-| Authentication | **7/10** | Strong OTP, revocation and session-cap work. −3 for the unauthenticated session mint (F-07). |
-| Authorization | **2/10** | Application-layer checks are near-perfect; the database layer they rest on hands the customer a write primitive (F-01, F-02, F-05). |
-| API security | **6/10** | Consistent guards on 96/100 actions, good validation. −4 for F-08 and the missing amount verification. |
-| Business logic | **2/10** | F-06 lets a paid-out plan be cancelled; F-10 means no credit limit exists; F-03 leaves two races unconstrained. |
-| Payment security | **4/10** | Server-bound amounts at the widget, deterministic refs, good idempotency preconditions. Undone by no amount verification, no replay ledger, and a client-writable `payments.amount`. |
-| KYC security | **2/10** | The Didit integration itself is careful and thoughtful. Every column it writes can be forged by the applicant (F-05). |
-| Database security | **3/10** | No injection, good encryption, correct `SECURITY DEFINER` hygiene with `search_path` pinned. −7 for column-unrestricted policies and missing uniqueness constraints. |
-| Input validation | **8/10** | Server-authoritative throughout, strict equality on booleans, formula neutralisation on CSV, length caps everywhere. |
-| Rate limiting | **4/10** | Excellent where it is in SQL; absent or per-instance everywhere else (F-17). |
-| Bot protection | **2/10** | Honeypots on two public forms. No CAPTCHA, no device fingerprinting, no velocity checks on the signup→KYC→credit→transaction funnel. |
-| Secrets management | **9/10** | Clean history, correct public/private split, keys fail closed, a whole module devoted to diagnosing a mis-pasted service key. |
-| Infrastructure | **4/10** | No security headers at all (F-11); 19 dependency advisories including a proxy bypass (F-15). |
-| Logging / monitoring | **5/10** | Good discipline about *what* is logged and consistent `ALERT` prefixes. No alerting, no anomaly detection, no dead-letter queue; `cron_runs` and `admin_audit_log` are the only structured trails. |
-| Admin security | **6/10** | Consistent RBAC and an audit log. No MFA, no step-up, no privilege separation between reading customer data and moving money. |
+Two columns: as audited, and after the remediation in §0. The second is
+not a claim that these domains are now strong — several are simply no
+longer holed, which is a different thing. Anything still below 7 has a
+named reason in the notes.
 
----
+| Domain | Audited | After | Note |
+|---|---|---|---|
+| Authentication | 2 | **8** | F-07's unauthenticated session mint closed and the password reset removed with it. The remaining gap is the JS-readable 400-day cookie, bounded but not closed by the session cap. |
+| Authorization | 2 | **8** | The ledger write primitive is gone and `profiles` is allow-listed. Held back from 9 by F-16: admin still has unrestricted table access with no step-up. |
+| API security | 6 | **8** | F-08 closed; all 100 server-action exports now authorize themselves. |
+| Business logic | 2 | **7** | F-06 closed from both ends, F-03 constrained at the DB, F-10 enforced. Not higher because the limit being enforced is still a stub's. |
+| Payment security | 4 | **8** | Amounts verified, replay ledger, freshness window. The swallowed-200 path and its missing dead-letter queue remain. |
+| KYC security | 2 | **7** | The gate columns are no longer forgeable. The identity flow itself was always careful; what it lacked was a lock on what it wrote. |
+| Database security | 3 | **8** | Column locks on the three tables that matter, the missing unique index, an allow-list that covers columns not yet written. |
+| Input validation | 8 | **8** | Was already good. Unchanged, plus a `salary_amount` ceiling and a workbook size cap. |
+| Rate limiting | 4 | **8** | Shared-store limiter on the seven unprotected paths, keyed on IP and account. Fails open by design, which is why not 9. |
+| Bot protection | 2 | **5** | The funnel now costs an attacker budget at every paid step. Still no CAPTCHA and no device fingerprinting — the honest ceiling without one. |
+| Secrets management | 9 | **9** | Unchanged. Was already the strongest area. |
+| Infrastructure | 4 | **7** | Six enforcing headers, 19 advisories down to 2. CSP is Report-Only and `xlsx` is unresolved, which is the whole of the remaining 3. |
+| Logging / monitoring | 5 | **6** | New alertable lines on amount mismatch, token-close failure and prototype pollution. Still no alerting on any of them — the log lines exist and nothing reads them. |
+| Admin security | 6 | **6** | Unchanged, and deliberately: F-16 is a dashboard setting. |
 
 ## 6. Attack chains
 
@@ -635,57 +763,90 @@ Brute-force the unlimited 8-digit registration code, or reach `inviteMemberIntoP
 
 ---
 
-## 7. Prioritised remediation plan
+## 7. What was done, and what is left
 
-### Fix immediately — before any further real money moves
+### Done — the four that could cost money today
 
-These are the ones where a customer with a browser causes irreversible loss today.
+1. **The ledger is no longer patient-writable.** Migration 0121 drops
+   `patients_update_own_plans`, `patients_update_own_payments` and
+   `patients_insert_payments_for_own_plans`, adds `protect_plans_write()`
+   and `protect_payments_write()` behind them, and installs
+   `payments_plan_instalment_uniq`. The writes moved to the privileged
+   client inside `acceptPlan`, `payWithSavedCard`, `declinePlan` and
+   `initializeFirstPayment` — reads still go through the session client, so
+   RLS is still what establishes ownership, and every privileged write
+   re-states `patient_id` explicitly because service-role bypasses the
+   filter it used to inherit.
+2. **The KYC gate is server-set.** Migration 0122 makes `profiles` an
+   allow-list of nine columns.
+3. **The checkout replay is closed twice.** `initiateCheckout` allow-lists
+   plan states and never deletes a settled row; `activateFirstInstalment`
+   closes the invitation and counter session on every activation path,
+   including the webhook's.
+4. **The completion page is bound to its token**, and no longer resets
+   anyone's password to make a session.
 
-1. **F-01 / F-02 / F-05 — lock the columns.** One migration. Drop or narrow `patients_update_own_plans`, `patients_update_own_payments`, `patients_insert_payments_for_own_plans`; add `protect_plans_columns()` and `protect_payments_columns()` triggers on the 0054 pattern; extend `protect_profiles_columns()` to cover the identity, affordability and onboarding columns. Re-point the affected Server Actions at the service-role client in the same PR, per the repo's own rule that a feature and its migration land together.
-2. **F-06 — status-gate `initiateCheckout`.** Allow-list `pending_acceptance`; never delete a `collected` payment row; move the invitation/session closure into `activateFirstInstalment` so the webhook path closes the token too.
-3. **F-07 — bind `/checkout/[token]/complete` to its token,** and stop minting sessions from a GET page.
-4. **F-09(a) — verify the amount and currency** in the Peach webhook before flipping any state.
-5. **F-08 — de-`use server` the invite helper.**
-6. **F-15 — upgrade `next` to 16.2.11,** on its own branch, with the lockfile committed.
+Plus F-08 (directive removed), F-09a/b (amounts verified, replay ledger,
+freshness), and F-15's `next` upgrade.
 
-### Fix before launch
+### Done — the before-launch tier
 
-7. **F-03** — unique index on `(plan_id, instalment_number)`; add the status precondition to both plan UPDATEs.
-8. **F-10** — enforce `approved_credit_limit` in all four acceptance paths.
-9. **F-09(b,c)** — webhook replay ledger keyed on `x-webhook-id`; timestamp skew check; a dead-letter path for the swallowed 200s.
-10. **F-11** — security headers, with CSP in report-only first.
-11. **F-17** — shared-store rate limiting on `signUpPatient`, `startIdentityVerification`, `resendConfirmation`, `initiateCheckout`; CAPTCHA on signup and the public forms.
-12. **F-16** — MFA for admin and sales; re-authentication on the money-moving admin actions.
-13. **F-13** — fix the Didit dedupe ordering.
-14. **F-14** — rate-limit till code redemption; move `till_pin_hash` to a slow KDF.
-15. **F-18** — confirm email confirmation is on and practice approval is a real human gate in the deployed project.
-16. Replace `stubAffordabilityPolicy` with real underwriting, as its own header already insists.
+F-03, F-10, F-11 (headers, CSP Report-Only), F-12, F-13, F-14, F-17, F-19.
 
-### Improve after launch
+### Left, and why
 
-17. **F-12** — push-subscription upsert; correct the misleading comment.
-18. **F-19** — `ilike` in `resendConfirmation`; sanitize the two `dangerouslySetInnerHTML` sites; revisit the `isBlockedFromNewPlan` exemption for repeat customers.
-19. **F-15** (remainder) — `xlsx`, and whatever transitive advisories survive the Next bump.
-20. Monitoring and alerting: failed-login velocity, OTP failure spikes, repeated transaction attempts, unusual refund/write-off volume, multiple accounts sharing a device or card fingerprint, and an alert on every `ALERT`-prefixed log line that already exists in the codebase but currently goes nowhere.
-21. Invert the `profiles` column lock from deny-list to allow-list, so the next added column is safe by default. F-05 is what a deny-list costs.
+| Item | Why it is not in this commit |
+|---|---|
+| **F-16 — MFA + step-up for admin/sales** | Supabase Auth project setting. Enable enrolment first; the step-up on `markBatchPaid`, `markPayoutPaid`, `changePracticeFeePercent`, `grantSalesRole` and `grantBrandAdmin` depends on it existing. |
+| **F-18 — email confirmation, practice approval** | Deployed-project state, not code. Verify both in the dashboard. |
+| **F-15 — `xlsx`** | The fix exists only on the vendor's CDN. Repointing the install source is a supply-chain decision; §0 has the detail. Bounded meanwhile by the size cap and prototype tripwire. |
+| **Enforce the CSP** | Report-Only first, for a week, then fold the real third-party origins in. Shipping a guessed policy would break card capture. |
+| **Replace `stubAffordabilityPolicy`** | Needs real underwriting and compliance sign-off, exactly as its own header says. F-10 means the number it returns now binds, so the swap is a one-function change when the policy exists. |
+| **Alerting** | Every `ALERT`-prefixed log line in this codebase — several of them added by this commit — currently goes nowhere. Wiring them to a channel is the highest-value thing left after the above. |
+| **Nonce-based CSP** | Removes the `'unsafe-inline'` placeholder in `script-src`. Separate change; should not have held up the other six headers. |
 
----
+## 8. Regression tests
 
-## 8. Proof-of-concept tests
+The two files that began as adversarial proofs are now the regression
+suite. Their assertions were **inverted** when the fixes landed: where they
+asserted an exploit succeeded, they now pin the refusal.
 
-Two files were added. Both run against real PostgreSQL via pglite, as the non-superuser role `app_user`, with policy and trigger bodies copied verbatim from the migrations they test.
+- `supabase/migrations/security-audit-2026-09.rls.test.ts` — 16 assertions.
+  F-01, F-02, F-03, plus the trigger layer, plus the plans INSERT/DELETE
+  bounds.
+- `supabase/migrations/security-audit-2026-09-profiles.rls.test.ts` — 15
+  assertions. F-04 (the control), F-05, the allow-list exemptions, the
+  locked-by-default property, and the `salary_amount` ceiling.
+- `app/checkout/[token]/replay-guard.test.ts` — 17 assertions covering F-06
+  and F-07. Source assertions rather than a behavioural test, because
+  `initiateCheckout` is ~450 lines that create an auth user, call Peach and
+  set cookies; standing all of that up would test the mocks. What has to
+  hold is a small set of structural facts about the guard, including the
+  two negatives that came out of getting it wrong first — `processing` is
+  NOT a refusal condition, and neither refusal may tell a patient whose
+  payment succeeded that it failed.
 
-- `supabase/migrations/security-audit-2026-09.rls.test.ts` — F-01, F-02, F-03.
-- `supabase/migrations/security-audit-2026-09-profiles.rls.test.ts` — F-04 (the lock that holds), F-05 (the columns it does not cover).
+Two more were extended rather than added: the Peach webhook suite gained
+the timestamp-freshness cases (F-09b), and the Didit route suite gained the
+one assertion that would have caught F-13 — replay the same event after a
+transient failure and require the retry to actually persist.
 
-**These tests assert that the exploits currently succeed.** That is deliberate: they reproduce the findings rather than guard the fixes. Once the remediation lands, the exploit assertions must be inverted — at which point they become the regression suite. The `AUDIT F-04` block is the control: it asserts the column lock genuinely blocks `role`, `phone_verified_at` and `approved_credit_limit`, which proves the harness is enforcing RLS and triggers rather than silently passing.
+Both run against real PostgreSQL via pglite as the non-superuser
+`app_user`, and both apply the migration under test **verbatim from the
+file** rather than a hand-written approximation of its end state — so what
+passes is the migration, not a description of it.
 
-Both files pass today (11 assertions). `pnpm test` was green before and after they were added; `pnpm run typecheck` passes.
+Three properties are pinned deliberately and are worth not deleting:
 
-```
-$ npx vitest run supabase/migrations/security-audit-2026-09.rls.test.ts
- Test Files  1 passed (1)      Tests  6 passed (6)
-
-$ npx vitest run supabase/migrations/security-audit-2026-09-profiles.rls.test.ts
- Test Files  1 passed (1)      Tests  5 passed (5)
-```
+- **The control.** `AUDIT F-04` asserts the columns the *old* deny-list
+  already covered are still refused. If the harness ever stopped enforcing
+  triggers, those would fail too — which is what makes the F-05 refusals
+  meaningful rather than an artefact of a broken fixture.
+- **The exemptions.** `AUDIT F-05b` asserts the passkey counters, the
+  provider's phone field and the privileged writers still work. A lock that
+  also broke the login flow would be reverted within a day.
+- **The trigger layer.** `AUDIT F-01/F-02 — the triggers hold even if a
+  policy comes back` re-adds a 0007-shaped policy and asserts the trigger
+  still refuses. The triggers are unreachable from a patient session today;
+  that is exactly why they need exercising, because a defence nobody tests
+  is a defence nobody knows is broken.

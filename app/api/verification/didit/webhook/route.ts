@@ -86,6 +86,31 @@ const TERMINAL_STATUS: Partial<Record<DiditWebhookEvent['status'], string>> = {
  * Atomic dedupe: the INSERT's primary-key violation (23505) IS the "have
  * we seen this event_id before" check — no separate SELECT, so two
  * concurrent deliveries of the same retried event can't both pass.
+ *
+ * ─── The claim is RELEASED when the handler asks for a retry ───────────
+ *
+ * THE DEFECT (audit 2026-09-01, F-13)
+ *
+ * The claim is taken BEFORE the handler runs, which is what makes the
+ * concurrency property above work. But the handler has one deliberate
+ * failure path — TransientDuplicateCheckError — that returns 500 SO THAT
+ * DIDIT RETRIES. The retry re-entered here, found the row this same
+ * delivery had just written, and returned {duplicate: true} with a 200.
+ *
+ * So a transient database blip inside findPatientBySaId permanently lost
+ * that verification. The applicant's Didit session reads Approved; their
+ * profile never gets sa_id_number or liveness_verified_at; they sit at the
+ * identity step forever with nothing logged as an error, because from this
+ * route's point of view everything worked.
+ *
+ * releaseEventClaim undoes the claim on exactly that path, so the retry it
+ * asked for is actually able to do something. It is NOT called on the
+ * generic catch below: an unexpected throw is a bug, that path answers 200
+ * and does not want a retry storm, and holding the claim is correct there.
+ *
+ * (The Peach receiver, added later, records its delivery id on the way OUT
+ * for this reason. Both orderings are defensible; what is not defensible is
+ * claiming first and never releasing.)
  */
 async function alreadyProcessed(supabase: SupabaseClient, eventId: string): Promise<boolean> {
   const { error } = await supabase.from('didit_webhook_events').insert({ event_id: eventId });
@@ -93,6 +118,19 @@ async function alreadyProcessed(supabase: SupabaseClient, eventId: string): Prom
   if ((error as { code?: string }).code === '23505') return true;
   console.error('[didit-webhook] idempotency ledger insert failed (non-fatal, may reprocess)', error.message);
   return false;
+}
+
+async function releaseEventClaim(supabase: SupabaseClient, eventId: string): Promise<void> {
+  const { error } = await supabase.from('didit_webhook_events').delete().eq('event_id', eventId);
+  if (error) {
+    // The retry will now be answered as a duplicate and the verification
+    // will be lost — the exact F-13 outcome. Nothing here can fix it, so
+    // it is logged at ALERT for a human to finish by hand.
+    console.error('[didit-webhook] ALERT could not release the idempotency claim before a retry', {
+      eventId, error: error.message,
+      note: 'the retry will be treated as a duplicate; this verification needs manual completion',
+    });
+  }
 }
 
 // A short machine-readable code for WHY a session was declined, stored
@@ -455,6 +493,11 @@ export async function POST(request: NextRequest) {
         // The ONE deliberate non-2xx for a handler-thrown error — this
         // is transient by construction (see the class comment), so
         // Didit's retry (5xx IS retried) is exactly the right response.
+        //
+        // Release the idempotency claim first, or the retry we are asking
+        // for arrives, sees the row this delivery wrote on its way in, and
+        // is answered as a duplicate — see releaseEventClaim (audit F-13).
+        if (parsed.event_id) await releaseEventClaim(supabase, parsed.event_id);
         return NextResponse.json({ error: 'Temporary failure, please retry' }, { status: 500 });
       }
       console.error('[didit-webhook] ALERT handler threw', {

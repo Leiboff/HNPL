@@ -5,6 +5,7 @@ import {
   parseConfigWebhookBody,
   parseFormEventBody,
   signWebhookForTesting,
+  webhookTimestampIsFresh,
 } from './webhook';
 
 // ─── Peach Checkout webhook — verification + signature tests ────────
@@ -235,6 +236,85 @@ describe('signWebhookForTesting — round-trip integrity', () => {
     expect(signed.webhookId).toBe('wh_test_custom');
     expect(signed.url).toBe('https://custom.example/hook');
     expect(signed.timestamp).toBe('2026-07-17T09:00:00Z');
-    expect(verifyWebhookSignature({ ...signed, secret })).toBe(true);
+    // nowMs pinned to the signed instant. This test is about the HMAC
+    // round-trip, and the timestamp it deliberately fixes is now also read
+    // by the freshness gate — without pinning the clock it would start
+    // failing purely because the literal aged out, which says nothing
+    // about signing. Freshness has its own tests below.
+    expect(verifyWebhookSignature({
+      ...signed,
+      secret,
+      nowMs: Date.parse('2026-07-17T09:00:00Z'),
+    })).toBe(true);
+  });
+});
+
+// ─── Timestamp freshness (audit F-09b) ──────────────────────────────────
+//
+// The signature covers the timestamp, so a captured delivery used to
+// verify forever — the header was checked for PRESENCE and never read.
+// These pin the window and, just as importantly, pin the two deliberate
+// leniencies: an unrecognised timestamp SHAPE is accepted (a format change
+// at Peach must not become a reconciliation outage) and epoch seconds are
+// accepted alongside ISO-8601 (Peach's own surfaces disagree).
+
+describe('webhookTimestampIsFresh', () => {
+  const NOW = Date.parse('2026-09-01T12:00:00Z');
+
+  it('accepts a delivery signed just now', () => {
+    expect(webhookTimestampIsFresh('2026-09-01T12:00:00Z', NOW)).toBe(true);
+  });
+
+  it('accepts a delivery inside the skew window in both directions', () => {
+    expect(webhookTimestampIsFresh('2026-09-01T11:56:00Z', NOW)).toBe(true);
+    expect(webhookTimestampIsFresh('2026-09-01T12:04:00Z', NOW)).toBe(true);
+  });
+
+  it('rejects a delivery older than the skew window — the replay case', () => {
+    expect(webhookTimestampIsFresh('2026-09-01T11:50:00Z', NOW)).toBe(false);
+    expect(webhookTimestampIsFresh('2026-07-17T12:00:00Z', NOW)).toBe(false);
+  });
+
+  it('rejects a delivery further ahead than the skew window', () => {
+    expect(webhookTimestampIsFresh('2026-09-01T12:10:00Z', NOW)).toBe(false);
+  });
+
+  it('reads epoch seconds and epoch milliseconds', () => {
+    expect(webhookTimestampIsFresh(String(Math.floor(NOW / 1000)), NOW)).toBe(true);
+    expect(webhookTimestampIsFresh(String(NOW), NOW)).toBe(true);
+    expect(webhookTimestampIsFresh(String(Math.floor(NOW / 1000) - 3600), NOW)).toBe(false);
+  });
+
+  it('accepts an unparseable timestamp rather than refusing a signed delivery', () => {
+    // Deliberate: the value is inside the signed message, so it cannot be
+    // forged. Refusing a shape we merely failed to anticipate would take
+    // down payment reconciliation over a formatting change.
+    expect(webhookTimestampIsFresh('not-a-timestamp', NOW)).toBe(true);
+  });
+
+  it('rejects a missing timestamp', () => {
+    expect(webhookTimestampIsFresh(null, NOW)).toBe(false);
+  });
+});
+
+describe('verifyWebhookSignature — freshness is part of verification', () => {
+  it('refuses a correctly-signed but stale delivery', () => {
+    const secret = randomSecret();
+    const signed = signWebhookForTesting({
+      body:      EVENT_BODY_SUCCESS,
+      secret,
+      timestamp: '2026-09-01T12:00:00Z',
+    });
+    // Same bytes, same secret, same signature — six minutes later.
+    expect(verifyWebhookSignature({
+      ...signed,
+      secret,
+      nowMs: Date.parse('2026-09-01T12:06:00Z'),
+    })).toBe(false);
+    expect(verifyWebhookSignature({
+      ...signed,
+      secret,
+      nowMs: Date.parse('2026-09-01T12:04:00Z'),
+    })).toBe(true);
   });
 });

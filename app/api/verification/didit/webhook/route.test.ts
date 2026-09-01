@@ -59,6 +59,16 @@ vi.mock('@supabase/supabase-js', () => ({
             dbState.webhookEventIds.add(row.event_id);
             return { error: null };
           },
+          // releaseEventClaim (audit F-13) drops the claim on the one path
+          // that answers 500 asking to be retried. Modelled here rather
+          // than stubbed to a no-op so the "does the retry actually get
+          // through" assertions below are testing the real mechanism.
+          delete: () => ({
+            eq: async (col: string, val: unknown) => {
+              if (col === 'event_id') dbState.webhookEventIds.delete(val as string);
+              return { error: null };
+            },
+          }),
         };
       }
       if (table === 'profiles') {
@@ -480,6 +490,47 @@ describe('transient vs deterministic duplicate-check failure (Change 4)', () => 
     const res = await POST(buildRequest(ocrEvent()));
     expect(res.status).toBe(500);
     expect(dbState.profiles[0].identity_verification_status).not.toBe('declined');
+  });
+
+  // ─── The retry has to be able to DO something (audit F-13) ──────────
+  //
+  // The 500 above is only worth returning if the delivery it asks Didit to
+  // resend can still be processed. It could not: alreadyProcessed() claims
+  // the event_id BEFORE the handler runs, so the retry arrived, found the
+  // row this same delivery had written on its way in, and was answered
+  // {duplicate: true} with a 200. The verification was lost silently — the
+  // applicant's session reads Approved, their profile never gets
+  // sa_id_number, and nothing anywhere is logged as an error.
+  //
+  // This is the assertion that would have caught it. It replays the SAME
+  // event after a transient failure and requires the second attempt to
+  // actually persist.
+  it('releases the idempotency claim so the retry it asked for can succeed', async () => {
+    findPatientBySaId.mockRejectedValueOnce(new Error('simulated DB connection failure'));
+    const first = await POST(buildRequest(ocrEvent()));
+    expect(first.status).toBe(500);
+
+    // The claim must be gone, or the retry below is a no-op.
+    expect(dbState.webhookEventIds.size).toBe(0);
+
+    // Didit resends the identical delivery. This time the lookup works.
+    findPatientBySaId.mockResolvedValueOnce(null);
+    const retry = await POST(buildRequest(ocrEvent()));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).not.toMatchObject({ duplicate: true });
+    expect(dbState.profiles[0].identity_verification_status).toBe('approved');
+  });
+
+  it('still treats a genuine duplicate delivery as a duplicate', async () => {
+    // The release is scoped to the retry path and must not have turned the
+    // ledger off: an ordinary redelivery of an event that COMPLETED is
+    // still short-circuited.
+    findPatientBySaId.mockResolvedValueOnce(null);
+    const first = await POST(buildRequest(ocrEvent()));
+    expect(first.status).toBe(200);
+
+    const again = await POST(buildRequest(ocrEvent()));
+    expect(await again.json()).toMatchObject({ duplicate: true });
   });
 
   it('a genuine duplicate match is NOT a throw — it is a normal declined/200 outcome (see case 13)', () => {

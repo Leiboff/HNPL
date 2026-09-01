@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { isValidEmail } from '@/lib/validation/email';
 import { normalizePhoneZA } from '@/lib/validation';
 import { checkAndRecord as checkContactRate } from '@/lib/contact/contactRateLimit';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { sendContactEnquiryEmail, type EnquirerKind } from '@/lib/email/templates/contactEnquiry';
 import { SUPPORT_EMAIL } from '@/lib/config/contact';
 
@@ -158,7 +159,15 @@ export async function submitContactEnquiry(
   const ip = (h.get('x-forwarded-for') ?? '').split(',')[0].trim()
           || h.get('x-real-ip')
           || 'anon';
-  if (!checkContactRate(ip)) {
+  // Shared-store twin of the in-memory bucket — see the public-lead
+  // action for why both are spent (audit F-17). Ordering is unchanged:
+  // the honeypot still runs first and still spends nothing, and neither
+  // limiter is reached until validation has passed, which is the decision
+  // written out at length above.
+  const withinShared = await consumeAll('contact_form', [
+    [await clientIp(), RATE_LIMITS.contact_form.ip],
+  ]);
+  if (!checkContactRate(ip) || !withinShared) {
     return {
       ok: false,
       error: 'rate_limited',

@@ -109,6 +109,55 @@ export type WebhookRegistrationPayload = {
  * failure — missing headers, wrong algorithm, bad hex, length
  * mismatch, or a genuine non-match. Caller renders every false as 401.
  */
+/**
+ * How far x-webhook-timestamp may be from our clock before a delivery is
+ * treated as stale. Matches lib/didit/webhook.ts's MAX_CLOCK_SKEW_SECONDS
+ * — there is no reason for the two receivers to disagree about what
+ * "recent" means, and having them agree is what makes the number
+ * reviewable.
+ *
+ * This bound is why a captured delivery stops being replayable forever.
+ * It is NOT the whole replay defence on its own: inside the window a
+ * capture is still valid, which is what peach_webhook_events (0123) is
+ * for. Freshness narrows the window; the ledger closes it.
+ */
+export const MAX_WEBHOOK_SKEW_SECONDS = 300;
+
+/**
+ * Parse Peach's x-webhook-timestamp and decide whether it is fresh.
+ *
+ * The docs show an ISO-8601 timestamp; other Peach surfaces use epoch
+ * seconds. Both are accepted rather than guessed at, because getting this
+ * wrong in the strict direction rejects every genuine delivery — a far
+ * louder failure than the one it would be protecting against, and one that
+ * would land in production rather than in review.
+ *
+ * An UNPARSEABLE timestamp is treated as fresh, not as stale. The value is
+ * inside the signed message, so it cannot be forged without the secret;
+ * refusing a shape we merely failed to anticipate would turn a format
+ * change at Peach into a total payment-reconciliation outage.
+ */
+export function webhookTimestampIsFresh(
+  timestamp: string | null,
+  nowMs:     number = Date.now(),
+): boolean {
+  if (!timestamp) return false;
+
+  const trimmed = timestamp.trim();
+  let thenMs: number;
+
+  if (/^\d{1,13}$/.test(trimmed)) {
+    // Epoch. Ten digits or fewer is seconds; longer is milliseconds.
+    const n = Number(trimmed);
+    thenMs = trimmed.length <= 10 ? n * 1000 : n;
+  } else {
+    thenMs = Date.parse(trimmed);
+  }
+
+  if (!Number.isFinite(thenMs)) return true; // unrecognised shape — see above
+  return Math.abs(nowMs - thenMs) <= MAX_WEBHOOK_SKEW_SECONDS * 1000;
+}
+
 export function verifyWebhookSignature(input: {
   body:      string;
   algorithm: string | null;
@@ -117,12 +166,15 @@ export function verifyWebhookSignature(input: {
   url:       string | null;
   signature: string | null;
   secret:    string;
+  /** Injectable for tests. Defaults to the real clock. */
+  nowMs?:    number;
 }): boolean {
   const { body, algorithm, timestamp, webhookId, url, signature, secret } = input;
 
   if (!secret) return false;
   if (!algorithm || !timestamp || !webhookId || !url || !signature) return false;
   if (algorithm !== 'HMAC-SHA256') return false;
+  if (!webhookTimestampIsFresh(timestamp, input.nowMs)) return false;
 
   // Docs: message = `${timestamp}.${webhookId}.${url}.${payload}`.
   // `payload` == the raw request body, unmodified.
@@ -236,7 +288,11 @@ export function signWebhookForTesting(input: {
   signature: string;
 } {
   const body      = input.body;
-  const timestamp = input.timestamp ?? '2026-07-17T12:00:00Z';
+  // NOW, not a frozen literal. The default used to be '2026-07-17T12:00:00Z',
+  // which was fine while nothing read the timestamp and became a suite that
+  // fails on a wall-clock date the moment freshness started being checked.
+  // A test that wants a stale delivery passes one explicitly.
+  const timestamp = input.timestamp ?? new Date().toISOString();
   const webhookId = input.webhookId ?? 'wh_test_1';
   const url       = input.url       ?? 'https://app.test/api/payments/peach/webhook';
   const message   = `${timestamp}.${webhookId}.${url}.${body}`;

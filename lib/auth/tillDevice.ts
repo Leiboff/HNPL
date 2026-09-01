@@ -54,6 +54,88 @@ export function hashTillSecret(value: string): string {
   return crypto.createHash('sha256').update(value + pepper()).digest('hex');
 }
 
+// ─── The PIN gets a slow, salted hash. The other two do not. ───────────
+//
+// THE DEFECT (audit 2026-09-01, F-14)
+//
+// practices.till_pin_hash was SHA-256(pin + pepper) over a 4-6 digit
+// space. One GPU-second recovers every practice PIN in the table if the
+// database and the pepper are ever exposed together, and unlike the two
+// values above the PIN is long-lived — it persists until a manager
+// rotates it, which in practice is never.
+//
+// WHY ONLY THE PIN CHANGES
+//
+// The other two secrets are looked up by hash: requireUnlockedDevice does
+// `.eq('secret_hash', …)` and the registration RPC matches on code_hash.
+// A per-row salt makes an equality lookup impossible, so those must stay
+// deterministic — and they can, because their threat model is different.
+// The device secret is 256 random bits, where a slow hash buys nothing a
+// pepper does not. The registration code is short-lived, single-use, and
+// (as of this same commit) rate-limited.
+//
+// The PIN is the one of the three that is COMPARED rather than looked up:
+// unlockTill has already resolved the device, so it knows which practice's
+// hash to check against. That is what makes a salt affordable here.
+//
+// FORMAT — `scrypt$N$r$p$<salt b64>$<hash b64>`, parameters stored inline
+// so they can be raised later without invalidating existing rows.
+//
+// LEGACY — verifyTillPin still accepts a bare 64-char hex digest, which is
+// what every PIN set before this migration looks like. Refusing them would
+// lock every practice out of its own till on deploy. They upgrade the next
+// time a manager sets a PIN; there is no way to upgrade one in place,
+// because we never see the plaintext except at that moment.
+
+const SCRYPT_N = 16384;  // 2^14 — ~50ms per hash, unnoticeable on an unlock
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_KEYLEN = 32;
+
+export function hashTillPin(pin: string): string {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(pin + pepper(), salt, SCRYPT_KEYLEN, {
+    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P,
+  });
+  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${hash.toString('base64')}`;
+}
+
+/**
+ * Constant-time verify against either format.
+ *
+ * Returns false rather than throwing on a malformed stored value: a PIN
+ * check is an authentication decision, and "the stored hash looks wrong"
+ * has to fail closed like any other mismatch.
+ */
+export function verifyTillPin(pin: string, stored: string | null | undefined): boolean {
+  if (!stored) return false;
+
+  if (!stored.startsWith('scrypt$')) {
+    // Legacy: SHA-256(pin + pepper), hex. Compared in constant time all
+    // the same — the format is weak, the comparison need not also be.
+    const expected = Buffer.from(hashTillSecret(pin), 'utf8');
+    const actual   = Buffer.from(stored, 'utf8');
+    if (expected.length !== actual.length) return false;
+    return crypto.timingSafeEqual(expected, actual);
+  }
+
+  const parts = stored.split('$');
+  if (parts.length !== 6) return false;
+  const [, nStr, rStr, pStr, saltB64, hashB64] = parts;
+  const N = Number(nStr), r = Number(rStr), p = Number(pStr);
+  if (!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p)) return false;
+
+  try {
+    const salt     = Buffer.from(saltB64, 'base64');
+    const expected = Buffer.from(hashB64, 'base64');
+    if (salt.length === 0 || expected.length === 0) return false;
+    const actual = crypto.scryptSync(pin + pepper(), salt, expected.length, { N, r, p });
+    return crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
 /** Cryptographically-random 8-digit code for device registration. */
 export function generateRegistrationCode(): string {
   const n = crypto.randomInt(0, 100_000_000);

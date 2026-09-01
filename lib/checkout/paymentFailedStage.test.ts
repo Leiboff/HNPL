@@ -191,7 +191,13 @@ describe('the till says what to do about it', () => {
   it('echoes the patient\'s own screen rather than inventing a second vocabulary', () => {
     // The failure card the patient is looking at says "Payment didn't go
     // through". Across a counter, one event should not have two names.
-    expect(read('app/checkout/[token]/complete/page.tsx')).toMatch(/Payment didn&apos;t go through/);
+    //
+    // Either apostrophe encoding counts. The phrase used to be JSX text,
+    // where React requires &apos;; it is now the default value of ErrorCard's
+    // `title` prop — a plain TS string, where the real ’ is the natural
+    // spelling. The wording is what this test is about, so it should not
+    // fail over which of the two the source happens to need.
+    expect(read('app/checkout/[token]/complete/page.tsx')).toMatch(/Payment didn(’|&apos;)t go through/);
     expect(STRIP).toMatch(/didn’t go through/);
   });
 

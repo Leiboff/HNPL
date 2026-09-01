@@ -1,4 +1,32 @@
-'use server';
+// ─── NOT a 'use server' module. That is the point. ─────────────────────
+//
+// THE DEFECT (audit 2026-09-01, F-08)
+//
+// This file used to open with `'use server'`, and its own header said:
+//
+//     "The helper is GUARD-AGNOSTIC — the caller does all authz work
+//      BEFORE calling here."
+//
+// That is a perfectly good contract for a plain module and an unsafe one
+// for a server-action module, because EVERY export of a 'use server' file
+// is an independently addressable HTTP endpoint. So
+// inviteMemberIntoPractice — which takes practiceId as a parameter,
+// performs no authorization of its own, and inserts a practice_members row
+// with whatever capability flags it is handed — was callable without the
+// guard that was supposed to precede it. Reaching it meant becoming a
+// manager of any practice: issue bills, read patient plans, set the till
+// PIN, register a till.
+//
+// Action ids are build-time hashes rather than guessable names, so this was
+// not trivially reachable — but an id is not an authorization boundary, and
+// the Next version this shipped on carries an advisory for unauthenticated
+// disclosure of internal Server Function endpoints.
+//
+// Dropping the directive makes the contract true: these are ordinary server
+// functions, reachable only from server code, and the two guarded actions
+// in app/practice/members/actions.ts and app/brand/actions.ts are the only
+// doors. THE RULE, generally: no 'use server' module may export a function
+// that does not authorize itself.
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { encryptId } from '@/lib/idEncryption';

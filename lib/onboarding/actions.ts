@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { normalizePhoneZA, validateSaId, saIdAge } from '@/lib/validation';
@@ -225,6 +226,26 @@ export async function startIdentityVerification(): Promise<StartVerificationResu
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
 
+  // ── Rate limit (audit F-17) ─────────────────────────────────────────
+  //
+  // EVERY call here spends a PAID Didit unit. It is the only surface in
+  // the app where a single request has a direct per-call cost at a vendor,
+  // and it had no limiter — so the bot-abuse chain the audit describes
+  // (signup → KYC → credit → transaction, thousands of times) was billable
+  // to us at this step regardless of whether anything downstream succeeded.
+  //
+  // Keyed per-account AND per-IP: per-account bounds one applicant's
+  // retries (a bad photo is worth two or three attempts), per-IP bounds a
+  // script that keeps making fresh accounts to get fresh per-account
+  // budgets. The window is 24h rather than an hour — a verification
+  // attempt is not something a real person repeats all afternoon.
+  if (!await consumeAll('identity_session', [
+    [await clientIp(), RATE_LIMITS.identity_session.ip],
+    [loaded.userId,                 RATE_LIMITS.identity_session.account!],
+  ])) {
+    return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
+  }
+
   let session;
   try {
     session = await createDiditSession({
@@ -410,6 +431,24 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
 
   if (!input.consent) {
     return { error: 'Please provide consent to continue.' };
+  }
+
+  // ── Rate limit (audit F-17) ─────────────────────────────────────────
+  //
+  // The same paid-vendor budget startIdentityVerification spends, shared
+  // deliberately: this path costs MORE per call (a DHA registry lookup and
+  // then a Didit face-match session), and two entry points onto one
+  // vendor bill with two separate allowances would be a limiter that
+  // bounds neither.
+  //
+  // Spent after the local checks — an invalid or under-18 ID is refused
+  // for free, exactly as it is refused before any network call today —
+  // and before the first outbound request.
+  if (!await consumeAll('identity_session', [
+    [await clientIp(), RATE_LIMITS.identity_session.ip],
+    [loaded.userId,                 RATE_LIMITS.identity_session.account!],
+  ])) {
+    return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
   }
 
   const callback = `${diditAppBaseUrl()}/onboarding/identity?didit=callback`;

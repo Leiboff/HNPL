@@ -25,6 +25,8 @@ import {
 import { decryptId } from '@/lib/idEncryption';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { isPatientFrozen } from '@/lib/patient/freeze';
+import { checkCreditLimit } from '@/lib/underwriting/creditLimit';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
@@ -267,6 +269,20 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   }
 
   if (!token)                  return { ok: false, error: 'Missing token.' };
+
+  // ── Rate limit (audit F-17) ─────────────────────────────────────────
+  //
+  // Unauthenticated, and a successful call creates an auth user and mints
+  // a Peach checkout. Keyed per-IP and per TOKEN: the token key is the
+  // interesting one, because it bounds what a leaked or shared checkout
+  // link can be made to do independently of where the requests come from.
+  if (!await consumeAll('checkout_initiate', [
+    [await clientIp(), RATE_LIMITS.checkout_initiate.ip],
+    [token,                         RATE_LIMITS.checkout_initiate.account!],
+  ])) {
+    return { ok: false, error: 'Too many attempts. Please wait a few minutes and try again.' };
+  }
+
   if (!firstName.trim())       return { ok: false, error: 'First name is required.' };
   if (!lastName.trim())        return { ok: false, error: 'Last name is required.' };
 
@@ -365,13 +381,80 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // decline-retry — see app/checkout/[token]/_lib/discriminate.ts.
   const { data: plan } = await svc
     .from('plans')
-    .select('id, total_amount, status, application_id, practice_id, patient_id')
+    .select('id, total_amount, status, application_id, practice_id, patient_id, peach_registration_id')
     .eq('id', resolved.planId)
     .maybeSingle();
 
   if (!plan) return { ok: false, error: 'This bill no longer exists.' };
-  if (plan.status === 'completed' || plan.status === 'cancelled' || plan.status === 'declined') {
+
+  // ── 2a. Which plan states may run this action ────────────────────────
+  //
+  // THIS USED TO BE A DENY-LIST of completed/cancelled/declined, which let
+  // an ACTIVE, already-paid, already-paid-out plan straight through to
+  // step 6 — where the schedule, including its `collected` instalment 1,
+  // was deleted and rewritten and the plan pushed back to
+  // pending_first_payment (audit F-06).
+  //
+  // That was reachable, not theoretical. The invitation's accepted_at and
+  // the POS session's terminal stage are stamped by the BROWSER return
+  // page; when the Peach webhook wins the activation race instead — the
+  // patient closed the tab, lost signal, or pressed back — neither is
+  // written and the token stays live for the rest of its 7-day TTL. Re-open
+  // the emailed link, let a card decline, and handlePaymentFailure cancels
+  // the plan while the payouts row (UNIQUE on plan_id, never reversed) has
+  // already paid the practice 94%.
+  //
+  // (activateFirstInstalment now closes the token itself, so the window is
+  // shut from the other end too. Both halves are kept: this one is the
+  // guard, that one removes the opportunity.)
+  //
+  // The allow-list is the two states that genuinely belong here:
+  //
+  //   pending_acceptance     — a fresh arrival.
+  //   pending_first_payment  — a genuine re-entry by an abandoner, which
+  //                            this action supports on purpose (they may
+  //                            change 2↔3, so the schedule IS rewritten).
+  //                            Admitted ONLY while the card was never
+  //                            captured and nothing was ever collected.
+  //
+  // Anything else — active, defaulted, completed, cancelled, declined —
+  // has money or a decision attached to it and does not get its ledger
+  // rewritten by a token holder.
+  const ACCEPTABLE_ENTRY_STATES = ['pending_acceptance', 'pending_first_payment'];
+  if (!ACCEPTABLE_ENTRY_STATES.includes(plan.status as string)) {
     return { ok: false, error: 'This bill has already been settled or cancelled.' };
+  }
+
+  if (plan.status === 'pending_first_payment') {
+    if (plan.peach_registration_id) {
+      // A stored card means the CIT landed (or is in flight). Re-entry
+      // belongs on resumeFirstInstalmentCapture, which rewrites nothing.
+      return { ok: false, error: 'This bill is already being paid. Please check your orders.' };
+    }
+    const { data: settled } = await svc
+      .from('payments')
+      .select('id')
+      .eq('plan_id', plan.id)
+      .in('status', ['collected', 'defaulted'])
+      .limit(1);
+    if (settled && settled.length > 0) {
+      // Belt-and-braces against the registration-id stamp having been
+      // missed: money that has moved is never deleted and re-created.
+      //
+      // 'processing' is deliberately NOT in this list. It is the status
+      // initiateCheckout itself writes for instalment 1, so every genuine
+      // abandoner is sitting in it — refusing on it would have broken the
+      // one re-entry this action exists to support (a patient who dropped
+      // out at the widget, lost their cookie, and comes back through the
+      // emailed link, possibly switching 2↔3).
+      //
+      // Safe to allow because of what it is paired with: no
+      // peach_registration_id. A CIT that actually landed stamps that id
+      // on BOTH completion paths — the browser return page and the webhook
+      // — so "no registration id and nothing collected" is a charge that
+      // demonstrably did not complete, whatever its row still says.
+      return { ok: false, error: 'This bill is already being paid. Please check your orders.' };
+    }
   }
 
   // ── 2b. Idempotency: short-window pay-step throttle ──────────────────
@@ -562,6 +645,30 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     };
   }
 
+  // ── 3a-bis. Credit limit (audit F-10) ────────────────────────────────
+  //
+  // The fourth acceptance path, and the one where the limit matters most:
+  // this is the surface a patient reaches at a counter with a bill of the
+  // practice's choosing, so without a per-customer ceiling the only bound
+  // on what they can take on is the platform-wide R50,000 band.
+  //
+  // Skipped for a genuinely new user: they were created seconds ago by this
+  // same action and have no limit yet, because the affordability step runs
+  // in /onboarding AFTER the account exists. Refusing here would make the
+  // first bill of every new customer impossible. Their exposure is bounded
+  // by isAllowedBillAmount and by having exactly one plan; the limit binds
+  // from their second bill onward, which is every path that can reach a
+  // returning account.
+  //
+  // excludePlanId, as in payWithSavedCard: on the abandoner re-entry fork
+  // this plan's own rows are already in the table.
+  if (!isNewUser) {
+    const limitCheck = await checkCreditLimit(svc, userId, Number(plan.total_amount), {
+      excludePlanId: plan.id as string,
+    });
+    if (!limitCheck.ok) return { ok: false, error: limitCheck.message };
+  }
+
   // ── 3b. Resolve the salary_day — profile is the source of truth ─────
   // Post-0065 the profile holds the canonical salary_day. Precedence:
   //   1. profile.salary_day if already set (returning patient) —
@@ -697,7 +804,34 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // Idempotent: if rows already exist (returning abandoner retrying),
   // wipe and re-create with a fresh schedule. Total instalment count
   // could have changed (2↔3) on the retry.
-  await svc.from('payments').delete().eq('plan_id', plan.id);
+  //
+  // Scoped to the statuses a never-captured plan can hold. The 2a gate
+  // above has already refused anything collected or defaulted, so this
+  // filter should never change the outcome — which is exactly why it is
+  // here: "a settled instalment is not deletable" should be a property of
+  // the statement, not a fact that depends on a guard fifty lines away
+  // staying correct (audit F-06).
+  //
+  // 'processing' is included because that is what instalment 1 is left in
+  // by an abandoned attempt — see the 2a comment for why deleting it is
+  // safe when no registration id was ever stamped.
+  await svc
+    .from('payments')
+    .delete()
+    .eq('plan_id', plan.id)
+    .in('status', ['scheduled', 'processing', 'failed']);
+
+  // If anything survived that delete, the plan is not in the state 2a
+  // established and we must not lay a second schedule on top of it.
+  const { data: survivors } = await svc
+    .from('payments')
+    .select('id')
+    .eq('plan_id', plan.id)
+    .limit(1);
+  if (survivors && survivors.length > 0) {
+    console.error('[checkout] refusing to rewrite a schedule with surviving rows', { planId: plan.id });
+    return { ok: false, error: 'This bill is already being paid. Please check your orders.' };
+  }
 
   const instalment1Id = crypto.randomUUID();
   const paymentRows   = instalments.map((amount, i) => ({
