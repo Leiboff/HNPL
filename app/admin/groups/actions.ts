@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
+import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
 
 // ─── Platform-admin actions for practice groups (brand layer) ──────────
 //
@@ -73,6 +74,18 @@ export async function createGroup(input: CreateGroupInput): Promise<{ groupId: s
 
   if (error || !data) return { groupId: null, error: error?.message ?? 'Could not create group.' };
 
+  // After the write, uniquely in this file: there is no entity_id to record
+  // against until the insert returns one. A creation that fails leaves
+  // nothing behind to investigate, which is the case where "before" buys
+  // nothing.
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'practice_group',
+    entityId:   data.id as string,
+    action:     'group_created',
+    payload:    { name: input.name.trim(), banking_supplied: !!input.bankAccountNumber },
+  });
+
   revalidatePath('/admin/groups');
   return { groupId: data.id as string, error: null };
 }
@@ -95,6 +108,26 @@ export type UpdateGroupBankingInput = {
 export async function updateGroupBanking(input: UpdateGroupBankingInput): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // The brand-level fallback account: every branch with no banking of its
+  // own settles here, so one edit can redirect a whole brand's money.
+  // 0131's trigger records the from→to (with the account number reduced to a
+  // last-4 and a digest); this row is the one that names the admin, because
+  // the write below is service-role and auth.uid() is NULL inside the
+  // trigger. Deliberately carries NO account number of its own.
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'practice_group',
+    entityId:   input.groupId,
+    action:     'group_banking_changed',
+    payload:    {
+      bank_name:      input.bankName,
+      branch_code:    input.branchCode,
+      account_holder: input.accountHolder,
+      account_type:   input.accountType,
+      cleared:        input.bankAccountNumber === null,
+    },
+  });
 
   const { error } = await svc()
     .from('practice_groups')
@@ -129,6 +162,18 @@ export async function assignPracticeToGroup(practiceId: string, groupId: string)
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
+  // Moving a branch between brands moves which group's banking it falls back
+  // to, and which brand admins can see it. No UI affordance, called by
+  // platform support directly — which is exactly the kind of action that
+  // needs to be in the record rather than in someone's memory.
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'practice',
+    entityId:   practiceId,
+    action:     'practice_reassigned_to_group',
+    payload:    { group_id: groupId },
+  });
+
   const { error } = await svc()
     .from('practices')
     .update({ group_id: groupId })
@@ -150,6 +195,17 @@ export async function grantBrandAdmin(groupId: string, userId: string): Promise<
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
+  // A brand admin can edit their branches' banking, which is why this is in
+  // the log. No trigger covers it: practice_group_members is a membership
+  // ROW appearing, not a column changing on an existing one.
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'practice_group',
+    entityId:   groupId,
+    action:     'grant_brand_admin',
+    payload:    { user_id: userId },
+  });
+
   // Upsert so re-granting an existing-but-deactivated row reactivates it.
   const { error } = await svc()
     .from('practice_group_members')
@@ -167,6 +223,14 @@ export async function grantBrandAdmin(groupId: string, userId: string): Promise<
 export async function revokeBrandAdmin(groupId: string, userId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'practice_group',
+    entityId:   groupId,
+    action:     'revoke_brand_admin',
+    payload:    { user_id: userId },
+  });
 
   const { error } = await svc()
     .from('practice_group_members')

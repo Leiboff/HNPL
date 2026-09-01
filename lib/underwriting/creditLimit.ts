@@ -20,9 +20,34 @@
 // and so had no per-customer limit of any kind. The R5,000 the affordability
 // step "granted" them was decoration.
 //
+// ─── WHAT REMAINS HERE, AND WHAT MOVED, 2026-09-02 (audit A-04) ─────────
+//
+// This module used to export `checkCreditLimit` as well: a read of the limit,
+// a read of the exposure, and a decision returned to the caller — which then
+// wrote the schedule. Three callers did exactly that, and every one of them
+// had a window between the decision and the write in which a concurrent
+// request read the same headroom and spent it too. Five parallel acceptances
+// against a R5,000 limit all passed; the proof is in
+// creditLimit.race.adversarial.test.ts.
+//
+// A check-then-write helper cannot be made safe by its callers, so it is
+// gone rather than deprecated. The decision and the write are now ONE
+// statement inside `claim_credit_for_plan` (migration 0130), under a row lock
+// on the patient's profile, reached through lib/underwriting/claimCredit.ts.
+//
+// What stays here is `outstandingExposure` — the exposure arithmetic and the
+// definition of what counts as outstanding, which the claim path still uses
+// for its optimistic pre-read, and which the RPC re-derives for itself under
+// the lock. Two implementations of that definition is a known cost, pinned
+// against each other by 0130_claim_credit_for_plan.rpc.test.ts; one
+// implementation that is not under a lock was the bug.
+//
+// The refusal copy stays too, and is the single source for both — claimCredit
+// re-exports it through CLAIM_MESSAGES.
+//
 // WHAT THIS MODULE IS AND IS NOT
 //
-// It is the exposure arithmetic and the refusal, in one place, so the four
+// It is the exposure arithmetic and the refusal, in one place, so the
 // acceptance paths cannot drift. It is NOT underwriting: the limit it
 // enforces is whatever `stubAffordabilityPolicy` granted, and that module's
 // own header is emphatic that it performs no assessment of any kind.
@@ -62,10 +87,6 @@ export const CREDIT_LIMIT_UNSET_REFUSAL =
 
 export const CREDIT_LIMIT_UNAVAILABLE_REFUSAL =
   'We couldn\'t check your available balance just now. Please try again in a moment.';
-
-export type CreditLimitDecision =
-  | { ok: true;  limit: number; outstanding: number; available: number }
-  | { ok: false; reason: 'no_limit' | 'over_limit' | 'lookup_failed'; message: string };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Svc = any;
@@ -114,59 +135,4 @@ export async function outstandingExposure(
     .reduce((sum, r) => sum + Math.round(Number(r.amount) * 100), 0);
 
   return { ok: true, rands: cents / 100 };
-}
-
-/**
- * Would taking on `billAmount` put this patient over their approved limit?
- *
- * Compared in integer cents, like everything else that touches money here —
- * a float comparison at the boundary would refuse a bill that lands exactly
- * on the limit about half the time.
- */
-export async function checkCreditLimit(
-  svc:        Svc,
-  patientId:  string,
-  billAmount: number,
-  opts?: { excludePlanId?: string | null },
-): Promise<CreditLimitDecision> {
-  const { data: profile, error } = await svc
-    .from('profiles')
-    .select('approved_credit_limit')
-    .eq('id', patientId)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[credit-limit] profile lookup failed', { patientId, error: error.message });
-    return { ok: false, reason: 'lookup_failed', message: CREDIT_LIMIT_UNAVAILABLE_REFUSAL };
-  }
-
-  const rawLimit = profile?.approved_credit_limit as number | string | null | undefined;
-  if (rawLimit === null || rawLimit === undefined) {
-    return { ok: false, reason: 'no_limit', message: CREDIT_LIMIT_UNSET_REFUSAL };
-  }
-
-  const limitCents = Math.round(Number(rawLimit) * 100);
-  if (!Number.isFinite(limitCents)) {
-    return { ok: false, reason: 'no_limit', message: CREDIT_LIMIT_UNSET_REFUSAL };
-  }
-
-  const exposure = await outstandingExposure(svc, patientId, opts);
-  if (!exposure.ok) {
-    console.error('[credit-limit] exposure lookup failed', { patientId });
-    return { ok: false, reason: 'lookup_failed', message: CREDIT_LIMIT_UNAVAILABLE_REFUSAL };
-  }
-
-  const outstandingCents = Math.round(exposure.rands * 100);
-  const billCents        = Math.round(Number(billAmount) * 100);
-
-  if (outstandingCents + billCents > limitCents) {
-    return { ok: false, reason: 'over_limit', message: CREDIT_LIMIT_REFUSAL };
-  }
-
-  return {
-    ok:          true,
-    limit:       limitCents / 100,
-    outstanding: outstandingCents / 100,
-    available:   (limitCents - outstandingCents) / 100,
-  };
 }

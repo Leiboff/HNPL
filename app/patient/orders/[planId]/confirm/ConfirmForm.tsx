@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { usePendingAction } from '@/components/loading/usePendingAction';
-import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
+import { splitInstalmentsWithExcess, calculatePaymentDates, MIN_FINANCED_RANDS } from '@/lib/finance';
 import { isCardValidForPlan } from '@/lib/cardValidity';
 import { payWithSavedCard, initializeCardRegistration } from '@/app/patient/actions';
 // Every customer-present surface here mounts the SAME Checkout V2
@@ -68,6 +68,24 @@ type Props = {
   // pending_first_payment with its schedule fixed. The instalment count
   // is locked and the CTA re-opens the same (deterministic-ref) checkout.
   resumeMode:       boolean;
+  /**
+   * The patient's remaining headroom, in rands, as of the render. Drives the
+   * allowance split (product decision 2026-09-02): a bill above it is not
+   * refused — the excess rides on instalment 1 — so this is what makes the
+   * schedule shown here the schedule that will actually be charged.
+   *
+   * null means "we could not read it", which is a display problem and not a
+   * gate: the claim re-derives the headroom under a row lock either way. We
+   * fall back to the fully-financed shape and let the claim correct it.
+   * 0 means the patient has no approved limit, or none left.
+   */
+  availableRands:   number | null;
+  /**
+   * On a resume the schedule already exists, so it is READ rather than
+   * recomputed — payWithSavedCard re-charges the amount on the row, and a
+   * recomputation here could quietly disagree with it.
+   */
+  committedInstalments: number[] | null;
 };
 
 const POLL_TIMEOUT_S = 10;
@@ -85,6 +103,8 @@ export default function ConfirmForm({
   fromRegistration,
   blocked,
   resumeMode,
+  availableRands,
+  committedInstalments,
 }: Props) {
   const router = useRouter();
 
@@ -127,13 +147,46 @@ export default function ConfirmForm({
 
   // ── Derived schedule ────────────────────────────────────────────────────────
 
-  const schedule = planType
+  // ── Derived schedule ──────────────────────────────────────────────────
+  //
+  // Three sources, in order of authority:
+  //
+  //   1. the committed rows, on a resume — the amounts that WILL be charged;
+  //   2. the allowance split against the headroom, on a fresh acceptance —
+  //      what the claim will compute from the same inputs;
+  //   3. the fully-financed split, only when the headroom could not be read.
+  //
+  // (3) is the pre-2026-09-02 behaviour and is now a fallback rather than the
+  // rule: it understates instalment 1 whenever a bill exceeds the headroom,
+  // which is exactly the case the allowance model exists to serve.
+  const split = planType
+    ? splitInstalmentsWithExcess(
+        totalAmount,
+        planType,
+        availableRands ?? totalAmount,
+      )
+    : null;
+
+  const schedule = planType && split
     ? (() => {
-        const amounts = splitInstalments(totalAmount, planType);
+        const amounts = committedInstalments && committedInstalments.length === planType
+          ? committedInstalments
+          : split.instalments;
         const dates   = calculatePaymentDates(new Date(), salaryDay, planType);
         return amounts.map((amount, i) => ({ amount, date: dates[i] }));
       })()
     : null;
+
+  // The part of the bill that is above the allowance and so is collected up
+  // front rather than financed. Suppressed on a resume, where the amounts are
+  // simply what the rows say and the explanation was given at acceptance.
+  const excessRands = !resumeMode && split && split.excess > 0 ? split.excess : 0;
+
+  // Not enough headroom to finance anything at all. The claim refuses this
+  // with `below_minimum`, so the honest thing is to say so BEFORE the tap
+  // rather than render a schedule and a Pay button that cannot work.
+  const belowMinimum =
+    !resumeMode && availableRands !== null && availableRands < MIN_FINANCED_RANDS;
 
   // ── Card validity (keyed on last instalment date) ───────────────────────────
 
@@ -280,7 +333,7 @@ export default function ConfirmForm({
     setPayWidget({ checkoutId: result.checkoutId, shopperResultUrl: result.shopperResultUrl });
   }
 
-  const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting && !wantsNewCard && !blocked;
+  const canSubmit    = planType !== null && selectedCardId !== null && hasValidCard && !submitting && !wantsNewCard && !blocked && !belowMinimum;
   const selectedCard = cards.find((c) => c.id === selectedCardId);
   const busy         = submitting || addCardLoading;
 
@@ -438,6 +491,26 @@ export default function ConfirmForm({
               </div>
             ))}
           </div>
+          {excessRands > 0 && (
+            <div className="px-5 py-3 border-t border-gray-100 bg-gray-50">
+              <p className="text-xs text-gray-600">
+                Your available limit covers{' '}
+                <span className="font-semibold text-gray-900">{formatRand(split!.financed)}</span>{' '}
+                of this bill. The remaining{' '}
+                <span className="font-semibold text-gray-900">{formatRand(excessRands)}</span>{' '}
+                is collected today with your first instalment, so instalment 1 is
+                larger than the rest.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {belowMinimum && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+          You don&apos;t have enough of your limit left to split this bill. Pay down
+          your current plan first, or contact us if you think your limit should be
+          higher.
         </div>
       )}
 

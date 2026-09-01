@@ -4,9 +4,9 @@ import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isPatientFrozen } from '@/lib/patient/freeze';
-import { checkCreditLimit } from '@/lib/underwriting/creditLimit';
+import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
 import { declineCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
-import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
+import { calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef, registrationRef } from '@/lib/payments/peach/refs';
 import { isCardValidForPlan } from '@/lib/cardValidity';
@@ -16,6 +16,7 @@ import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import type { User } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── The privileged client, and why these actions now need one ─────────
 //
@@ -115,6 +116,26 @@ async function isBlockedFromNewPlan(patientId: string): Promise<boolean> {
   return hasInProgress && !hasCompleted;
 }
 
+/**
+ * The due dates already on a plan's schedule, ascending.
+ *
+ * A RESUME must validate the card against the dates the plan ACTUALLY has,
+ * not against a fresh calculatePaymentDates run: the original acceptance
+ * anchored those dates to the salary day as it stood then, and a patient who
+ * has since changed their salary day would otherwise be checked against a
+ * schedule that does not exist.
+ */
+async function resumeDueDates(svcClient: SupabaseClient, planId: string): Promise<Date[]> {
+  const { data } = await svcClient
+    .from('payments')
+    .select('due_date')
+    .eq('plan_id', planId)
+    .eq('kind', 'instalment')
+    .order('instalment_number', { ascending: true });
+
+  return ((data ?? []) as Array<{ due_date: string }>).map((r) => new Date(r.due_date));
+}
+
 export async function acceptPlan(
   planId: string,
   planType: 2 | 3,
@@ -127,6 +148,30 @@ export async function acceptPlan(
   // ─── Onboarding gate ─────────────────────────────────────────────
   const refusal = await requireOnboarded(supabase, user);
   if (refusal) return refusal;
+
+  // ── Rate limit (audit A-11's second half) ────────────────────────
+  //
+  // Not an anti-abuse limit in the signup sense: the caller is an
+  // authenticated patient acting on their own plan, and the authorization
+  // above is already correct. It is a BLAST-RADIUS limit. Whatever goes
+  // wrong upstream — a stolen session, a retry storm from a flaky client,
+  // a loop introduced by a future edit — the damage per account per hour
+  // is bounded, and a counter that trips is a signal something is wrong
+  // before the money says so.
+  //
+  // Spent AFTER authentication and the onboarding gate, unlike the
+  // anonymous surfaces: there is no unauthenticated attacker to damp here,
+  // so keying the budget to a user who has already proved who they are is
+  // both cheaper and more informative than keying it to arrivals.
+  //
+  // Keyed on IP AND account, per the module's own rule: either alone is
+  // rotatable.
+  if (!await consumeAll('accept_plan', [
+    [await clientIp(), RATE_LIMITS.accept_plan.ip],
+    [user.id,          RATE_LIMITS.accept_plan.account!],
+  ])) {
+    return { error: 'Too many attempts. Please wait a few minutes and try again.' };
+  }
 
   if (planType !== 2 && planType !== 3) {
     return { error: 'Invalid instalment count. Choose 2 or 3.' };
@@ -170,63 +215,35 @@ export async function acceptPlan(
 
   const totalAmount = Number(plan.total_amount);
 
-  // ─── Credit-limit gate ───────────────────────────────────────────
-  // The limit granted by the affordability step was written, displayed,
-  // and enforced nowhere (audit F-10). This is one of the four acceptance
-  // paths that now actually spends it.
+  // ─── The claim: decide and write in ONE transaction ──────────────
+  //
+  // Was: checkCreditLimit, then splitInstalments, then an UPDATE with a
+  // status precondition, then an INSERT. Four steps, and the first three
+  // were a read — so two concurrent acceptances both saw the same headroom
+  // and both committed (audit A-04; proved in
+  // lib/underwriting/creditLimit.race.adversarial.test.ts).
+  //
+  // claimCreditForPlan calls migration 0130's claim_credit_for_plan, which
+  // locks the patient's profile row, re-derives exposure, validates the
+  // split, and writes the plan transition plus the schedule together. The
+  // status precondition that was the F-03 fix lives inside it now
+  // (`p_expected_status`), and so does the F-06 survivor check.
+  //
+  // It also applies the allowance model: a bill above what is left of the
+  // customer's limit is SPLIT rather than refused, with the unfinanced part
+  // collected on instalment 1 before the plan activates.
   const privileged = svc();
-  const limitCheck = await checkCreditLimit(privileged, user.id, totalAmount);
-  if (!limitCheck.ok) return { error: limitCheck.message };
-
-  const instalments = splitInstalments(totalAmount, planType);
-  const dates       = calculatePaymentDates(new Date(), salaryDay, planType);
-
-  // ─── The claim ───────────────────────────────────────────────────
-  //
-  // `.eq('status', 'pending_acceptance')` is the whole fix for the
-  // acceptPlan race (audit F-03). The SELECT above filters on that status,
-  // but the UPDATE used to re-state only id + patient_id — so two
-  // concurrent calls both passed the read, both wrote, and both inserted a
-  // schedule. With the status in the WHERE clause the second UPDATE
-  // matches zero rows and we bail before touching payments.
-  //
-  // `.select('id')` because PostgREST reports an UPDATE that matched
-  // nothing as a success with a null error.
-  const { data: claimed, error: planError } = await privileged
-    .from('plans')
-    .update({
-      status:            'pending_first_payment',
-      plan_type:         planType,
-      instalment_amount: instalments[0],
-      // Record acceptance of the payment-plan terms + privacy policy on
-      // the plan, at activation — server-side, not just the client tick.
-      terms_accepted_at: new Date().toISOString(),
-      terms_version:     TERMS_VERSION,
-      privacy_version:   PRIVACY_VERSION,
-    })
-    .eq('id', planId)
-    .eq('patient_id', user.id)
-    .eq('status', 'pending_acceptance')
-    .select('id');
-
-  if (planError) return { error: planError.message };
-  if (!claimed || claimed.length === 0) {
-    // Lost the race, or the plan moved on between the read and here.
-    return { error: 'Plan not found or already actioned.' };
-  }
-
-  const paymentRows = instalments.map((amount, i) => ({
-    id:                crypto.randomUUID(),
-    plan_id:           planId,
-    patient_id:        user.id,
-    instalment_number: i + 1,
-    amount,
-    due_date:          dates[i].toISOString().split('T')[0],
-    status:            i === 0 ? 'processing' : 'scheduled',
-  }));
-
-  const { error: paymentsError } = await privileged.from('payments').insert(paymentRows);
-  if (paymentsError) return { error: paymentsError.message };
+  const claim = await claimCreditForPlan(privileged, {
+    planId,
+    patientId:      user.id,
+    planType,
+    totalAmount,
+    salaryDay,
+    expectedStatus: 'pending_acceptance',
+    termsVersion:   TERMS_VERSION,
+    privacyVersion: PRIVACY_VERSION,
+  });
+  if (!claim.ok) return { error: claim.message };
 
   if (plan.application_id) {
     await supabase
@@ -441,6 +458,20 @@ export async function payWithSavedCard(
   const refusal = await requireOnboarded(supabase, user);
   if (refusal) return refusal;
 
+  // ── Rate limit (audit A-11's second half) ────────────────────────
+  //
+  // This one fires a real customer-present charge at Peach. See acceptPlan
+  // above for why these are blast-radius limits rather than anti-abuse
+  // ones; the resume path re-enters here with the SAME deterministic
+  // reference, so Peach dedups and the limit is about the VOLUME of
+  // attempts rather than the correctness of any one of them.
+  if (!await consumeAll('pay_saved_card', [
+    [await clientIp(), RATE_LIMITS.pay_saved_card.ip],
+    [user.id,          RATE_LIMITS.pay_saved_card.account!],
+  ])) {
+    return { error: 'Too many payment attempts. Please wait a few minutes and try again.' };
+  }
+
   // ─── Default freeze gate ─────────────────────────────────────────
   // The saved-card one-click is the returning-patient equivalent of
   // accepting a bill. If the patient has an unresolved defaulted plan,
@@ -525,20 +556,25 @@ export async function payWithSavedCard(
     return { error: 'Please complete your current payment plan before starting another.' };
   }
 
-  // Calculate instalment schedule
-  const totalAmount  = Number(plan.total_amount);
+  const totalAmount = Number(plan.total_amount);
 
-  // ─── Credit-limit gate (audit F-10) ──────────────────────────────
-  // excludePlanId matters on the resume fork: this plan's own instalment
-  // rows already exist, so counting them AND adding total_amount again
-  // would refuse a legitimate resume for double its actual exposure.
+  // ─── The schedule dates, computed once ───────────────────────────
+  //
+  // Needed here (before anything is written) for the card-expiry check
+  // below, and passed into the claim so the dates it writes are the same
+  // ones we validated the card against. calculatePaymentDates is pure and
+  // deterministic given (now, salaryDay, planType), but "deterministic if
+  // called twice with the same arguments" is only true if you actually pass
+  // the same arguments — hence `now`.
   const privileged = svc();
-  const limitCheck = await checkCreditLimit(privileged, user.id, totalAmount, {
-    excludePlanId: isResume ? planId : null,
-  });
-  if (!limitCheck.ok) return { error: limitCheck.message };
-  const instalments  = splitInstalments(totalAmount, effectivePlanType);
-  const dates        = calculatePaymentDates(new Date(), salaryDay, effectivePlanType);
+  const now        = new Date();
+  const dates = isResume
+    ? await resumeDueDates(privileged, planId)
+    : calculatePaymentDates(now, salaryDay, effectivePlanType);
+
+  if (dates.length === 0) {
+    return { error: 'The instalment schedule is missing. Please contact support.' };
+  }
 
   // Validate the card covers the full plan (expiry + 30-day buffer after last instalment)
   const lastInstalmentDate = dates[dates.length - 1];
@@ -584,13 +620,18 @@ export async function payWithSavedCard(
 
   // For a RESUME, reuse the EXISTING instalment-1 row id so the
   // deterministic Peach ref is byte-identical to the abandoned attempt
-  // (Peach dedups on merchantTransactionId → no double charge). For a
-  // FRESH acceptance, mint a new id.
-  let instalment1Id: string;
+  // (Peach dedups on merchantTransactionId → no double charge).
+  //
+  // For a FRESH acceptance the id now comes from the claim, which writes the
+  // schedule itself — see the claim inside the try below. Nothing mints an id
+  // here any more, because an id minted before the write is an id that exists
+  // whether or not the write happened.
+  let resumeInstalmentOneId:     string | null = null;
+  let resumeInstalmentOneAmount: number | null = null;
   if (isResume) {
     const { data: existing } = await supabase
       .from('payments')
-      .select('id')
+      .select('id, amount')
       .eq('plan_id', planId)
       .eq('patient_id', user.id)
       .eq('instalment_number', 1)
@@ -598,9 +639,12 @@ export async function payWithSavedCard(
     if (!existing) {
       return { error: 'The first instalment record is missing. Please contact support.' };
     }
-    instalment1Id = existing.id as string;
-  } else {
-    instalment1Id = crypto.randomUUID();
+    resumeInstalmentOneId     = existing.id as string;
+    // The amount to re-charge is the one ALREADY on the row, never a
+    // recomputation: the original acceptance may have loaded an
+    // above-allowance excess onto it (audit A-05), and re-deriving would
+    // silently drop that.
+    resumeInstalmentOneAmount = Number(existing.amount);
   }
 
   // Bound outside the closure below: TypeScript cannot carry the
@@ -649,63 +693,49 @@ export async function payWithSavedCard(
   }
 
   try {
-    // Compact 16-char peach ref, seeded off the instalment-1 id — Peach
-    // dedups on merchantTransactionId, so it's byte-identical across a
-    // fresh attempt and every resume, and a retry never double-charges.
-    const reference = checkoutRef(instalment1Id);
-
-    if (!isResume) {
-      // ── STEP 1: move plan → pending_first_payment ──────────────────
-      console.log('PEACH PAY-WITH-SAVED-CARD STEP 1 PLAN UPDATE:', { planId });
-      // `.eq('status','pending_acceptance')` + `.select('id')` — the same
-      // atomic claim acceptPlan now makes, for the same reason: without the
-      // status in the WHERE clause two concurrent one-clicks both wrote the
-      // plan and both inserted a schedule (audit F-03).
-      const { data: claimed, error: planError } = await privileged
-        .from('plans')
-        .update({
-          status:            'pending_first_payment',
-          plan_type:         effectivePlanType,
-          instalment_amount: instalments[0],
-          // Record acceptance of the payment-plan terms + privacy policy
-          // on the plan, at activation — server-side, not just the tick.
-          terms_accepted_at: new Date().toISOString(),
-          terms_version:     TERMS_VERSION,
-          privacy_version:   PRIVACY_VERSION,
-        })
-        .eq('id', planId)
-        .eq('patient_id', user.id)
-        .eq('status', 'pending_acceptance')
-        .select('id');
-
-      if (planError) return { error: planError.message };
-      if (!claimed || claimed.length === 0) {
-        // Another tab / request claimed this plan between our read and
-        // here. Nothing was written, so there is nothing to roll back.
-        return { error: 'Plan not found or already actioned.' };
-      }
-
-      // ── STEP 2: insert payment rows (instalment 1 = 'processing') ──
-      const paymentRows = instalments.map((amount, i) => ({
-        id:                i === 0 ? instalment1Id : crypto.randomUUID(),
-        plan_id:           planId,
-        patient_id:        user.id,
-        instalment_number: i + 1,
-        amount,
-        due_date:          dates[i].toISOString().split('T')[0],
-        status:            i === 0 ? 'processing' : 'scheduled',
-      }));
-
-      console.log('PEACH PAY-WITH-SAVED-CARD STEP 2 PAYMENTS INSERT:', {
+    // ── STEP 1: claim the credit and write the schedule ──────────────
+    //
+    // Was: a credit-limit READ up in the validation block, then an UPDATE
+    // with a status precondition, then an INSERT. Three steps with the
+    // decision in the first one, so two concurrent one-clicks both saw the
+    // same headroom and both committed (audit A-04). Now one transaction
+    // inside migration 0130's claim_credit_for_plan, which locks the
+    // patient's profile row, re-derives exposure, validates the split and
+    // writes plan + schedule together.
+    //
+    // A RESUME does not claim: the plan was claimed at its original
+    // acceptance and its schedule already exists. Re-claiming would either
+    // double-count the exposure or rewrite a schedule a charge may already
+    // be in flight against.
+    let instalment1Id:       string;
+    let instalmentOneAmount: number;
+    if (isResume) {
+      instalment1Id       = resumeInstalmentOneId as string;
+      instalmentOneAmount = resumeInstalmentOneAmount as number;
+      console.log('PEACH PAY-WITH-SAVED-CARD STEP 1 RESUME (no claim):', { planId, instalment1Id });
+    } else {
+      console.log('PEACH PAY-WITH-SAVED-CARD STEP 1 CLAIM:', { planId, totalAmount });
+      const claim = await claimCreditForPlan(privileged, {
         planId,
-        rowCount: paymentRows.length,
-        instalment1Id,
+        patientId:      user.id,
+        planType:       effectivePlanType,
+        totalAmount,
+        salaryDay,
+        expectedStatus: 'pending_acceptance',
+        termsVersion:   TERMS_VERSION,
+        privacyVersion: PRIVACY_VERSION,
+        now,
       });
-      const { error: paymentsError } = await privileged.from('payments').insert(paymentRows);
-      if (paymentsError) {
-        await rollbackPlanState(`paymentsError: ${paymentsError.message}`);
-        return { error: paymentsError.message };
+      if (!claim.ok) {
+        // Nothing was written — the claim is all-or-nothing — so there is
+        // nothing to roll back.
+        return { error: claim.message };
       }
+      instalment1Id       = claim.instalmentOneId;
+      instalmentOneAmount = claim.instalments[0];
+      console.log('PEACH PAY-WITH-SAVED-CARD STEP 2 CLAIMED:', {
+        planId, instalment1Id, financed: claim.financed, excess: claim.excess,
+      });
 
       if (plan.application_id) {
         await supabase
@@ -713,37 +743,34 @@ export async function payWithSavedCard(
           .update({ plan_type: effectivePlanType })
           .eq('id', plan.application_id as string);
       }
+    }
 
-      // ── STEP 3: stamp merchant reference on the payment row ─────────
-      console.log('PEACH PAY-WITH-SAVED-CARD STEP 3 REF STAMP:', {
-        planId,
-        instalment1Id,
-        merchantTransactionId: reference,
-      });
-      const { error: refErr } = await privileged
-        .from('payments')
-        .update({ peach_payment_id: reference })
-        .eq('id', instalment1Id)
-        .eq('patient_id', user.id);
-      if (refErr) {
-        await rollbackPlanState(`refErr: ${refErr.message}`);
-        return { error: refErr.message };
-      }
-    } else {
-      // ── RESUME: plan + schedule already exist (an abandoned first
-      // charge). Re-stamp the SAME deterministic ref idempotently; no
-      // plan-status change, no new rows. The plan stays
-      // pending_first_payment and the CIT re-opens for the same amount.
-      console.log('PEACH PAY-WITH-SAVED-CARD RESUME REF STAMP:', {
-        planId,
-        instalment1Id,
-        merchantTransactionId: reference,
-      });
-      await privileged
-        .from('payments')
-        .update({ peach_payment_id: reference })
-        .eq('id', instalment1Id)
-        .eq('patient_id', user.id);
+    // Compact 16-char peach ref, seeded off the instalment-1 id — Peach
+    // dedups on merchantTransactionId, so it is byte-identical across a
+    // fresh attempt and every resume, and a retry never double-charges.
+    const reference = checkoutRef(instalment1Id);
+
+    // ── STEP 3: stamp the merchant reference on the payment row ──────
+    //
+    // ONE statement for both paths now. It always was the same operation —
+    // put this plan's deterministic ref on instalment 1 — and having it
+    // written twice, once inside each branch, is how the two copies drifted
+    // into checking the error on one path and ignoring it on the other.
+    // Idempotent on a resume: the ref is derived from the row id, so
+    // re-stamping writes the identical value.
+    console.log('PEACH PAY-WITH-SAVED-CARD STEP 3 REF STAMP:', {
+      planId, instalment1Id, isResume, merchantTransactionId: reference,
+    });
+    const { error: refErr } = await privileged
+      .from('payments')
+      .update({ peach_payment_id: reference })
+      .eq('id', instalment1Id)
+      .eq('patient_id', user.id);
+    if (refErr) {
+      // Rolling back a RESUME is already a no-op inside the helper, so this
+      // is safe to call unconditionally.
+      await rollbackPlanState(`refErr: ${refErr.message}`);
+      return { error: refErr.message };
     }
 
     // ── STEP 4: customer-present CIT via Checkout V2 one-click ───────
@@ -764,7 +791,7 @@ export async function payWithSavedCard(
     // peach_initial_transaction_id (the CIT root) and activates
     // instalment 1 via activateFirstInstalment. Instalments 2-N then
     // charge rooted MIT INSTALLMENT (chargeInstalment.ts).
-    const amountCents = Math.round(instalments[0] * 100);
+    const amountCents = Math.round(instalmentOneAmount * 100);
     const appUrl      = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     const shopperResultUrl = `${appUrl}/patient/payment-complete`;
 

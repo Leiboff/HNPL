@@ -8,8 +8,7 @@ import {
   checkPassword,
 } from '@/lib/validation';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
-import { TERMS_VERSION } from '@/lib/legal/terms';
-import { PRIVACY_VERSION } from '@/lib/legal/privacy';
+import { consentColumns } from '@/lib/legal/documentHash';
 import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
@@ -122,14 +121,6 @@ function ref(operation: string, error?: unknown): string {
   const code = (error as any)?.code;
   const suffix = typeof code === 'string' && /^[A-Za-z0-9]{1,8}$/.test(code) ? `-${code}` : '';
   return `${operation}${suffix}`.toUpperCase();
-}
-
-function consentColumns() {
-  return {
-    terms_accepted_at: new Date().toISOString(),
-    terms_version:     TERMS_VERSION,
-    privacy_version:   PRIVACY_VERSION,
-  };
 }
 
 /** Everything PostgREST knows about a failure, not just the sentence. */

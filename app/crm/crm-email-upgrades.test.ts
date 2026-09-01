@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { sanitizeSignatureHtml } from '@/lib/gmail/signature';
 
 // ─── CRM email upgrades — source-pin regressions ─────────────────────
 //
@@ -198,9 +199,27 @@ describe('signature — sanitiser + brand template', () => {
   const SRC = read('lib/gmail/signature.ts');
 
   it('strips <script>, <style>, <iframe>, on*="…" attributes, and javascript: URLs', () => {
-    expect(SRC).toMatch(/BAD_TAGS.*script/);
-    expect(SRC).toMatch(/on\[a-z\]\+/);
-    expect(SRC).toMatch(/javascript|vbscript/);
+    // AMENDED 2026-09-02 (audit A-08). This used to pin the OLD sanitiser's
+    // regex literals in source — `BAD_TAGS.*script`, `on[a-z]+`,
+    // `javascript|vbscript`. Pinning a blocklist's patterns is pinning the
+    // defect: five bypasses were confirmed against exactly those patterns,
+    // and every one of them would have kept this test green.
+    //
+    // The replacement asserts the PROPERTY instead, by running the
+    // sanitiser. Full coverage — including the five bypasses, now inverted
+    // into closures — lives in lib/html/sanitizeAllowList.test.ts and
+    // lib/gmail/signature.sanitizer-bypass.adversarial.test.ts.
+    const out = sanitizeSignatureHtml(
+      '<script>alert(1)</script><style>body{x:1}</style>'
+      + '<iframe src="//evil"></iframe>'
+      + '<img src=x onerror=alert(1)><b onclick="x()">bold</b>'
+      + '<a href="javascript:alert(1)">click</a>',
+    );
+    for (const forbidden of ['<script', '<style', '<iframe', 'onerror', 'onclick', 'javascript:', 'alert(1)']) {
+      expect(out).not.toContain(forbidden);
+    }
+    // …and the formatting a signature actually needs survives.
+    expect(out).toContain('<b>bold</b>');
   });
 
   it('renders brand template with betternow wordmark colours and teal rule', () => {

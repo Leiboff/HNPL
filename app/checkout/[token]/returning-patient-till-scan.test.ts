@@ -13,7 +13,8 @@ import { stripComments } from '@/lib/testing/stripComments';
 //               redirected to /patient?reason=invitation_not_yours — a message
 //               that is not merely unhelpful but false.
 //   signed out  the anonymous form ran, they typed their email, the
-//               discriminator returned reject-organic-collision, and the
+//               discriminator refused (then reject-organic-collision, now
+//               require-login — audit A-03 widened it, see below), and the
 //               /login?next= pointed at a confirm page that cannot render an
 //               unbound plan. They landed on /patient/orders with the bill
 //               nowhere in sight, at the counter, mid-transaction.
@@ -99,29 +100,43 @@ describe('signed in, scanning a counter QR', () => {
 });
 
 describe('signed out, scanning a counter QR', () => {
-  it('still REJECTS the email collision — logging in is the proof, and it is unchanged', () => {
+  it('still REJECTS the email collision — logging in is the proof, and it only got stricter', () => {
     // The rejection is an account-takeover guard: on a session token the email
     // is client-typed with no proof of inbox control, so reusing a confirmed
-    // account would sign a stranger into it. Not relaxed.
-    expect(ACTIONS).toMatch(/decision\.action === 'reject-organic-collision'/);
+    // account would sign a stranger into it. Not relaxed — WIDENED. Audit
+    // A-03 found the guard fired only when the plan was bound to somebody
+    // ELSE, and a QR bill raised against a returning patient's SA ID is bound
+    // to that patient, which was the one shape it let through. The action is
+    // now 'require-login' and covers every pre-existing account on this door.
+    expect(ACTIONS).toMatch(/decision\.action === 'require-login'/);
     expect(ACTIONS).toMatch(/requireLogin:\s*true/);
   });
 
   it('sends a SESSION token back to the checkout page, which can now bind', () => {
-    const block = ACTIONS.slice(ACTIONS.indexOf("decision.action === 'reject-organic-collision'"));
-    expect(block).toMatch(/resolved\.kind === 'session'\s*\?\s*`\/checkout\/\$\{encodeURIComponent\(token\)\}`/);
+    // The fork moved into signInRequired() when the three separately-worded
+    // refusals were collapsed into one (A-03's enumeration oracle) — the
+    // routing rule itself is unchanged.
+    const block = ACTIONS.slice(ACTIONS.indexOf('function signInRequired('));
+    expect(block).toMatch(/tokenKind === 'session'\s*\?\s*`\/checkout\/\$\{encodeURIComponent\(token\)\}`/);
   });
 
   it('still sends an INVITATION token to the confirm page — that path was never broken', () => {
-    const block = ACTIONS.slice(ACTIONS.indexOf("decision.action === 'reject-organic-collision'"));
-    expect(block).toMatch(/`\/patient\/orders\/\$\{plan\.id\}\/confirm`/);
+    const block = ACTIONS.slice(ACTIONS.indexOf('function signInRequired('));
+    expect(block).toMatch(/`\/patient\/orders\/\$\{planId\}\/confirm`/);
   });
 
-  it('the discriminator itself is untouched', () => {
+  it('the discriminator keeps its invitation-door rules, under a session-door gate', () => {
+    // Both original branches survive verbatim and still decide the emailed
+    // door. What A-03 added is a gate BEFORE them: on a session token an
+    // existing account never reaches the plan-ownership question at all.
     const D = read('app/checkout/[token]/_lib/discriminate.ts');
     expect(D).toMatch(/if \(planPatientId !== null && planPatientId === existing\.id\)/);
     expect(D).toMatch(/if \(existing\.email_confirmed_at\)/);
-    expect(D).toMatch(/return \{ action: 'reject-organic-collision', existingUserId: existing\.id \}/);
+    expect(D).toMatch(/return \{ action: 'require-login', existingUserId: existing\.id \}/);
+    // The gate is above the ownership check, not below it — the ordering IS
+    // the fix, since the takeover input passes the ownership check.
+    expect(D.indexOf("if (tokenKind === 'session')"))
+      .toBeLessThan(D.indexOf('if (planPatientId !== null'));
   });
 });
 

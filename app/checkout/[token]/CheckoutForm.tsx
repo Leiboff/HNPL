@@ -126,6 +126,12 @@ type Props = {
     | { ok: true;  checkoutId: string; amountCents: number; shopperResultUrl: string }
     | { ok: false; error: string }
     | { ok: false; error: string; requireLogin: true; loginUrl: string }
+    /**
+     * The verification gate (product decision 2026-09-02, audit A-05): a
+     * patient may not take on a plan before their ID check and credit check
+     * have passed. `error` is the stable code 'verification_required'.
+     */
+    | { ok: false; error: string; requireOnboarding: true; onboardingUrl: string }
   >;
   requestPhoneOtp:    (token: string, phone: string) => Promise<PhoneOtpStartResult>;
   verifyPhoneOtp:     (token: string, phone: string, code: string) => Promise<PhoneOtpVerifyResult>;
@@ -173,6 +179,23 @@ function formatRand(n: number): string {
 // the patient sees the schedule before the server runs the canonical
 // calculation. Kept tiny + self-contained so a missed import doesn't
 // pull the whole finance module into the client bundle.
+//
+// ─── WHY THIS ONE DOES NOT MODEL THE ALLOWANCE SPLIT ─────────────────────
+//
+// Since the allowance model (product decision 2026-09-02) a bill above the
+// patient's remaining headroom is split with the excess collected up front on
+// instalment 1, so the equal split below can understate the first charge.
+// lib/finance.ts::splitInstalmentsWithExcess is the real shape, and the
+// portal's own confirm page renders it (app/patient/orders/[planId]/confirm).
+//
+// It is NOT rendered here, because it cannot be: this form runs before the
+// caller has been identified, so there is no account whose headroom could be
+// read, and a preview keyed on an email typed into this form would be an
+// enumeration surface for other people's credit positions. The forecast below
+// is therefore labelled as one, and the authoritative amounts are shown on
+// the surface that mounts the widget — ResumeCapture reads the COMMITTED
+// instalment rows, so the number next to the Pay button is always the number
+// charged.
 
 function previewInstalments(total: number, planType: 2 | 3): number[] {
   const totalCents = Math.round(total * 100);
@@ -356,9 +379,12 @@ export default function CheckoutForm({
   const router = useRouter();
 
   const [error,     setError]     = useState<string | null>(null);
-  // When the server says "this email collides with an organic account",
-  // we render a Log in CTA next to the error instead of bare red text.
-  const [loginUrl,  setLoginUrl]  = useState<string | null>(null);
+  // When the server refuses with a next step rather than a dead end, we
+  // render a CTA next to the message instead of bare red text. Two cases:
+  // "sign in to continue with this bill" (an account already exists at this
+  // address, or on this ID — see signInRequired), and "finish verifying"
+  // (the ID + credit gate below).
+  const [nextStep, setNextStep] = useState<{ url: string; label: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   // Post-"Continue to payment": initiateCheckout has created the account
@@ -438,7 +464,7 @@ export default function CheckoutForm({
 
   function submitPay() {
     setError(null);
-    setLoginUrl(null);
+    setNextStep(null);
 
     // Submit-time backstop. validateAll() also marks all fields
     // touched and finds the first invalid for focusing.
@@ -514,9 +540,31 @@ export default function CheckoutForm({
             setError('Please pick when you get paid — this saves to your profile for future bills too.');
             return;
           }
+          if ('requireOnboarding' in result && result.requireOnboarding) {
+            // ── The verification gate ──────────────────────────────────
+            //
+            // The patient is identified and the bill is bound to them, but
+            // their ID check / credit check has not passed, so nothing has
+            // been charged and no schedule exists. They finish verifying and
+            // come back to this same token, which is still live — activation
+            // is what closes it, not this detour.
+            //
+            // NOT an automatic redirect: this happens at a counter with a
+            // receptionist watching, and a page that navigates itself
+            // somewhere unexplained is how a patient walks away. Say what
+            // is needed, then let them tap.
+            setHandoff(false);
+            setError(
+              'Before you can split this bill we need to verify your ID and run a '
+              + 'quick affordability check. It takes a couple of minutes, and this '
+              + 'bill will be waiting when you come back.',
+            );
+            setNextStep({ url: result.onboardingUrl, label: 'Verify my ID' });
+            return;
+          }
           setError(result.error);
           if ('requireLogin' in result && result.requireLogin) {
-            setLoginUrl(result.loginUrl);
+            setNextStep({ url: result.loginUrl, label: 'Log in' });
           }
           return;
         }
@@ -575,6 +623,16 @@ export default function CheckoutForm({
             setPlanType={setPlanType}
             perInstalmentAmount={(n) => previewInstalments(totalAmount, n)[0]}
           />
+
+          {/* Said once, up front, because the alternative is a patient who
+              agreed to one number meeting another at the card screen. Only
+              bites when the bill exceeds their remaining limit; harmless and
+              true otherwise. */}
+          <p className="text-xs text-[#7A8AA0]">
+            If your bill is more than the limit you have left, the difference is
+            collected with your first payment — we&apos;ll show you the exact
+            amounts before you enter your card.
+          </p>
 
           {/* Inline salary-day capture — rendered ONLY when the server
               couldn't source one from the patient's profile (new
@@ -867,9 +925,9 @@ export default function CheckoutForm({
         >
           {!error && (
             <p className="text-center text-sm text-[#3A4B66]" data-testid="checkout-handoff-loading">
-              No charge yet — you&apos;ll confirm your{' '}
-              <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span> first
-              instalment and enter your card on the next screen.
+              No charge yet — you&apos;ll confirm your first instalment (around{' '}
+              <span className="font-medium text-[#0F1F3A]">{formatRand(instalments[0])}</span>) and
+              enter your card on the next screen.
             </p>
           )}
 
@@ -879,12 +937,12 @@ export default function CheckoutForm({
               className="rounded-xl bg-[#FCEAEA] border border-[#E07A7A] px-4 py-3 space-y-3"
             >
               <p className="text-sm text-[#8A1F1F]">{error}</p>
-              {loginUrl && (
+              {nextStep && (
                 <a
-                  href={loginUrl}
+                  href={nextStep.url}
                   className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_140%)] px-4 py-2 text-sm font-semibold text-white hover:shadow-md transition-shadow"
                 >
-                  Log in
+                  {nextStep.label}
                 </a>
               )}
             </div>

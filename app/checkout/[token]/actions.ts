@@ -1,6 +1,5 @@
 'use server';
 
-import crypto from 'crypto';
 import { cookies } from 'next/headers';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
@@ -8,8 +7,8 @@ import { getPaymentProvider } from '@/lib/payments/provider';
 import { checkoutRef } from '@/lib/payments/peach/refs';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
-import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { TERMS_VERSION } from '@/lib/legal/terms';
+import { consentColumns } from '@/lib/legal/documentHash';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import {
   isAllowedSalaryDay,
@@ -25,7 +24,9 @@ import {
 import { decryptId } from '@/lib/idEncryption';
 import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { isPatientFrozen } from '@/lib/patient/freeze';
-import { checkCreditLimit } from '@/lib/underwriting/creditLimit';
+import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
+import { currentFlags } from '@/lib/featureFlags';
+import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
@@ -208,6 +209,105 @@ async function resolveCheckoutToken(
   return null;
 }
 
+/**
+ * Is this patient allowed to pay yet?
+ *
+ * The same question `requireOnboarded` asks in app/patient/actions.ts, and
+ * deliberately the same answer: one call to `computeOnboarding` over the same
+ * profile columns and the same feature flags. Duplicating the STEP LIST here
+ * would let the two doors drift again, which is what audit A-05 was.
+ *
+ * `isNewUser` short-circuits: an account created moments ago has no identity
+ * verification and no credit check by definition, so there is nothing to read
+ * and the answer is the first step of the flow.
+ */
+async function checkoutOnboardingStatus(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  svc: any,
+  userId: string,
+  isNewUser: boolean,
+): Promise<{ done: boolean; path: string }> {
+  if (isNewUser) return { done: false, path: '/onboarding' };
+
+  const { data: authUser } = await svc.auth.admin.getUserById(userId);
+  const { data: profile } = await svc
+    .from('profiles')
+    .select(
+      'phone_verified_at, sa_id_number, salary_day, salary_amount, '
+      + 'credit_check_status, liveness_verified_at, onboarding_completed',
+    )
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (!profile) return { done: false, path: '/onboarding' };
+
+  const status = computeOnboarding(
+    {
+      email_confirmed_at: authUser?.user?.email_confirmed_at ?? null,
+      identity_providers: (authUser?.user?.identities ?? []).map(
+        (i: { provider: string }) => i.provider,
+      ),
+    },
+    profile as unknown as ProfileForOnboarding,
+    currentFlags(),
+  );
+
+  if (status.done) return { done: true, path: '/patient' };
+  return { done: false, path: `/onboarding/${status.step}` };
+}
+
+/**
+ * The ONE refusal for "this bill belongs to an account — sign in".
+ *
+ * Extracted so the three call sites that used to word it three different
+ * ways cannot drift apart again. On the POS/QR door the wording says nothing
+ * about whether an account exists at the address supplied, whether it is the
+ * account on the bill, or whether the ID number matched — all three were
+ * distinguishable before, and together they let a QR-token holder walk a
+ * candidate email list (audit A-03).
+ *
+ * ─── WHY THE SA-ID COPY SURVIVES ON THE INVITATION DOOR ─────────────────
+ *
+ * The specific "an account already exists for this ID number" message is a
+ * deliberate disclosure, argued for at its call site: it is what lets a real
+ * returning patient understand why they cannot pay, and the alternative
+ * strands them. What made it a problem is the OTHER door. On a POS/QR token
+ * the email is the caller's choice, so with the bill's SA ID fixed, "ID
+ * duplicate" versus "sign in" told a caller whether the address they probed
+ * held an account — a two-outcome enumeration oracle, from a surface a
+ * merchant can POST to in a loop.
+ *
+ * On an invitation the email is not the caller's choice; it comes off the
+ * invitation row. There is nothing to enumerate, so the disclosure costs
+ * nothing and the UX argument stands unopposed. Hence: keyed on the door.
+ *
+ * The session door does not strand anybody either. Its `next` is the
+ * checkout page, which for a signed-in patient claims the plan by SA ID and
+ * forwards to /confirm — so the generic message plus a Log in button is a
+ * complete path, not a dead end.
+ */
+function signInRequired(
+  token:     string,
+  planId:    string,
+  tokenKind: 'invitation' | 'session',
+  opts:      { saIdDuplicate?: boolean } = {},
+): InitiateCheckoutResult {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
+  const next   = tokenKind === 'session'
+    ? `/checkout/${encodeURIComponent(token)}`
+    : `/patient/orders/${planId}/confirm`;
+  const error  = opts.saIdDuplicate && tokenKind === 'invitation'
+    ? 'An account already exists for this ID number. Please log in to that '
+      + 'account to continue — or use "Forgot password" if you can\'t get in.'
+    : 'Please sign in to continue with this bill.';
+  return {
+    ok:           false,
+    error,
+    requireLogin: true,
+    loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
+  };
+}
+
 export type InitiateCheckoutResult =
   | {
       ok:                  true;
@@ -231,7 +331,12 @@ export type InitiateCheckoutResult =
   | { ok: false; error: string; requireLogin: true; loginUrl: string }
   // frozen fires when the resolved patient has an unresolved defaulted
   // plan — they're blocked from starting a new one until it's settled.
-  | { ok: false; error: string; frozen: true };
+  | { ok: false; error: string; frozen: true }
+  // requireOnboarding fires when the patient's identity verification or
+  // credit check has not passed (product decision 2026-09-02, audit A-05).
+  // `error` is the stable code 'verification_required'; the form sends them
+  // to `onboardingUrl`, which returns to this same checkout token when done.
+  | { ok: false; error: string; requireOnboarding: true; onboardingUrl: string };
 
 export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
   const { token, firstName, lastName, phone, planType, termsAccepted } = input;
@@ -519,39 +624,41 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   const decision = discriminateExistingUser(
     existing,
     (plan.patient_id as string | null) ?? null,
+    resolved.kind,
   );
 
-  if (decision.action === 'reject-organic-collision') {
-    // #6 race / email collision with an organic BetterNow account.
-    // The plan was bound to a different (or null) patient on the
-    // new-patient fork; this confirmed user owns a separate organic
-    // account. Send them to /login — authenticating is the proof of
-    // ownership this flow cannot get from a typed email alone, and that
-    // rejection is deliberately NOT relaxed here.
+  if (decision.action === 'require-login') {
+    // ── The A-03 refusal ──────────────────────────────────────────────
+    //
+    // Covers two cases that used to be three messages:
+    //
+    //   • an email collision with an organic BetterNow account (the #6
+    //     race), which this always refused; and
+    //   • ANY pre-existing account reached through a POS/QR token, which it
+    //     used to hand a session to. On that path the token is on the
+    //     practice's screen and the email is in the request body, so
+    //     "reuse the account at this address" meant a merchant could name a
+    //     customer and get a session as them — with the customer's password
+    //     reset out from under them on the way. See _lib/discriminate.ts.
+    //
+    // ONE message for both, and for the SA-ID collision below. The three
+    // distinct strings this used to emit were a working oracle: an attacker
+    // holding a QR token could tell "wrong-but-real address" from "unknown
+    // address" from "the address on this bill", and walk a candidate list
+    // until one came back different.
     //
     // WHERE they land after logging in forks on the token kind, because the
     // confirm page can only render a plan that already has an owner:
     //
     //   invitation — createBill stamped plans.patient_id at creation when an
     //                account existed, so /confirm works and is the shorter hop.
-    //   session    — a till bill has NO owner yet, so /confirm would find
+    //   session    — a till bill may have NO owner yet, so /confirm would find
     //                nothing and dump them on /patient/orders with the bill
     //                nowhere in sight, at the counter, mid-transaction. Send
-    //                them back to the checkout page instead: now that they
-    //                have a session it claims the plan for them (SA ID
-    //                matched) and forwards to /confirm itself. One hop, and
-    //                the anonymous signup form is still never reached by
-    //                somebody who already has an account.
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
-    const next   = resolved.kind === 'session'
-      ? `/checkout/${encodeURIComponent(token)}`
-      : `/patient/orders/${plan.id}/confirm`;
-    return {
-      ok:           false,
-      error:        'An account with this email already exists. Please log in to continue with this bill.',
-      requireLogin: true,
-      loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
-    };
+    //                them back to the checkout page instead: with a session it
+    //                claims the plan for them (SA ID matched) and forwards to
+    //                /confirm itself.
+    return signInRequired(token, plan.id as string, resolved.kind);
   }
 
   // ── 3-bis. One SA ID = one patient account (migration 0097) ──────────
@@ -566,6 +673,13 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   //   This DELIBERATELY diverges from findExistingAuthUser's posture, which
   //   never confirms whether an email is registered. Do not "fix" it for
   //   consistency — the divergence is the decision, not an oversight.
+  //
+  //   AMENDED 2026-09-02 (audit A-03): the divergence now holds only on the
+  //   INVITATION door. On a POS/QR token the email is the caller's choice, so
+  //   with the bill's SA ID fixed this message versus the generic one told a
+  //   caller whether a probed address held an account. Both halves of the
+  //   reasoning below are about a person at a counter with an ID in hand —
+  //   which is exactly the emailed door's caller and not the QR holder's.
   //
   //   Two reasons it is right here and not there. First, the disclosure is
   //   marginal: an SA ID reaches this action because a person physically
@@ -594,16 +708,11 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     }
 
     if (idOwner && idOwner.id !== prospectiveUserId) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
-      const next   = resolved.kind === 'session'
-        ? `/checkout/${encodeURIComponent(token)}`
-        : `/patient/orders/${plan.id}/confirm`;
-      return {
-        ok:           false,
-        error:        'An account already exists for this ID number. Please log in to that account to continue — or use "Forgot password" if you can\'t get in.',
-        requireLogin: true,
-        loginUrl:     `${appUrl}/login?next=${encodeURIComponent(next)}`,
-      };
+      // Names the situation on the emailed door and stays generic on the
+      // POS/QR one — see signInRequired for why the door is what decides.
+      // Three distinguishable refusals here were an oracle (audit A-03), and
+      // this is the one of the three whose disclosure is worth its cost.
+      return signInRequired(token, plan.id as string, resolved.kind, { saIdDuplicate: true });
     }
   }
 
@@ -645,29 +754,24 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     };
   }
 
-  // ── 3a-bis. Credit limit (audit F-10) ────────────────────────────────
+  // ── 3a-bis. Credit limit ─────────────────────────────────────────────
   //
-  // The fourth acceptance path, and the one where the limit matters most:
-  // this is the surface a patient reaches at a counter with a bill of the
-  // practice's choosing, so without a per-customer ceiling the only bound
-  // on what they can take on is the platform-wide R50,000 band.
+  // Nothing here any more, deliberately. This used to be a `checkCreditLimit`
+  // read that decided, and then STEP 6 below wrote the schedule — the
+  // check→then→write window that audit A-04 exploited on all three
+  // acceptance paths. Worse, it was skipped entirely for `isNewUser`, on the
+  // reasoning that a user created seconds ago has no limit yet; audit A-05
+  // showed that made "be a new user" the way to take on a bill with no
+  // ceiling at all, and the account-creation branch above is reachable by
+  // choosing an unused email.
   //
-  // Skipped for a genuinely new user: they were created seconds ago by this
-  // same action and have no limit yet, because the affordability step runs
-  // in /onboarding AFTER the account exists. Refusing here would make the
-  // first bill of every new customer impossible. Their exposure is bounded
-  // by isAllowedBillAmount and by having exactly one plan; the limit binds
-  // from their second bill onward, which is every path that can reach a
-  // returning account.
-  //
-  // excludePlanId, as in payWithSavedCard: on the abandoner re-entry fork
-  // this plan's own rows are already in the table.
-  if (!isNewUser) {
-    const limitCheck = await checkCreditLimit(svc, userId, Number(plan.total_amount), {
-      excludePlanId: plan.id as string,
-    });
-    if (!limitCheck.ok) return { ok: false, error: limitCheck.message };
-  }
+  // Both are now the same single fact: `claim_credit_for_plan` (migration
+  // 0130) decides and writes the schedule in one transaction under a row
+  // lock, for EVERY account, new or returning. A new user with no approved
+  // limit is refused `no_limit` there — which is correct and is why the
+  // verification gate above exists: a patient reaches this action already
+  // ID-verified and credit-checked, so they have a limit by the time they
+  // get here.
 
   // ── 3b. Resolve the salary_day — profile is the source of truth ─────
   // Post-0065 the profile holds the canonical salary_day. Precedence:
@@ -736,13 +840,40 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     // Checkout-origin patients never pass through signUpPatient, so this
     // is where their account-level acceptance of the T&Cs + Privacy
     // Policy is recorded — the checkout "I agree" tick, stamped
-    // server-side with both versions. The tick itself is REFUSED at the
-    // top of this action, so reaching here means an agreement the server
-    // actually saw, not one inferred from the form having rendered.
-    terms_accepted_at:  new Date().toISOString(),
-    terms_version:      TERMS_VERSION,
-    privacy_version:    PRIVACY_VERSION,
+    // server-side with both versions AND both document digests. The tick
+    // itself is REFUSED at the top of this action, so reaching here means an
+    // agreement the server actually saw, not one inferred from the form
+    // having rendered.
+    //
+    // No server-issued token on this path, and it does not need one (audit
+    // A-14): the tick arrives in the SAME request as the acceptance, from a
+    // form served by this application at a token this application issued —
+    // so there is no gap between "the documents were shown" and "the
+    // acceptance was recorded" for a parameter to slip into. The OAuth
+    // callback needs the token precisely because its acceptance arrives on a
+    // separate request, after a round trip through Google.
+    ...consentColumns(),
   };
+
+  // ── Never overwrite an existing account's identity from a QR token ──
+  //
+  // Unreachable by construction: discriminateExistingUser returns
+  // require-login for every pre-existing account on the session path, so
+  // reaching here with !isNewUser means the token was an invitation — i.e.
+  // a link emailed to this very address, which is the patient editing their
+  // own details.
+  //
+  // Asserted anyway, because the alternative is that this write's safety
+  // depends on a rule in another file staying correct. The overwrite of
+  // first_name / last_name / phone / phone_verified_at is exactly what audit
+  // A-03 used to rewrite a victim's profile, and the property wants to be
+  // local to the statement that does it.
+  if (!isNewUser && resolved.kind === 'session') {
+    console.error('[checkout] ALERT refusing to overwrite an existing profile from a counter session', {
+      planId: plan.id,
+    });
+    return signInRequired(token, plan.id as string, resolved.kind);
+  }
 
   // Use upsert so the path works whether the trigger has populated a row
   // or not — for AUTH_ONLY orphans the profile may not exist.
@@ -780,74 +911,70 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       .is('patient_id', null);
   }
 
-  // ── 5. Compute schedule + update plan with chosen terms ───────────────
-  const totalAmount = Number(plan.total_amount);
-  const instalments = splitInstalments(totalAmount, planType);
-  const dates       = calculatePaymentDates(new Date(), salaryDay, planType);
-
-  const { error: planTermsErr } = await svc
-    .from('plans')
-    .update({
-      status:            'pending_first_payment',
-      plan_type:         planType,
-      instalment_amount: instalments[0],
-      // Record acceptance of the payment-plan terms + privacy policy on
-      // the plan, at activation — server-side, not just the client tick.
-      terms_accepted_at: new Date().toISOString(),
-      terms_version:     TERMS_VERSION,
-      privacy_version:   PRIVACY_VERSION,
-    })
-    .eq('id', plan.id);
-  if (planTermsErr) return { ok: false, error: `Failed to set plan terms: ${planTermsErr.message}` };
-
-  // ── 6. Create / refresh payments rows ─────────────────────────────────
-  // Idempotent: if rows already exist (returning abandoner retrying),
-  // wipe and re-create with a fresh schedule. Total instalment count
-  // could have changed (2↔3) on the retry.
+  // ── 6. THE VERIFICATION GATE ─────────────────────────────────────────
   //
-  // Scoped to the statuses a never-captured plan can hold. The 2a gate
-  // above has already refused anything collected or defaulted, so this
-  // filter should never change the outcome — which is exactly why it is
-  // here: "a settled instalment is not deletable" should be a property of
-  // the statement, not a fact that depends on a guard fifty lines away
-  // staying correct (audit F-06).
+  // Product decision, 2026-09-02: a patient may not PAY before their
+  // identity and credit check have passed. Audit A-05 was that this door
+  // enforced neither — the in-app door (acceptPlan / payWithSavedCard) runs
+  // requireOnboarded, which covers email, phone, salary, IDENTITY, LIVENESS
+  // and the credit check, and this one ran a phone check and nothing else.
+  // So a stolen SA ID number plus a phone the caller controls was enough to
+  // take a plan, and HNPL paid the practice 94% of it on first-payment
+  // success.
   //
-  // 'processing' is included because that is what instalment 1 is left in
-  // by an abandoned attempt — see the 2a comment for why deleting it is
-  // safe when no registration id was ever stamped.
-  await svc
-    .from('payments')
-    .delete()
-    .eq('plan_id', plan.id)
-    .in('status', ['scheduled', 'processing', 'failed']);
-
-  // If anything survived that delete, the plan is not in the state 2a
-  // established and we must not lay a second schedule on top of it.
-  const { data: survivors } = await svc
-    .from('payments')
-    .select('id')
-    .eq('plan_id', plan.id)
-    .limit(1);
-  if (survivors && survivors.length > 0) {
-    console.error('[checkout] refusing to rewrite a schedule with surviving rows', { planId: plan.id });
-    return { ok: false, error: 'This bill is already being paid. Please check your orders.' };
+  // The fix is not another copy of those gates. It is that this action stops
+  // being a second front door: it identifies the patient and binds the plan,
+  // and then hands off to the flow that already enforces everything. Nothing
+  // below this point runs until onboarding is complete — no schedule, no
+  // Peach checkout, no charge.
+  //
+  // A brand-new account is by definition not onboarded, so a first-time
+  // patient at the counter is routed through Didit and the credit check and
+  // comes back to the same token. The token is still live (activation is
+  // what closes it), so the return trip charges normally and still vaults
+  // the card in the same step — the one-tap card-and-charge is preserved,
+  // it just happens after verification instead of before.
+  const onboarding = await checkoutOnboardingStatus(svc, userId, isNewUser);
+  if (!onboarding.done) {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
+    return {
+      ok:                false,
+      error:             'verification_required',
+      requireOnboarding: true,
+      onboardingUrl:     `${appUrl}${onboarding.path}?next=${encodeURIComponent(`/checkout/${token}`)}`,
+    };
   }
 
-  const instalment1Id = crypto.randomUUID();
-  const paymentRows   = instalments.map((amount, i) => ({
-    id:                i === 0 ? instalment1Id : crypto.randomUUID(),
-    plan_id:           plan.id,
-    patient_id:        userId,
-    instalment_number: i + 1,
-    amount,
-    due_date:          dates[i].toISOString().split('T')[0],
-    status:            i === 0 ? 'processing' : 'scheduled',
-  }));
+  // ── 7. Claim the credit and write the schedule, in ONE transaction ────
+  //
+  // Was: splitInstalments, then a plan UPDATE, then a DELETE, then a
+  // survivor SELECT, then an INSERT — with the credit decision a hundred
+  // lines earlier and skipped entirely for a new account (`if (!isNewUser)`,
+  // audit A-05) so a first bill was bounded only by MAX_BILL_AMOUNT.
+  //
+  // claim_credit_for_plan (migration 0130) does all of it under a lock on
+  // the patient's profile row: re-derives exposure, applies the allowance
+  // model, deletes only the statuses a never-captured plan can hold, refuses
+  // if anything survives that delete (the F-06 guard, now a property of the
+  // statement), and inserts the schedule. There is no longer a window in
+  // which two callers both see the same headroom (A-04).
+  const totalAmount = Number(plan.total_amount);
+  const claim = await claimCreditForPlan(svc, {
+    planId:         plan.id as string,
+    patientId:      userId,
+    planType,
+    totalAmount,
+    salaryDay,
+    expectedStatus: plan.status as 'pending_acceptance' | 'pending_first_payment',
+    termsVersion:   TERMS_VERSION,
+    privacyVersion: PRIVACY_VERSION,
+  });
+  if (!claim.ok) return { ok: false, error: claim.message };
 
-  const { error: paymentsErr } = await svc.from('payments').insert(paymentRows);
-  if (paymentsErr) return { ok: false, error: `Failed to create schedule: ${paymentsErr.message}` };
+  const instalments   = claim.instalments;
+  const instalment1Id = claim.instalmentOneId;
 
-  // ── 7. Stamp the Peach reference on the instalment-1 row ─────────────
+  // ── 7b. Stamp the Peach reference on the instalment-1 row ────────────
   // Compact 16-char ref per Peach V2 mandate. Deterministic per
   // instalment-1 payment id so a mid-flight retry Peach-dedups.
   // Webhook echoes it back as merchantTransactionId; reconcile via
@@ -855,20 +982,37 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   const reference = checkoutRef(instalment1Id);
   await svc.from('payments').update({ peach_payment_id: reference }).eq('id', instalment1Id);
 
-  // ── 8. Sign the user in via fresh temp password ───────────────────────
-  // We need an authenticated session before redirecting to Peach so
-  // the callback returns into the right cookie context. updateUserById
-  // sets a known password; signInWithPassword establishes the session.
-  const sessionTempPwd = generateTempPassword();
-  const { error: pwdErr } = await svc.auth.admin.updateUserById(userId, {
-    password: sessionTempPwd,
-  });
-  if (pwdErr) return { ok: false, error: `Failed to establish session: ${pwdErr.message}` };
-
+  // ── 8. Establish the session — WITHOUT touching the password ──────────
+  //
+  // THE DEFECT (audit A-03): this used to be
+  //
+  //     await svc.auth.admin.updateUserById(userId, { password: temp });
+  //     await supabaseAuth.auth.signInWithPassword({ email, password: temp });
+  //
+  // which is fine for an account this call just created and an account
+  // takeover for any account it did not: the real owner's password was
+  // destroyed (no notification, no way back except a reset) and whoever held
+  // the token got a live session as them.
+  //
+  // A magic link mints the session and mutates nothing — the same shape the
+  // F-07 fix already adopted on /checkout/[token]/complete. The token holder
+  // still gets a session, but only where that is equivalent to a magic link
+  // sent to the address in question: discriminateExistingUser now returns
+  // require-login for every pre-existing account on the POS/QR path, so the
+  // only accounts reachable here are ones this call created and ones whose
+  // own emailed invitation carried the caller.
   const supabaseAuth = await createClient();
-  const { error: signInErr } = await supabaseAuth.auth.signInWithPassword({
-    email:    normalizedEmail,
-    password: sessionTempPwd,
+  const { data: link, error: linkErr } = await svc.auth.admin.generateLink({
+    type:  'magiclink',
+    email: normalizedEmail,
+  });
+  const hashedToken = link?.properties?.hashed_token;
+  if (linkErr || !hashedToken) {
+    return { ok: false, error: `Failed to establish session: ${linkErr?.message ?? 'no token returned'}` };
+  }
+  const { error: signInErr } = await supabaseAuth.auth.verifyOtp({
+    token_hash: hashedToken,
+    type:       'magiclink',
   });
   if (signInErr) return { ok: false, error: `Failed to sign in: ${signInErr.message}` };
 
@@ -906,7 +1050,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   //   recurringType        = NOT sent for type=INSTALLMENT (only for
   //                          type=RECURRING). Our BNPL is closed-ended
   //                          fixed-count → type=INSTALLMENT covers it.
-  const lastInstalmentDate = dates[dates.length - 1];
+  const lastInstalmentDate = claim.dueDates[claim.dueDates.length - 1];
   const expiryDate = new Date(lastInstalmentDate.getTime() + 30 * 24 * 60 * 60 * 1000)
     .toISOString().slice(0, 10);
 

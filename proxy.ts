@@ -7,6 +7,31 @@ import {
   sessionExceedsAbsoluteCap,
 } from '@/lib/auth/sessionCap';
 import { clearAuthCookies } from '@/lib/auth/authCookies';
+import {
+  issueConsentToken,
+  TERMS_CONSENT_COOKIE,
+} from '@/lib/legal/consentToken';
+
+// ─── Where the legal acceptance token is minted (audit A-14) ───────────────
+//
+// The surfaces that RENDER the acceptance control and link to both documents.
+// Requesting one of these pages is the event the token attests to, which is
+// why it is minted here rather than by a Server Action the client calls: a
+// cookie set on the way to rendering /signup means "this browser was served
+// the page that displays the terms", and that is not something a caller can
+// assert for itself.
+//
+// /login is included because ContinueWithGoogleButton lives there too and
+// carries the same consent note. An existing customer who has already
+// accepted does not need the token — the callback only consults it when an
+// acceptance is MISSING — but a first-time Google user who arrives via
+// /login rather than /signup would otherwise be bounced for something the
+// page did in fact show them.
+const CONSENT_TOKEN_PATHS = new Set([
+  '/signup',
+  '/signup/patient',
+  '/login',
+]);
 
 export async function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
@@ -139,6 +164,32 @@ export async function proxy(request: NextRequest) {
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Mint the legal-acceptance token (audit A-14) ──────────────────────
+  //
+  // Was: /auth/callback trusted `?terms_accepted=1` off the query string, so
+  // the acceptance record attested to a parameter the visitor controlled
+  // rather than to anything the platform had shown them. Under the NCA and
+  // POPIA §11 that is the difference between a consent record and a note.
+  //
+  // Re-minted on every request to these paths, deliberately: the token is
+  // cheap, its 30-minute life starts when the documents were last put in
+  // front of the visitor, and a reload should restart that clock rather than
+  // inherit a nearly-expired one.
+  //
+  // httpOnly so no script can read or forge it; SameSite=Lax so it survives
+  // the top-level GET navigation back from Google while staying off
+  // cross-site POSTs.
+  if (CONSENT_TOKEN_PATHS.has(request.nextUrl.pathname)) {
+    const { token, maxAgeSeconds } = issueConsentToken();
+    response.cookies.set(TERMS_CONSENT_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production',
+      path:     '/',
+      maxAge:   maxAgeSeconds,
+    });
+  }
 
   return response;
 }

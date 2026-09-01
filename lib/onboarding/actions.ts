@@ -1,7 +1,6 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { normalizePhoneZA, validateSaId, saIdAge } from '@/lib/validation';
@@ -13,6 +12,7 @@ import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPol
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -605,6 +605,29 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
 export async function runCreditCheck(): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
+
+  // ── Rate limit (audit A-11's second half) ────────────────────────
+  //
+  // Today this calls stubAffordabilityPolicy and costs nothing, which is
+  // exactly why the limit goes in NOW: the stub is a placeholder for a
+  // credit-bureau call that bills per enquiry, and the surface that spends
+  // real money at a vendor should not acquire its first limiter on the same
+  // day it acquires the cost.
+  //
+  // A patient needs one check. The retries a real person makes are for a
+  // failed lookup, not for a second opinion — and a second opinion is what
+  // an unlimited endpoint would let them shop for, since the policy that
+  // replaces the stub will not be deterministic.
+  //
+  // Placed after the profile load so the account key is a real user id, and
+  // before the flag check so a flag flip cannot uncover an unlimited path.
+  if (!await consumeAll('credit_check', [
+    [await clientIp(),  RATE_LIMITS.credit_check.ip],
+    [loaded.userId,     RATE_LIMITS.credit_check.account!],
+  ])) {
+    return { error: 'Too many affordability checks today. Please try again tomorrow, or contact support.' };
+  }
+
   if (!currentFlags().creditCheck) {
     // Flag off — should be unreachable but never fail on it.
     return { error: null, nextPath: '/onboarding' };

@@ -1,8 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { TERMS_VERSION } from '@/lib/legal/terms';
-import { PRIVACY_VERSION } from '@/lib/legal/privacy';
+import { consentColumns } from '@/lib/legal/documentHash';
+import {
+  verifyConsentToken,
+  TERMS_CONSENT_COOKIE,
+} from '@/lib/legal/consentToken';
 import { clearAuthCookies } from '@/lib/auth/authCookies';
 import { hasAcceptedTerms } from '@/lib/legal/acceptance';
 
@@ -159,14 +162,6 @@ function extractOAuthName(metadata: Record<string, unknown> | null | undefined):
  */
 type OAuthSyncOutcome = 'ok' | 'needs-terms' | 'write-failed';
 
-function consentColumns(): Record<string, unknown> {
-  return {
-    terms_accepted_at: new Date().toISOString(),
-    terms_version:     TERMS_VERSION,
-    privacy_version:   PRIVACY_VERSION,
-  };
-}
-
 async function ensureOAuthProfileSynced(
   userId: string,
   email: string,
@@ -278,9 +273,41 @@ export async function GET(request: NextRequest) {
   const url    = new URL(request.url);
   const code   = url.searchParams.get('code');
   const next   = safeNext(url.searchParams.get('next'));
-  // Set by ContinueWithGoogleButton only when its caller collected the
-  // tick. Strict equality — any other value is treated as absent.
-  const consentGiven = url.searchParams.get('terms_accepted') === '1';
+  // ── The acceptance, as something the SERVER can vouch for (audit A-14) ──
+  //
+  // This was `url.searchParams.get('terms_accepted') === '1'` — the legal
+  // record written on the strength of a query parameter the visitor's own
+  // browser supplied. The refusal direction was well defended and still is;
+  // the ASSERTION direction was not, so appending `&terms_accepted=1`
+  // recorded an agreement to a document that had never been rendered.
+  //
+  // Nobody attacks that: the person doing it is the person whose consent it
+  // is. The exposure runs the other way — the record was not EVIDENCE, and
+  // for an NCA credit agreement and POPIA §11 consent that is the whole
+  // value of the column. A customer could point out that the flag came from
+  // a parameter they controlled, and the platform could not show the terms
+  // were ever displayed.
+  //
+  // Now: an httpOnly, HMAC-signed token minted by proxy.ts when it serves
+  // /signup or /login — the pages that render the acceptance control and
+  // link to both documents. Its presence attests that the platform served
+  // those documents to this browser within the last 30 minutes, and it
+  // carries the two version strings and the two document digests, signed.
+  //
+  // The query parameter is still read, for one reason: `param && !token` is
+  // exactly the shape of the old defect, and it is worth a log line rather
+  // than a silent refusal. It is no longer sufficient for anything.
+  const consentParam    = url.searchParams.get('terms_accepted') === '1';
+  const consentVerdict  = verifyConsentToken(
+    request.cookies.get(TERMS_CONSENT_COOKIE)?.value ?? null,
+  );
+  const consentGiven    = consentVerdict.ok;
+
+  if (consentParam && !consentGiven) {
+    console.warn('[auth/callback] terms_accepted param with no valid server token — not recording an acceptance', {
+      reason: consentVerdict.ok ? 'n/a' : consentVerdict.reason,
+    });
+  }
   const origin = url.origin;
 
   if (!code) {

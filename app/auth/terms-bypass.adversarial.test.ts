@@ -127,6 +127,7 @@ vi.mock('@/lib/supabase/server', () => ({
 
 import { GET as callbackGET }     from './callback/route';
 import { GET as requireTermsGET } from './require-terms/route';
+import { issueConsentToken, TERMS_CONSENT_COOKIE } from '@/lib/legal/consentToken';
 
 // ─── Attacker helpers ─────────────────────────────────────────────────
 
@@ -143,6 +144,26 @@ function withAuthCookies(req: NextRequest): NextRequest {
 
 function callbackReq(query: string): NextRequest {
   return withAuthCookies(new NextRequest(`http://test/auth/callback${query}`));
+}
+
+/**
+ * A callback request carrying a REAL server-issued consent token.
+ *
+ * AMENDED 2026-09-02 (audit A-14). `?terms_accepted=1` alone used to be
+ * enough, and that was the finding: the legal record was written on the
+ * strength of a parameter the visitor's own browser supplied, so it attested
+ * to nothing the platform had done. The token is minted by proxy.ts when it
+ * serves the page that renders the acceptance control, and the callback
+ * requires it.
+ *
+ * Every test below that exercises the ACCEPTED path now uses this helper.
+ * The one that does not is the new ATTACK 2b — a param with no token — which
+ * is the defect itself, asserted closed.
+ */
+function acceptedCallbackReq(query: string): NextRequest {
+  const req = callbackReq(query);
+  req.cookies.set(TERMS_CONSENT_COOKIE, issueConsentToken().token);
+  return req;
 }
 
 /** Cookie names this response tells the browser to drop. */
@@ -172,6 +193,12 @@ function googleArrival(overrides: Partial<NonNullable<typeof state.sessionUser>>
 }
 
 beforeEach(() => {
+  // The consent token is HMAC-signed, and this suite drives the real route,
+  // so it needs a real key. Set here rather than in the harness config
+  // because the KEY is part of what is under test: a route that stopped
+  // requiring a token would still pass every assertion below if the token
+  // were mocked away.
+  process.env.TERMS_CONSENT_SECRET = 'adversarial-suite-signing-key';
   state.profile = null;
   state.readError = null;
   state.writeError = null;
@@ -260,6 +287,9 @@ describe('ATTACK 2 — forging ?terms_accepted', () => {
     'null', 'undefined', '[1]', '1,1',
   ];
 
+  // These were the readings of a parameter that used to decide the outcome.
+  // They still pass, and now for a stronger reason: without a server-issued
+  // token no value of it is an acceptance, including '1'.
   it.each(NEAR_MISSES)('a value of "%s" is NOT an acceptance', async (value) => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
 
@@ -269,32 +299,123 @@ describe('ATTACK 2 — forging ?terms_accepted', () => {
     expect(acceptanceWrites()).toHaveLength(0);
   });
 
-  it('a repeated param does not let the second copy vote for the first', async () => {
-    // URLSearchParams.get returns the FIRST value, so `=x&=1` must lose.
+  it('no spelling of the param matters any more, in either direction', async () => {
+    // This used to be "a repeated param does not let the second copy vote for
+    // the first" — URLSearchParams.get returns the FIRST value, so `=x&=1`
+    // had to lose. That test, and the NEAR_MISSES table above it, were
+    // careful readings of a parameter that decided the outcome.
+    //
+    // Since A-14 it decides nothing: the token does. So the property worth
+    // pinning is the inverse of the old one — the param cannot help WITHOUT a
+    // token, and cannot hurt WITH one. If either half ever fails, the URL has
+    // become load-bearing again.
+    for (const query of [
+      '?code=valid-pkce&terms_accepted=x&terms_accepted=1',
+      '?code=valid-pkce&terms_accepted=0',
+      '?code=valid-pkce',
+    ]) {
+      state.writes = [];
+      state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+      expect(location(await callbackGET(callbackReq(query))), `${query} without a token`)
+        .toBe('http://test/signup?error=terms');
+      expect(acceptanceWrites()).toHaveLength(0);
+
+      state.writes = [];
+      state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+      expect(location(await callbackGET(acceptedCallbackReq(query))), `${query} with a token`)
+        .toBe('http://test/dashboard');
+      expect(acceptanceWrites()).toHaveLength(1);
+    }
+  });
+
+  // ── The one that USED to work, and no longer does ────────────────────
+  //
+  // This block used to end with the note that `terms_accepted=1` is a
+  // client assertion and is honoured, and that this is the design rather
+  // than a defect — the tick happens before any session exists, so there is
+  // no authenticated row to stamp and the acceptance had to travel on the
+  // URL. The blast radius was the argument: an attacker can assert their OWN
+  // agreement, which is the same as ticking a box they did not read.
+  //
+  // Audit A-14 rejected that reasoning, on a point the blast-radius argument
+  // misses entirely. The problem was never what an attacker gains — nobody
+  // attacks this — it is that THE RECORD IS NOT EVIDENCE. For an NCA credit
+  // agreement, and for POPIA §11 consent to process special personal
+  // information, the column's whole value is that the platform can show the
+  // documents were displayed. A flag the customer set could not show that,
+  // and the customer disputing it is the person who would point that out.
+  //
+  // So the acceptance no longer travels on the URL. It travels as an
+  // httpOnly HMAC-signed token minted by proxy.ts when it SERVES the page
+  // that renders the acceptance control, carrying both version strings and
+  // both document digests. Every test above and below that reaches the
+  // accepted path now supplies one, via acceptedCallbackReq.
+
+  it('a param with NO server token records nothing — the finding, closed', async () => {
+    // Verbatim what the audit asked for: "a callback carrying
+    // terms_accepted=1 with no matching server-issued token must return
+    // needs-terms".
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=x&terms_accepted=1'));
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms');
     expect(acceptanceWrites()).toHaveLength(0);
   });
 
-  // ── The one that DOES work, stated plainly ──────────────────────────
-  //
-  // `terms_accepted=1` is a client assertion and it is honoured. That is
-  // the design, not a defect: the tick happens before any session
-  // exists, so there is no authenticated row to stamp at that moment and
-  // the acceptance has to travel on the URL.
-  //
-  // What makes it acceptable is the blast radius, and THAT is what these
-  // two tests pin. An attacker can assert their OWN agreement — which is
-  // the same thing as ticking a box they did not read, and no security
-  // boundary has ever stopped that. They cannot assert anyone else's.
-
-  it('is honoured when set exactly — the documented, self-asserted case', async () => {
+  it('a FORGED token records nothing either', async () => {
+    // The obvious next move once the param stops working: make up a cookie.
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const req = callbackReq('?code=valid-pkce&terms_accepted=1');
+    req.cookies.set(TERMS_CONSENT_COOKIE, 'eyJ2IjoidjEifQ.not-a-real-signature');
+    const res = await callbackGET(req);
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(acceptanceWrites()).toHaveLength(0);
+  });
+
+  it('an EXPIRED token records nothing — a stale one is not a fresh reading', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const req = callbackReq('?code=valid-pkce&terms_accepted=1');
+    const stale = issueConsentToken(new Date(Date.now() - 60 * 60 * 1000)).token;
+    req.cookies.set(TERMS_CONSENT_COOKIE, stale);
+    const res = await callbackGET(req);
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(acceptanceWrites()).toHaveLength(0);
+  });
+
+  it('a valid token with NO param still records — the token is what counts', async () => {
+    // The param is now only read to log the mismatch. Asserting this stops a
+    // future edit from quietly making the URL load-bearing again.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/dashboard');
+    expect(acceptanceWrites()).toHaveLength(1);
+  });
+
+  it('the recorded row carries the document digests, not just the versions', async () => {
+    // "Which text did they accept" has to be answerable from the row. A
+    // version string alone is only as good as nobody having edited a clause
+    // without bumping it.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    const values = acceptanceWrites()[0].values;
+    expect(values.terms_doc_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(values.privacy_doc_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(values.terms_doc_sha256).not.toBe(values.privacy_doc_sha256);
+  });
+
+  it('is honoured with a server-issued token — the documented, self-asserted case', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/dashboard');
     expect(acceptanceWrites()).toHaveLength(1);
@@ -303,7 +424,7 @@ describe('ATTACK 2 — forging ?terms_accepted', () => {
   it('stamps the SESSION\'s user, never an id supplied on the URL', async () => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
 
-    await callbackGET(callbackReq(
+    await callbackGET(acceptedCallbackReq(
       `?code=valid-pkce&terms_accepted=1&user_id=${VICTIM_ID}&id=${VICTIM_ID}&sub=${VICTIM_ID}`,
     ));
 
@@ -317,7 +438,7 @@ describe('ATTACK 2 — forging ?terms_accepted', () => {
     // the recorded VERSION, forward onto a newer set of terms.
     state.profile = { id: ATTACKER_ID, terms_accepted_at: '2024-01-01T00:00:00Z', onboarding_completed: null };
 
-    await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(acceptanceWrites()).toHaveLength(0);
   });
@@ -344,7 +465,7 @@ describe('ATTACK 3 — steering the landing with ?next', () => {
   ])('clamps a %s ?next to /dashboard even on the ACCEPTED path (%s)', async (next) => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
 
-    const res = await callbackGET(callbackReq(
+    const res = await callbackGET(acceptedCallbackReq(
       `?code=valid-pkce&terms_accepted=1&next=${encodeURIComponent(next)}`,
     ));
 
@@ -366,7 +487,7 @@ describe('ATTACK 4 — degrade the write, keep the session', () => {
   it('an unreadable profile row does not resolve to "probably fine"', async () => {
     state.readError = { message: 'permission denied', code: '42501' };
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms_write');
     expect(clearedCookies(res)).toContain('sb-project-auth-token');
@@ -379,7 +500,7 @@ describe('ATTACK 4 — degrade the write, keep the session', () => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
     state.updateMatchesNoRows = true;
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms_write');
   });
@@ -388,7 +509,7 @@ describe('ATTACK 4 — degrade the write, keep the session', () => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
     state.updateReturnsNullStamp = true;
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms_write');
   });
@@ -397,7 +518,7 @@ describe('ATTACK 4 — degrade the write, keep the session', () => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
     state.writeError = { message: 'deadlock detected', code: '40P01' };
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms_write');
   });
@@ -406,7 +527,7 @@ describe('ATTACK 4 — degrade the write, keep the session', () => {
     state.profile = null;
     state.insertError = { message: 'insert refused', code: '42501' };
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms_write');
     expect(clearedCookies(res)).toContain('sb-project-auth-token');
@@ -418,7 +539,7 @@ describe('ATTACK 4 — degrade the write, keep the session', () => {
     state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
     state.readThrows = true;
 
-    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+    const res = await callbackGET(acceptedCallbackReq('?code=valid-pkce&terms_accepted=1'));
 
     expect(location(res)).toBe('http://test/signup?error=terms_write');
     expect(clearedCookies(res)).toContain('sb-project-auth-token');

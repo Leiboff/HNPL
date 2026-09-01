@@ -25,8 +25,44 @@ allowBuilds:
 # it rather than to `latest`, so the override stays a security fix and not
 # an unreviewed major bump. Revisit whenever `next` moves: once it depends
 # on fixed versions itself, these can go.
+# ─── The dev/build-only advisories (audit 2026-09-02, A-16) ────────────
+#
+# Five more of the same shape, none of them shipped. They are pinned for
+# one reason only: a `pnpm audit` that is permanently noisy is a report
+# nobody reads, and the runtime advisory that DOES matter (`xlsx`) needs to
+# be the thing that stands out in it.
+#
+#   brace-expansion  four DoS advisories, reached via
+#                    eslint-config-next → eslint → minimatch. Two major
+#                    lines are in the tree, so both are pinned by range.
+#   js-yaml          quadratic CPU on hostile input, same eslint chain
+#   vite             server.fs.deny bypass, via vitest. Windows-only, and
+#                    the one that needed more than an override: vite is
+#                    nobody's dependency here, only a PEER of vitest and
+#                    @vitejs/plugin-react, and pnpm's overrides do not
+#                    govern an auto-installed peer. So it is also a direct
+#                    devDependency in package.json — which is the ordinary
+#                    way to pin one, and is why the line is there.
+#   esbuild          arbitrary file read from the dev server, via vite.
+#                    Windows dev only.
+#   browserslist     ReDoS, via next's build chain
+#
+# What is NOT here, deliberately: `xlsx`. It is a RUNTIME dependency with
+# two high advisories, SheetJS left npm at 0.20, and the fixed builds are
+# on the vendor's CDN only — repointing a dependency at a non-registry URL
+# is a supply-chain decision for a human, not something to slip into an
+# overrides block. lib/crm/xlsxToCsv.ts bounds it (workbook size cap, and
+# a refusal on any workbook that disturbs Object.prototype) and the caller
+# must already hold a sales session. The open decision is: accept the CDN
+# pin, or move the read path to `exceljs`, which needs only sheet-to-CSV.
 overrides:
   nanoid: ^3.3.18
   postcss: ^8.5.23
   '@babel/core': ^7.29.1
   sharp: ^0.35.0
+  'brace-expansion@1': ^1.1.18
+  'brace-expansion@5': ^5.0.9
+  js-yaml: ^4.3.1
+  vite: ^8.0.16
+  esbuild: ^0.28.1
+  browserslist: ^4.28.7

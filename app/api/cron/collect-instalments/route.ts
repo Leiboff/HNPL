@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { assessDunningFee } from '@/lib/payments/assessDunningFee';
+import { sweepStuckProcessing, type SweepSummary } from '@/lib/payments/sweepStuckProcessing';
 
 // ─── Daily installment collection cron ──────────────────────────────────────
 //
@@ -27,6 +28,17 @@ import { assessDunningFee } from '@/lib/payments/assessDunningFee';
 //      entry needed. Because the run is once daily at a fixed time,
 //      "24 hours" in practice means "the next day's run", which is the
 //      granularity this whole system already operates at.
+//   3. Sweep stuck 'processing' claims (step 6 below) — the safety net
+//      under every path that claims a row and then calls the provider.
+//      A claim left in 'processing' is invisible to jobs 1 and 2 both,
+//      so without this a single stranded claim is a permanent silent
+//      write-off of everything it covers (audit A-13).
+//
+//      It runs LAST, deliberately. Its cutoff is hours old, so nothing
+//      this run just claimed is in scope — but running it first would
+//      make that a matter of arithmetic rather than of ordering, and a
+//      sweep that races the collector it shares a process with is not a
+//      safety net.
 
 export const dynamic = 'force-dynamic';
 
@@ -224,6 +236,33 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       err instanceof Error ? err.message : String(err));
   }
 
+  // ── 6. Sweep stuck 'processing' claims (audit A-13) ─────────────────
+  //
+  // Two tiers, and the split is the whole design — see
+  // lib/payments/sweepStuckProcessing.ts. Rows that never reached the
+  // provider are reverted; rows that may have a charge in flight are
+  // reported for a human, because this Peach client cannot ask whether the
+  // charge landed and guessing costs a customer a double payment either way.
+  //
+  // Non-fatal, like the prune above: this job's purpose is collecting money,
+  // and a sweep that throws must not take the collection run down with it.
+  // The summary carries the counts so a sweep that stops working, or one
+  // whose reconciliation queue is growing, is visible in cron_runs rather
+  // than only in the logs.
+  let sweep: SweepSummary | null = null;
+  try {
+    sweep = await sweepStuckProcessing(svc, { now: startedAt });
+    if (sweep.needs_reconciliation > 0) {
+      console.error(
+        '[cron/collect-instalments] ALERT payments awaiting manual reconciliation',
+        { count: sweep.needs_reconciliation, ids: sweep.needs_reconciliation_ids },
+      );
+    }
+  } catch (err) {
+    console.error('[cron/collect-instalments] stuck-processing sweep threw (non-fatal)',
+      err instanceof Error ? err.message : String(err));
+  }
+
   const finishedAt = new Date();
   const summary = {
     started_at:            startedAt.toISOString(),
@@ -239,6 +278,12 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     newly_defaulted_count: newlyDefaulted,
     assess_claim_lost_count: assessClaimLost,
     rate_limit_rows_pruned:  rateLimitRowsPruned,
+    stuck_scanned:                sweep?.scanned ?? null,
+    stuck_reverted:               sweep?.reverted ?? null,
+    stuck_covered_reverted:       sweep?.covered_reverted ?? null,
+    stuck_skipped_resumable:      sweep?.skipped_resumable ?? null,
+    stuck_needs_reconciliation:   sweep?.needs_reconciliation ?? null,
+    stuck_unrestorable:           sweep?.unrestorable ?? null,
   };
 
   // ── 5. Record the run for observability. A cron that silently stops

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
-import { formatRand, formatDateStr, fullName, practiceName } from '../_lib/format';
+import { formatRand, formatDateStr, formatDateTime, fullName, practiceName } from '../_lib/format';
 import CollectionStatusBadge, { classifyCollection, type CollectionBucket } from '../_components/CollectionStatusBadge';
 import {
   rollupByDate,
@@ -12,6 +12,7 @@ import {
 } from './_lib/dateRollup';
 import { parseRangeParams, formatPeriodLabel } from './_lib/dateRange';
 import CollectionsDateRangePicker from './CollectionsDateRangePicker';
+import { STUCK_PROCESSING_HOURS } from '@/lib/payments/sweepStuckProcessing';
 
 // ─── /admin/collections ─────────────────────────────────────────────────────
 //
@@ -214,6 +215,40 @@ export default async function AdminCollectionsPage({
     counts.all++;
   }
 
+  // ── Awaiting reconciliation (audit A-13) ─────────────────────────────
+  //
+  // Rows the daily sweep found stuck in 'processing' and deliberately did
+  // NOT touch, because a charge may be in flight: provider_attempted_at is
+  // set, so the request reached Peach and the response never came back.
+  //
+  // The sweep cannot resolve these — the recurring surface of this Peach
+  // client has no payment-status query, and reverting on a guess either
+  // double-charges the customer (if Peach collected) or writes off the
+  // balance (if it did not). The answer lives in the Peach dashboard, so
+  // the row lives here, in front of the person who can look it up.
+  //
+  // Shown unconditionally, above the chips, on every chip. It is not a
+  // filter of the collections view; it is the thing that used to be
+  // invisible, and burying it behind a chip nobody clicks would leave it
+  // that way. The list is empty and the block absent in normal operation.
+  // new Date().getTime() rather than Date.now(): the react-hooks/purity rule
+  // flags the latter, and this page already derives `today` the same way.
+  const stuckCutoff = new Date(
+    new Date().getTime() - STUCK_PROCESSING_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+  const { data: rawStuck } = await supabase
+    .from('payments')
+    .select('id, amount, kind, plan_id, peach_payment_id, processing_since, failure_reason')
+    .eq('status', 'processing')
+    .not('provider_attempted_at', 'is', null)
+    .lt('processing_since', stuckCutoff)
+    .order('processing_since', { ascending: true })
+    .limit(50);
+  const stuckRows = (rawStuck ?? []) as Array<{
+    id: string; amount: number; kind: string | null; plan_id: string | null;
+    peach_payment_id: string | null; processing_since: string; failure_reason: string | null;
+  }>;
+
   // ── Rollup by date ───────────────────────────────────────────────────
   const rollups = rollupByDate(rows, today, sortModeForChip(chip));
 
@@ -263,6 +298,41 @@ export default async function AdminCollectionsPage({
           </p>
         </div>
       </div>
+
+      {/* Awaiting reconciliation — see the query above for why it is here
+          and not behind a chip. */}
+      {stuckRows.length > 0 && (
+        <section className="rounded-2xl border border-red-300 bg-red-50 p-4 space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-red-900">
+              {stuckRows.length} payment{stuckRows.length === 1 ? '' : 's'} awaiting reconciliation
+            </h2>
+            <p className="mt-1 text-xs text-red-800">
+              The charge reached the payment provider and no result came back. Nothing
+              automated can resolve these — look each reference up in the Peach dashboard.
+              If it collected, the webhook can be replayed; if it never existed, the claim
+              can be released. Until then the balance they cover is not collectable.
+            </p>
+          </div>
+          <ul className="space-y-1.5">
+            {stuckRows.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-lg bg-white/70 px-3 py-2 text-xs"
+              >
+                <Link
+                  href={`/admin/collections/${row.id}`}
+                  className="font-medium text-[#13294B] underline underline-offset-2"
+                >
+                  {row.kind === 'settlement' ? 'Full settlement' : 'Instalment'} · {formatRand(Number(row.amount))}
+                </Link>
+                <span className="font-mono text-gray-700">{row.peach_payment_id ?? 'no reference'}</span>
+                <span className="text-gray-600">stuck since {formatDateTime(row.processing_since)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Range picker */}
       <div className="flex items-center gap-2">

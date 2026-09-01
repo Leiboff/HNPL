@@ -24,6 +24,10 @@ const NAV_LINKS = [
   { href: '/admin/payouts',                    label: 'Payouts',     countKey: 'pendingPayouts'      as const                },
   { href: '/crm',                              label: 'CRM'                                                                  },
   { href: '/admin/sales-team',                 label: 'Sales team'                                                           },
+  // The privileged-action log. Desktop only, deliberately — the mobile bar
+  // is for the queues an operator works from a phone, and reading an audit
+  // trail is a desk activity. See app/admin/audit/page.tsx.
+  { href: '/admin/audit',                      label: 'Audit log'                                                            },
 ];
 
 export default function AdminNav({ counts }: { counts: Counts }) {

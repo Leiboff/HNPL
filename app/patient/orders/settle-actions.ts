@@ -7,6 +7,7 @@ import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { dunningFeesEnabled } from '@/lib/payments/dunning';
 import { settleRef } from '@/lib/payments/peach/refs';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── Patient-initiated "Pay now" — self-settle a past-due instalment ──
 //
@@ -75,6 +76,25 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return { ok: false, status: 'unauthorized' };
+  }
+
+  // ── 1b. Rate limit (audit A-11's second half) ─────────────────────
+  //
+  // Both settle paths share one budget, deliberately. They fire the same
+  // kind of charge at the same provider against the same card, and a
+  // separate allowance for each would let an attacker alternate between
+  // them for double the throughput — which is precisely what somebody
+  // probing a stolen session would do.
+  //
+  // Refused as a claim-loss rather than a new status: the caller already
+  // handles that branch, the copy is right ("a payment attempt is already
+  // in progress"), and adding a status to a union consumed by two button
+  // components buys nothing here.
+  if (!await consumeAll('self_settle', [
+    [await clientIp(), RATE_LIMITS.self_settle.ip],
+    [user.id,          RATE_LIMITS.self_settle.account!],
+  ])) {
+    return { ok: false, status: 'claim_lost', reason: 'rate_limited' };
   }
 
   // ── 2. Ownership + settleability. RLS scopes the SELECT to rows the
@@ -196,6 +216,24 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     return { ok: false, status: 'unauthorized' };
   }
 
+  // ── 1b. Rate limit (audit A-11's second half) ─────────────────────
+  //
+  // The single largest amount a patient can move in one call — this
+  // charges the whole outstanding balance — and the one whose failure
+  // mode is worst: a claim that strands leaves every instalment it
+  // covered in 'processing' (audit A-13). Shares the 'self_settle' budget
+  // with the per-instalment path; see the note there.
+  //
+  // 'race_lost' is the honest refusal: the caller's copy for it is "some
+  // instalments are being collected right now, please try again in a
+  // moment", which is true and is the right instruction.
+  if (!await consumeAll('self_settle', [
+    [await clientIp(), RATE_LIMITS.self_settle.ip],
+    [user.id,          RATE_LIMITS.self_settle.account!],
+  ])) {
+    return { ok: false, status: 'race_lost' };
+  }
+
   // ── 2. Atomic multi-row claim + settlement-row insert via the RPC.
   //       The RPC verifies plan ownership against p_patient_id (=auth
   //       user), snapshots every eligible instalment, claims them in
@@ -301,6 +339,20 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     ? { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'INSTALLMENT' as const, initialTransactionId: initial }
     : { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'UNSCHEDULED' as const };
 
+  // ── The point of no safe return (audit A-13) ────────────────────────
+  //
+  // Stamped BEFORE the call, so it means "may be in flight" and nothing
+  // stronger. This is the column the stuck-processing sweep reads to decide
+  // whether an abandoned 'processing' row can be reverted: NULL means the
+  // claim died before the request left, and only then is a revert safe. A
+  // stamp written after the response would make every in-flight settlement
+  // look never-sent, and the sweep would release a whole plan's instalments
+  // while Peach was collecting them.
+  await svc
+    .from('payments')
+    .update({ provider_attempted_at: new Date().toISOString() })
+    .eq('id', settlementId);
+
   const provider = getPaymentProvider();
   const chargeResult = await provider.chargeSavedCard({
     registrationId:        plan.peach_registration_id,
@@ -311,11 +363,42 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   });
 
   if (chargeResult.status === 'error') {
-    // Transport error: the settlement row stays in 'processing'.
-    // We do NOT revert here — Peach may still have received the
-    // charge; reverting would risk double-charging if a delayed
-    // webhook later arrives. Same posture as chargeInstalment's
-    // transport_error path. Admin reconciles via the Peach dashboard.
+    // ── Transport error ───────────────────────────────────────────────
+    //
+    // The settlement row STAYS in 'processing', and that posture is
+    // unchanged and correct: Peach may have received the charge, and
+    // reverting a claim it is about to collect would double-charge the
+    // customer for their whole remaining balance.
+    //
+    // What was wrong (A-13) is what happened next: nothing. The comment
+    // here said "admin reconciles via the Peach dashboard" and no surface
+    // ever told an admin there was anything to reconcile — so one transport
+    // error silently froze the plan's entire outstanding balance in a status
+    // no cron, no dunning ladder and no retry path can see.
+    //
+    // Now it is marked and alerted, the daily sweep reports it, and
+    // /admin/collections lists it. The failure_reason is written WITHOUT
+    // moving the status, so the row stays claimed (no double-charge risk)
+    // while becoming findable.
+    await svc
+      .from('payments')
+      .update({ failure_reason: 'transport_error — awaiting reconciliation' })
+      .eq('id', settlementId)
+      .eq('status', 'processing');
+
+    console.error(
+      '[settle-entire-bill] ALERT transport error after the charge was sent '
+      + '— the plan\'s balance is claimed and unresolved until reconciled',
+      {
+        settlementId,
+        planId,
+        reference,
+        amountCents,
+        coveredCount,
+        error: chargeResult.resultDescription ?? 'transport error',
+      },
+    );
+
     return {
       ok: false,
       status: 'transport_error',

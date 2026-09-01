@@ -9,12 +9,21 @@ import { addNote, type AuditEntityType } from '../_lib/auditActions';
 // renders them in reverse-chronological order. The add-note form is a
 // client component (AddNoteForm) that wraps the addNote server action.
 //
-// Rendering separates the two kinds of rows the table can carry today:
-//   action='note'         → free-text note (payload.text)
-//   action='fee_changed'  → system row showing the from→to delta
+// Rendering separates the kinds of rows the table can carry:
+//   action='note'             → free-text note (payload.text)
+//   action='fee_changed'      → system row showing the from→to delta
+//   action='banking_changed'  → WHERE THE MONEY GOES (migration 0131)
+//   action='role_changed'     → an access grant (migration 0131)
+//   anything else             → the raw payload, so nothing is dropped
 //
-// New action types added later (e.g. status overrides) just need a
-// new case in the renderer below.
+// The raw fallback is load-bearing, not laziness: 0131 made the database
+// itself the primary writer, so actions can appear here that no TypeScript
+// in this repo names. Rendering them badly beats not rendering them.
+//
+// An UNATTRIBUTED row (actor_id NULL) is one the database recorded on a
+// connection with no session identity — a service-role write, the cron, a
+// psql session. It is labelled as such rather than shown as '—', because
+// "we do not know who" is a finding and an em-dash is not.
 
 type AuditRow = {
   id:          string;
@@ -66,7 +75,7 @@ export default async function AdminNotes({
 }
 
 function TimelineRow({ row }: { row: AuditRow }) {
-  const actor = fullName(row.actor);
+  const actor = row.actor_id ? fullName(row.actor) : 'an unattributed write';
   const when  = formatDateTime(row.created_at);
 
   if (row.action === 'note') {
@@ -94,6 +103,45 @@ function TimelineRow({ row }: { row: AuditRow }) {
         <p className="text-sm text-amber-900 tabular-nums">
           {from}% → {to}%
         </p>
+      </div>
+    );
+  }
+
+  if (row.action === 'banking_changed' || row.action === 'branch_banking_changed'
+      || row.action === 'group_banking_changed') {
+    // The single highest-value edit in the product. Rendered loudly, and
+    // WITHOUT the account number — 0131's payload carries only a last-4 and a
+    // SHA-256, which is what makes "changed and changed back" provable
+    // without this table becoming a permanent store of bank accounts.
+    const to = (row.payload.to ?? row.payload) as Record<string, unknown>;
+    const last4 = typeof to.account_last4 === 'string' ? to.account_last4 : null;
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+        <div className="flex items-center justify-between text-xs text-red-800 mb-1">
+          <span className="font-medium">Banking changed by {actor}</span>
+          <span>{when}</span>
+        </div>
+        <p className="text-sm text-red-900">
+          {typeof to.bank_name === 'string' && to.bank_name ? to.bank_name : 'Bank not set'}
+          {last4 ? ` ••${last4}` : ''}
+          {typeof to.branch_code === 'string' && to.branch_code ? ` · branch ${to.branch_code}` : ''}
+          {typeof to.account_holder === 'string' && to.account_holder ? ` · ${to.account_holder}` : ''}
+        </p>
+      </div>
+    );
+  }
+
+  if (row.action === 'role_changed' || row.action === 'grant_sales_role'
+      || row.action === 'revoke_sales_role') {
+    const from = typeof row.payload.from === 'string' ? row.payload.from : '?';
+    const to   = typeof row.payload.to   === 'string' ? row.payload.to   : '?';
+    return (
+      <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+        <div className="flex items-center justify-between text-xs text-violet-800 mb-1">
+          <span className="font-medium">Role changed by {actor}</span>
+          <span>{when}</span>
+        </div>
+        <p className="text-sm text-violet-900">{from} → {to}</p>
       </div>
     );
   }

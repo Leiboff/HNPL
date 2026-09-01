@@ -38,6 +38,9 @@ import { stripComments } from '@/lib/testing/stripComments';
 
 const ROOT = resolve(process.cwd());
 const read = (p: string) => stripComments(readFileSync(resolve(ROOT, p), 'utf8'));
+// SQL keeps its comments — stripComments is a TS/JS stripper, and the SQL
+// assertions below quote statements, not prose.
+const rawRead = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 
 const ACTIONS  = read('app/checkout/[token]/actions.ts');
 const ACTIVATE = read('lib/payments/activateFirstInstalment.ts');
@@ -83,6 +86,12 @@ describe('initiateCheckout admits only the two states it can safely rewrite', ()
 
 describe('a settled instalment is never deleted', () => {
   const body = initiateCheckoutBody();
+  // Since migration 0130 the schedule write is one transaction inside
+  // claim_credit_for_plan (audit A-04), so the scoped delete and the survivor
+  // refusal moved out of this action and into the RPC. They are the SAME two
+  // properties, asserted where they now live — the F-06 lesson is a property
+  // of the statement that writes a schedule, wherever that statement is.
+  const CLAIM_SQL = rawRead('supabase/migrations/0130_claim_credit_for_plan.sql');
 
   it('refuses on a collected or defaulted row', () => {
     expect(body).toMatch(/\.in\('status', \['collected', 'defaulted'\]\)/);
@@ -95,7 +104,12 @@ describe('a settled instalment is never deleted', () => {
   });
 
   it('scopes the schedule delete to the never-settled statuses', () => {
-    expect(body).toMatch(/\.delete\(\)[\s\S]{0,120}\.in\('status', \['scheduled', 'processing', 'failed'\]\)/);
+    expect(CLAIM_SQL).toMatch(
+      /DELETE FROM payments\s+WHERE plan_id = p_plan_id\s+AND status IN \('scheduled', 'processing', 'failed'\)/,
+    );
+    // And this action no longer deletes payments at all — the RPC is the one
+    // writer, which is what makes the guard unbypassable rather than repeated.
+    expect(body).not.toMatch(/from\('payments'\)[\s\S]{0,80}\.delete\(\)/);
   });
 
   it('never issues an unscoped delete on the plan\'s payments', () => {
@@ -105,8 +119,15 @@ describe('a settled instalment is never deleted', () => {
   });
 
   it('refuses if anything survives the scoped delete', () => {
-    expect(body).toMatch(/survivors/);
-    expect(body).toMatch(/refusing to rewrite a schedule with surviving rows/);
+    expect(CLAIM_SQL).toMatch(/SELECT COUNT\(\*\) INTO v_survivors FROM payments WHERE plan_id = p_plan_id/);
+    expect(CLAIM_SQL).toMatch(/IF v_survivors > 0 THEN[\s\S]{0,300}'schedule_survived'/);
+    // Inside the same transaction as the delete and the insert, so unlike the
+    // old TypeScript version there is no window in which the refusal loses a
+    // race with a concurrent settlement.
+    expect(CLAIM_SQL.indexOf('DELETE FROM payments'))
+      .toBeLessThan(CLAIM_SQL.indexOf('INTO v_survivors'));
+    expect(CLAIM_SQL.indexOf('INTO v_survivors'))
+      .toBeLessThan(CLAIM_SQL.indexOf('INSERT INTO payments'));
   });
 });
 

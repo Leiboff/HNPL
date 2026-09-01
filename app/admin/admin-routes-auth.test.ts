@@ -29,6 +29,10 @@ const ADMIN_PAGES = [
   'app/admin/payouts/page.tsx',
   'app/admin/practices/page.tsx',
   'app/admin/practices/[id]/page.tsx',
+  // The privileged-action log (audit A-12). Every row on it is an admin
+  // action against a practice, a customer or the money — so it is the LAST
+  // page that should be reachable by a demoted account.
+  'app/admin/audit/page.tsx',
 ];
 
 describe('admin routes — server-side admin auth pattern', () => {

@@ -61,12 +61,26 @@ vi.mock('@supabase/supabase-js', () => ({
       }
       return {
         select: selectChain,
-        update: (row: unknown) => ({
-          eq: () => {
-            writes.push({ table, op: 'update', row });
+        // An update chain that is thenable at every link, so a call site
+        // may add as many .eq() filters as the write needs. It used to end
+        // after exactly one, which meant adding a second guard to a
+        // production write broke the stub rather than the assertion — a
+        // test that constrains the shape of a query instead of its effect.
+        update: (row: unknown) => {
+          let recorded = false;
+          const record = () => {
+            if (!recorded) { writes.push({ table, op: 'update', row }); recorded = true; }
             return Promise.resolve({ data: null, error: null });
-          },
-        }),
+          };
+          const chain: Record<string, unknown> = {
+            eq:  () => chain,
+            in:  () => chain,
+            neq: () => chain,
+            select: () => record(),
+            then: (resolve: (v: unknown) => unknown) => record().then(resolve),
+          };
+          return chain;
+        },
         insert: (row: unknown) => {
           writes.push({ table, op: 'insert', row });
           return Promise.resolve({ data: null, error: null });

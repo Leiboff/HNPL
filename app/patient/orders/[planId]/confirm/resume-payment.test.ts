@@ -52,16 +52,39 @@ describe('payWithSavedCard — resume of an abandoned first charge', () => {
     // The whole point of idempotency: the ref is checkoutRef(instalment1Id),
     // and on resume instalment1Id is the row that already exists, so the
     // merchantTransactionId is byte-identical and Peach dedups.
-    expect(body).toMatch(/if\s*\(isResume\)\s*\{[\s\S]*?\.eq\('instalment_number',\s*1\)[\s\S]*?instalment1Id\s*=\s*existing\.id/);
+    // The resume path reads the EXISTING instalment-1 row rather than
+    // minting an id, so checkoutRef() produces the identical reference and
+    // Peach dedups instead of double-charging. Since 0130 the fresh path
+    // gets its id from the claim (which writes the schedule), so the read is
+    // now guarded by `if (isResume)` alone.
+    expect(body).toMatch(/if\s*\(isResume\)\s*\{[\s\S]*?\.eq\('instalment_number',\s*1\)[\s\S]*?resumeInstalmentOneId\s*=\s*existing\.id/);
+    expect(body).toMatch(/instalment1Id\s*=\s*resumeInstalmentOneId as string/);
+    // And it re-charges the amount ALREADY on the row — never a
+    // recomputation, which would drop an above-allowance excess (A-05).
+    expect(body).toMatch(/resumeInstalmentOneAmount\s*=\s*Number\(existing\.amount\)/);
+    expect(body).toMatch(/amountCents\s*=\s*Math\.round\(instalmentOneAmount \* 100\)/);
     expect(body).toContain('const reference = checkoutRef(instalment1Id)');
   });
 
   it('creates NO new payment rows and changes NO plan status on resume', () => {
     // STEP 1 (plan → pending_first_payment) + STEP 2 (insert rows) run
     // only for a fresh acceptance.
-    expect(body).toMatch(/if\s*\(!isResume\)\s*\{[\s\S]*?STEP 1 PLAN UPDATE[\s\S]*?STEP 2 PAYMENTS INSERT/);
-    // The resume branch only re-stamps the (same) ref.
-    expect(body).toContain('PEACH PAY-WITH-SAVED-CARD RESUME REF STAMP');
+    // Since 0130 the plan transition and the schedule insert are one
+    // transaction inside claim_credit_for_plan, and a resume does not claim
+    // at all — so the property is now "the claim is only reached on the
+    // fresh branch", asserted structurally.
+    expect(body).toMatch(/if\s*\(isResume\)\s*\{[\s\S]*?STEP 1 RESUME \(no claim\)[\s\S]*?\}\s*else\s*\{[\s\S]*?claimCreditForPlan/);
+    // And nothing outside the claim writes plans or payments on this path.
+    expect(body).not.toMatch(/STEP 1 PLAN UPDATE/);
+    expect(body).not.toMatch(/STEP 2 PAYMENTS INSERT/);
+    // The ref stamp is now ONE statement shared by both paths — it always
+    // was the same operation, and the two copies had drifted into checking
+    // the error on the fresh path and ignoring it on the resume. It carries
+    // isResume in its log line so the two are still distinguishable in
+    // Vercel logs.
+    expect(body).toContain('PEACH PAY-WITH-SAVED-CARD STEP 3 REF STAMP');
+    expect(body).toMatch(/STEP 3 REF STAMP[\s\S]*?isResume/);
+    expect(body).not.toContain('RESUME REF STAMP');
   });
 
   it('never rolls a resume back (would destroy a legitimate in-progress plan)', () => {

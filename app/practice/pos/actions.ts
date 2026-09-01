@@ -314,6 +314,25 @@ export async function issueCounterSession(
   if (!auth.ok) return { error: auth.error };
   const practiceId = auth.practiceId;
 
+  // ── Rate limit (audit A-11's second half) ────────────────────────
+  //
+  // Each call issues a bill token — a live, scannable claim on a patient's
+  // credit — and on the identity-matched path it binds the plan to the
+  // owner of the SA ID that was typed. So the volume matters even though
+  // every individual call is authorised.
+  //
+  // Keyed on the PRACTICE rather than on a user, deliberately: a busy front
+  // desk is several receptionists sharing one unlocked till device, and the
+  // thing worth noticing is "this practice is raising bills at 300 an hour",
+  // whoever is typing. The ceiling is set well above a real clinic's day —
+  // it is there to catch a script, not to pace a receptionist.
+  if (!await consumeAll('counter_session', [
+    [await clientIp(), RATE_LIMITS.counter_session.ip],
+    [practiceId,       RATE_LIMITS.counter_session.account!],
+  ])) {
+    return { error: 'Too many bills raised in the last hour. Please wait a few minutes, or contact support if this is wrong.' };
+  }
+
   if (!isAllowedBillAmount(billAmount)) {
     return {
       error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`,
