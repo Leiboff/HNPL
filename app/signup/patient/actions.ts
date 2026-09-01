@@ -11,6 +11,7 @@ import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -238,6 +239,23 @@ async function recordAcceptance(
 
 export async function signUpPatient(input: PatientSignupInput): Promise<PatientSignupResult> {
   const { firstName, lastName, email, password, token, termsAccepted } = input;
+
+  // ── Rate limit ──────────────────────────────────────────────────────
+  //
+  // Anonymous, and every successful call creates an auth user AND sends a
+  // Supabase transactional email. It had no limiter of any kind (audit
+  // F-17). Spent BEFORE validation on purpose — unlike the contact form,
+  // where the same ordering question was decided the other way, the
+  // expensive work here is not gated behind a cheap validator an attacker
+  // would have to satisfy: a script sends well-formed payloads.
+  if (!await consumeAll('signup', [
+    [await clientIp(), RATE_LIMITS.signup.ip],
+  ])) {
+    return {
+      error: 'Too many sign-up attempts from this connection. Please wait a few minutes and try again.',
+      success: false,
+    };
+  }
 
   if (!firstName.trim())      return { error: 'First name is required.', success: false };
   if (!lastName.trim())       return { error: 'Last name is required.',  success: false };

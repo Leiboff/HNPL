@@ -22,7 +22,17 @@ export default function ImportClient() {
 
   function onFile(f: File) {
     if (isExcelFile(f)) {
-      f.arrayBuffer().then(buf => setCsvText(xlsxToCsv(buf)));
+      // xlsxToCsv now REFUSES an oversized workbook and one that disturbs
+      // Object.prototype while parsing (see that file for why the parser
+      // needs watching). Both arrive as a thrown WorkbookRejectedError with
+      // copy meant for this banner — previously any parse failure rejected
+      // an unhandled promise and the file simply appeared to do nothing.
+      f.arrayBuffer()
+        .then(buf => { setCsvText(xlsxToCsv(buf)); setMsg(null); })
+        .catch((err: unknown) => setMsg({
+          kind: 'err',
+          text: err instanceof Error ? err.message : 'We couldn\'t read that spreadsheet.',
+        }));
       return;
     }
     const reader = new FileReader();

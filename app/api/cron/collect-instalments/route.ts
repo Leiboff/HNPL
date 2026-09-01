@@ -196,6 +196,34 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // ── 4b. Housekeeping: prune spent rate-limit hits ───────────────────
+  //
+  // rate_limit_hits (migration 0124) grows by one row per guarded request
+  // and is only ever read over a rolling window, so anything past a day is
+  // dead weight. It rides along with the daily run rather than taking a
+  // fourth Vercel cron entry: it needs no schedule of its own, and a
+  // separate cron for one DELETE would be noise in vercel.json.
+  //
+  // Non-fatal by construction — this job's purpose is collecting money,
+  // and a failed prune must not colour the run's outcome. It is reported
+  // in the summary so a silently-failing prune is visible in cron_runs
+  // rather than only in the table size.
+  let rateLimitRowsPruned: number | null = null;
+  try {
+    const { data, error } = await svc.rpc('delete_expired_rate_limit_hits', { p_older_than_secs: 86400 });
+    if (error) {
+      console.warn('[cron/collect-instalments] rate-limit prune failed (non-fatal)', error.message);
+    } else {
+      rateLimitRowsPruned = typeof data === 'number' ? data : null;
+    }
+  } catch (err) {
+    // Catches the THROW as well as the returned error. "Non-fatal by
+    // construction" has to mean it, or a job whose purpose is collecting
+    // money dies on a housekeeping DELETE.
+    console.warn('[cron/collect-instalments] rate-limit prune threw (non-fatal)',
+      err instanceof Error ? err.message : String(err));
+  }
+
   const finishedAt = new Date();
   const summary = {
     started_at:            startedAt.toISOString(),
@@ -210,6 +238,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     fees_applied_count:    feesApplied,
     newly_defaulted_count: newlyDefaulted,
     assess_claim_lost_count: assessClaimLost,
+    rate_limit_rows_pruned:  rateLimitRowsPruned,
   };
 
   // ── 5. Record the run for observability. A cron that silently stops

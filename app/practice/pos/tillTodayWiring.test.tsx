@@ -93,7 +93,12 @@ describe('the strip survives "Start next patient"', () => {
     mountTill();
     await screen.findByTestId('pos-entry-form');
     expect(await screen.findByTestId('till-today-strip')).toBeTruthy();
-    expect(screen.getByTestId('till-today-row-earlier')).toBeTruthy();
+    // findBy, not getBy. The strip's SHELL renders before its ROWS do, so a
+    // synchronous query for a row right after awaiting the shell is a race
+    // — it passed when the file ran alone and failed intermittently under a
+    // full-suite run, which is the signature of exactly that. All three row
+    // assertions in this file had it.
+    expect(await screen.findByTestId('till-today-row-earlier')).toBeTruthy();
   });
 
   it('stays on screen while a QR is up — when the phone is most likely to ring', async () => {
@@ -108,7 +113,7 @@ describe('the strip survives "Start next patient"', () => {
     expect(screen.queryByTestId('pos-entry-form')).toBeNull();
     // ...and the strip is still there, unchanged.
     expect(screen.getByTestId('till-today-strip')).toBeTruthy();
-    expect(screen.getByTestId('till-today-row-earlier')).toBeTruthy();
+    expect(await screen.findByTestId('till-today-row-earlier')).toBeTruthy();
   });
 
   it('SURVIVES the reset that discards session state', async () => {
@@ -131,7 +136,7 @@ describe('the strip survives "Start next patient"', () => {
 
     // The strip is not.
     expect(screen.getByTestId('till-today-strip')).toBeTruthy();
-    expect(screen.getByTestId('till-today-row-earlier')).toBeTruthy();
+    expect(await screen.findByTestId('till-today-row-earlier')).toBeTruthy();
     expect(screen.getByTestId('till-today-amount-earlier').textContent).toBe('R1,450.50');
   });
 

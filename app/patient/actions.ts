@@ -1,8 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isPatientFrozen } from '@/lib/patient/freeze';
+import { checkCreditLimit } from '@/lib/underwriting/creditLimit';
 import { declineCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 import { splitInstalments, calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
@@ -14,6 +16,31 @@ import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import type { User } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+
+// ─── The privileged client, and why these actions now need one ─────────
+//
+// Migration 0121 dropped patients_update_own_plans /
+// patients_update_own_payments / patients_insert_payments_for_own_plans.
+// Those policies scoped the ROW but not the COLUMNS, which handed every
+// patient a direct PostgREST write over their own ledger — status,
+// total_amount, instalment amounts (audit F-01 / F-02). There is no
+// column-scoped RLS in Postgres, so the policies had to go, and the writes
+// they used to permit move here.
+//
+// The rule that replaces them: the SESSION client still performs every
+// READ, so ownership is established by RLS exactly as before and this file
+// does not get to decide who owns a plan. Only the WRITE runs privileged,
+// and every privileged write below re-states the ownership predicate
+// (.eq('patient_id', user.id)) explicitly rather than inheriting it —
+// service-role bypasses RLS, so a filter that was previously belt-and-
+// braces is now the only thing scoping the statement.
+function svc(): SupabaseClient {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+}
 
 // ─── Onboarding gate for acceptance actions ────────────────────────────
 //
@@ -142,10 +169,30 @@ export async function acceptPlan(
   }
 
   const totalAmount = Number(plan.total_amount);
+
+  // ─── Credit-limit gate ───────────────────────────────────────────
+  // The limit granted by the affordability step was written, displayed,
+  // and enforced nowhere (audit F-10). This is one of the four acceptance
+  // paths that now actually spends it.
+  const privileged = svc();
+  const limitCheck = await checkCreditLimit(privileged, user.id, totalAmount);
+  if (!limitCheck.ok) return { error: limitCheck.message };
+
   const instalments = splitInstalments(totalAmount, planType);
   const dates       = calculatePaymentDates(new Date(), salaryDay, planType);
 
-  const { error: planError } = await supabase
+  // ─── The claim ───────────────────────────────────────────────────
+  //
+  // `.eq('status', 'pending_acceptance')` is the whole fix for the
+  // acceptPlan race (audit F-03). The SELECT above filters on that status,
+  // but the UPDATE used to re-state only id + patient_id — so two
+  // concurrent calls both passed the read, both wrote, and both inserted a
+  // schedule. With the status in the WHERE clause the second UPDATE
+  // matches zero rows and we bail before touching payments.
+  //
+  // `.select('id')` because PostgREST reports an UPDATE that matched
+  // nothing as a success with a null error.
+  const { data: claimed, error: planError } = await privileged
     .from('plans')
     .update({
       status:            'pending_first_payment',
@@ -158,9 +205,15 @@ export async function acceptPlan(
       privacy_version:   PRIVACY_VERSION,
     })
     .eq('id', planId)
-    .eq('patient_id', user.id);
+    .eq('patient_id', user.id)
+    .eq('status', 'pending_acceptance')
+    .select('id');
 
   if (planError) return { error: planError.message };
+  if (!claimed || claimed.length === 0) {
+    // Lost the race, or the plan moved on between the read and here.
+    return { error: 'Plan not found or already actioned.' };
+  }
 
   const paymentRows = instalments.map((amount, i) => ({
     id:                crypto.randomUUID(),
@@ -172,7 +225,7 @@ export async function acceptPlan(
     status:            i === 0 ? 'processing' : 'scheduled',
   }));
 
-  const { error: paymentsError } = await supabase.from('payments').insert(paymentRows);
+  const { error: paymentsError } = await privileged.from('payments').insert(paymentRows);
   if (paymentsError) return { error: paymentsError.message };
 
   if (plan.application_id) {
@@ -286,7 +339,7 @@ export async function initializeFirstPayment(
     return { error: err instanceof Error ? err.message : 'Failed to initialize payment.' };
   }
 
-  const { error: updateError } = await supabase
+  const { error: updateError } = await svc()
     .from('payments')
     .update({ peach_payment_id: reference, peach_checkout_id: checkoutId })
     .eq('id', payment.id)
@@ -474,6 +527,16 @@ export async function payWithSavedCard(
 
   // Calculate instalment schedule
   const totalAmount  = Number(plan.total_amount);
+
+  // ─── Credit-limit gate (audit F-10) ──────────────────────────────
+  // excludePlanId matters on the resume fork: this plan's own instalment
+  // rows already exist, so counting them AND adding total_amount again
+  // would refuse a legitimate resume for double its actual exposure.
+  const privileged = svc();
+  const limitCheck = await checkCreditLimit(privileged, user.id, totalAmount, {
+    excludePlanId: isResume ? planId : null,
+  });
+  if (!limitCheck.ok) return { error: limitCheck.message };
   const instalments  = splitInstalments(totalAmount, effectivePlanType);
   const dates        = calculatePaymentDates(new Date(), salaryDay, effectivePlanType);
 
@@ -540,6 +603,12 @@ export async function payWithSavedCard(
     instalment1Id = crypto.randomUUID();
   }
 
+  // Bound outside the closure below: TypeScript cannot carry the
+  // `if (!user) return` narrowing into a nested function declaration, and
+  // the ownership predicate on the rollback's statements is load-bearing
+  // now that they run on the privileged client.
+  const patientId = user.id;
+
   // Rollback helper — used from every catch in this region. Best-
   // effort: if a rollback DB call ALSO fails, log + swallow so the
   // caller still sees the original error.
@@ -555,10 +624,21 @@ export async function payWithSavedCard(
     }
     console.error('PEACH PAY-WITH-SAVED-CARD ROLLBACK:', { planId, reason });
     try {
-      await supabase.from('payments').delete().eq('plan_id', planId);
-      await supabase.from('plans')
+      // Never unwind a COLLECTED row. The rollback exists to clear a
+      // half-written fresh acceptance, and it is already skipped entirely
+      // on the resume fork above — but scoping the delete makes "a paid
+      // instalment is not deletable" a property of the statement rather
+      // than of the branch that guards it (audit F-06, same class).
+      await svc().from('payments')
+        .delete()
+        .eq('plan_id', planId)
+        .eq('patient_id', patientId)
+        .in('status', ['scheduled', 'processing']);
+      await svc().from('plans')
         .update({ status: 'pending_acceptance', plan_type: null, instalment_amount: null })
-        .eq('id', planId);
+        .eq('id', planId)
+        .eq('patient_id', patientId)
+        .eq('status', 'pending_first_payment');
     } catch (rbErr) {
       console.error('PEACH PAY-WITH-SAVED-CARD ROLLBACK FAILED:', {
         planId,
@@ -577,7 +657,11 @@ export async function payWithSavedCard(
     if (!isResume) {
       // ── STEP 1: move plan → pending_first_payment ──────────────────
       console.log('PEACH PAY-WITH-SAVED-CARD STEP 1 PLAN UPDATE:', { planId });
-      const { error: planError } = await supabase
+      // `.eq('status','pending_acceptance')` + `.select('id')` — the same
+      // atomic claim acceptPlan now makes, for the same reason: without the
+      // status in the WHERE clause two concurrent one-clicks both wrote the
+      // plan and both inserted a schedule (audit F-03).
+      const { data: claimed, error: planError } = await privileged
         .from('plans')
         .update({
           status:            'pending_first_payment',
@@ -590,9 +674,16 @@ export async function payWithSavedCard(
           privacy_version:   PRIVACY_VERSION,
         })
         .eq('id', planId)
-        .eq('patient_id', user.id);
+        .eq('patient_id', user.id)
+        .eq('status', 'pending_acceptance')
+        .select('id');
 
       if (planError) return { error: planError.message };
+      if (!claimed || claimed.length === 0) {
+        // Another tab / request claimed this plan between our read and
+        // here. Nothing was written, so there is nothing to roll back.
+        return { error: 'Plan not found or already actioned.' };
+      }
 
       // ── STEP 2: insert payment rows (instalment 1 = 'processing') ──
       const paymentRows = instalments.map((amount, i) => ({
@@ -610,7 +701,7 @@ export async function payWithSavedCard(
         rowCount: paymentRows.length,
         instalment1Id,
       });
-      const { error: paymentsError } = await supabase.from('payments').insert(paymentRows);
+      const { error: paymentsError } = await privileged.from('payments').insert(paymentRows);
       if (paymentsError) {
         await rollbackPlanState(`paymentsError: ${paymentsError.message}`);
         return { error: paymentsError.message };
@@ -629,7 +720,7 @@ export async function payWithSavedCard(
         instalment1Id,
         merchantTransactionId: reference,
       });
-      const { error: refErr } = await supabase
+      const { error: refErr } = await privileged
         .from('payments')
         .update({ peach_payment_id: reference })
         .eq('id', instalment1Id)
@@ -648,7 +739,7 @@ export async function payWithSavedCard(
         instalment1Id,
         merchantTransactionId: reference,
       });
-      await supabase
+      await privileged
         .from('payments')
         .update({ peach_payment_id: reference })
         .eq('id', instalment1Id)
@@ -750,7 +841,7 @@ export async function payWithSavedCard(
     }
 
     // Stamp the checkout id for reconciliation / admin lookups.
-    await supabase
+    await privileged
       .from('payments')
       .update({ peach_checkout_id: checkoutId })
       .eq('id', instalment1Id)
@@ -800,13 +891,18 @@ export async function declinePlan(
 
   if (!plan) return { error: 'Plan not found or already actioned.' };
 
-  const { error: planError } = await supabase
+  const { data: declined, error: planError } = await svc()
     .from('plans')
     .update({ status: 'declined' })
     .eq('id', planId)
-    .eq('patient_id', user.id);
+    .eq('patient_id', user.id)
+    .eq('status', 'pending_acceptance')
+    .select('id');
 
   if (planError) return { error: planError.message };
+  if (!declined || declined.length === 0) {
+    return { error: 'Plan not found or already actioned.' };
+  }
 
   // ── Propagate to the POS counter session, if this bill had one ────────
   // A till-issued bill carries a checkout_sessions row (migration 0085)

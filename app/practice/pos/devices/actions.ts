@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import {
   hashTillSecret,
+  hashTillPin,
   generateRegistrationCode,
   generateTillPin,
 } from '@/lib/auth/tillDevice';
@@ -297,7 +298,11 @@ export async function setTillPin(pin: string, practiceId?: string): Promise<{ er
 
   let pinHash: string;
   try {
-    pinHash = hashTillSecret(pin);
+    // Salted scrypt since the 2026-09 audit (F-14) — see hashTillPin. The
+    // registration code two functions up still uses hashTillSecret, and
+    // must: it is matched by an equality lookup, which a per-row salt
+    // would make impossible.
+    pinHash = hashTillPin(pin);
   } catch {
     // See generateDeviceRegistrationCode's identical try/catch — same
     // TILL_AUTH_PEPPER misconfiguration, same fix.

@@ -9,6 +9,7 @@ import { neutraliseFormula } from '@/lib/crm/csv';
 import { normalisePhone, normaliseEmail } from '@/lib/crm/dedupe';
 import { SPECIALTIES } from '@/lib/specialties';
 import { checkAndRecord as checkAndRecordPublicLeadRate } from '@/lib/crm/publicLeadRateLimit';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── Public lead capture — /practices form ───────────────────────────
 //
@@ -64,7 +65,16 @@ export async function submitPublicLead(input: PublicLeadInput): Promise<PublicLe
   const ip = (h.get('x-forwarded-for') ?? '').split(',')[0].trim()
           || h.get('x-real-ip')
           || 'anon';
-  if (!checkAndRecordPublicLeadRate(ip)) {
+  // Two limiters, on purpose (audit F-17). The in-memory one is kept as a
+  // free first line that costs no round trip; the shared one is the one
+  // that actually holds, because the in-memory buckets are per-lambda and
+  // Vercel gives an attacker a fresh budget on every cold instance — which
+  // that module's own header says.
+  const withinMemory = checkAndRecordPublicLeadRate(ip);
+  const withinShared = await consumeAll('public_lead', [
+    [await clientIp(), RATE_LIMITS.public_lead.ip],
+  ]);
+  if (!withinMemory || !withinShared) {
     return { ok: false, error: 'rate_limited', message: 'Too many submissions from this IP.' };
   }
 

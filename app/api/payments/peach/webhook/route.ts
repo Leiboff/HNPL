@@ -98,6 +98,89 @@ async function safePush(
 
 // ─── Payment-success dispatch ──────────────────────────────────────
 
+// ─── Did we actually receive what we were owed? ─────────────────────────
+//
+// THE DEFECT (audit 2026-09-01, F-09a)
+//
+// Nothing in this route ever read payload.amount or payload.currency. A
+// success was established from result.code ALONE, and the row was marked
+// collected whatever sum had actually settled. A partial capture, a
+// currency mismatch, or a capture smaller than the instalment all closed
+// out as payment in full — and, on instalment 1, released a payout for 94%
+// of plans.total_amount.
+//
+// It is the missing half of a pair. F-02 let a patient rewrite
+// payments.amount before initiating the charge; this is why nobody
+// noticed. There was no point in the system where "what we asked for" and
+// "what arrived" were compared, so both numbers could be wrong
+// independently and the ledger would still balance on paper.
+//
+// TOLERANCE
+//
+// Exact, in integer cents, with ONE allowance: a capture LARGER than
+// expected is accepted and logged rather than refused. Over-collection is
+// not a fraud shape — nobody attacks themselves by paying more — and
+// refusing it would strand real money that has already left a real card
+// with no path back through this route. Under-collection by even one cent
+// is refused: that is the direction the money goes missing in.
+//
+// EXPECTED AMOUNT
+//
+// payments.amount plus any dunning fees already posted on the row, which
+// is exactly what chargeAmountCents computes for the charge itself — so
+// the comparison is against the figure we actually asked the processor
+// for, not against a re-derivation that could drift from it.
+//
+// A payload with NO amount field is accepted with a warning rather than
+// refused. Peach's own event shapes vary by product and this route already
+// tolerates that (see parseFormEventBody); turning a missing optional
+// field into a refusal would mean declining to reconcile real settled
+// money, which is worse than the check being best-effort on that path.
+
+type AmountVerdict =
+  | { ok: true;  note?: string }
+  | { ok: false; reason: string };
+
+function verifySettledAmount(
+  payload:      WebhookPaymentPayload,
+  expectedCents: number,
+): AmountVerdict {
+  const currency = payload.currency;
+  if (currency && currency.toUpperCase() !== 'ZAR') {
+    return { ok: false, reason: `currency ${currency} is not ZAR` };
+  }
+
+  if (payload.amount === undefined || payload.amount === null || payload.amount === '') {
+    return { ok: true, note: 'delivery carried no amount field — not verified' };
+  }
+
+  const settled = Number(payload.amount);
+  if (!Number.isFinite(settled)) {
+    return { ok: false, reason: `unparseable amount ${JSON.stringify(payload.amount)}` };
+  }
+
+  const settledCents = Math.round(settled * 100);
+  if (settledCents < expectedCents) {
+    return {
+      ok: false,
+      reason: `settled ${settledCents}c is short of the expected ${expectedCents}c`,
+    };
+  }
+  if (settledCents > expectedCents) {
+    return { ok: true, note: `settled ${settledCents}c exceeds the expected ${expectedCents}c — accepted` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Refuse to settle, loudly. Money has moved at the processor and we are
+ * declining to write it off against this instalment, so this is an
+ * operator-actionable state and not something to swallow at info level.
+ */
+function refuseSettlement(context: Record<string, unknown>): void {
+  console.error('[peach-webhook] ALERT amount-mismatch — NOT marking collected', context);
+}
+
 async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<void> {
   const reference = payload.merchantTransactionId;
   if (!reference) {
@@ -139,7 +222,7 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
   }
 
   if (payment.kind === 'settlement') {
-    await handleSettlementChargeSuccess(supabase, payment, reference);
+    await handleSettlementChargeSuccess(supabase, payment, reference, payload);
     return;
   }
 
@@ -155,6 +238,32 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
   }
 
   const now = new Date().toISOString();
+
+  // ── What actually settled has to match what we charged ──
+  //
+  // Ahead of every state flip below, including instalment 1's activation
+  // and its payout. See verifySettledAmount above for the tolerance and
+  // why an over-capture is allowed through.
+  const expectedCents = chargeAmountCents(
+    Number(payment.amount),
+    (payment.dunning_fees_cents ?? 0) as number,
+  );
+  const verdict = verifySettledAmount(payload, expectedCents);
+  if (!verdict.ok) {
+    refuseSettlement({
+      reference,
+      paymentId:        payment.id,
+      planId:           plan.id,
+      instalmentNumber: payment.instalment_number,
+      expectedCents,
+      reason:           verdict.reason,
+      note:             'money may have moved at Peach — reconcile by hand before releasing any payout',
+    });
+    return;
+  }
+  if (verdict.note) {
+    console.warn('[peach-webhook] payment.success: amount check', { reference, note: verdict.note });
+  }
 
   // ── Instalment 1 — first-payment activation ──
   if (payment.instalment_number === 1) {
@@ -586,11 +695,35 @@ async function handleSettlementChargeSuccess(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   settlement: any,
   reference: string,
+  payload: WebhookPaymentPayload,
 ): Promise<void> {
   if (settlement.status === 'collected') {
     console.log('[peach-webhook] settlement payment.success: already collected (duplicate)', { settlementId: settlement.id, reference });
     return;
   }
+
+  // Same amount gate as the instalment path (audit F-09a), and it matters
+  // MORE here: one settlement row fans `collected` out to every instalment
+  // it covers, so a short capture accepted at this point writes off a whole
+  // plan. A settlement row carries its full total in `amount` and posts no
+  // dunning fee of its own, so the expected figure is the row's own amount.
+  const expectedCents = Math.round(Number(settlement.amount) * 100);
+  const verdict = verifySettledAmount(payload, expectedCents);
+  if (!verdict.ok) {
+    refuseSettlement({
+      reference,
+      settlementId: settlement.id,
+      planId:       settlement.plan_id,
+      expectedCents,
+      reason:       verdict.reason,
+      note:         'settlement NOT applied — the instalments it covers stay as they were',
+    });
+    return;
+  }
+  if (verdict.note) {
+    console.warn('[peach-webhook] settlement payment.success: amount check', { reference, note: verdict.note });
+  }
+
   const now = new Date().toISOString();
 
   await supabase.from('payments').update({ status: 'collected', collected_at: now }).eq('id', settlement.id);
@@ -736,6 +869,66 @@ async function handleRegistrationEvent(payload: WebhookPaymentPayload, action: s
 //
 //   Malformed body (neither valid JSON nor parseable form) → 400.
 
+// ─── Replay ledger ──────────────────────────────────────────────────────
+//
+// x-webhook-id is unique per delivery and is part of the signed message,
+// so it cannot be substituted without the secret. Recording it is what
+// stops a captured delivery being replayed inside the freshness window
+// that verifyWebhookSignature now enforces (audit F-09b).
+//
+// ORDERING: checked BEFORE the handlers, recorded AFTER them.
+//
+// The check-before is the actual replay defence. The record-after is the
+// lesson from the Didit receiver's F-13 bug, which claims its event id up
+// front — so its own deliberate retry path re-entered, found the row it
+// had just written, and answered "duplicate" to the retry it had asked
+// for, permanently losing the verification. Recording on the way out means
+// a crash mid-handler leaves no row, and Peach's retry re-processes
+// against handlers that are individually precondition-guarded.
+//
+// The narrow cost of that ordering is that two deliveries of the same
+// event arriving genuinely concurrently can both pass the check. That is
+// the case the preconditions were always covering and still cover; it is a
+// strictly better failure than silently dropping a real event.
+
+async function alreadyDelivered(
+  supabase: ReturnType<typeof svc>,
+  webhookId: string,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('peach_webhook_events')
+    .select('webhook_id')
+    .eq('webhook_id', webhookId)
+    .maybeSingle();
+  if (error) {
+    // Fail OPEN. A ledger that cannot be read must not stop real payment
+    // events being reconciled — the preconditions in every handler are
+    // what make that safe, and losing a settlement is worse than
+    // re-running an idempotent flip.
+    console.error('[peach-webhook] replay-ledger read failed (processing anyway)', error.message);
+    return false;
+  }
+  return !!data;
+}
+
+async function recordDelivery(
+  supabase: ReturnType<typeof svc>,
+  webhookId: string,
+  meta: { eventType?: string; reference?: string },
+): Promise<void> {
+  const { error } = await supabase
+    .from('peach_webhook_events')
+    .upsert(
+      { webhook_id: webhookId, event_type: meta.eventType ?? null, reference: meta.reference ?? null },
+      { onConflict: 'webhook_id', ignoreDuplicates: true },
+    );
+  if (error) {
+    console.error('[peach-webhook] replay-ledger write failed (event WAS processed)', {
+      webhookId, error: error.message,
+    });
+  }
+}
+
 function computeWebhookUrl(request: NextRequest): string | null {
   // Prefer the env — set to match the Dashboard entry verbatim. Vercel
   // proxies can rewrite host/proto and NextRequest.url may not reflect
@@ -876,6 +1069,17 @@ export async function POST(request: NextRequest) {
 
   const { type, action, payload } = parsed;
 
+  // Replay check — after the signature (an unauthenticated delivery never
+  // reaches the ledger) and before any handler. webhookId is non-null here:
+  // verifyWebhookSignature refuses without it.
+  const ledger = svc();
+  if (await alreadyDelivered(ledger, webhookId!)) {
+    console.log('[peach-webhook] duplicate delivery — already processed', {
+      webhookId, reference: (payload as WebhookPaymentPayload).merchantTransactionId,
+    });
+    return NextResponse.json({ received: true, duplicate: true }, { status: 200 });
+  }
+
   console.log('[peach-webhook] event received:', {
     type,
     action,
@@ -919,7 +1123,16 @@ export async function POST(request: NextRequest) {
       error:     err instanceof Error ? err.message : String(err),
       stack:     err instanceof Error ? err.stack   : undefined,
     });
+    // Deliberately NOT recorded. A delivery that threw did not complete,
+    // and Peach's retry is the mechanism that finishes it — marking it
+    // delivered here would reproduce F-13 exactly.
+    return NextResponse.json({ received: true }, { status: 200 });
   }
+
+  await recordDelivery(ledger, webhookId!, {
+    eventType: type,
+    reference: (payload as WebhookPaymentPayload).merchantTransactionId,
+  });
 
   return NextResponse.json({ received: true }, { status: 200 });
 }

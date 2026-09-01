@@ -11,6 +11,7 @@ import {
   type ComposeAccount,
   type ReplyContext,
 } from './composeEmail';
+import { sanitizeSignatureHtml } from '@/lib/gmail/signature';
 
 // ─── Compose email sheet ────────────────────────────────────────────
 //
@@ -366,7 +367,9 @@ export default function ComposeEmailSheet({
                 {previewText.signatureHtml && (
                   <div className="pt-2 border-t border-gray-200">
                     <div className="text-[10px] font-semibold text-gray-500 mb-1">Signature (auto-appended):</div>
-                    <div className="bg-white rounded p-2 border border-gray-100" data-testid="compose-preview-signature" dangerouslySetInnerHTML={{ __html: previewText.signatureHtml }} />
+                    {/* Sanitised on output — see the matching note in
+                        app/crm/settings/SignatureEditor.tsx. */}
+                    <div className="bg-white rounded p-2 border border-gray-100" data-testid="compose-preview-signature" dangerouslySetInnerHTML={{ __html: sanitizeSignatureHtml(previewText.signatureHtml) }} />
                   </div>
                 )}
               </div>

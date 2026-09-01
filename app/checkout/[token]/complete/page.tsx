@@ -3,10 +3,10 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
-import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { classifyResultCode } from '@/lib/payments/peach/resultCodes';
 import { peachRefPurpose } from '@/lib/payments/peach/refs';
 import { activateFirstInstalment } from '@/lib/payments/activateFirstInstalment';
+import { resolveTokenPlan } from '@/lib/checkout/resolveTokenPlan';
 import PendingAutoRefresh from './PendingAutoRefresh';
 
 // ─── /checkout/[token]/complete — Peach Checkout V2 return route ────
@@ -28,7 +28,31 @@ import PendingAutoRefresh from './PendingAutoRefresh';
 
 type Params = { token: string };
 
-function ErrorCard({ reason, token }: { reason: string; token: string }) {
+// ─── Two shapes of refusal, and they must not share copy ───────────────
+//
+// The default title and hint describe a DECLINED CARD — "the bill is still
+// unpaid, try again". That is right for the rejected/no-reference paths
+// and flatly wrong for the two refusals added by the F-07 fix, which both
+// happen AFTER a successful charge: the money moved, the plan activated,
+// and what we are declining to do is hand this browser a session. Telling
+// someone their payment failed when it did not is the kind of copy that
+// produces a duplicate payment and a support call.
+//
+// So title and hint are overridable, and the retry button is suppressed
+// where retrying is exactly the wrong instruction.
+function ErrorCard({
+  reason,
+  token,
+  title = 'Payment didn’t go through',
+  hint  = 'Your account is set up but the bill is still unpaid. Try again with the same or a different card — no new account will be created.',
+  showRetry = true,
+}: {
+  reason:     string;
+  token:      string;
+  title?:     string;
+  hint?:      string;
+  showRetry?: boolean;
+}) {
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gray-50">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-200 p-6 text-center space-y-4">
@@ -37,25 +61,24 @@ function ErrorCard({ reason, token }: { reason: string; token: string }) {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
         </div>
-        <h1 className="text-xl font-semibold text-gray-900">Payment didn&apos;t go through</h1>
+        <h1 className="text-xl font-semibold text-gray-900">{title}</h1>
         <p className="text-sm text-gray-600">{reason}</p>
-        <p className="text-sm text-gray-500">
-          Your account is set up but the bill is still unpaid. Try again with the same or a
-          different card — no new account will be created.
-        </p>
+        <p className="text-sm text-gray-500">{hint}</p>
         {/* Plain anchor (NOT next/link) — this is a return-to-checkout
             after a failure and we want a HARD navigation so any
             client-side router cache holding the pre-attempt RSC of
             /checkout/[token] (which would flash the CheckoutForm
             before revalidating to ResumeCapture) is bypassed
             entirely. See page.tsx for the corresponding force-dynamic. */}
-        <a
-          href={`/checkout/${encodeURIComponent(token)}`}
-          className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
-          data-testid="checkout-complete-retry"
-        >
-          Try again
-        </a>
+        {showRetry && (
+          <a
+            href={`/checkout/${encodeURIComponent(token)}`}
+            className="inline-flex items-center justify-center rounded-lg bg-[#13294B] [background:linear-gradient(135deg,#13294B_0%,#15A89E_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+            data-testid="checkout-complete-retry"
+          >
+            Try again
+          </a>
+        )}
       </div>
     </div>
   );
@@ -179,6 +202,49 @@ export default async function CheckoutCompletePage({
   const planId    = payment.plan_id as string;
   const patientId = payment.patient_id as string;
 
+  // ── The token has to be about THIS payment ──────────────────────────
+  //
+  // THE DEFECT (audit 2026-09-01, F-07)
+  //
+  // Everything above this line was driven by `checkoutId`, a query
+  // parameter. The `token` in the path — the only value that could tie the
+  // request to a particular bill — was used for the invitation stamp and
+  // the final redirect and was NEVER compared to the payment, the plan or
+  // the patient. So `/checkout/<anything>/complete?checkoutId=<id>` reached
+  // the same code, and the block at the bottom of this page then reset that
+  // patient's password and signed the visitor in as them.
+  //
+  // A checkoutId is not a secret in practice. It is a query parameter on a
+  // URL the victim's browser visited, so it survives in history, in any
+  // Referer the page emits, and in access logs — and the QR flow is
+  // designed around a shared counter machine, which is the worst possible
+  // place for a history-borne credential.
+  //
+  // The sibling return route (app/patient/payment-complete) already got
+  // this right, with `if (!user || user.id !== payment.patient_id) return`.
+  // It could, because it runs for an already-authenticated patient. This
+  // route cannot use that check — establishing the session is part of its
+  // job — so the binding it uses instead is the token it was addressed
+  // with, resolved through exactly the same lookup initiateCheckout used.
+  const resolved = await resolveTokenPlan(svc, token);
+  if (!resolved || resolved.planId !== planId) {
+    console.warn('[checkout-complete] token does not resolve to this payment\'s plan — refusing', {
+      token: token.slice(0, 8) + '…',
+      checkoutId,
+      tokenPlanId: resolved?.planId ?? null,
+      paymentPlanId: planId,
+    });
+    return (
+      <ErrorCard
+        token={token}
+        title="We couldn't confirm this bill"
+        reason="This payment link doesn't match the bill it was opened from."
+        hint="If you've just paid, your payment is safe and your plan will update on its own — open your bill again from your email or scan the code. Don't pay a second time."
+        showRetry={false}
+      />
+    );
+  }
+
   // Save the card — idempotent; if the webhook raced us we get
   // { kind: 'already_saved' }.
   if (status.card) {
@@ -276,22 +342,77 @@ export default async function CheckoutCompletePage({
     .neq('stage', 'completed');
 
   // ── Make sure the patient is still authenticated for /done ────────
-  // If their session dropped during the widget interaction (rare — the
-  // widget is same-origin, but keep the fallback for parity with the
-  // earlier Paystack flow), reset a temp password and sign them back in.
+  //
+  // The widget is same-origin so the session initiateCheckout established
+  // normally survives; this is the fallback for when it does not.
+  //
+  // TWO THINGS CHANGED HERE (audit F-07).
+  //
+  // First, it no longer RESETS THE PASSWORD. The old version called
+  // admin.updateUserById({password}) and then signed in with the value it
+  // had just written — so every visit to this page silently rotated the
+  // patient's credential, locking the real owner out of an account they
+  // had just set a password on two clicks earlier at /done. A magic-link
+  // token does the same job (establish a session, server-side, without the
+  // browser proving anything) and mutates nothing.
+  //
+  // Second, it refuses rather than switching accounts. `user.id !==
+  // patientId` used to mean "sign them in as patientId", which is how a
+  // page reachable with only a checkoutId became an account-takeover. A
+  // DIFFERENT authenticated user reaching a completion page for somebody
+  // else's bill is not a session that needs repairing.
+  //
+  // What makes the remaining re-establishment defensible is the token
+  // binding above: reaching this line requires the bill's bearer token,
+  // which is the same credential initiateCheckout already accepts as proof
+  // of possession for this whole anonymous flow.
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user || user.id !== patientId) {
+
+  if (user && user.id !== patientId) {
+    console.warn('[checkout-complete] a different user is signed in on this browser — not switching accounts', {
+      checkoutId, planId,
+    });
+    return (
+      <ErrorCard
+        token={token}
+        title="You're signed in to another account"
+        reason="This bill belongs to a different account from the one signed in on this device."
+        hint="Your payment went through and the plan is active. Sign out, then open the bill again from your email or the QR code to see it. Don't pay a second time."
+        showRetry={false}
+      />
+    );
+  }
+
+  if (!user) {
     const { data: profile } = await svc
       .from('profiles')
       .select('email')
       .eq('id', patientId)
       .single();
     if (profile?.email) {
-      const tempPwd = generateTempPassword();
-      const { error: updErr } = await svc.auth.admin.updateUserById(patientId, { password: tempPwd });
-      if (!updErr) {
-        await supabase.auth.signInWithPassword({ email: profile.email, password: tempPwd });
+      // generateLink mints the token WITHOUT emailing it and without
+      // touching the credential; verifyOtp then redeems it onto this
+      // request's cookie jar. Best-effort: /done degrades to "session
+      // expired — use the emailed link again" rather than losing the
+      // payment, which has already settled by this point.
+      const { data: link, error: linkErr } = await svc.auth.admin.generateLink({
+        type:  'magiclink',
+        email: profile.email as string,
+      });
+      const hashedToken = link?.properties?.hashed_token;
+      if (linkErr || !hashedToken) {
+        console.error('[checkout-complete] could not mint a session for /done', {
+          planId, error: linkErr?.message ?? 'no hashed_token returned',
+        });
+      } else {
+        const { error: otpErr } = await supabase.auth.verifyOtp({
+          token_hash: hashedToken,
+          type:       'magiclink',
+        });
+        if (otpErr) {
+          console.error('[checkout-complete] magic-link redemption failed', { planId, error: otpErr.message });
+        }
       }
     }
   }

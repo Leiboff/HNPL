@@ -3,3 +3,30 @@ allowBuilds:
   sharp: true
   simple-git-hooks: true
   unrs-resolver: true
+
+# ─── Transitive-advisory overrides (audit 2026-09-01, F-15) ────────────
+#
+# Four packages that reach us only through `next` and its build chain, each
+# with a published advisory and a published fix. Nothing here is a direct
+# dependency — we do not import any of them — so pinning the resolved
+# version is the whole remedy and there is no code to change with it.
+#
+# pnpm 11 reads overrides from THIS file, not from package.json's `pnpm`
+# field (which it now ignores with a warning). Worth knowing, because the
+# package.json form looks correct and silently does nothing.
+#
+#   nanoid       infinite loop on a hostile size argument
+#   postcss      arbitrary file read + path traversal via sourceMappingURL,
+#                and a CSS-stringify XSS. Build-time, but the fix is free.
+#   @babel/core  the same sourceMappingURL file read, via styled-jsx
+#   sharp        libvips CVEs, via next's image optimisation
+#
+# Each is pinned to the lowest version that clears every advisory against
+# it rather than to `latest`, so the override stays a security fix and not
+# an unreviewed major bump. Revisit whenever `next` moves: once it depends
+# on fixed versions itself, these can go.
+overrides:
+  nanoid: ^3.3.18
+  postcss: ^8.5.23
+  '@babel/core': ^7.29.1
+  sharp: ^0.35.0

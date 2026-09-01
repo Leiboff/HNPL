@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { isAllowedSalaryDay, ALLOWED_SALARY_DAYS } from '@/lib/salaryDates';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
 
@@ -11,6 +12,29 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 // rather than being built inline on the account index page, so these
 // two actions moved to a neutral module both can reach without one
 // importing the other's page file.
+
+
+// ─── Why these two writes are privileged now ───────────────────────────
+//
+// Migration 0122 turned the profiles column lock into an ALLOW-LIST, and
+// salary_day / salary_amount are deliberately NOT on it (audit F-05).
+//
+// They could have been — a patient edits both from this very screen — and
+// the reason they are not is that a column a patient can PATCH directly is
+// a column whose validator is decorative. isAllowedSalaryDay and
+// isValidSalaryAmount are right here, three lines up, and before this
+// change a request that skipped them landed in the same column just the
+// same. salary_amount feeds the affordability step, so "whatever the
+// caller sent" was the wrong contract for it.
+//
+// So the validation stays where it is and the WRITE moves behind it.
+function svc() {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+}
 
 // Changes apply to FUTURE plans only — a plan's own `salary_day` column is
 // snapshotted at plan creation, so existing schedules are untouched. The
@@ -24,7 +48,7 @@ export async function saveSalaryDay(day: number): Promise<{ error: string | null
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Session expired. Please log in again.' };
 
-  const { error } = await supabase
+  const { error } = await svc()
     .from('profiles')
     .update({ salary_day: day })
     .eq('id', user.id);
@@ -47,7 +71,7 @@ export async function saveSalaryAmount(amount: number): Promise<{ error: string 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Session expired. Please log in again.' };
 
-  const { error } = await supabase
+  const { error } = await svc()
     .from('profiles')
     .update({ salary_amount: amount })
     .eq('id', user.id);
