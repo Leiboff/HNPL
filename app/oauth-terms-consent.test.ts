@@ -320,6 +320,6 @@ describe('the OAuth path AGREES — actively, like the email path', () => {
 
   it('the email path still gates on the tick before creating anything', () => {
     expect(STATE).toMatch(/if \(user\.identity_providers\.includes\('email'\)\) steps\.push\('verify-email'\);/);
-    expect(SIGNUP_SRC).toMatch(/if \(!termsAccepted\)\s*return \{ error:/);
+    expect(SIGNUP_SRC).toMatch(/if \(termsAccepted !== true\)\s*return \{ error:/);
   });
 });

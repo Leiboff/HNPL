@@ -114,6 +114,14 @@ type Props = {
     planType:    2 | 3;
     salaryDay?:  number | null;
     email?:      string;
+    /**
+     * The "I agree" tick, carried to the server. Required here — not
+     * optional — so a call site that forgets it is a type error rather
+     * than a silent refusal at runtime. The server gates on it (see
+     * initiateCheckout); this form's own validation is the courtesy that
+     * keeps the patient from meeting that refusal.
+     */
+    termsAccepted: boolean;
   }) => Promise<
     | { ok: true;  checkoutId: string; amountCents: number; shopperResultUrl: string }
     | { ok: false; error: string }
@@ -475,6 +483,10 @@ export default function CheckoutForm({
           // the invitation flow resolves email server-side from the
           // token and this is omitted.
           email:      requireEmail ? details.email.trim() : undefined,
+          // The tick has to travel. It is validated on this step too, but
+          // the client check is a courtesy — the server refuses without
+          // it, because that is where the acceptance gets recorded.
+          termsAccepted: details.termsAccepted,
         });
         if (!result.ok) {
           // The server's "verify_phone_required" code means the row

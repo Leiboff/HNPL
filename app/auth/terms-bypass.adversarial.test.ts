@@ -1,0 +1,550 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
+
+// ─── ADVERSARIAL: can anyone get an account without agreeing? ──────────
+//
+// The question these tests exist to answer, asked from the attacker's
+// side rather than the author's: a person WANTS an account and does NOT
+// want to tick the box. What can they actually do?
+//
+// The existing terms suites (app/terms-acceptance.test.ts,
+// app/oauth-terms-consent.test.ts, lib/legal/acceptance.test.ts) are
+// almost entirely SOURCE-TEXT assertions — they read route.ts and match
+// regexes against it. That pins the code against a careless edit, which
+// is worth having, but it cannot answer this question: a grep proves a
+// line exists, not that the handler refuses when you attack it.
+//
+// So these drive the REAL GET handlers of /auth/callback and
+// /auth/require-terms against a fake Supabase, with attacker-controlled
+// URLs and attacker-controlled database failures, and assert on what
+// comes back out — the redirect, the Set-Cookie header, and whether an
+// acceptance was ever written.
+//
+// Every test here is written as an attempt, not as a description. If one
+// of them ever goes green in the "attack succeeded" direction, someone
+// can register without agreeing.
+
+// ─── The fake Supabase ────────────────────────────────────────────────
+
+type ProfileRow = {
+  id:                    string;
+  first_name?:           string | null;
+  last_name?:            string | null;
+  role?:                 string | null;
+  terms_accepted_at:     string | null;
+  onboarding_completed?: boolean | null;
+} | null;
+
+type Write = { op: 'update' | 'insert'; values: Record<string, unknown>; filters: Record<string, unknown> };
+
+const state: {
+  profile:      ProfileRow;
+  readError:    unknown;
+  writeError:   unknown;
+  /** PostgREST's silent no-op: an UPDATE that matches nothing is not an error. */
+  updateMatchesNoRows: boolean;
+  /** The row comes back, but the column did not actually land. */
+  updateReturnsNullStamp: boolean;
+  insertError:  unknown;
+  /** The client throws rather than reporting — a reset connection, not a SQL error. */
+  readThrows:   boolean;
+  writes:       Write[];
+  sessionUser:  { id: string; email: string; identities: { provider: string }[]; user_metadata: Record<string, unknown> } | null;
+  exchangeError: unknown;
+  signOutResult: 'ok' | 'returns-error' | 'throws';
+  signOutCalls: { scope?: string }[];
+} = {
+  profile: null,
+  readError: null,
+  writeError: null,
+  updateMatchesNoRows: false,
+  updateReturnsNullStamp: false,
+  insertError: null,
+  readThrows: false,
+  writes: [],
+  sessionUser: null,
+  exchangeError: null,
+  signOutResult: 'ok',
+  signOutCalls: [],
+};
+
+function fakeTable() {
+  const filters: Record<string, unknown> = {};
+  let op: 'select' | 'update' | 'insert' | null = null;
+  let pending: Record<string, unknown> = {};
+
+  const builder: Record<string, unknown> = {
+    select: () => {
+      if (op === 'update') {
+        // Terminal: the route reads the row BACK rather than trusting a
+        // null error, so this is where an update resolves.
+        state.writes.push({ op: 'update', values: pending, filters: { ...filters } });
+        if (state.writeError) return Promise.resolve({ data: null, error: state.writeError });
+        if (state.updateMatchesNoRows) return Promise.resolve({ data: [], error: null });
+        const stamp = state.updateReturnsNullStamp ? null : (pending.terms_accepted_at ?? null);
+        if (state.profile) state.profile = { ...state.profile, ...pending } as ProfileRow;
+        return Promise.resolve({ data: [{ terms_accepted_at: stamp }], error: null });
+      }
+      op = 'select';
+      return builder;
+    },
+    update: (values: Record<string, unknown>) => { op = 'update'; pending = values; return builder; },
+    insert: (values: Record<string, unknown>) => {
+      state.writes.push({ op: 'insert', values, filters: {} });
+      if (state.insertError) return Promise.resolve({ error: state.insertError });
+      state.profile = values as ProfileRow;
+      return Promise.resolve({ error: null });
+    },
+    eq: (col: string, val: unknown) => { filters[col] = val; return builder; },
+    is: () => builder,
+    maybeSingle: async () => {
+      if (state.readThrows) throw new Error('connection reset');
+      if (state.readError) return { data: null, error: state.readError };
+      return { data: state.profile, error: null };
+    },
+  };
+  return builder;
+}
+
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: () => ({ from: () => fakeTable() }),
+}));
+
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: async () => ({
+    auth: {
+      exchangeCodeForSession: async () => ({ error: state.exchangeError }),
+      getUser: async () => ({ data: { user: state.sessionUser }, error: null }),
+      signOut: async (opts?: { scope?: string }) => {
+        state.signOutCalls.push(opts ?? {});
+        if (state.signOutResult === 'throws') throw new Error('network');
+        if (state.signOutResult === 'returns-error') return { error: { message: 'revocation failed' } };
+        return { error: null };
+      },
+    },
+  }),
+}));
+
+import { GET as callbackGET }     from './callback/route';
+import { GET as requireTermsGET } from './require-terms/route';
+
+// ─── Attacker helpers ─────────────────────────────────────────────────
+
+const ATTACKER_ID = 'attacker-user-id';
+const VICTIM_ID   = 'victim-user-id';
+
+/** A browser holding a live Supabase session, plus an unrelated cookie. */
+function withAuthCookies(req: NextRequest): NextRequest {
+  req.cookies.set('sb-project-auth-token', 'live-session');
+  req.cookies.set('sb-project-auth-token.1', 'chunk-two');
+  req.cookies.set('cf_bm', 'unrelated');
+  return req;
+}
+
+function callbackReq(query: string): NextRequest {
+  return withAuthCookies(new NextRequest(`http://test/auth/callback${query}`));
+}
+
+/** Cookie names this response tells the browser to drop. */
+function clearedCookies(res: Response): string[] {
+  return res.headers.getSetCookie()
+    .filter((c) => /Expires=Thu, 01 Jan 1970|Max-Age=0/i.test(c))
+    .map((c) => c.split('=')[0]);
+}
+
+function location(res: Response): string {
+  return res.headers.get('location') ?? '';
+}
+
+/** Did anything write an acceptance to the profiles table? */
+function acceptanceWrites(): Write[] {
+  return state.writes.filter((w) => 'terms_accepted_at' in w.values);
+}
+
+function googleArrival(overrides: Partial<NonNullable<typeof state.sessionUser>> = {}) {
+  return {
+    id:            ATTACKER_ID,
+    email:         'attacker@example.com',
+    identities:    [{ provider: 'google' }],
+    user_metadata: { given_name: 'Att', family_name: 'Acker' },
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  state.profile = null;
+  state.readError = null;
+  state.writeError = null;
+  state.updateMatchesNoRows = false;
+  state.updateReturnsNullStamp = false;
+  state.insertError = null;
+  state.readThrows = false;
+  state.writes = [];
+  state.sessionUser = googleArrival();
+  state.exchangeError = null;
+  state.signOutResult = 'ok';
+  state.signOutCalls = [];
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 1 — Just sign in with Google and skip the tick entirely
+// ══════════════════════════════════════════════════════════════════════
+//
+// The cheapest attack there is, and the one a real person stumbles into:
+// use the Google button on /login (a sign-in screen, which by design
+// carries a disclosure rather than a tick) and let Supabase provision a
+// brand-new account on the way through. No box was ever ticked.
+
+describe('ATTACK 1 — Google sign-in with no acceptance anywhere', () => {
+  it('does not keep the session, and creates no accepted account', async () => {
+    // Trigger made the row; nothing has ever accepted on it.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null, first_name: '', last_name: '' };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(acceptanceWrites()).toHaveLength(0);
+  });
+
+  it('deletes the auth cookies on the response the browser actually receives', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null, first_name: '', last_name: '' };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    // Both chunks — a half-deleted chunked cookie is worse than either
+    // extreme, because @supabase/ssr reassembles whatever it finds.
+    expect(clearedCookies(res)).toEqual(
+      expect.arrayContaining(['sb-project-auth-token', 'sb-project-auth-token.1']),
+    );
+    // And nothing that isn't ours.
+    expect(clearedCookies(res)).not.toContain('cf_bm');
+  });
+
+  it('revokes GLOBALLY, so the refresh token is dead upstream and not just unreachable here', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(state.signOutCalls).toContainEqual({ scope: 'global' });
+  });
+
+  it('when there is no profile row at all, refuses WITHOUT provisioning one', async () => {
+    // The defensive-provision branch must not be reachable without a tick:
+    // if we are the ones creating the row, no tick means no account.
+    state.profile = null;
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(state.writes.filter((w) => w.op === 'insert')).toHaveLength(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 2 — Forge the consent parameter
+// ══════════════════════════════════════════════════════════════════════
+//
+// redirectTo is built in the browser, so the attacker owns every
+// character of the URL Google sends them back to. The interesting
+// question is not whether they can set `terms_accepted` — they can — but
+// whether anything OTHER than a deliberate, exact assertion slips
+// through, and whether the assertion can be pointed at someone else.
+
+describe('ATTACK 2 — forging ?terms_accepted', () => {
+  const NEAR_MISSES = [
+    'true', 'TRUE', 'True', 'yes', 'on', 'Y',
+    '0', '2', '01', '1.0', '11',
+    '', ' 1', '%201', '1%20', '1%09',
+    'null', 'undefined', '[1]', '1,1',
+  ];
+
+  it.each(NEAR_MISSES)('a value of "%s" is NOT an acceptance', async (value) => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(callbackReq(`?code=valid-pkce&terms_accepted=${value}`));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(acceptanceWrites()).toHaveLength(0);
+  });
+
+  it('a repeated param does not let the second copy vote for the first', async () => {
+    // URLSearchParams.get returns the FIRST value, so `=x&=1` must lose.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=x&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(acceptanceWrites()).toHaveLength(0);
+  });
+
+  // ── The one that DOES work, stated plainly ──────────────────────────
+  //
+  // `terms_accepted=1` is a client assertion and it is honoured. That is
+  // the design, not a defect: the tick happens before any session
+  // exists, so there is no authenticated row to stamp at that moment and
+  // the acceptance has to travel on the URL.
+  //
+  // What makes it acceptable is the blast radius, and THAT is what these
+  // two tests pin. An attacker can assert their OWN agreement — which is
+  // the same thing as ticking a box they did not read, and no security
+  // boundary has ever stopped that. They cannot assert anyone else's.
+
+  it('is honoured when set exactly — the documented, self-asserted case', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/dashboard');
+    expect(acceptanceWrites()).toHaveLength(1);
+  });
+
+  it('stamps the SESSION\'s user, never an id supplied on the URL', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    await callbackGET(callbackReq(
+      `?code=valid-pkce&terms_accepted=1&user_id=${VICTIM_ID}&id=${VICTIM_ID}&sub=${VICTIM_ID}`,
+    ));
+
+    const write = acceptanceWrites()[0];
+    expect(write.filters.id).toBe(ATTACKER_ID);
+    expect(write.filters.id).not.toBe(VICTIM_ID);
+  });
+
+  it('never re-dates an acceptance already on record (write-once audit fact)', async () => {
+    // An attacker replaying the flow cannot roll the recorded date, or
+    // the recorded VERSION, forward onto a newer set of terms.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: '2024-01-01T00:00:00Z', onboarding_completed: null };
+
+    await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(acceptanceWrites()).toHaveLength(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 3 — Aim past the gate with ?next=
+// ══════════════════════════════════════════════════════════════════════
+
+describe('ATTACK 3 — steering the landing with ?next', () => {
+  it('a deep link into onboarding does not survive the refusal', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&next=%2Fonboarding%2Fphone'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(location(res)).not.toContain('onboarding');
+  });
+
+  it.each([
+    ['//evil.example.com',           'protocol-relative'],
+    ['https://evil.example.com',     'absolute'],
+    ['http://evil.example.com/x',    'absolute http'],
+  ])('clamps a %s ?next to /dashboard even on the ACCEPTED path (%s)', async (next) => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await callbackGET(callbackReq(
+      `?code=valid-pkce&terms_accepted=1&next=${encodeURIComponent(next)}`,
+    ));
+
+    expect(location(res)).toBe('http://test/dashboard');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 4 — Break the write and keep the session
+// ══════════════════════════════════════════════════════════════════════
+//
+// The subtler attack, and the one that produced the original field bug:
+// don't fight the gate, make the RECORDING fail. If a broken write means
+// "carry on", then anyone who can degrade the database — or who simply
+// gets lucky during an outage — lands inside the app with nothing on
+// record. Every one of these must fail CLOSED.
+
+describe('ATTACK 4 — degrade the write, keep the session', () => {
+  it('an unreadable profile row does not resolve to "probably fine"', async () => {
+    state.readError = { message: 'permission denied', code: '42501' };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms_write');
+    expect(clearedCookies(res)).toContain('sb-project-auth-token');
+  });
+
+  it('an UPDATE that silently matches no rows is a failure, not a success', async () => {
+    // PostgREST does not error on a zero-row UPDATE. Trusting a null
+    // error here is exactly how "the write didn't happen" becomes "the
+    // write happened".
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+    state.updateMatchesNoRows = true;
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms_write');
+  });
+
+  it('a row that comes back with the column still NULL is a failure', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+    state.updateReturnsNullStamp = true;
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms_write');
+  });
+
+  it('a refused UPDATE is a failure', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+    state.writeError = { message: 'deadlock detected', code: '40P01' };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms_write');
+  });
+
+  it('a failed defensive provision is a failure', async () => {
+    state.profile = null;
+    state.insertError = { message: 'insert refused', code: '42501' };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms_write');
+    expect(clearedCookies(res)).toContain('sb-project-auth-token');
+  });
+
+  it('a THROWN error rather than a reported one refuses too', async () => {
+    // A reset connection does not come back as { error } — it comes back
+    // as an exception. The sync used to swallow those and redirect anyway.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+    state.readThrows = true;
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce&terms_accepted=1'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms_write');
+    expect(clearedCookies(res)).toContain('sb-project-auth-token');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 5 — Make the sign-out fail
+// ══════════════════════════════════════════════════════════════════════
+//
+// The actual field bug, from the attacker's side. supabase-js reports a
+// failed revocation by RETURNING { error } and early-returns BEFORE
+// removing the stored session. A refusal that leans on signOut is a
+// refusal an attacker can defeat by making one network call fail.
+
+describe('ATTACK 5 — defeat the refusal by breaking signOut', () => {
+  it('a signOut that RETURNS an error still loses the cookies', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+    state.signOutResult = 'returns-error';
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(clearedCookies(res)).toEqual(
+      expect.arrayContaining(['sb-project-auth-token', 'sb-project-auth-token.1']),
+    );
+  });
+
+  it('a signOut that THROWS still loses the cookies', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+    state.signOutResult = 'throws';
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(clearedCookies(res)).toContain('sb-project-auth-token');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 6 — Claim the grandfather clause
+// ══════════════════════════════════════════════════════════════════════
+//
+// One account shape is let through with a NULL acceptance: one whose
+// onboarding_completed is already true. If that flag were assertable,
+// it would be the whole gate's back door.
+
+describe('ATTACK 6 — forging the grandfather flag', () => {
+  it.each([
+    ['a string "true"', 'true'],
+    ['a string "1"',    '1'],
+    ['the number 1',    1],
+    ['a non-empty object', {}],
+  ])('%s does not satisfy onboarding_completed', async (_label, value) => {
+    state.profile = {
+      id: ATTACKER_ID,
+      terms_accepted_at: null,
+      onboarding_completed: value as unknown as boolean,
+    };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+  });
+
+  it('only a real boolean true grandfathers — and that column is server-written', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: true };
+
+    const res = await callbackGET(callbackReq('?code=valid-pkce'));
+
+    expect(location(res)).toBe('http://test/dashboard');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// ATTACK 7 — Hold the session past the callback
+// ══════════════════════════════════════════════════════════════════════
+//
+// Suppose the callback's refusal is somehow survived — the browser keeps
+// a live cookie and walks straight to a patient surface. The page gate
+// (lib/legal/termsGate.ts) sends them to /auth/require-terms, which is
+// where a session can actually be ended. So that route is attacked from
+// both sides: it must end an unaccepted session, and it must NOT be
+// usable as a drive-by logout link against an account that is fine.
+
+describe('ATTACK 7 — /auth/require-terms', () => {
+  beforeEach(() => { state.sessionUser = googleArrival(); });
+
+  it('ends an unaccepted session and clears its cookies', async () => {
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: null, onboarding_completed: null };
+
+    const res = await requireTermsGET(withAuthCookies(new NextRequest('http://test/auth/require-terms')));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(clearedCookies(res)).toEqual(
+      expect.arrayContaining(['sb-project-auth-token', 'sb-project-auth-token.1']),
+    );
+    expect(state.signOutCalls).toContainEqual({ scope: 'global' });
+  });
+
+  it('CANNOT be used as a drive-by logout against an accepted account', async () => {
+    // e.g. an <img src="/auth/require-terms"> on a forum. A GET that logs
+    // people out is only safe because it re-verifies first.
+    state.profile = { id: ATTACKER_ID, terms_accepted_at: '2026-01-01T00:00:00Z', onboarding_completed: true };
+
+    const res = await requireTermsGET(withAuthCookies(new NextRequest('http://test/auth/require-terms')));
+
+    expect(location(res)).toBe('http://test/dashboard');
+    expect(clearedCookies(res)).toHaveLength(0);
+    expect(state.signOutCalls).toHaveLength(0);
+  });
+
+  it('fails CLOSED when the profile row cannot be read', async () => {
+    state.readError = { message: 'timeout' };
+
+    const res = await requireTermsGET(withAuthCookies(new NextRequest('http://test/auth/require-terms')));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+    expect(clearedCookies(res)).toContain('sb-project-auth-token');
+  });
+
+  it('a session that cannot be identified is cleared, not waved through', async () => {
+    state.sessionUser = null;
+
+    const res = await requireTermsGET(withAuthCookies(new NextRequest('http://test/auth/require-terms')));
+
+    expect(location(res)).toBe('http://test/signup?error=terms');
+  });
+});

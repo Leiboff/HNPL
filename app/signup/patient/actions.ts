@@ -242,9 +242,26 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   if (!firstName.trim())      return { error: 'First name is required.', success: false };
   if (!lastName.trim())       return { error: 'Last name is required.',  success: false };
   if (!isValidEmail(email))   return { error: 'Enter a valid email address.', success: false };
-  // Server-side gate: the T&C tick is enforced in the form, but the
-  // acceptance must be a server decision, not just a client checkbox.
-  if (!termsAccepted)         return { error: 'Please accept the betternow terms to continue.', success: false };
+  // ── Server-side gate: the acceptance is a SERVER decision ───────────
+  //
+  // The tick is enforced in the form too, but a Server Action is an HTTP
+  // endpoint and the form is a page the caller owns — so this is the only
+  // check that counts.
+  //
+  // `!== true`, not `!termsAccepted`. The field is typed `boolean` and
+  // TypeScript is erased at runtime; nothing between the wire and here
+  // coerces it, so a crafted payload can send a string, a number, or an
+  // object. `!termsAccepted` admits every truthy one of those — including,
+  // notoriously, the STRING "false" — and each would create an account
+  // AND stamp profiles.terms_accepted_at.
+  //
+  // That column is a legal audit record. A value the server never examined
+  // is not evidence that anyone agreed to anything, so the gate takes the
+  // same strict-equality posture the OAuth path already takes on its own
+  // client-asserted parameter (`terms_accepted === '1'` in
+  // app/auth/callback/route.ts). Enumerated in
+  // app/signup/patient/terms-bypass.adversarial.test.ts.
+  if (termsAccepted !== true)  return { error: 'Please accept the betternow terms to continue.', success: false };
 
   // Password — minimum length + the two cheap guards (email-local-part
   // + common-password list). Same guardrails as before.
