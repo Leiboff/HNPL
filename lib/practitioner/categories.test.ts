@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { categoryCounts } from './categories';
 import type { PractitionerCard } from './grouping';
 
@@ -83,5 +85,42 @@ describe('categoryCounts', () => {
       card({ id: 'c', specialty: 'Mango' }),
     ]);
     expect(cs.map((c) => c.specialty)).toEqual(['Alpha', 'Mango', 'Zeta']);
+  });
+});
+
+// ─── The patient portal stays inventory-driven ────────────────────────
+//
+// The specialty register (lib/specialties.ts) is 60 entries long and is
+// the vocabulary for SIGNUP and LABELLING only. A patient must only ever
+// see a specialty that has at least one signed-up practitioner behind
+// it, which is exactly what categoryCounts computes from the live
+// directory rows. Rendering the register on the landing instead would
+// offer a patient 60 tiles, most leading to an empty results list.
+describe('the register never reaches the patient portal', () => {
+  const ROOT = resolve(process.cwd());
+
+  const PATIENT_SOURCES = [
+    'app/patient/explore/page.tsx',
+    'app/patient/explore/ExploreView.tsx',
+    'app/patient/explore/Landing.tsx',
+    'app/patient/explore/PractitionerListCard.tsx',
+    'lib/practitioner/categories.ts',
+    'lib/practitioner/grouping.ts',
+  ];
+
+  it('no patient-facing specialty surface imports the register', () => {
+    for (const f of PATIENT_SOURCES) {
+      const src = readFileSync(resolve(ROOT, f), 'utf8');
+      expect(src).not.toMatch(/from ['"](@\/lib\/specialties|\.\.\/specialties|\.\/specialties)['"]/);
+      expect(src).not.toMatch(/\bSPECIALTIES\b/);
+    }
+  });
+
+  it('a specialty with no practitioners produces no category at all', () => {
+    // The whole rule, stated once: categories come from cards, so an
+    // unrepresented specialty cannot appear — there is no list to filter.
+    expect(categoryCounts([])).toEqual([]);
+    expect(categoryCounts([card({ id: 'only', specialty: 'Urologist' })]))
+      .toEqual([{ specialty: 'Urologist', count: 1 }]);
   });
 });

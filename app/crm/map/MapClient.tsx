@@ -14,7 +14,7 @@ import {
   STAGE_LEGEND,
 } from '@/lib/crm/mapPlanner';
 import type { MapLeadRow } from './page';
-import { SPECIALTIES } from '@/lib/specialties';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 import { STAGES } from '@/lib/crm/stages';
 
 // ─── /crm/map client ─────────────────────────────────────────────────
@@ -378,12 +378,17 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
           </div>
           <div className="flex gap-2 flex-wrap items-center">
             <span className="text-xs text-gray-500 uppercase tracking-wide">Specialty:</span>
-            <button type="button" onClick={() => setFilters(f => ({ ...f, specialty: '' }))} className={chip(!filters.specialty)}>All</button>
-            {SPECIALTIES.map(s => (
-              <button key={s} type="button" onClick={() => setFilters(f => ({ ...f, specialty: f.specialty === s ? '' : s }))} className={chip(filters.specialty === s)}>
-                {s}
-              </button>
-            ))}
+            {/* A chip per specialty was fine for a nine-value list; the
+                register is 60 long, which would push the map itself off
+                screen. Same filter, one control. */}
+            <select
+              value={filters.specialty}
+              onChange={e => setFilters(f => ({ ...f, specialty: e.target.value }))}
+              aria-label="Specialty"
+              className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs text-gray-700"
+            >
+              <SpecialtyOptions placeholder="All" current={filters.specialty} />
+            </select>
           </div>
           <div>
             <button

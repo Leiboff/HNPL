@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
-import { SPECIALTIES } from '@/lib/specialties';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 import { createLead } from '../actions';
 
 const SOURCES = ['referral','cold_outreach','inbound','event','other'] as const;
@@ -101,8 +101,7 @@ export default function NewLeadForm({
         </Field>
         <Field label="Specialty">
           <select value={f.specialty} onChange={e => upd('specialty', e.target.value)} className={inp}>
-            <option value="">(none)</option>
-            {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+            <SpecialtyOptions placeholder="(none)" />
           </select>
         </Field>
         <Field label="Phone">

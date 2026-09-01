@@ -1,20 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-
-const SPECIALTIES = [
-  'General Practitioner',
-  'Dentist',
-  'Physiotherapist',
-  'Psychologist',
-  'Specialist Physician',
-  'Gynaecologist',
-  'Paediatrician',
-  'Dermatologist',
-  'Optometrist',
-  'Chiropractor',
-  'Other',
-];
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 
 type PracticeFormData = {
   practiceId: string;
@@ -109,9 +96,7 @@ export default function SetupForm({ createPractice }: Props) {
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
             <option value="" disabled>Select a specialty</option>
-            {SPECIALTIES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+            <SpecialtyOptions />
           </select>
         </div>
 

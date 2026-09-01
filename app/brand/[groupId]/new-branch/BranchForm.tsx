@@ -5,11 +5,7 @@ import { useRouter } from 'next/navigation';
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
 import type { CreateBranchInput } from '@/app/brand/actions';
-
-const SPECIALTIES = [
-  'General Practice', 'Dentistry', 'Physiotherapy', 'Optometry',
-  'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
-];
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 ' +
@@ -71,7 +67,7 @@ export default function BranchForm({ groupId, createAction }: Props) {
       <input className={inputCls} placeholder="Practice name"         value={name}  onChange={(e) => setName(e.target.value)} />
       <select className={inputCls} value={specialty} onChange={(e) => setSpecialty(e.target.value)}>
         <option value="">Select specialty…</option>
-        {SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+        <SpecialtyOptions />
       </select>
       <input className={inputCls} placeholder="Email"                 type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
       <input className={inputCls} placeholder="Phone (optional)"      value={phone} onChange={(e) => setPhone(e.target.value)} />

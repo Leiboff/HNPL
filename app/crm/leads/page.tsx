@@ -6,7 +6,6 @@ import LeadsListSection from './LeadsListSection';
 import LeadsViewSwitcher from './LeadsViewSwitcher';
 import SavedViewsBar from './SavedViewsBar';
 import type { LeadScore } from '@/lib/crm/priorityScore';
-import { SPECIALTIES } from '@/lib/specialties';
 import { sastDayWindows } from '@/lib/crm/timezone';
 import { computeLeadScore } from '@/lib/crm/priorityScore';
 import { STAGES, TERMINAL_STAGES } from '@/lib/crm/stages';
@@ -69,7 +68,11 @@ export default async function LeadsListPage({
   const q         = sanitizeQ(params.q);
   const stage     = STAGES.includes(params.stage as (typeof STAGES)[number]) ? params.stage : '';
   const source    = SOURCES.includes(params.source as (typeof SOURCES)[number]) ? params.source : '';
-  const specialty = (SPECIALTIES as readonly string[]).includes(params.specialty ?? '') ? params.specialty : '';
+  // Validated by shape, not against the register: specialty is free
+  // text in crm_leads (bulk imports, and the pre-2026-08 vocabulary), so
+  // a value the filter dropdown offers below may legitimately not be a
+  // register entry. It reaches the DB as a parameterised .eq() only.
+  const specialty = (params.specialty ?? '').trim().slice(0, 80);
   const overdue   = params.overdue === 'true';
   const interest  = (INTERESTS as readonly string[]).includes(params.interest ?? '') ? (params.interest as Interest) : '';
   const hpcsaMatch = params.hpcsaMatch === 'true';
@@ -198,6 +201,16 @@ export default async function LeadsListPage({
   const { data: cityRows } = await supabase.from('crm_leads').select('city').is('archived_at', null).not('city', 'is', null).limit(2000);
   const cities = Array.from(new Set((cityRows ?? []).map(r => r.city).filter(Boolean) as string[])).sort();
 
+  // Same rule the patient portal applies to its specialty tiles: a
+  // filter only offers what the data actually contains. The register is
+  // 60 entries long — listing all of it here would be 60 dropdown rows,
+  // most matching nothing, and would still miss the free-text values
+  // that bulk imports leave behind. Its own query (not folded into the
+  // city one) so neither list loses entries to the other's rows against
+  // the 2000 cap.
+  const { data: specialtyRows } = await supabase.from('crm_leads').select('specialty').is('archived_at', null).not('specialty', 'is', null).limit(2000);
+  const leadSpecialties = Array.from(new Set((specialtyRows ?? []).map(r => r.specialty).filter(Boolean) as string[])).sort();
+
   const now = new Date();
   const scoresById = new Map(interestFilteredRows.map(r => [r.id, computeLeadScore({
     stage: r.stage,
@@ -260,7 +273,7 @@ export default async function LeadsListPage({
         rows={sorted.map(r => ({ ...r, interest: interestByLead.get(r.id) ?? 'unknown' }))}
         owners={owners}
         scores={Object.fromEntries(scoresById) as Record<string, LeadScore>}
-        specialties={SPECIALTIES}
+        specialties={leadSpecialties}
         cities={cities}
         isAdmin={isAdmin}
         currentUserId={user.id}

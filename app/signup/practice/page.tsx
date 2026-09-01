@@ -12,13 +12,9 @@ import {
 import PlacesAutocomplete from '@/app/_components/PlacesAutocomplete';
 import { parseAddressComponents } from '@/lib/maps/places';
 import { usePendingAction } from '@/components/loading/usePendingAction';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const SPECIALTIES = [
-  'General Practice', 'Dentistry', 'Physiotherapy', 'Optometry',
-  'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
-];
 
 const INPUT_BASE =
   'w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 ' +
@@ -327,7 +323,7 @@ export default function PracticeSignupPage() {
                 aria-invalid={!!errors.specialty}
               >
                 <option value="">Select specialty…</option>
-                {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+                <SpecialtyOptions />
               </select>
             </Field>
             <Field

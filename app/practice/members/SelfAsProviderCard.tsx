@@ -9,6 +9,7 @@ import {
   type FieldsSchema,
 } from '@/lib/forms/useFieldValidation';
 import { validateSaId } from '@/lib/validation';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 
 // ─── SelfAsProviderCard ──────────────────────────────────────────────────────
 //
@@ -25,11 +26,6 @@ import { validateSaId } from '@/lib/validation';
 //   • SA ID surfaces only one generic message regardless of which
 //     internal check (length / format / date / citizenship / checksum)
 //     failed — mirrors the patient signup pattern.
-
-const SPECIALTIES = [
-  'General Practice', 'Dentistry', 'Physiotherapy', 'Optometry',
-  'Specialist Medicine', 'Psychology', 'Nursing', 'Pharmacy', 'Other',
-];
 
 const INPUT_BASE = 'w-full rounded-lg border px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 outline-none transition-all focus:ring-2';
 const INPUT_OK   = 'border-gray-300 focus:border-[var(--portal-accent)] focus:ring-[var(--portal-accent)]/20';
@@ -168,7 +164,7 @@ export default function SelfAsProviderCard() {
             aria-invalid={!!errors.specialty}
           >
             <option value="">Select specialty…</option>
-            {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+            <SpecialtyOptions />
           </select>
           {errors.specialty && <p className="mt-1 text-xs text-red-600">{errors.specialty}</p>}
         </div>

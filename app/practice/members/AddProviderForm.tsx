@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { SPECIALTIES } from './AddMemberForm';
+import SpecialtyOptions from '@/components/SpecialtyOptions';
 
 // ─── Add a practitioner to the roster ───────────────────────────────────
 //
@@ -13,7 +13,7 @@ import { SPECIALTIES } from './AddMemberForm';
 // brand TeamSection, and it is explicitly out of scope for this work. Adding
 // an "and sometimes there's no email" branch to it would have put the
 // login-less path and the sends-mail-to-a-stranger path one conditional apart.
-// This form shares what should be shared — the SPECIALTIES list, so the two
+// This form shares what should be shared — <SpecialtyOptions>, so the two
 // surfaces can never offer different specialties — and nothing else.
 //
 // HPCSA is REQUIRED here although it is optional at invite. An invited
@@ -107,7 +107,7 @@ export default function AddProviderForm({
             required
           >
             <option value="">Select a specialty…</option>
-            {SPECIALTIES.map((s) => <option key={s} value={s}>{s}</option>)}
+            <SpecialtyOptions />
           </select>
         </label>
         <label className="block">

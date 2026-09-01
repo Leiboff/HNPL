@@ -196,10 +196,13 @@ describe('the Team screen offers both, separately', () => {
     expect(ADD_PROV).not.toMatch(/set\('email'/);                 // not in the draft state
   });
 
-  it('the roster form reuses the shared SPECIALTIES list', () => {
+  it('the roster form reuses the shared specialty vocabulary', () => {
     // One list, so the two surfaces cannot offer different specialties.
-    expect(ADD_PROV).toMatch(/from '\.\/AddMemberForm'/);
-    expect(ADD_PROV).toMatch(/SPECIALTIES/);
+    // It reaches every dropdown through <SpecialtyOptions>, which reads
+    // lib/specialties.ts — no form declares its own list.
+    expect(ADD_PROV).toMatch(/from '@\/components\/SpecialtyOptions'/);
+    expect(ADD_PROV).toMatch(/<SpecialtyOptions/);
+    expect(ADD_PROV).not.toMatch(/const SPECIALTIES = \[/);
   });
 
   it('the roster form says plainly that no login is created', () => {
