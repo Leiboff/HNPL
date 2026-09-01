@@ -34,7 +34,13 @@ function stampsAcceptanceOnActivation(src: string, occurrences: number) {
 describe('signup records acceptance server-side', () => {
   it('gates on termsAccepted as a server decision (not just the client tick)', () => {
     expect(SIGNUP).toMatch(/termsAccepted:\s*boolean/);
-    expect(SIGNUP).toMatch(/if \(!termsAccepted\)\s*return \{ error:/);
+    // STRICT equality, not `!termsAccepted`. The annotation above is
+    // erased at runtime and a Server Action is an HTTP endpoint, so a
+    // truthiness check admits every truthy non-boolean — the string
+    // "false" included — and stamps the audit column from a value the
+    // server never examined. Attacked in
+    // app/signup/patient/terms-bypass.adversarial.test.ts.
+    expect(SIGNUP).toMatch(/if \(termsAccepted !== true\)\s*return \{ error:/);
   });
 
   it('stamps profiles.terms_accepted_at + terms_version + privacy_version after signUp', () => {

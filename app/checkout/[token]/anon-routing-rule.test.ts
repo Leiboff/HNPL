@@ -833,13 +833,17 @@ describe('post-success UX — hero-first, skippable password, collapsed hand-off
   });
 
   it('T&C consent capture preserved — the checkbox still gates on the Details step', () => {
-    // Consent is a client-side required gate on Details (termsAccepted),
-    // captured BEFORE account creation — unchanged. Since migration 0081
-    // the acceptance is ALSO recorded server-side by initiateCheckout:
-    // profiles.terms_accepted_at/terms_version on the profile upsert and
-    // plans.terms_accepted_at/terms_version on the plan activation (pinned
-    // in app/terms-acceptance.test.ts). The label now links to
-    // /legal/terms.
+    // Consent is captured on Details (termsAccepted), BEFORE account
+    // creation — unchanged. Two things have moved since this was written:
+    // migration 0081 made the acceptance RECORDED server-side by
+    // initiateCheckout (profiles.terms_accepted_at/terms_version on the
+    // profile upsert, plans.terms_accepted_at/terms_version on the plan
+    // activation — pinned in app/terms-acceptance.test.ts), and the tick
+    // is now REQUIRED server-side too. It is no longer "a client-side
+    // gate": the value travels and initiateCheckout refuses without it,
+    // because a stamp the server never checked is not evidence of an
+    // agreement. See checkout-terms-bypass.adversarial.test.ts. The label
+    // links to /legal/terms.
     expect(FORM_SRC).toMatch(/id="checkout-termsAccepted"/);
     expect(FORM_SRC).toMatch(/checked=\{details\.termsAccepted\}/);
     expect(FORM_SRC).toMatch(/Please accept the payment-plan terms/);

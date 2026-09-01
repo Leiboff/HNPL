@@ -130,6 +130,10 @@ export type InitiateCheckoutInput = {
   // Required ONLY for a POS session token — an invitation token
   // resolves email server-side and this is ignored if sent.
   email?:      string;
+  // The checkout "I agree" tick. Required, and checked server-side —
+  // see the gate at the top of initiateCheckout for why it has to
+  // travel rather than being inferred from the form having rendered.
+  termsAccepted: boolean;
 };
 
 // ─── Polymorphic token resolution ─────────────────────────────────────
@@ -228,9 +232,39 @@ export type InitiateCheckoutResult =
   | { ok: false; error: string; frozen: true };
 
 export async function initiateCheckout(input: InitiateCheckoutInput): Promise<InitiateCheckoutResult> {
-  const { token, firstName, lastName, phone, planType } = input;
+  const { token, firstName, lastName, phone, planType, termsAccepted } = input;
   const clientSalaryDay: number | null =
     typeof input.salaryDay === 'number' ? input.salaryDay : null;
+
+  // ── The acceptance is a SERVER decision ─────────────────────────────
+  //
+  // This action is the THIRD way to get an account on this system — it
+  // runs svc.auth.admin.createUser for a patient who has never signed up
+  // — and it was the only one whose "I agree" tick was never checked
+  // here. CheckoutForm validates it client-side and did not send it, yet
+  // the profile upsert below stamps profiles.terms_accepted_at
+  // unconditionally. So a request that skipped the form entirely got an
+  // account AND an audit record saying they had agreed.
+  //
+  // That is exactly the defect migration 0081 was written to close, still
+  // open on this path: its own header says the checkout tick was
+  // "captured CLIENT-SIDE ONLY". 0081 made the acceptance RECORDED; this
+  // makes it REQUIRED, which is the half that makes the record mean
+  // something.
+  //
+  // Checked first, before the token is even resolved, for the same reason
+  // signUpPatient checks it first: no account, no plan and no OTP should
+  // exist for a request that was never entitled to make one.
+  //
+  // `!== true` rather than `!termsAccepted` — a Server Action is an HTTP
+  // endpoint, the `boolean` annotation is erased at runtime, and every
+  // truthy non-boolean (the string "false" among them) would otherwise
+  // pass. Same posture as signUpPatient and as /auth/callback's
+  // `terms_accepted === '1'`. Enumerated in
+  // app/checkout/[token]/checkout-terms-bypass.adversarial.test.ts.
+  if (termsAccepted !== true) {
+    return { ok: false, error: 'Please accept the payment-plan terms to continue.' };
+  }
 
   if (!token)                  return { ok: false, error: 'Missing token.' };
   if (!firstName.trim())       return { ok: false, error: 'First name is required.' };
@@ -595,7 +629,9 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     // Checkout-origin patients never pass through signUpPatient, so this
     // is where their account-level acceptance of the T&Cs + Privacy
     // Policy is recorded — the checkout "I agree" tick, stamped
-    // server-side with both versions.
+    // server-side with both versions. The tick itself is REFUSED at the
+    // top of this action, so reaching here means an agreement the server
+    // actually saw, not one inferred from the form having rendered.
     terms_accepted_at:  new Date().toISOString(),
     terms_version:      TERMS_VERSION,
     privacy_version:    PRIVACY_VERSION,
