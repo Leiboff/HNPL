@@ -478,8 +478,12 @@ C1 and C2 are the same afternoon's work for one attacker, and they compose: C1 s
 
 ### Fix immediately — before any further real money
 
-1. **R3-01** — `DROP POLICY "patients_insert_payout_on_accept" ON payouts` and add `protect_payouts_write`. The policy is dead code; verified against every write path in the tree. *One migration.*
-2. **R3-02** — give `protect_practices_columns` an INSERT branch and rebuild the trigger as `BEFORE INSERT OR UPDATE`; drop `authenticated_insert_practice`. *Same migration.*
+**Written: `supabase/migrations/0135_close_insert_surface_payouts_practices.sql`**, covering both criticals, with `0135_close_insert_surface.rls.test.ts` (21 assertions) proving the holes are closed *and* that the three load-bearing legitimate paths still work. **Not yet applied to production** — it is a pending migration awaiting a deliberate deploy.
+
+1. **R3-01** — `DROP POLICY "patients_insert_payout_on_accept" ON payouts` and add `protect_payouts_write`. The policy is dead code; verified against every write path in the tree. *Done in 0135.*
+2. **R3-02** — give `protect_practices_columns` an INSERT branch and rebuild the trigger as `BEFORE INSERT OR UPDATE`; drop `authenticated_insert_practice`. *Done in 0135.*
+
+   One thing the migration had to work around, recorded because it is the way this fix goes wrong: `payouts` **cannot** take the blanket refusal `protect_plans_write` uses. `app/admin/payouts/actions.ts` settles payouts on the **session client**, not service-role, and that is deliberate — 0131's `trg_log_payout_settlement` records `auth.uid()`, so moving it to service-role would make every settlement audit row read `actor_id = NULL`. 0135's UPDATE branch therefore permits exactly one write: a platform admin changing only `status` and `paid_at`, `pending → paid`.
 3. **Audit the production data for both.** Before or alongside the fix, run:
    ```sql
    -- payouts nobody's activation path would have written
