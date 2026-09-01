@@ -26,7 +26,15 @@ export type RateLimitBucket =
   | 'identity_session'
   | 'till_registration'
   | 'public_lead'
-  | 'contact_form';
+  | 'contact_form'
+  // ── The money-moving surfaces, added 2026-09-02 (audit A-11's second
+  //    half). Every one of these charges a card, commits credit or issues
+  //    a bill token, and none of them had any limit at all.
+  | 'accept_plan'
+  | 'pay_saved_card'
+  | 'self_settle'
+  | 'counter_session'
+  | 'credit_check';
 
 export type RateLimitRule = { max: number; windowSecs: number };
 
@@ -65,6 +73,45 @@ export const RATE_LIMITS: Record<RateLimitBucket, { ip: RateLimitRule; account?:
   // Twins of the two in-memory limiters these replace, same numbers.
   public_lead:         { ip: { max: 5,  windowSecs: 3600 } },
   contact_form:        { ip: { max: 5,  windowSecs: 3600 } },
+
+  // ─── The money-moving surfaces ───────────────────────────────────────
+  //
+  // These are not anti-abuse limits in the signup sense — the caller is an
+  // authenticated patient acting on their own plan, and the authorization
+  // is already correct. They are BLAST-RADIUS limits: whatever goes wrong
+  // upstream (a compromised session, a retry storm from a flaky client, a
+  // bug that loops), the damage per account per hour is bounded, and the
+  // counter is a signal that something is wrong before the money is.
+  //
+  // Sized against the legitimate repeat profile, which for all five is
+  // "once, occasionally twice". Generous multiples of that, so a real
+  // person fumbling a payment never meets one.
+
+  // Commits credit and writes a schedule. A patient accepts a bill once;
+  // a decline-retry does not re-accept.
+  accept_plan:         { ip: { max: 20, windowSecs: 3600 }, account: { max: 10, windowSecs: 3600 } },
+
+  // Fires a real CIT charge at Peach. The resume path re-enters this with
+  // the SAME deterministic reference, so Peach dedups rather than
+  // double-charging — the limit is about the volume of attempts, not about
+  // correctness of any one of them.
+  pay_saved_card:      { ip: { max: 20, windowSecs: 3600 }, account: { max: 10, windowSecs: 3600 } },
+
+  // Fires an MIT charge for the whole outstanding balance. The single
+  // largest amount a patient can move in one call, and once it succeeds
+  // there is nothing left to settle.
+  self_settle:         { ip: { max: 10, windowSecs: 3600 }, account: { max: 5,  windowSecs: 3600 } },
+
+  // A practice issuing a till bill. Keyed on the PRACTICE rather than the
+  // user, because a busy front desk is several receptionists on one
+  // account — and because "this practice is raising bills at 300/hour" is
+  // the thing worth noticing, whoever is typing.
+  counter_session:     { ip: { max: 120, windowSecs: 3600 }, account: { max: 200, windowSecs: 3600 } },
+
+  // A credit bureau call. Real money at a vendor per unit, and a patient
+  // needs exactly one — the retries are for a failed lookup, not for a
+  // second opinion.
+  credit_check:        { ip: { max: 10, windowSecs: 86400 }, account: { max: 5, windowSecs: 86400 } },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

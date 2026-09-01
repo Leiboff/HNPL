@@ -16,6 +16,7 @@ import { TERMS_VERSION } from '@/lib/legal/terms';
 import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import type { User } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── The privileged client, and why these actions now need one ─────────
 //
@@ -147,6 +148,30 @@ export async function acceptPlan(
   // ─── Onboarding gate ─────────────────────────────────────────────
   const refusal = await requireOnboarded(supabase, user);
   if (refusal) return refusal;
+
+  // ── Rate limit (audit A-11's second half) ────────────────────────
+  //
+  // Not an anti-abuse limit in the signup sense: the caller is an
+  // authenticated patient acting on their own plan, and the authorization
+  // above is already correct. It is a BLAST-RADIUS limit. Whatever goes
+  // wrong upstream — a stolen session, a retry storm from a flaky client,
+  // a loop introduced by a future edit — the damage per account per hour
+  // is bounded, and a counter that trips is a signal something is wrong
+  // before the money says so.
+  //
+  // Spent AFTER authentication and the onboarding gate, unlike the
+  // anonymous surfaces: there is no unauthenticated attacker to damp here,
+  // so keying the budget to a user who has already proved who they are is
+  // both cheaper and more informative than keying it to arrivals.
+  //
+  // Keyed on IP AND account, per the module's own rule: either alone is
+  // rotatable.
+  if (!await consumeAll('accept_plan', [
+    [await clientIp(), RATE_LIMITS.accept_plan.ip],
+    [user.id,          RATE_LIMITS.accept_plan.account!],
+  ])) {
+    return { error: 'Too many attempts. Please wait a few minutes and try again.' };
+  }
 
   if (planType !== 2 && planType !== 3) {
     return { error: 'Invalid instalment count. Choose 2 or 3.' };
@@ -432,6 +457,20 @@ export async function payWithSavedCard(
   // ─── Onboarding gate ─────────────────────────────────────────────
   const refusal = await requireOnboarded(supabase, user);
   if (refusal) return refusal;
+
+  // ── Rate limit (audit A-11's second half) ────────────────────────
+  //
+  // This one fires a real customer-present charge at Peach. See acceptPlan
+  // above for why these are blast-radius limits rather than anti-abuse
+  // ones; the resume path re-enters here with the SAME deterministic
+  // reference, so Peach dedups and the limit is about the VOLUME of
+  // attempts rather than the correctness of any one of them.
+  if (!await consumeAll('pay_saved_card', [
+    [await clientIp(), RATE_LIMITS.pay_saved_card.ip],
+    [user.id,          RATE_LIMITS.pay_saved_card.account!],
+  ])) {
+    return { error: 'Too many payment attempts. Please wait a few minutes and try again.' };
+  }
 
   // ─── Default freeze gate ─────────────────────────────────────────
   // The saved-card one-click is the returning-patient equivalent of

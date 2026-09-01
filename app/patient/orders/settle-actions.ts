@@ -7,6 +7,7 @@ import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { getPaymentProvider } from '@/lib/payments/provider';
 import { dunningFeesEnabled } from '@/lib/payments/dunning';
 import { settleRef } from '@/lib/payments/peach/refs';
+import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 // ─── Patient-initiated "Pay now" — self-settle a past-due instalment ──
 //
@@ -75,6 +76,25 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return { ok: false, status: 'unauthorized' };
+  }
+
+  // ── 1b. Rate limit (audit A-11's second half) ─────────────────────
+  //
+  // Both settle paths share one budget, deliberately. They fire the same
+  // kind of charge at the same provider against the same card, and a
+  // separate allowance for each would let an attacker alternate between
+  // them for double the throughput — which is precisely what somebody
+  // probing a stolen session would do.
+  //
+  // Refused as a claim-loss rather than a new status: the caller already
+  // handles that branch, the copy is right ("a payment attempt is already
+  // in progress"), and adding a status to a union consumed by two button
+  // components buys nothing here.
+  if (!await consumeAll('self_settle', [
+    [await clientIp(), RATE_LIMITS.self_settle.ip],
+    [user.id,          RATE_LIMITS.self_settle.account!],
+  ])) {
+    return { ok: false, status: 'claim_lost', reason: 'rate_limited' };
   }
 
   // ── 2. Ownership + settleability. RLS scopes the SELECT to rows the
@@ -194,6 +214,24 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return { ok: false, status: 'unauthorized' };
+  }
+
+  // ── 1b. Rate limit (audit A-11's second half) ─────────────────────
+  //
+  // The single largest amount a patient can move in one call — this
+  // charges the whole outstanding balance — and the one whose failure
+  // mode is worst: a claim that strands leaves every instalment it
+  // covered in 'processing' (audit A-13). Shares the 'self_settle' budget
+  // with the per-instalment path; see the note there.
+  //
+  // 'race_lost' is the honest refusal: the caller's copy for it is "some
+  // instalments are being collected right now, please try again in a
+  // moment", which is true and is the right instruction.
+  if (!await consumeAll('self_settle', [
+    [await clientIp(), RATE_LIMITS.self_settle.ip],
+    [user.id,          RATE_LIMITS.self_settle.account!],
+  ])) {
+    return { ok: false, status: 'race_lost' };
   }
 
   // ── 2. Atomic multi-row claim + settlement-row insert via the RPC.
