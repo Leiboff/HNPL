@@ -71,7 +71,15 @@ export default function PayNowButton({
             setDone(true);
             return;
           case 'transport_error':
-            setFeedback(`Couldn't reach the payment processor. Please try again in a moment.`);
+            // Same reasoning as SettleEntireBillButton (audit A-13): the
+            // response did not arrive, which is not the same as the charge
+            // not happening. The row stays claimed, so a retry cannot work
+            // anyway — and "try again" is how a customer pays twice.
+            setFeedback(
+              'We couldn\'t confirm this payment with the bank. Do NOT pay again — '
+              + 'we\'re checking, and we\'ll update your plan as soon as we know.',
+            );
+            setDone(true);
             return;
           case 'not_settleable':
             setFeedback(`This instalment can't be settled right now.`);

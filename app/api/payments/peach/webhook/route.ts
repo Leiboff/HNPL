@@ -735,6 +735,41 @@ async function handleSettlementChargeSuccess(
     .eq('status', 'processing')
     .select('id, instalment_number, amount, dunning_fees_cents');
 
+  // ── The late-webhook fallback (audit A-13) ────────────────────────
+  //
+  // The UPDATE above finds nothing when something already released the
+  // covered rows — the stuck-processing sweep reverting a claim it judged
+  // never-sent, and then this webhook arriving anyway. Without a fallback
+  // the settlement would be marked collected while the instalments it paid
+  // for sit unpaid: the customer is charged and still owes the money, which
+  // is the worst outcome available here.
+  //
+  // pre_settlement_snapshot is keyed by the covered rows' own ids, so the
+  // settlement row still knows exactly what it bought even after the link
+  // was cleared. Each write is conditional on the row NOT already being
+  // collected, so a row the cron collected in the meantime is left alone
+  // rather than restamped.
+  let rescuedCount = 0;
+  if ((covered ?? []).length === 0) {
+    const snapshot = (settlement.pre_settlement_snapshot ?? {}) as Record<string, unknown>;
+    const ids = Object.keys(snapshot);
+    if (ids.length > 0) {
+      const { data: rescued } = await supabase
+        .from('payments')
+        .update({ status: 'collected', collected_at: now, next_attempt_date: null })
+        .in('id', ids)
+        .eq('kind', 'instalment')
+        .neq('status', 'collected')
+        .select('id');
+      rescuedCount = (rescued ?? []).length;
+      console.warn(
+        '[peach-webhook] settlement payment.success: covered rows had been released '
+        + '— re-collected them from the snapshot',
+        { settlementId: settlement.id, reference, snapshotCount: ids.length, rescued: rescuedCount },
+      );
+    }
+  }
+
   const { data: remaining } = await supabase
     .from('payments')
     .select('id')
@@ -755,7 +790,7 @@ async function handleSettlementChargeSuccess(
       reference,
       collected_amount_cents: Math.round(Number(settlement.amount) * 100),
       via_settle_entire:      true,
-      covered_count:          covered?.length ?? 0,
+      covered_count:          (covered?.length ?? 0) + rescuedCount,
     },
   });
 

@@ -301,6 +301,20 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     ? { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'INSTALLMENT' as const, initialTransactionId: initial }
     : { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'UNSCHEDULED' as const };
 
+  // ── The point of no safe return (audit A-13) ────────────────────────
+  //
+  // Stamped BEFORE the call, so it means "may be in flight" and nothing
+  // stronger. This is the column the stuck-processing sweep reads to decide
+  // whether an abandoned 'processing' row can be reverted: NULL means the
+  // claim died before the request left, and only then is a revert safe. A
+  // stamp written after the response would make every in-flight settlement
+  // look never-sent, and the sweep would release a whole plan's instalments
+  // while Peach was collecting them.
+  await svc
+    .from('payments')
+    .update({ provider_attempted_at: new Date().toISOString() })
+    .eq('id', settlementId);
+
   const provider = getPaymentProvider();
   const chargeResult = await provider.chargeSavedCard({
     registrationId:        plan.peach_registration_id,
@@ -311,11 +325,42 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   });
 
   if (chargeResult.status === 'error') {
-    // Transport error: the settlement row stays in 'processing'.
-    // We do NOT revert here — Peach may still have received the
-    // charge; reverting would risk double-charging if a delayed
-    // webhook later arrives. Same posture as chargeInstalment's
-    // transport_error path. Admin reconciles via the Peach dashboard.
+    // ── Transport error ───────────────────────────────────────────────
+    //
+    // The settlement row STAYS in 'processing', and that posture is
+    // unchanged and correct: Peach may have received the charge, and
+    // reverting a claim it is about to collect would double-charge the
+    // customer for their whole remaining balance.
+    //
+    // What was wrong (A-13) is what happened next: nothing. The comment
+    // here said "admin reconciles via the Peach dashboard" and no surface
+    // ever told an admin there was anything to reconcile — so one transport
+    // error silently froze the plan's entire outstanding balance in a status
+    // no cron, no dunning ladder and no retry path can see.
+    //
+    // Now it is marked and alerted, the daily sweep reports it, and
+    // /admin/collections lists it. The failure_reason is written WITHOUT
+    // moving the status, so the row stays claimed (no double-charge risk)
+    // while becoming findable.
+    await svc
+      .from('payments')
+      .update({ failure_reason: 'transport_error — awaiting reconciliation' })
+      .eq('id', settlementId)
+      .eq('status', 'processing');
+
+    console.error(
+      '[settle-entire-bill] ALERT transport error after the charge was sent '
+      + '— the plan\'s balance is claimed and unresolved until reconciled',
+      {
+        settlementId,
+        planId,
+        reference,
+        amountCents,
+        coveredCount,
+        error: chargeResult.resultDescription ?? 'transport error',
+      },
+    );
+
     return {
       ok: false,
       status: 'transport_error',

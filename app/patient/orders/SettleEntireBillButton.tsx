@@ -77,7 +77,20 @@ export default function SettleEntireBillButton({
             setResultMsg('Some instalments are being collected right now. Please try again in a moment.');
             return;
           case 'transport_error':
-            setResultMsg(`Couldn't reach the payment processor. Please try again in a moment.`);
+            // NOT "try again" (audit A-13). A transport error means the
+            // response never arrived, not that the charge did not happen —
+            // Peach may well be collecting it. Telling the patient to retry
+            // invites a second payment for the same bill, and in any case
+            // the retry cannot work: every instalment is claimed, so the
+            // next attempt finds nothing eligible and reports "nothing
+            // outstanding", which reads as "it went through" and is not
+            // something we know.
+            setResultMsg(
+              'We couldn\'t confirm this payment with the bank. Do NOT pay again — '
+              + 'we\'re checking, and we\'ll update your plan as soon as we know. '
+              + 'Contact us if you don\'t hear within one working day.',
+            );
+            setDone(true);
             return;
           case 'declined':
             setResultMsg('The card was declined. Please try again or contact support.');

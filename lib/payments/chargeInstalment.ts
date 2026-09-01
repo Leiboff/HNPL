@@ -219,6 +219,34 @@ export async function attemptChargeInstalment(
     ? { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'INSTALLMENT' as const, initialTransactionId: initial }
     : { mode: 'REPEATED' as const, source: 'MIT' as const, type: 'UNSCHEDULED' as const };
 
+  // ── The point of no safe return (audit A-13) ──────────────────────
+  //
+  // Stamped BEFORE the call, never after. It means "this charge may be in
+  // flight", which is the only thing that is true from here on: a transport
+  // error below tells us the response did not arrive, not that Peach did not
+  // receive the request.
+  //
+  // The stuck-processing sweep reads exactly this column to decide whether a
+  // row it finds abandoned in 'processing' may be reverted. A stamp written
+  // after the call would leave every genuinely in-flight charge looking
+  // never-sent, and the sweep would revert claims Peach was about to
+  // collect — charging the customer twice. See
+  // lib/payments/sweepStuckProcessing.ts.
+  //
+  // Deliberately not awaited-and-checked: a failed stamp must not stop the
+  // charge, and its only consequence is that the sweep treats this row
+  // conservatively (as never-sent) if the process then dies. That is the
+  // wrong side to fail on, so it is logged loudly.
+  const { error: stampErr } = await svc
+    .from('payments')
+    .update({ provider_attempted_at: new Date().toISOString() })
+    .eq('id', paymentId);
+  if (stampErr) {
+    console.error('[charge-instalment] ALERT could not stamp provider_attempted_at', {
+      paymentId, reference, error: stampErr.message,
+    });
+  }
+
   const provider = getPaymentProvider();
   const result = await provider.chargeSavedCard({
     registrationId:        plan.peach_registration_id,
