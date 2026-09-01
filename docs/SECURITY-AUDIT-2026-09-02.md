@@ -4,7 +4,43 @@
 **Branch:** `claude/web-app-security-audit-j53pdt`
 **Scope:** the whole repository — `app/` (≈300 route/action/component files), `lib/`, `components/`, 124 SQL migrations, 20 API routes, 34 Server Action modules, `proxy.ts`, `next.config.ts`, `vercel.json`.
 **Method:** static review of every auth, authorization, money, KYC and webhook path, plus **executable proof-of-concept tests** — three new test files, 20 assertions, all passing as exploit demonstrations. The pglite proofs run the **actual migration SQL** against a real PostgreSQL as non-superuser roles named `anon` / `authenticated` / `service_role`, so the migrations' own `GRANT`/`REVOKE` statements are what execute.
-**Constraint honoured:** no production code was changed. The pre-existing suite was green before (368 files / 6,558 tests) and is green after.
+**Constraint honoured (round one):** no production code was changed. The pre-existing suite was green before (368 files / 6,558 tests) and is green after.
+
+---
+
+> ## Remediation status, 2026-09-02
+>
+> The findings below were subsequently **fixed** on this branch, at the owner's
+> instruction to close everything that would block launch. Each finding carries
+> a STATUS line saying what closed it.
+>
+> **Fixed: A-01 through A-14, A-17** — sixteen of the seventeen, across
+> migrations 0125–0134 and the application code around them.
+>
+> **Not fixed, deliberately:**
+> - **A-15** (unsigned webhook probe branch) — the plan already placed it in
+>   "improve after launch", and it changes no state.
+> - **A-16, in part** — the five dev/build-only advisories are pinned and the
+>   audit output is down from 14 to 2. The two that remain are the `xlsx`
+>   runtime pair: SheetJS left npm at 0.20 and the fixed builds are on the
+>   vendor's CDN only, so repointing a dependency at a non-registry URL is a
+>   decision for a person, not something to slip into an overrides block.
+>
+> **Out of scope for this pass, and still open** — these are in the plan's
+> post-launch section and are not code changes to this repository:
+> - **F-16 / F-18 from the previous audit** — admin MFA and email
+>   confirmation are Supabase dashboard settings.
+> - **Bot, velocity and device-fingerprint correlation** (scorecard 2/10, and
+>   the single highest-leverage addition). Rate limits now cover the
+>   money-moving actions, which is the mechanical half; correlating accounts
+>   by device, IP, card fingerprint and payment method is the half that makes
+>   Chain 2 detectable, and it is a week of work rather than a fix.
+> - **Replacing `stubAffordabilityPolicy`.** Every limit-enforcement fix above
+>   enforces a stub. Enforcing a stub correctly is progress, not underwriting.
+> - **Enforcing the CSP** rather than reporting on it.
+>
+> The suite is green at every commit: 6,558 tests before the audit, 7,052
+> after.
 
 **Relationship to `docs/SECURITY-AUDIT-2026-09.md`:** that audit (yesterday, 19 findings, 17 fixed) was re-verified. Its fixes hold — migrations 0121–0124 do what they claim, and I could not reopen F-01, F-02, F-03, F-05, F-07, F-09, F-10, F-12 or F-13. **Every finding below is new.** Two of them are in code that audit touched: A-04 is a race the F-10 fix introduced, and A-03 is a session-minting primitive one route away from the one F-07 closed.
 
@@ -91,6 +127,8 @@ Severity is CVSS-flavoured but weighted for a lender holding SA ID numbers: anyt
 
 ### A-01 — The phone OTP can be self-issued: the RPCs take the code hash as a parameter
 
+> **STATUS: FIXED** (2026-09-02) — migration 0125 — `EXECUTE` is now an allow-list, and both phone-OTP RPCs are off it entirely. Closed together with A-02 and A-11, which are the same defect.
+
 **Severity: CRITICAL**
 
 **Location**
@@ -174,6 +212,8 @@ Do not let the caller choose the hash, and do not let the caller reach the RPC.
 ---
 
 ### A-02 — Every `SECURITY DEFINER` function is executable by `anon`/`authenticated` via PostgreSQL's default `PUBLIC` grant
+
+> **STATUS: FIXED** (2026-09-02) — migration 0125. The role-wide `ALTER DEFAULT PRIVILEGES` form is used — the schema-qualified recipe most guides give turned out to be a silent no-op, and the migration header records the empirical finding.
 
 **Severity: HIGH** (systemic — it is the reason A-01 is reachable, and it silently re-opens whatever is added next)
 
@@ -259,6 +299,8 @@ SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 ---
 
 ### A-03 — `initiateCheckout` resets an existing patient's password, mints a session as them, and overwrites their identity fields
+
+> **STATUS: FIXED** (2026-09-02) — commit `One atomic credit claim behind all three acceptance doors`. Three independent properties: the POS/QR door never reuses an existing account, the session is minted from a magic-link hashed token so no password is written anywhere in the action, and the profile upsert refuses an existing account on a session token. The three separately-worded refusals were also an email-enumeration oracle and are now one message.
 
 **Severity: CRITICAL**
 
@@ -354,6 +396,8 @@ Full customer account takeover by a merchant, plus victim lockout, plus silent r
 
 ### A-04 — The credit limit is a check-then-act with no atomicity, so concurrent requests multiply it
 
+> **STATUS: FIXED** (2026-09-02) — migration 0130 + `lib/underwriting/claimCredit.ts`. The decision and the write are one transaction under `SELECT … FOR UPDATE` on the patient profile, with a `DEFERRABLE INITIALLY DEFERRED` constraint trigger re-checking the aggregate at COMMIT. `checkCreditLimit` is deleted, not deprecated.
+
 **Severity: HIGH**
 
 **Location** `lib/underwriting/creditLimit.ts:126-172`; callers at `app/patient/actions.ts:178` (`acceptPlan`), `:536` (`payWithSavedCard`) and `app/checkout/[token]/actions.ts:666`.
@@ -406,6 +450,8 @@ Make check-and-commit one atomic step. The pattern is already in this codebase �
 
 ### A-05 — The checkout door has no KYC gate, and skips even the credit limit for accounts it just created
 
+> **STATUS: FIXED** (2026-09-02) — the verification gate in `initiateCheckout`, and the `isNewUser` carve-out removed entirely. Also a product change: a bill above the remaining allowance is now SPLIT (the excess rides on instalment 1) rather than refused, and every surface that shows a schedule shows that schedule.
+
 **Severity: HIGH**
 
 **Location** `app/checkout/[token]/actions.ts:236-994` (no `requireOnboarded`, no `isBlockedFromNewPlan`), `:665` (`if (!isNewUser)`). Compare `app/patient/actions.ts:128` and `:441`. Limits at `lib/config/billAmountLimits.ts:43-44`; policy at `lib/underwriting/stubAffordabilityPolicy.ts:31`.
@@ -455,6 +501,8 @@ Add a test that asserts `initiateCheckoutBody()` contains no unconditional credi
 
 ### A-06 — The `*_for_user` phone RPCs accept any `p_user_id` and never compare it to `auth.uid()`
 
+> **STATUS: FIXED** (2026-09-02) — migration 0126. Both `*_for_user` RPCs compare `p_user_id` to `auth.uid()`. Repairing this surfaced a second latent bug: `hnpl_write_is_privileged()` returned NULL rather than false, so every guard written with a bare `NOT` failed open.
+
 **Severity: MEDIUM** (HIGH in combination with A-01)
 
 **Location** `supabase/migrations/0053_phone_verification_user_keying.sql:89`, `:167`; re-issued without an auth check by `0055:133` and `0099:86`. Granted to `authenticated` at `0053:154` and `:218`.
@@ -498,6 +546,8 @@ The `A-01b` block in the proof test already sets `auth.uid()` to the attacker an
 ---
 
 ### A-07 — `accept_practice_invitation` does not check who owns the practice it links
+
+> **STATUS: FIXED** (2026-09-02) — migration 0127.
 
 **Severity: MEDIUM**
 
@@ -551,6 +601,8 @@ A pglite RPC test in the `0070_accept_practice_invitation.rpc.test.ts` style: us
 
 ### A-08 — `sanitizeSignatureHtml` is a regex blocklist and leaks executable HTML into `dangerouslySetInnerHTML`
 
+> **STATUS: FIXED** (2026-09-02) — `lib/html/sanitizeAllowList.ts` — a tokeniser that parses and then serialises a fresh document, replacing the regex blocklist. All five confirmed bypasses are inverted in place into closures.
+
 **Severity: MEDIUM**
 
 **Location** `lib/gmail/signature.ts:101-128`. Rendered at `app/crm/settings/SignatureEditor.tsx:168` and `app/crm/leads/[id]/ComposeEmailSheet.tsx:372`; also shipped in outbound email via `composeWithSignature`.
@@ -589,6 +641,8 @@ Replace it with a parser-based allow-list and delete the regexes. `isomorphic-do
 ---
 
 ### A-09 — The CRM child tables are not owner-scoped, so any sales rep reads every rep's leads
+
+> **STATUS: FIXED** (2026-09-02) — migration 0129 — `crm_can_see_lead(uuid)`, applied to all seven child tables.
 
 **Severity: MEDIUM**
 
@@ -641,6 +695,8 @@ The repo already has `0112_0113_crm_owner_scoped_rls.rls.test.ts`. Extend it: tw
 
 ### A-10 — `crm_leads` UPDATE lets a sales rep hand a lead to another owner
 
+> **STATUS: FIXED** (2026-09-02) — migration 0129.
+
 **Severity: LOW**
 
 **Location** `supabase/migrations/0113_crm_leads_owner_scoped_rls.sql` — the UPDATE policy.
@@ -666,6 +722,8 @@ Reassignment should be an admin action, or a `sales`-callable RPC that logs to `
 ---
 
 ### A-11 — `consume_rate_limit` is `anon`-executable with caller-supplied parameters
+
+> **STATUS: FIXED** (2026-09-02) — migration 0125 revoked it to `service_role`; migration 0134 added the recommended clamps and the bucket allow-list.
 
 **Severity: MEDIUM**
 
@@ -693,6 +751,8 @@ Also clamp the parameters defensively inside the function (`p_max` between 1 and
 ---
 
 ### A-12 — No audit trail on the admin actions that move money or grant roles
+
+> **STATUS: FIXED** (2026-09-02) — migration 0131 + `app/admin/_lib/adminAudit.ts` + `/admin/audit`. Triggers for every change that IS the event, call-site records for the actor, and a screen that surfaces the stream.
 
 **Severity: MEDIUM**
 
@@ -727,6 +787,8 @@ Write it **before** the state change, and record the outcome, so an action that 
 
 ### A-13 — A transport error during "settle entire bill" freezes the whole remaining balance in `processing`
 
+> **STATUS: FIXED** (2026-09-02) — migration 0132 + `lib/payments/sweepStuckProcessing.ts`. Two tiers — revert what provably never reached the provider, report what may be in flight. The suggested blanket revert was not adopted; see the module header for why.
+
 **Severity: MEDIUM**
 
 **Location** `app/patient/orders/settle-actions.ts:313-324`.
@@ -755,6 +817,8 @@ The comment says the row is left for reconciliation, but nothing reconciles it. 
 
 ### A-14 — Terms acceptance is asserted by a URL query parameter
 
+> **STATUS: FIXED** (2026-09-02) — `lib/legal/consentToken.ts` + migration 0133. An httpOnly HMAC token minted when the server serves the page that renders the acceptance control, plus the document digest on the row.
+
 **Severity: LOW**
 
 **Location** `app/auth/callback/route.ts:283` — `const consentGiven = url.searchParams.get('terms_accepted') === '1';`
@@ -772,6 +836,8 @@ The comment says the row is left for reconciliation, but nothing reconciles it. 
 ---
 
 ### A-15 — The Peach webhook's unsigned JSON branch logs arbitrary attacker content and always returns 200
+
+> **STATUS: OPEN** (2026-09-02) — deferred by the remediation plan to "improve after launch". Unchanged.
 
 **Severity: LOW**
 
@@ -793,6 +859,8 @@ The comment says the row is left for reconciliation, but nothing reconciles it. 
 ---
 
 ### A-16 — Dependency advisories: one runtime, the rest dev-only
+
+> **STATUS: PARTIALLY FIXED** (2026-09-02) — the five dev/build-only advisories are pinned (14 advisories down to 2). The `xlsx` runtime pair is deliberately left: the fixed builds are CDN-only and that is a supply-chain decision for a human. The choice is written down in `pnpm-workspace.yaml`.
 
 **Severity: LOW** (the runtime one is unchanged from the previous audit's F-15)
 
@@ -822,6 +890,8 @@ None of these reach production; all four are one line each in `pnpm-workspace.ya
 ---
 
 ### A-17 — Any patient can insert phantom `applications` rows against any practice
+
+> **STATUS: FIXED** (2026-09-02) — migration 0128.
 
 **Severity: LOW**
 
@@ -992,6 +1062,14 @@ Scored 0–10, where 10 is "I tried hard and could not find a way in".
 
 ## 7. Prioritised remediation plan
 
+> **Worked through 2026-09-02.** Items 1–12 and 15–16 are done, and item 17's
+> mechanical half (rate limits on the money-moving actions) with them; 20 is
+> done for everything but `xlsx`. What remains is listed under "Remediation
+> status" at the top of this document, with the reasoning for each. The plan
+> is left as written rather than rewritten into a checklist — its ORDERING is
+> the part worth keeping, and it turned out to be right: A-02 before A-01,
+> A-04 before A-05, and A-12 before trusting any admin surface.
+
 ### Fix immediately — before any further real ID numbers or money
 
 These are the ones with a working exploit and a loss attached.
@@ -1033,6 +1111,18 @@ These are the ones with a working exploit and a loss attached.
 ## 8. Proof-of-concept tests added
 
 Three files, 20 assertions, all passing. They are written as **proofs**, not guards — each one asserts that the exploit currently works, with a header explaining which assertion to invert once the fix lands.
+
+> **All four have since been inverted into CLOSURES.** The payloads and the
+> reasoning stay — the reason a defence failed is more useful to a future
+> reader than the fact that it did — and the assertions now hold the fix
+> rather than the defect. Two moved: the A-04 race cannot be proved refused
+> against a stub row-set (no lock to take, no COMMIT to hook), so it is now
+> proved against real Postgres in
+> `supabase/migrations/0130_claim_credit_for_plan.rpc.test.ts`; and the A-08
+> bypasses gained the rest of the standard XSS repertoire, because the claim
+> being made changed from "these five payloads work" to "this is a different
+> kind of defence", and a claim like that should meet more than the payloads
+> that motivated it.
 
 | File | Proves | Assertions |
 |---|---|---|
