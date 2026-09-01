@@ -78,3 +78,106 @@ export function calculatePaymentDates(
 
   return [payment1, payment2, payment3];
 }
+
+// ─── Bills above the customer's allowance ────────────────────────────────
+//
+// THE MODEL (product decision, 2026-09-02; audit A-05)
+//
+// HNPL finances up to the customer's approved allowance and no more. A bill
+// ABOVE it is not refused — it is restructured, and the part HNPL is not
+// financing is collected on the first instalment, from the customer's card,
+// before the plan activates.
+//
+//   allowance R15,000 · bill R30,000 · 3 instalments
+//     financed = R15,000  →  R5,000 × 3
+//     excess   = R15,000  →  all of it onto instalment 1
+//     schedule = R20,000 / R5,000 / R5,000
+//
+// So HNPL's exposure after instalment 1 clears is bounded by the allowance,
+// whatever the bill is, and the practice is still paid 94% of the GROSS —
+// `calculateFee` is untouched and the fee arithmetic does not change.
+//
+// ─── WHY THE EXCESS GOES ENTIRELY ON INSTALMENT 1 ──────────────────────
+//
+// Because instalment 1 is the one HNPL watches clear before it commits its
+// own capital (activateFirstInstalment creates the payout on that event, and
+// only that event). Money HNPL is not lending has to be collected at the
+// moment the risk decision is made, not spread across instalments it would
+// then be carrying. Spreading it would make the allowance meaningless: the
+// customer would owe more than their limit for two more months.
+//
+// ─── WHAT THIS FUNCTION DELIBERATELY DOES NOT DECIDE ───────────────────
+//
+// Whether the customer HAS an allowance, and how much of it is already
+// spent. That is `claim_credit_for_plan` (migration 0130), which reads the
+// limit under a row lock and passes what is left in here as `availableRands`.
+// This function is pure arithmetic on numbers it is given — same contract as
+// every other function in this file, and the reason it is testable against
+// known answers.
+//
+// A ZERO or NEGATIVE `availableRands` is a legal input and produces
+// `financed: 0` with the whole bill on instalment 1: a customer with no
+// allowance left is paying by card, not taking a plan. The CALLER decides
+// whether that is an acceptable outcome to offer — see MIN_FINANCED_RANDS
+// below and the refusal in 0130 — because "pay the whole thing now" is a
+// product decision, not an arithmetic one.
+
+/**
+ * The smallest financed portion worth calling a payment plan.
+ *
+ * Below this the schedule degenerates: instalments 2 and 3 round to a few
+ * rand or to zero, the customer is charged almost everything up front, and
+ * the plan is a card payment wearing a plan's clothes. 0130 refuses rather
+ * than writing one.
+ *
+ * R300 rather than a round R500 because it has to divide sensibly by 3 —
+ * R100 instalments are small but not absurd.
+ */
+export const MIN_FINANCED_RANDS = 300;
+
+export type InstalmentSplit = {
+  /** Per-instalment amounts in rands, index 0 first. Sums to the bill total. */
+  instalments: number[];
+  /** The part HNPL is lending, in rands. Never more than the allowance. */
+  financed: number;
+  /** The part collected up front on instalment 1, in rands. Zero when the bill fits. */
+  excess: number;
+};
+
+/**
+ * Split a bill into `planType` instalments, financing at most
+ * `availableRands` and loading any excess onto the first instalment.
+ *
+ * Integer cents throughout, like everything else here. The financed portion
+ * is split by the same rule `splitInstalments` uses — remainder onto the
+ * first instalment — so a bill that fits inside the allowance produces a
+ * schedule IDENTICAL to the one it produced before this function existed.
+ * That equivalence is asserted in finance.test.ts and is what makes this
+ * safe to route every caller through.
+ */
+export function splitInstalmentsWithExcess(
+  totalAmountRands: number,
+  planType: 2 | 3,
+  availableRands: number,
+): InstalmentSplit {
+  const totalCents = Math.round(totalAmountRands * 100);
+
+  // Clamp at both ends: a negative allowance finances nothing, and an
+  // allowance larger than the bill finances the bill.
+  const availableCents = Math.max(0, Math.round(availableRands * 100));
+  const financedCents  = Math.min(totalCents, availableCents);
+  const excessCents    = totalCents - financedCents;
+
+  const baseCents      = Math.floor(financedCents / planType);
+  const remainderCents = financedCents - baseCents * planType;
+
+  const cents = Array.from({ length: planType }, (_, i) =>
+    i === 0 ? baseCents + remainderCents + excessCents : baseCents,
+  );
+
+  return {
+    instalments: cents.map((c) => c / 100),
+    financed:    financedCents / 100,
+    excess:      excessCents / 100,
+  };
+}

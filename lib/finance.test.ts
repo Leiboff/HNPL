@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitInstalments, calculateFee, calculatePaymentDates } from './finance';
+import { splitInstalments, splitInstalmentsWithExcess, calculateFee, calculatePaymentDates } from './finance';
 
 // ---------------------------------------------------------------------------
 // splitInstalments
@@ -250,5 +250,121 @@ describe('calculatePaymentDates — serialized due_dates (UTC correctness)', () 
     const start = new Date(Date.UTC(2024, 0, 5)); // 5 Jan 2024 (leap year)
     const [, , p3] = calculatePaymentDates(start, 31, 3);
     expect(p3.toISOString().split('T')[0]).toBe('2024-02-29');
+  });
+});
+
+// ─── splitInstalmentsWithExcess ──────────────────────────────────────────
+//
+// The bills-above-the-allowance model (product decision 2026-09-02, audit
+// A-05). Known answers, including the exact worked example the decision was
+// stated with, because this is the module where a rounding slip becomes a
+// rand somebody is owed.
+
+describe('splitInstalmentsWithExcess', () => {
+  it('the worked example: R30,000 bill, R15,000 allowance, 3 instalments', () => {
+    const s = splitInstalmentsWithExcess(30000, 3, 15000);
+    expect(s.instalments).toEqual([20000, 5000, 5000]);
+    expect(s.financed).toBe(15000);
+    expect(s.excess).toBe(15000);
+  });
+
+  it('the same bill over 2 instalments', () => {
+    const s = splitInstalmentsWithExcess(30000, 2, 15000);
+    // financed 15,000 → 7,500 × 2; excess 15,000 onto instalment 1.
+    expect(s.instalments).toEqual([22500, 7500]);
+    expect(s.financed).toBe(15000);
+    expect(s.excess).toBe(15000);
+  });
+
+  it('a bill INSIDE the allowance is unchanged, and there is no excess', () => {
+    const s = splitInstalmentsWithExcess(9000, 3, 15000);
+    expect(s.instalments).toEqual([3000, 3000, 3000]);
+    expect(s.financed).toBe(9000);
+    expect(s.excess).toBe(0);
+  });
+
+  it('a bill exactly ON the allowance has no excess', () => {
+    const s = splitInstalmentsWithExcess(15000, 3, 15000);
+    expect(s.instalments).toEqual([5000, 5000, 5000]);
+    expect(s.excess).toBe(0);
+  });
+
+  it('every instalment sums back to the bill total, to the cent', () => {
+    // The property that matters most: HNPL must never collect more or less
+    // than the practice billed. Swept across awkward totals and allowances.
+    for (const total of [1, 33.33, 100.01, 999.99, 1234.56, 15000.01, 87654.21]) {
+      for (const available of [0, 0.01, 300, 999.99, 5000, 14999.99, 15000, 1e6]) {
+        for (const planType of [2, 3] as const) {
+          const s = splitInstalmentsWithExcess(total, planType, available);
+          const sum = s.instalments.reduce((a, b) => Math.round(a * 100 + b * 100) / 100, 0);
+          expect(sum).toBeCloseTo(total, 2);
+          expect(s.financed + s.excess).toBeCloseTo(total, 2);
+        }
+      }
+    }
+  });
+
+  it('is IDENTICAL to splitInstalments when the bill fits the allowance', () => {
+    // The equivalence that makes routing every caller through the new
+    // function safe. If this ever breaks, existing plans would reschedule
+    // differently from how they were written.
+    for (const total of [1, 33.33, 100.01, 999.99, 1234.56, 4999.97]) {
+      for (const planType of [2, 3] as const) {
+        expect(splitInstalmentsWithExcess(total, planType, total).instalments)
+          .toEqual(splitInstalments(total, planType));
+        expect(splitInstalmentsWithExcess(total, planType, total * 10).instalments)
+          .toEqual(splitInstalments(total, planType));
+      }
+    }
+  });
+
+  it('the rounding remainder still lands on instalment 1, alongside the excess', () => {
+    // R1,000.01 financed over 3: 33333/33333/33333 cents + 2 remainder.
+    const s = splitInstalmentsWithExcess(1500.01, 3, 1000.01);
+    expect(s.instalments[0]).toBeCloseTo(333.35 + 500, 2);
+    expect(s.instalments[1]).toBeCloseTo(333.33, 2);
+    expect(s.instalments[2]).toBeCloseTo(333.33, 2);
+  });
+
+  it('no allowance left puts the whole bill on instalment 1', () => {
+    // A legal input. The CALLER decides whether to offer this — 0130 refuses
+    // below MIN_FINANCED_RANDS rather than writing a plan that is really a
+    // card payment.
+    const s = splitInstalmentsWithExcess(4000, 3, 0);
+    expect(s.instalments).toEqual([4000, 0, 0]);
+    expect(s.financed).toBe(0);
+    expect(s.excess).toBe(4000);
+  });
+
+  it('a negative allowance is clamped to zero rather than inverting the split', () => {
+    // outstandingExposure can exceed a limit that was lowered after the fact,
+    // which makes `available` negative. It must not produce a negative
+    // instalment or a financed amount above the bill.
+    const s = splitInstalmentsWithExcess(4000, 2, -9000);
+    expect(s.instalments).toEqual([4000, 0]);
+    expect(s.financed).toBe(0);
+    expect(s.excess).toBe(4000);
+    expect(s.instalments.every((n) => n >= 0)).toBe(true);
+  });
+
+  it('never finances more than the bill, however large the allowance', () => {
+    const s = splitInstalmentsWithExcess(500, 3, 1_000_000);
+    expect(s.financed).toBe(500);
+    expect(s.excess).toBe(0);
+  });
+
+  it('the practice fee is on the GROSS, not the financed part', () => {
+    // The invariant that makes this model neutral to the practice: they are
+    // paid 94% of what they billed, whoever funded which slice of it.
+    const { gross, fee, net } = calculateFee(30000, 6);
+    expect(gross).toBe(30000);
+    expect(fee).toBe(1800);
+    expect(net).toBe(28200);
+
+    const s = splitInstalmentsWithExcess(30000, 3, 15000);
+    // And HNPL's cash position closes: collect 30,000 over the schedule,
+    // pay out 28,200, keep 1,800.
+    const collected = s.instalments.reduce((a, b) => a + b, 0);
+    expect(collected - net).toBeCloseTo(fee, 2);
   });
 });

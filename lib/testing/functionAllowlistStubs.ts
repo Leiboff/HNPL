@@ -40,9 +40,11 @@
  * The three Supabase roles, plus `auth.uid()` / `auth.role()` backed by a
  * mutable `_ctx` row so a test can say who is calling.
  *
- * `service_role` is created WITHOUT bypassrls here — these suites test
- * function privileges, not row security, and a bypassrls role would mask a
- * missing EXECUTE grant behind a passing query.
+ * `service_role` is created WITHOUT bypassrls here. Not for safety —
+ * bypassrls has no bearing on function EXECUTE — but because nothing in the
+ * privilege suite reads a row, so granting it would be noise. A suite that
+ * DOES read rows should create it WITH bypassrls, as production has it; see
+ * 0126_0128_caller_binding.rls.test.ts.
  */
 export const SUPABASE_ROLES_DDL = `
   create role anon          nologin;
