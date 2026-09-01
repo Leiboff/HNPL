@@ -2,11 +2,19 @@
 //
 // ─── ADVERSARIAL PROOFS — audit 2026-09-02 ─────────────────────────────────
 //
-// These tests currently PASS BY DEMONSTRATING EXPLOITS. They are written as
-// proofs, not as regression guards, because the defects they describe are
-// still open at the time of writing. When the fixes land, invert each
-// assertion (the pattern the 2026-09 suite already uses) so the file
-// becomes a guard instead of a proof.
+// MIXED FILE, and the mix is the point. Each finding gets two blocks:
+//
+//   • the PROOF, which applies the migrations as they stood when the audit
+//     ran and asserts the exploit SUCCEEDS. Left in place deliberately — it
+//     is the evidence, and it is what makes the closure assertion mean
+//     something rather than being a tautology about a schema nobody has.
+//   • the CLOSURE, which applies the fix on top of that same schema and
+//     asserts the exploit is gone.
+//
+// A-01 and A-02 are closed by 0125 (EXECUTE becomes an allow-list) and
+// A-06 by 0126 (caller binding). If a proof block ever starts failing,
+// someone changed the historical migrations; if a closure block starts
+// failing, someone reopened the hole.
 //
 // Everything below runs the ACTUAL migration SQL against a real Postgres
 // (pglite), as a NON-superuser role shaped like Supabase's `authenticated`
@@ -40,6 +48,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import {
+  ALLOWLIST_STUBS_DDL,
+  serviceRoleOnlyStubsDdl,
+  PLATFORM_DEFAULT_PRIVILEGES_DDL,
+} from '@/lib/testing/functionAllowlistStubs';
 
 function migration(name: string): string {
   return readFileSync(resolve(process.cwd(), 'supabase/migrations', name), 'utf8')
@@ -310,6 +323,80 @@ describe('A-01b — the *_for_user RPCs never compare p_user_id to auth.uid()', 
   });
 });
 
+describe('A-01 / A-06 CLOSED by 0125 — the RPCs are no longer reachable from a browser', () => {
+  let db: PGlite;
+
+  beforeEach(async () => {
+    db = await phoneDb();
+
+    // 0125's allow-list is STRICT — every GRANT names a real signature — so
+    // the rest of the schema it expects has to exist before it will apply.
+    // The four phone-verification functions are skipped: the real 0052/0053
+    // migrations already created them inside phoneDb(), which is the whole
+    // point of applying the fix on top of the exploited schema rather than
+    // on top of a stub of it.
+    const REAL = [
+      'prepare_phone_verification', 'verify_phone_otp',
+      'prepare_phone_verification_for_user', 'verify_phone_otp_for_user',
+    ];
+    await db.exec(ALLOWLIST_STUBS_DDL);
+    await db.exec(serviceRoleOnlyStubsDdl(REAL));
+    await db.exec(PLATFORM_DEFAULT_PRIVILEGES_DDL);
+
+    // Applied VERBATIM. It revokes EXECUTE from PUBLIC, anon and
+    // authenticated across the schema and grants back an allow-list that
+    // deliberately excludes all four phone-OTP functions.
+    await db.exec(migration('0125_lock_function_execute.sql'));
+  });
+  afterEach(async () => { await db.close(); });
+
+  const REVOKED = [
+    'prepare_phone_verification(text,text,text)',
+    'verify_phone_otp(text,text,text)',
+    'prepare_phone_verification_for_user(uuid,text,text)',
+    'verify_phone_otp_for_user(uuid,text,text)',
+  ];
+
+  it.each(REVOKED)('anon and authenticated cannot execute %s', async (sig) => {
+    for (const role of ['anon', 'authenticated']) {
+      const r = await db.query<{ ok: boolean }>(
+        `select has_function_privilege($1, $2, 'EXECUTE') as ok`, [role, sig],
+      );
+      expect(r.rows[0].ok).toBe(false);
+    }
+  });
+
+  it.each(REVOKED)('service_role still can — the four real call sites keep working (%s)', async (sig) => {
+    const r = await db.query<{ ok: boolean }>(
+      `select has_function_privilege('service_role', $1, 'EXECUTE') as ok`, [sig],
+    );
+    expect(r.rows[0].ok).toBe(true);
+  });
+
+  it('the hash-injection sequence now fails at the door, not at the comparison', async () => {
+    // Same two calls as the first proof above, verbatim.
+    await expect(
+      asRole(db, 'anon',
+        `select prepare_phone_verification('live-invitation-token', '+27829999999', 'x');`),
+    ).rejects.toThrow(/permission denied for function/i);
+  });
+
+  it('and a service-role caller can still complete a genuine verification', async () => {
+    // The fix must not break the flow it protects. This is the real path:
+    // the server action computes the peppered hash and passes it through the
+    // privileged client.
+    const prep = await asRole<Array<{ prepare_phone_verification: string }>>(
+      db, 'service_role',
+      `select prepare_phone_verification('live-invitation-token', '+27825550000', 'peppered-hash');`);
+    expect(prep[0].prepare_phone_verification).toBe('ok');
+
+    const verify = await asRole<Array<{ verify_phone_otp: string }>>(
+      db, 'service_role',
+      `select verify_phone_otp('live-invitation-token', '+27825550000', 'peppered-hash');`);
+    expect(verify[0].verify_phone_otp).toBe('ok');
+  });
+});
+
 describe('A-02 — Postgres grants EXECUTE to PUBLIC, so service_role-only GRANTs are not exclusive', () => {
   it('next_invoice_number stays callable by authenticated AFTER 0056 revokes it', async () => {
     const db = new PGlite();
@@ -341,6 +428,43 @@ describe('A-02 — Postgres grants EXECUTE to PUBLIC, so service_role-only GRANT
       const after = await asRole<Array<{ next_invoice_number: string }>>(
         db, 'authenticated', 'select next_invoice_number();');
       expect(before[0].next_invoice_number).not.toBe(after[0].next_invoice_number);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('CLOSED by 0125 — next_invoice_number is finally unreachable', async () => {
+    const db = new PGlite();
+    try {
+      await db.exec(ROLES_AND_AUTH);
+      await db.exec('grant usage on schema public to anon, authenticated, service_role;');
+      await db.exec('create table plans (id uuid primary key default gen_random_uuid());');
+      await db.exec(migration('0014_invoice_numbers.sql'));
+      await db.exec(migration('0056_revoke_next_invoice_number_from_authenticated.sql'));
+
+      // Same schema as the proof above, plus the rest of what 0125's
+      // strict allow-list names, then the fix. next_invoice_number is
+      // skipped — 0014 created the real one.
+      await db.exec(ALLOWLIST_STUBS_DDL);
+      await db.exec(serviceRoleOnlyStubsDdl(['next_invoice_number']));
+      await db.exec(PLATFORM_DEFAULT_PRIVILEGES_DDL);
+      await db.exec(migration('0125_lock_function_execute.sql'));
+
+      const authed = await db.query<{ has: boolean }>(
+        `select has_function_privilege('authenticated', 'next_invoice_number()', 'EXECUTE') as has;`);
+      const anon = await db.query<{ has: boolean }>(
+        `select has_function_privilege('anon', 'next_invoice_number()', 'EXECUTE') as has;`);
+      const svc = await db.query<{ has: boolean }>(
+        `select has_function_privilege('service_role', 'next_invoice_number()', 'EXECUTE') as has;`);
+
+      expect(authed.rows[0].has).toBe(false);
+      expect(anon.rows[0].has).toBe(false);
+      // createBill and issueCounterSession call it on the privileged client.
+      expect(svc.rows[0].has).toBe(true);
+
+      await expect(
+        asRole(db, 'authenticated', 'select next_invoice_number();'),
+      ).rejects.toThrow(/permission denied for function/i);
     } finally {
       await db.close();
     }
