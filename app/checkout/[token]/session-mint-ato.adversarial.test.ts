@@ -1,51 +1,63 @@
-// ─── ADVERSARIAL PROOF — audit 2026-09-02, finding A-03 ───────────────────
+// ─── CLOSURE — audit 2026-09-02, finding A-03 ─────────────────────────────
 //
-// THE CHAIN
+// This file began as the adversarial PROOF of A-03 and is now its closure.
+// The assertions are inverted in place, deliberately: the chain's steps are
+// the properties worth pinning, and a future change that reopens any one of
+// them fails the test that describes the attack it enables.
 //
-// `initiateCheckout` establishes the caller's session by RESETTING the target
-// account's password and signing in with the value it just set:
+// ─── THE CHAIN THAT WAS ───────────────────────────────────────────────────
+//
+// `initiateCheckout` established the caller's session by RESETTING the
+// target account's password and signing in with the value it had just set:
 //
 //     const sessionTempPwd = generateTempPassword();
 //     await svc.auth.admin.updateUserById(userId, { password: sessionTempPwd });
 //     await supabaseAuth.auth.signInWithPassword({ email, password: sessionTempPwd });
 //
-// That is fine when `userId` is an account the action itself just created. It
-// is an account takeover when `userId` is an EXISTING patient — which is
-// exactly what `discriminateExistingUser` returns 'reuse' for whenever the
-// plan behind the token is already bound to that account.
+// Fine when `userId` was an account the action itself had just created. An
+// account takeover when it was an EXISTING patient — which is exactly what
+// `discriminateExistingUser` returned 'reuse' for whenever the plan behind
+// the token was already bound to that account.
 //
 // A plan reaches that state by design. `resolveBillIdentity` (case C, QR
 // delivery) stamps `plans.patient_id` with the owner of the SA ID number the
 // practice typed, and `issueCounterSession` / `createBill` then hand the
 // practice a `checkout_sessions` token, rendered as a QR on the practice's
-// own screen. On the session path `normalizedEmail` comes from
-// `input.email` — the caller's, not the bill's.
+// own screen. On the session path `normalizedEmail` came from `input.email`
+// — the caller's, not the bill's.
 //
-// So: a practice raises a QR bill against a returning patient's ID number,
-// then POSTs that token to `initiateCheckout` with the patient's email
-// address and a phone number of its own choosing. The result is
+// So: a practice raised a QR bill against a returning patient's ID number,
+// then POSTed that token to `initiateCheckout` with the patient's email and
+// a phone number of its own choosing. The result was
 //
-//   • the patient's password destroyed (they are locked out),
+//   • the patient's password destroyed (they were locked out),
 //   • a live session as the patient in the caller's browser,
 //   • and, before that, `profiles` upserted with the caller's first name,
 //     last name, phone and phone_verified_at over the patient's own.
 //
-// The phone-OTP precondition is not a barrier: the caller supplies the phone
-// and receives the SMS, and finding A-01 removes even that step.
+// ─── WHAT CLOSED IT ───────────────────────────────────────────────────────
 //
-// This file asserts the structural facts of the chain, following the
-// convention set by replay-guard.test.ts — standing up `initiateCheckout`'s
-// auth-admin, Peach and cookie calls would test the mocks rather than the
-// action. The decision that opens the door IS pure, so that half is
-// exercised behaviourally.
+// Three independent properties, each asserted below, because the chain only
+// needed one of them to hold to run:
 //
-// WHEN THIS IS FIXED: `initiateCheckout` must never mint a session for an
-// account it did not create. Either refuse `reuse` outright and send the
-// caller to /login?next=… (the branch already used for
-// 'reject-organic-collision'), or mint a magic-link token via
-// admin.generateLink and redeem it — the mutation-free shape the F-07 fix
-// already adopted on /checkout/[token]/complete. Then invert the assertions
-// below.
+//   1. THE DOOR. `discriminateExistingUser` takes the token kind. On the
+//      POS/QR (session) door an account that already exists is never reused
+//      — the holder is asked to sign in, the one thing a practice cannot do
+//      on the patient's behalf. And all refusals are ONE message, so the
+//      response is no longer an oracle for which addresses hold accounts.
+//   2. THE MINT. No password is written anywhere in this action's session
+//      path. A magic-link `hashed_token` is generated and redeemed instead —
+//      mutation-free, the same shape the F-07 fix adopted on
+//      /checkout/[token]/complete. So even a reused account keeps its
+//      credentials.
+//   3. THE WRITE. The profile upsert refuses outright if it is ever reached
+//      with an existing account on a session token, rather than trusting
+//      property 1 from another file.
+//
+// Step 1 of the chain (resolveBillIdentity case C) is NOT changed and is
+// still asserted as-is. Binding a QR bill to the ID owner is the correct
+// behaviour — it is what lets a returning patient pay at a till. It was only
+// dangerous because of what came after it.
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -66,8 +78,10 @@ function initiateCheckoutBody(): string {
   return ACTIONS.slice(start, next === -1 ? undefined : next);
 }
 
-describe('A-03 step 1 — a QR bill binds the plan to an existing patient', () => {
+describe('A-03 step 1 — a QR bill still binds the plan to an existing patient', () => {
   it('resolveBillIdentity case C stamps the ID owner under QR delivery', () => {
+    // Unchanged, and correct: this is what lets a returning patient pay a
+    // till bill at all. It is a precondition of the chain, not the defect.
     const decision = resolveBillIdentity({
       idOwner:    { id: 'victim-user-id', email: 'victim@example.com' },
       emailOwner: null,
@@ -83,80 +97,115 @@ describe('A-03 step 1 — a QR bill binds the plan to an existing patient', () =
   });
 });
 
-describe('A-03 step 2 — discriminateExistingUser returns reuse for that account', () => {
-  it('a CONFIRMED existing account is reused when the plan is already bound to it', () => {
+describe('A-03 step 2 CLOSED — the session door never reuses an existing account', () => {
+  it('the exact input that used to return reuse now returns require-login', () => {
+    // Plan bound to the victim (step 1), victim's email supplied by the
+    // caller, token from the practice's own QR panel.
     const decision = discriminateExistingUser(
       { id: 'victim-user-id', email_confirmed_at: '2026-01-01T00:00:00Z' },
       'victim-user-id',        // plans.patient_id, stamped at step 1
+      'session',
     );
-    // Note which branch this is NOT: the confirmed-account collision guard
-    // below only fires when the plan is bound to somebody else.
-    expect(decision).toEqual({ action: 'reuse', userId: 'victim-user-id' });
+    expect(decision).toEqual({ action: 'require-login', existingUserId: 'victim-user-id' });
   });
 
-  it('the collision guard that would have refused only fires on a DIFFERENT account', () => {
-    const decision = discriminateExistingUser(
-      { id: 'victim-user-id', email_confirmed_at: '2026-01-01T00:00:00Z' },
-      'someone-else',
-    );
-    expect(decision.action).toBe('reject-organic-collision');
-  });
-
-  it('an UNCONFIRMED account is reused with no binding requirement at all', () => {
+  it('an UNCONFIRMED account is not adopted on this door either', () => {
+    // The orphan carve-out was the second way in: no binding requirement at
+    // all, so any unconfirmed row at a guessed address was reusable.
     const decision = discriminateExistingUser(
       { id: 'stale-user-id', email_confirmed_at: null },
       null,
+      'session',
     );
-    expect(decision).toEqual({ action: 'reuse', userId: 'stale-user-id' });
+    expect(decision).toEqual({ action: 'require-login', existingUserId: 'stale-user-id' });
+  });
+
+  it('the emailed-invitation door still reuses — that is a magic link, not a takeover', () => {
+    // The fix is scoped to the door, not to reuse. On an invitation the email
+    // comes off the invitation row, so handing the holder a session for that
+    // address is equivalent to emailing them a link.
+    const decision = discriminateExistingUser(
+      { id: 'victim-user-id', email_confirmed_at: '2026-01-01T00:00:00Z' },
+      'victim-user-id',
+      'invitation',
+    );
+    expect(decision).toEqual({ action: 'reuse', userId: 'victim-user-id' });
+  });
+
+  it('and a walk-in with no account still gets one at the till', () => {
+    expect(discriminateExistingUser(null, null, 'session')).toEqual({ action: 'create-new' });
   });
 });
 
-describe('A-03 step 3 — initiateCheckout then resets the password and signs in', () => {
+describe('A-03 step 3 CLOSED — no password is written, and the mint is mutation-free', () => {
   const body = initiateCheckoutBody();
 
-  it('the email is caller-supplied on the counter-session path', () => {
-    // kind 'session' takes the address off the request body. kind
-    // 'invitation' pins it to the invitation row — only the session path is
-    // attacker-controlled.
+  it('the email is STILL caller-supplied on the counter-session path', () => {
+    // Not fixed here, and it does not need to be — this is what makes the
+    // token kind the load-bearing fact. Asserted so the reasoning above
+    // stays true of the code: if this ever became bill-derived, the door
+    // check would be belt-and-braces rather than the fix.
     expect(body).toMatch(/const emailInput = \(input\.email \?\? ''\)/);
     expect(body).toMatch(/normalizedEmail = emailInput/);
   });
 
-  it('reuse assigns the EXISTING account id with no ownership proof', () => {
-    expect(body).toMatch(/decision\.action === 'reuse'/);
-    expect(body).toMatch(/userId = decision\.userId/);
-    // isNewUser stays false on this branch — the only thing that
-    // distinguishes a created account from an appropriated one.
+  it('FIXED: the action never sets a password on any account it signs in', () => {
+    // The whole class, not just the reuse branch: no updateUserById with a
+    // password anywhere, and no signInWithPassword to consume one.
+    expect(body).not.toMatch(/updateUserById/);
+    expect(body).not.toMatch(/signInWithPassword/);
+    expect(body).not.toMatch(/sessionTempPwd/);
+  });
+
+  it('FIXED: the session comes from a magic-link hashed_token, redeemed via verifyOtp', () => {
+    expect(body).toMatch(/generateLink\(\{\s*\n?\s*type:\s*'magiclink'/);
+    expect(body).toMatch(/link\?\.properties\?\.hashed_token/);
+    expect(body).toMatch(/verifyOtp\(\{\s*\n?\s*token_hash:\s*hashedToken/);
+    // Fails closed: no token, no session, no checkout.
+    expect(body).toMatch(/if\s*\(linkErr \|\| !hashedToken\)[\s\S]{0,140}return \{ ok: false/);
+  });
+
+  it('the ONE createUser is still the only account creation, and still marks isNewUser', () => {
+    // generateTempPassword survives for exactly one purpose — the initial
+    // password of an account this call creates, which nobody ever uses.
+    expect(body).toMatch(/auth\.admin\.createUser\(/);
     expect(body).toMatch(/isNewUser\s*=\s*true/);
   });
 
-  it('DEFECT: the password is reset unconditionally, reuse included', () => {
-    expect(body).toMatch(/updateUserById\(\s*userId\s*,\s*\{\s*\n?\s*password:\s*sessionTempPwd/);
-    // No isNewUser condition anywhere near the reset.
-    const resetAt = body.indexOf('updateUserById');
-    const window  = body.slice(Math.max(0, resetAt - 400), resetAt);
-    expect(window).not.toMatch(/if\s*\(\s*isNewUser/);
-  });
-
-  it('DEFECT: the session is then minted for that account', () => {
-    expect(body).toMatch(/signInWithPassword\(\{\s*\n?\s*email:\s*normalizedEmail/);
-  });
-
-  it('DEFECT: the profile upsert overwrites the existing account\'s identity fields', () => {
-    // first_name / last_name / phone / phone_verified_at all come from the
-    // request, and the upsert is unconditional on isNewUser.
+  it('FIXED: the profile upsert refuses an existing account on a session token', () => {
+    // Property 3 — local to the statement that does the damage, so the write
+    // is safe even if the rule in _lib/discriminate.ts is later relaxed.
+    const upsertAt = body.indexOf('.upsert(profileFields');
+    expect(upsertAt).toBeGreaterThan(-1);
+    const guard = body.slice(Math.max(0, upsertAt - 900), upsertAt);
+    expect(guard).toMatch(/if\s*\(!isNewUser && resolved\.kind === 'session'\)/);
+    expect(guard).toMatch(/return signInRequired\(/);
+    // Still the fields A-03 rewrote — the point is the guard above them.
     expect(body).toMatch(/first_name:\s*firstName\.trim\(\)/);
     expect(body).toMatch(/phone:\s*normalizedPhone/);
     expect(body).toMatch(/phone_verified_at:\s*phoneVerifiedAt/);
-    expect(body).toMatch(/\.upsert\(profileFields, \{ onConflict: 'id' \}\)/);
-    const upsertAt = body.indexOf('.upsert(profileFields');
-    const window   = body.slice(Math.max(0, upsertAt - 600), upsertAt);
-    expect(window).not.toMatch(/if\s*\(\s*isNewUser/);
   });
 
-  it('and the phone gate it relies on is keyed on the caller-supplied number', () => {
-    // Not the patient's number on file — whichever number the caller put in
-    // the form and verified. See A-01 for why even that is optional.
+  it('every refusal on THIS door is the same message — no enumeration oracle', () => {
+    // Three distinguishable strings (unknown address / real-but-wrong
+    // address / the address on this bill) let a QR-token holder walk a
+    // candidate list until one came back different. Now one helper, and on a
+    // session token it has exactly one string.
+    const refusals = body.match(/return signInRequired\(/g) ?? [];
+    expect(refusals.length).toBeGreaterThanOrEqual(3);
+    expect(ACTIONS).toMatch(/function signInRequired\(/);
+    const helper = ACTIONS.slice(ACTIONS.indexOf('function signInRequired('));
+    expect(helper).toMatch(/'Please sign in to continue with this bill\.'/);
+    // The one specific message that survives is gated on the INVITATION door,
+    // where the caller cannot choose the address and so has nothing to probe.
+    // If that gate is ever dropped, the oracle is back on the QR door.
+    expect(helper).toMatch(/opts\.saIdDuplicate && tokenKind === 'invitation'/);
+  });
+
+  it('the phone gate is still keyed on the caller-supplied number', () => {
+    // Unchanged and still worth knowing: this proves control of a phone, not
+    // of the account. It is no longer load-bearing for A-03 — the door is —
+    // but do not mistake it for identity.
     expect(body).toMatch(/\.eq\('phone_e164',\s*normalizedPhone\)/);
   });
 });

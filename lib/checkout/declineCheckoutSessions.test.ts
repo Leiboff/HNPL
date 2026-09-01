@@ -224,13 +224,20 @@ describe('the reachability of this path, stated honestly', () => {
     expect(decline).toMatch(/\.eq\('patient_id', user\.id\)/);
   });
 
-  it('initiateCheckout is what binds a till plan, and it sets terms in the same action', () => {
+  it('initiateCheckout is what binds a till plan, and it leaves pending_acceptance in the same action', () => {
+    // Since migration 0130 the pending_acceptance → pending_first_payment
+    // transition is written by claim_credit_for_plan rather than by an UPDATE
+    // in this action (audit A-04 — the transition and the schedule insert had
+    // to become one transaction). The ORDERING is the property this test cares
+    // about and it is unchanged: bind first, then leave pending_acceptance.
     const CHECKOUT = read('app/checkout/[token]/actions.ts');
     const initiate = CHECKOUT.slice(CHECKOUT.indexOf('export async function initiateCheckout'));
     const bind  = initiate.indexOf("update({ patient_id: userId })");
-    const terms = initiate.indexOf("status:            'pending_first_payment',");
+    const claim = initiate.indexOf('claimCreditForPlan(svc, {');
     expect(bind).toBeGreaterThan(0);
-    expect(terms).toBeGreaterThan(bind);
+    expect(claim).toBeGreaterThan(bind);
+    const SQL = rawRead('supabase/migrations/0130_claim_credit_for_plan.sql');
+    expect(SQL).toMatch(/UPDATE plans\s+SET status\s+= 'pending_first_payment'/);
   });
 
   it('nothing else writes a session stage, so there is no third path to keep in step', () => {

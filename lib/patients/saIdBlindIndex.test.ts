@@ -291,8 +291,22 @@ describe('the server-side gate — the message, above the index that actually ho
   it('the copy routes them somewhere, rather than stranding them', () => {
     // The task's requirement: tell them plainly, and point at log in /
     // recovery. A vague message strands a real returning patient.
+    //
+    // AMENDED 2026-09-02 (audit A-03). On checkout the plain message is now
+    // keyed on the DOOR, not on the case. An emailed invitation carries an
+    // address the caller did not choose, so naming the situation discloses
+    // nothing and the argument above holds. A POS/QR token carries an address
+    // the caller typed, so with the bill's SA ID fixed this message versus the
+    // generic one told a merchant whether a probed address held an account —
+    // an enumeration oracle on a surface they can POST to in a loop. That door
+    // gets one message for every refusal, and its Log in link returns to the
+    // checkout page, which claims the plan by SA ID once they are signed in —
+    // so nobody is stranded there either.
     expect(CHECKOUT).toMatch(/Forgot password/);
+    expect(CHECKOUT).toMatch(/opts\.saIdDuplicate && tokenKind === 'invitation'/);
     expect(CHECKOUT).toMatch(/requireLogin:\s*true/);
+    // The call site must actually ask for it, or the copy above is dead.
+    expect(CHECKOUT).toMatch(/signInRequired\([\s\S]{0,60}\{ saIdDuplicate: true \}\)/);
     expect(ONBOARD).toMatch(/Forgot password/);
   });
 

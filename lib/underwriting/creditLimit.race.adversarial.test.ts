@@ -1,33 +1,68 @@
-// ─── ADVERSARIAL PROOF — audit 2026-09-02, finding A-04 ───────────────────
+// ─── CLOSURE — audit 2026-09-02, finding A-04 ─────────────────────────────
 //
-// `checkCreditLimit` is a READ followed by a DECISION, and the write that
-// commits the exposure happens later, in the caller. Nothing between them is
-// atomic: no row lock on the profile, no serialisable transaction, and no
-// database constraint that relates `payments` in aggregate to
+// ─── THE DEFECT ───────────────────────────────────────────────────────────
+//
+// `checkCreditLimit` was a READ followed by a DECISION, and the write that
+// committed the exposure happened later, in the caller. Nothing between them
+// was atomic: no row lock on the profile, no serialisable transaction, and no
+// database constraint relating `payments` in aggregate to
 // `profiles.approved_credit_limit`.
 //
-// So two requests that overlap both see the pre-write exposure, both find
-// headroom, and both proceed. The limit is not a limit; it is a limit per
-// request. N concurrent requests give N times the approved exposure.
+// So two requests that overlapped both saw the pre-write exposure, both found
+// headroom, and both proceeded. The limit was not a limit; it was a limit per
+// request, and N concurrent requests gave N times the approved exposure. The
+// original of this file drove the real function against a stub row-set and
+// showed five parallel acceptances against a R5,000 limit all passing —
+// R25,000 of live exposure.
 //
-// This test drives the REAL `checkCreditLimit` against a stub client whose
-// only job is to hold the row set, so the interleaving under test is the
-// production function's own read pattern — not a re-implementation of it.
-//
-// The exploit needs no special access: the patient opens two bills (two
+// The exploit needed no special access: the patient opens two bills (two
 // practices, or the same practice twice) and submits both acceptances at the
-// same moment. Both are legitimate requests; the ordering is the attack.
+// same moment. Both are legitimate requests; the ordering was the attack.
 //
-// WHEN THIS IS FIXED, invert the final assertion of the concurrent test —
-// the second decision must come back `over_limit`. The fix has to make the
-// check-and-commit one atomic step (a SECURITY DEFINER RPC that locks the
-// profile row and inserts the schedule, or a deferred constraint trigger on
-// `payments` that re-derives exposure), so the test will need to move to
-// pglite at that point. The interleaving proved here is what any candidate
-// fix must refuse.
+// ─── WHAT CLOSED IT ───────────────────────────────────────────────────────
+//
+// The original said: "The fix has to make the check-and-commit one atomic
+// step (a SECURITY DEFINER RPC that locks the profile row and inserts the
+// schedule, or a deferred constraint trigger on `payments` that re-derives
+// exposure), so the test will need to move to pglite at that point."
+//
+// Both, as it turns out, and it did. `claim_credit_for_plan` (migration 0130)
+// takes `SELECT … FOR UPDATE` on the patient's profile, re-derives exposure
+// under that lock, applies the allowance model, writes the plan transition
+// and inserts the schedule — one transaction, one statement from the
+// caller's side. `enforce_credit_exposure()` is a DEFERRABLE INITIALLY
+// DEFERRED constraint trigger on `payments` that re-checks the aggregate at
+// COMMIT, so even a writer that bypasses the RPC cannot leave the invariant
+// broken.
+//
+// THE RACE ITSELF is proved refused against real Postgres in
+// supabase/migrations/0130_claim_credit_for_plan.rpc.test.ts — see "THE RACE:
+// a second transaction committing after the first is refused". It cannot be
+// proved here, because a stub row-set has no lock to take and no COMMIT to
+// hook: this file's stub could only ever demonstrate the interleaving, never
+// its refusal.
+//
+// ─── WHAT THIS FILE KEEPS ─────────────────────────────────────────────────
+//
+// Two things worth more than the proof it replaces:
+//
+//   1. The check-then-act helper is GONE, and no production path reads a
+//      limit and then writes a schedule. Asserted structurally, because the
+//      way this defect returns is somebody reintroducing the convenient
+//      shape rather than reintroducing the bug.
+//   2. `outstandingExposure` — the definition of what counts as outstanding
+//      — still behaves as it did, exercised through the same narrow stub.
+//      That arithmetic survived the fix and is now implemented TWICE (here
+//      for the optimistic pre-read, in plpgsql under the lock), so its
+//      behaviour is worth pinning on both sides.
 
 import { describe, it, expect } from 'vitest';
-import { checkCreditLimit, outstandingExposure } from './creditLimit';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { outstandingExposure } from './creditLimit';
+
+const ROOT = resolve(process.cwd());
+const readSrc = (p: string) => readFileSync(resolve(ROOT, p), 'utf8');
 
 const PATIENT = '00000000-0000-0000-0000-0000000000aa';
 
@@ -35,12 +70,12 @@ type PlanRow    = { id: string; patient_id: string; status: string };
 type PaymentRow = { plan_id: string; patient_id: string; amount: number; kind: string; status: string };
 
 /**
- * The narrowest Supabase-shaped stub that the two functions under test
- * actually exercise: `.from().select().eq()/.in()/.neq()/.maybeSingle()`.
+ * The narrowest Supabase-shaped stub that the function under test actually
+ * exercises: `.from().select().eq()/.in()/.neq()/.maybeSingle()`.
  *
- * Deliberately NOT a general query engine. It resolves exactly the three
- * queries creditLimit.ts issues, so if that file's read pattern changes this
- * stub fails loudly rather than silently answering something else.
+ * Deliberately NOT a general query engine. It resolves exactly the queries
+ * creditLimit.ts issues, so if that file's read pattern changes this stub
+ * fails loudly rather than silently answering something else.
  */
 function stubDb(state: {
   limit: number | null;
@@ -72,7 +107,7 @@ function stubDb(state: {
   };
 }
 
-/** Commit an accepted plan's schedule the way acceptPlan / initiateCheckout do. */
+/** Commit an accepted plan's schedule the way the claim RPC does. */
 function commitPlan(
   state: { plans: PlanRow[]; payments: PaymentRow[] },
   planId: string,
@@ -89,70 +124,142 @@ function commitPlan(
   }
 }
 
-describe('A-04 — the credit limit is a check-then-act with no atomicity', () => {
-  it('refuses the second bill when the two are SEQUENTIAL (the happy path)', async () => {
-    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
+describe('A-04 CLOSED — there is no longer a check-then-act to interleave', () => {
+  const LIMIT_SRC = readSrc('lib/underwriting/creditLimit.ts');
+  const CLAIM_SRC = readSrc('lib/underwriting/claimCredit.ts');
+  const CLAIM_SQL = readSrc('supabase/migrations/0130_claim_credit_for_plan.sql');
 
-    const first = await checkCreditLimit(stubDb(state), PATIENT, 5000);
-    expect(first.ok).toBe(true);
-
-    // The first acceptance commits its schedule before the second request
-    // arrives, so the second read sees the exposure.
-    commitPlan(state, 'plan-1', 5000);
-
-    const second = await checkCreditLimit(stubDb(state), PATIENT, 5000);
-    expect(second.ok).toBe(false);
-    if (!second.ok) expect(second.reason).toBe('over_limit');
+  it('the helper that returned a decision for a caller to act on is gone', () => {
+    // Not deprecated, not renamed — removed. A function that hands out a
+    // credit decision for someone else to commit cannot be made safe by its
+    // callers, and leaving it exported is an invitation to a fourth caller.
+    expect(LIMIT_SRC).not.toMatch(/export async function checkCreditLimit/);
+    expect(LIMIT_SRC).not.toMatch(/export type CreditLimitDecision/);
   });
 
-  it('EXPLOIT: admits both bills when the two checks interleave', async () => {
-    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
-
-    // Both requests read before either writes. This is the ordinary
-    // serverless shape: two lambdas, two connections, no lock between them.
-    const [a, b] = await Promise.all([
-      checkCreditLimit(stubDb(state), PATIENT, 5000),
-      checkCreditLimit(stubDb(state), PATIENT, 5000),
-    ]);
-
-    expect(a.ok).toBe(true);
-    expect(b.ok).toBe(true);   // ← the defect
-
-    // …and then both commit.
-    commitPlan(state, 'plan-1', 5000);
-    commitPlan(state, 'plan-2', 5000);
-
-    const exposure = await outstandingExposure(stubDb(state), PATIENT);
-    expect(exposure.ok).toBe(true);
-    if (exposure.ok) {
-      // R10,000 of live exposure against an approved limit of R5,000.
-      expect(exposure.rands).toBe(10000);
-      expect(exposure.rands).toBeGreaterThan(state.limit!);
+  it('no production path reads a limit and then writes a schedule', () => {
+    // The three that did. Each now calls claimCreditForPlan, which returns an
+    // already-committed schedule rather than permission to write one.
+    for (const p of [
+      'app/patient/actions.ts',
+      'app/checkout/[token]/actions.ts',
+    ]) {
+      const src = readSrc(p);
+      expect(src).toMatch(/claimCreditForPlan\(/);
+      expect(src).not.toMatch(/checkCreditLimit\(/);
+      expect(src).not.toMatch(/approved_credit_limit/);
     }
   });
 
-  it('EXPLOIT scales linearly — five concurrent bills give five times the limit', async () => {
-    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
-
-    const decisions = await Promise.all(
-      Array.from({ length: 5 }, () => checkCreditLimit(stubDb(state), PATIENT, 5000)),
+  it('the decision and the write are one statement, under a row lock', () => {
+    expect(CLAIM_SQL).toMatch(/FROM profiles\s+WHERE id = p_patient_id\s+FOR UPDATE/);
+    // The lock is taken BEFORE exposure is derived, or it locks nothing that
+    // matters — and the schedule is inserted after both, inside the same
+    // function body. Scoped to claim_credit_for_plan, because the constraint
+    // trigger further down the file derives exposure too and would otherwise
+    // satisfy this by accident.
+    const fn = CLAIM_SQL.slice(
+      CLAIM_SQL.indexOf('CREATE OR REPLACE FUNCTION claim_credit_for_plan('),
+      CLAIM_SQL.indexOf('CREATE OR REPLACE FUNCTION enforce_credit_exposure()'),
     );
-    expect(decisions.every((d) => d.ok)).toBe(true);
-
-    decisions.forEach((_, i) => commitPlan(state, `plan-${i}`, 5000));
-    const exposure = await outstandingExposure(stubDb(state), PATIENT);
-    if (exposure.ok) expect(exposure.rands).toBe(25000);
+    expect(fn.indexOf('FOR UPDATE')).toBeGreaterThan(-1);
+    expect(fn.indexOf('FOR UPDATE')).toBeLessThan(fn.indexOf('INTO v_outstanding'));
+    expect(fn.indexOf('INTO v_outstanding')).toBeLessThan(fn.indexOf('INSERT INTO payments'));
   });
 
-  it('a patient with NO approved limit is refused — so the gate only exists once onboarding grants one', async () => {
-    const state = { limit: null, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
-    const decision = await checkCreditLimit(stubDb(state), PATIENT, 100);
-    expect(decision.ok).toBe(false);
-    if (!decision.ok) expect(decision.reason).toBe('no_limit');
+  it('and a second, independent backstop re-checks the aggregate at COMMIT', () => {
+    // So a future writer that inserts payments without going through the RPC
+    // still cannot leave the invariant broken.
+    expect(CLAIM_SQL).toMatch(/CREATE CONSTRAINT TRIGGER[\s\S]{0,200}DEFERRABLE INITIALLY DEFERRED/);
+    expect(CLAIM_SQL).toMatch(/FUNCTION enforce_credit_exposure\(\)/);
+  });
 
-    // Which is why A-05 matters: initiateCheckout SKIPS this call entirely
-    // when it has just created the account (`if (!isNewUser)`), so a brand
-    // new patient's first bill is bounded only by MAX_BILL_AMOUNT — R50,000
-    // by default, ten times the limit the stub policy grants.
+  it('the client retries the moved-headroom case exactly once, then tells the truth', () => {
+    // The RPC's refusal returns the TRUE available figure, so one re-split is
+    // worth attempting. An unbounded loop against a number another request is
+    // still moving is not, and "please try again" is the honest answer.
+    expect(CLAIM_SRC).toMatch(/const first = await attempt\(headroom\.available\)/);
+    expect(CLAIM_SRC).toMatch(/const second = await attempt\(first\.retryWith\)/);
+    expect(CLAIM_SRC).toMatch(/if \('retryWith' in second\)[\s\S]{0,160}reason: 'over_limit'/);
+    // No third.
+    expect((CLAIM_SRC.match(/await attempt\(/g) ?? []).length).toBe(2);
+  });
+
+  it('the race is proved refused where a race CAN be proved', () => {
+    // A stub row-set has no lock to take and no COMMIT to hook, so the proof
+    // moved to real Postgres. Pinned as a pointer so this file cannot become
+    // the last word on A-04.
+    const RPC_TEST = readSrc('supabase/migrations/0130_claim_credit_for_plan.rpc.test.ts');
+    expect(RPC_TEST).toMatch(/THE RACE/);
+    expect(RPC_TEST).toMatch(/PGlite|pglite/);
+  });
+});
+
+describe('outstandingExposure — the definition that survived the fix', () => {
+  it('counts uncollected instalments across live plans', () => {
+    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
+    commitPlan(state, 'plan-1', 5000);
+    return outstandingExposure(stubDb(state), PATIENT).then((exposure) => {
+      expect(exposure.ok).toBe(true);
+      if (exposure.ok) expect(exposure.rands).toBe(5000);
+    });
+  });
+
+  it('sums across MULTIPLE live plans', async () => {
+    // The figure the old check-then-act got right and committed twice over.
+    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
+    commitPlan(state, 'plan-1', 5000);
+    commitPlan(state, 'plan-2', 5000);
+    const exposure = await outstandingExposure(stubDb(state), PATIENT);
+    if (exposure.ok) expect(exposure.rands).toBe(10000);
+  });
+
+  it('drops a collected instalment, so a customer part-way through owes less', async () => {
+    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
+    commitPlan(state, 'plan-1', 5000);
+    state.payments[0].status = 'collected';
+    const exposure = await outstandingExposure(stubDb(state), PATIENT);
+    if (exposure.ok) expect(exposure.rands).toBe(2500);
+  });
+
+  it('excludes the plan being accepted right now', async () => {
+    // The resume paths re-enter a plan whose rows are ALREADY in the table.
+    // Counting them and then adding the bill again would refuse a legitimate
+    // resume and charge the customer twice for one bill.
+    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
+    commitPlan(state, 'plan-1', 5000);
+    const exposure = await outstandingExposure(stubDb(state), PATIENT, { excludePlanId: 'plan-1' });
+    if (exposure.ok) expect(exposure.rands).toBe(0);
+  });
+
+  it('ignores settlement rows, which cover instalments already counted', async () => {
+    const state = { limit: 5000, plans: [] as PlanRow[], payments: [] as PaymentRow[] };
+    commitPlan(state, 'plan-1', 5000);
+    state.payments.push({
+      plan_id: 'plan-1', patient_id: PATIENT, amount: 5000,
+      kind: 'settlement', status: 'scheduled',
+    });
+    const exposure = await outstandingExposure(stubDb(state), PATIENT);
+    if (exposure.ok) expect(exposure.rands).toBe(5000);
+  });
+
+  it('a failed read is not zero exposure — it is a failure', async () => {
+    // "Could not read" and "owes nothing" are indistinguishable to a caller
+    // that treats an error as 0, and one of those answers gives away money.
+    const broken = {
+      from() {
+        return {
+          select() { return this; },
+          eq() { return this; },
+          in() { return this; },
+          neq() { return this; },
+          then(resolve: (v: { data: null; error: { message: string } }) => unknown) {
+            return Promise.resolve({ data: null, error: { message: 'boom' } }).then(resolve);
+          },
+        };
+      },
+    };
+    const exposure = await outstandingExposure(broken, PATIENT);
+    expect(exposure.ok).toBe(false);
   });
 });

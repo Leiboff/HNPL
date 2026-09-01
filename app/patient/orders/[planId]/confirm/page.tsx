@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import ConfirmForm from './ConfirmForm';
 import { getRequestUser } from '@/lib/auth/requestUser';
+import { outstandingExposure } from '@/lib/underwriting/creditLimit';
 
 export default async function ConfirmPage({
   params,
@@ -33,7 +34,14 @@ export default async function ConfirmPage({
       .maybeSingle(),
     supabase
       .from('profiles')
-      .select('salary_day')
+      // approved_credit_limit is here so the schedule this page RENDERS is
+      // the schedule the server will WRITE. Since the allowance model
+      // (product decision 2026-09-02) a bill above the patient's remaining
+      // headroom is not refused — the excess is collected with instalment 1 —
+      // so an equal three-way split shown next to a Pay button would
+      // understate the first charge, sometimes by thousands. Readable by the
+      // row's owner; already displayed on the dashboard.
+      .select('salary_day, approved_credit_limit')
       .eq('id', user.id)
       .single(),
     supabase
@@ -118,6 +126,51 @@ export default async function ConfirmPage({
   const resolvedPlanType: 2 | 3 | null =
     resumeMode ? ((rawPlan.plan_type as 2 | 3 | null) ?? initialPlanType) : initialPlanType;
 
+  // ── What this page may promise about the money ───────────────────────────
+  //
+  // Two different questions, and conflating them is how a patient meets a
+  // first charge they were not shown:
+  //
+  //   RESUME  the schedule already EXISTS. Read it, don't recompute it —
+  //           payWithSavedCard re-charges the amount on the row, so any
+  //           recomputation here could disagree with what is charged.
+  //   FRESH   no schedule yet. The amounts depend on the headroom the claim
+  //           will find, so read the headroom the same way the claim's
+  //           pre-read does and split against it.
+  //
+  // Both are best-effort for DISPLAY only. claim_credit_for_plan re-derives
+  // everything under a row lock and is the authority; if the headroom moves
+  // between this render and the tap, the claim wins and the patient is told.
+  let committedInstalments: number[] | null = null;
+  let availableRands:       number | null   = null;
+
+  if (resumeMode) {
+    const { data: rows } = await supabase
+      .from('payments')
+      .select('amount, instalment_number')
+      .eq('plan_id', planId)
+      .eq('kind', 'instalment')
+      .order('instalment_number', { ascending: true });
+    const amounts = (rows ?? []).map((r) => Number(r.amount));
+    if (amounts.length > 0) committedInstalments = amounts;
+  } else {
+    const rawLimit = profile?.approved_credit_limit as number | string | null | undefined;
+    const limit    = rawLimit === null || rawLimit === undefined ? null : Number(rawLimit);
+    if (limit !== null && Number.isFinite(limit)) {
+      const exposure = await outstandingExposure(supabase, user.id, { excludePlanId: planId });
+      // A failed exposure read means we cannot say what the split will be, so
+      // we say nothing rather than guessing — ConfirmForm falls back to the
+      // fully-financed shape and the claim corrects it.
+      if (exposure.ok) {
+        availableRands = Math.round((limit - exposure.rands) * 100) / 100;
+      }
+    } else {
+      // No approved limit at all. The claim will refuse with no_limit, so
+      // don't render a schedule and a Pay button as if it won't.
+      availableRands = 0;
+    }
+  }
+
   return (
     <div className="mx-auto max-w-xl px-6 py-10">
       <ConfirmForm
@@ -131,6 +184,8 @@ export default async function ConfirmPage({
         fromRegistration={fromRegistration}
         blocked={blocked}
         resumeMode={resumeMode}
+        availableRands={availableRands}
+        committedInstalments={committedInstalments}
       />
     </div>
   );

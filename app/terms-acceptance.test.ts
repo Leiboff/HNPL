@@ -21,14 +21,31 @@ const PATIENT  = read('app/patient/actions.ts');
 const CHECKOUT = read('app/checkout/[token]/actions.ts');
 const MIGRATION      = read('supabase/migrations/0081_terms_acceptance.sql');
 const MIGRATION_PRIV = read('supabase/migrations/0082_privacy_acceptance.sql');
+const CLAIM_SQL      = read('supabase/migrations/0130_claim_credit_for_plan.sql');
+const CLAIM_TS       = read('lib/underwriting/claimCredit.ts');
 
-// A plan-activation UPDATE that stamps acceptance. We look for the terms
-// AND privacy fields appearing together inside a plans .update({...}) that
-// also moves the plan to pending_first_payment.
-function stampsAcceptanceOnActivation(src: string, occurrences: number) {
-  const re = /\.update\(\{[\s\S]*?status:\s*'pending_first_payment'[\s\S]*?terms_accepted_at:\s*new Date\(\)\.toISOString\(\)[\s\S]*?terms_version:\s*TERMS_VERSION[\s\S]*?privacy_version:\s*PRIVACY_VERSION[\s\S]*?\}\)/g;
-  const matches = src.match(re) ?? [];
-  expect(matches.length).toBe(occurrences);
+// ─── WHERE THE ACTIVATION STAMP MOVED, 2026-09-02 ─────────────────────────
+//
+// This used to look for the terms + privacy fields inside a
+// `plans.update({ status: 'pending_first_payment', … })` in each of the three
+// acceptance actions, and count the copies: two in app/patient/actions.ts,
+// one in checkout. Audit A-04 collapsed all three into
+// `claim_credit_for_plan` (migration 0130), because the transition and the
+// schedule insert had to become one transaction under a row lock.
+//
+// So the write is now in ONE place instead of three, which is strictly better
+// for this property — a legal record written by three hand-maintained object
+// literals is how one of them comes to be missing a column, exactly as the
+// signup path's own comment below says. The test follows it there: the stamp
+// is asserted on the statement that performs the transition, and each caller
+// is asserted to supply the two versions it stamps.
+function stampsAcceptanceOnActivation(src: string) {
+  // The caller hands both versions to the claim…
+  expect(src).toMatch(/termsVersion:\s*TERMS_VERSION/);
+  expect(src).toMatch(/privacyVersion:\s*PRIVACY_VERSION/);
+  // …and no longer writes the transition itself, or there would be a second
+  // path to activation with its own idea of what to stamp.
+  expect(src).not.toMatch(/\.update\(\{[\s\S]{0,400}?status:\s*'pending_first_payment'/);
 }
 
 describe('signup records acceptance server-side', () => {
@@ -99,16 +116,33 @@ describe('Google (OAuth) signup records acceptance server-side', () => {
 });
 
 describe('plan activation records acceptance server-side', () => {
-  it('app/patient/actions.ts stamps terms + privacy on BOTH activation paths (acceptPlan + payWithSavedCard)', () => {
-    expect(PATIENT).toMatch(/from '@\/lib\/legal\/terms'/);
-    expect(PATIENT).toMatch(/from '@\/lib\/legal\/privacy'/);
-    stampsAcceptanceOnActivation(PATIENT, 2);
+  it('the ONE statement that activates a plan stamps terms + privacy', () => {
+    // Same UPDATE, same transaction, same row lock as the credit claim and
+    // the schedule insert — so a plan cannot reach pending_first_payment
+    // without an acceptance record, in any interleaving.
+    expect(CLAIM_SQL).toMatch(
+      /UPDATE plans\s+SET status\s+= 'pending_first_payment'[\s\S]*?terms_accepted_at = now\(\)[\s\S]*?terms_version\s+= p_terms_version[\s\S]*?privacy_version\s+= p_privacy_version/,
+    );
+    // The versions are parameters, never defaults or literals in the SQL —
+    // lib/legal is the single source of the current version strings.
+    expect(CLAIM_SQL).toMatch(/p_terms_version\s+TEXT/);
+    expect(CLAIM_SQL).toMatch(/p_privacy_version TEXT/);
+    expect(CLAIM_TS).toMatch(/p_terms_version:\s*input\.termsVersion/);
+    expect(CLAIM_TS).toMatch(/p_privacy_version:\s*input\.privacyVersion/);
   });
 
-  it('app/checkout/[token]/actions.ts stamps terms + privacy on the plan-terms activation UPDATE', () => {
+  it('app/patient/actions.ts supplies both versions on BOTH activation paths (acceptPlan + payWithSavedCard)', () => {
+    expect(PATIENT).toMatch(/from '@\/lib\/legal\/terms'/);
+    expect(PATIENT).toMatch(/from '@\/lib\/legal\/privacy'/);
+    // Both callers, so neither path can activate without an acceptance.
+    expect((PATIENT.match(/termsVersion:\s*TERMS_VERSION/g) ?? []).length).toBe(2);
+    stampsAcceptanceOnActivation(PATIENT);
+  });
+
+  it('app/checkout/[token]/actions.ts supplies both versions on the counter path', () => {
     expect(CHECKOUT).toMatch(/from '@\/lib\/legal\/terms'/);
     expect(CHECKOUT).toMatch(/from '@\/lib\/legal\/privacy'/);
-    stampsAcceptanceOnActivation(CHECKOUT, 1);
+    stampsAcceptanceOnActivation(CHECKOUT);
   });
 
   it('checkout also records account-level acceptance (terms + privacy) on the profile upsert', () => {
