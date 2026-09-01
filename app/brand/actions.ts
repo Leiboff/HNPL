@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server';
 import { isWithinSouthAfrica } from '@/lib/maps/saBounds';
 import { checkHpcsa, HPCSA_ERROR_MESSAGE } from '@/lib/validation/hpcsa';
 import { inviteMemberIntoPractice } from '@/lib/brand/inviteMember';
+import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
 
 // ─── Brand-admin server actions ────────────────────────────────────────
 //
@@ -643,6 +644,37 @@ export async function updateBranchBanking(input: UpdateBranchBankingInput): Prom
       return { error: 'Universal branch code must be exactly 6 digits.' };
     }
   }
+
+  // ── Where this branch's money goes (audit A-12) ──────────────────
+  //
+  // The highest-value single edit in the product: change the account, wait
+  // for the Friday EFT, change it back. Until 0131 nothing recorded it at
+  // all.
+  //
+  // Two records now, and this is the half that names the person. The write
+  // below is service-role (the 0054 column locks demand it), so auth.uid()
+  // is NULL inside the trigger and it can only say the change happened. The
+  // caller's identity is not in question here — guardBrandAdminOfPractice
+  // has just proved active brand-admin membership of this branch's group.
+  //
+  // The account number is NOT in the payload. The trigger records a last-4
+  // and a SHA-256, which is what makes a change-and-change-back provable,
+  // and admin_audit_log is append-only: anything written here is written
+  // forever.
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'practice',
+    entityId:   input.practiceId,
+    action:     'branch_banking_changed',
+    payload:    {
+      bank_name:      bankName,
+      branch_code:    branchCode,
+      account_holder: accountHolder,
+      account_type:   accountType,
+      cleared:        !anySet,
+      by_role:        'brand_admin',
+    },
+  });
 
   const { error } = await svc()
     .from('practices')

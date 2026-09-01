@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { isValidEmail } from '@/lib/validation/email';
+import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
 
 // ─── Admin actions: grant / revoke the 'sales' role ──────────────────────
 //
@@ -79,6 +80,23 @@ export async function grantSalesRole(email: string): Promise<{
   // patient → sales REMOVES this row from 0097's partial unique index
   // (which covers role='patient' only), so this direction can never
   // collide. The mirror case is handled in revokeSalesRole.
+  // ── Who granted CRM-wide read (audit A-12) ─────────────────────────
+  //
+  // 0131's trigger on profiles.role records that the grant HAPPENED, but
+  // this write goes through the service-role client (the 0054 column lock
+  // demands it) so auth.uid() is NULL there and the trigger cannot name
+  // anybody. The attribution has to come from here, where guardAdmin has
+  // just established it.
+  //
+  // Before the write, so a grant that fails halfway is still visible.
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'customer',
+    entityId:   profile.id as string,
+    action:     'grant_sales_role',
+    payload:    { from: profile.role, to: 'sales', email: cleanEmail },
+  });
+
   const { error: updErr } = await s
     .from('profiles')
     .update({ role: 'sales' })
@@ -114,6 +132,14 @@ export async function revokeSalesRole(userId: string): Promise<{ error: string |
 
   if (!profile) return { error: 'User not found.' };
   if (profile.role !== 'sales') return { error: 'User does not have the sales role.' };
+
+  await recordAdminAction({
+    actorId:    guard.userId,
+    entityType: 'customer',
+    entityId:   userId,
+    action:     'revoke_sales_role',
+    payload:    { from: 'sales', to: 'patient' },
+  });
 
   const { error } = await s
     .from('profiles')

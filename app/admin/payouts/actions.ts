@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
+import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
 
 // ─── Settlement actions ─────────────────────────────────────────────────────
 //
@@ -23,10 +24,10 @@ import { createClient } from '@/lib/supabase/server';
 async function guardAdmin() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false as const, error: 'Not authenticated.', supabase: null };
+  if (!user) return { ok: false as const, error: 'Not authenticated.', supabase: null, userId: null };
   const { data: p } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-  if (p?.role !== 'admin') return { ok: false as const, error: 'Unauthorized.', supabase: null };
-  return { ok: true as const, error: null, supabase };
+  if (p?.role !== 'admin') return { ok: false as const, error: 'Unauthorized.', supabase: null, userId: null };
+  return { ok: true as const, error: null, supabase, userId: user.id };
 }
 
 // ─── markBatchPaid ──────────────────────────────────────────────────────────
@@ -53,6 +54,26 @@ export async function markBatchPaid(batchId: string): Promise<{ error: string | 
   if (!batch) return { error: 'Batch not found or already paid.' };
 
   const paidAt = new Date().toISOString();
+
+  // ── Recorded BEFORE the flip (audit A-12) ────────────────────────────
+  //
+  // "Marked paid" is a human ASSERTION that an EFT left the bank — nothing
+  // here talks to a bank, so this row is the only evidence the payment was
+  // ever claimed to have happened, and it used to be evidence with no
+  // signature on it.
+  //
+  // Written first because this action makes TWO writes (members, then the
+  // batch) and can die between them. A record written only on success would
+  // be missing precisely the half-finished settlements an investigator needs
+  // to see. Migration 0131's triggers then record whichever writes actually
+  // committed, so the pair reads as intent-then-outcome.
+  await recordAdminAction({
+    actorId:    guard.userId!,
+    entityType: 'payout_batch',
+    entityId:   batchId,
+    action:     'mark_batch_paid',
+    payload:    { from: 'pending', to: 'paid', paid_at: paidAt },
+  });
 
   const { error: payoutsErr } = await guard.supabase!
     .from('payouts')
@@ -96,9 +117,19 @@ export async function markPayoutPaid(payoutId: string): Promise<{ error: string 
     };
   }
 
+  const paidAt = new Date().toISOString();
+
+  await recordAdminAction({
+    actorId:    guard.userId!,
+    entityType: 'payout',
+    entityId:   payoutId,
+    action:     'mark_payout_paid',
+    payload:    { from: 'pending', to: 'paid', paid_at: paidAt, batched: false },
+  });
+
   const { error } = await guard.supabase!
     .from('payouts')
-    .update({ status: 'paid', paid_at: new Date().toISOString() })
+    .update({ status: 'paid', paid_at: paidAt })
     .eq('id', payoutId)
     // Re-assert both conditions at write time: the read above is a separate
     // statement, so a batch could have claimed this row in between.
