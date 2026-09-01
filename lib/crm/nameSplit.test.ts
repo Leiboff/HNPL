@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitFullName } from './nameSplit';
+import { splitFullName, contactDisplayName, NO_CONTACT_NAME } from './nameSplit';
 
 describe('splitFullName', () => {
   it('strips a leading title and splits the rest', () => {
@@ -40,5 +40,26 @@ describe('splitFullName', () => {
 
   it('returns empty strings for an empty input', () => {
     expect(splitFullName('')).toEqual({ title: null, firstName: '', lastName: '' });
+  });
+});
+
+describe('contactDisplayName', () => {
+  it('joins a first and last name', () => {
+    expect(contactDisplayName('Naledi', 'Khumalo')).toBe('Naledi Khumalo');
+  });
+
+  it('renders one name when only one is on file', () => {
+    expect(contactDisplayName('Naledi', '')).toBe('Naledi');
+    expect(contactDisplayName('', 'Khumalo')).toBe('Khumalo');
+  });
+
+  it('marks the no-name case explicitly rather than printing a lone space', () => {
+    // The new-lead form only requires practice name, address and phone,
+    // so a lead can legitimately have no contact name. `{first} {last}`
+    // would render " " and read as a broken row.
+    expect(contactDisplayName('', '')).toBe(NO_CONTACT_NAME);
+    expect(contactDisplayName(null, null)).toBe(NO_CONTACT_NAME);
+    expect(contactDisplayName(undefined, undefined)).toBe(NO_CONTACT_NAME);
+    expect(contactDisplayName('   ', '  ')).toBe(NO_CONTACT_NAME);
   });
 });

@@ -40,8 +40,11 @@ async function guardSalesOrAdmin(): Promise<GuardOk | GuardErr> {
 
 export type CreateLeadInput = {
   practice_name:              string;
-  contact_first_name:         string;
-  contact_last_name:          string;
+  // Optional since the new-lead form stopped requiring a contact name;
+  // stored as '' when absent (the columns stay NOT NULL). practice_name,
+  // phone and an address are the compulsory three — enforced below.
+  contact_first_name?:        string | null;
+  contact_last_name?:         string | null;
   role_at_practice?:          string | null;
   specialty?:                 string | null;
   phone?:                     string | null;
@@ -73,9 +76,17 @@ export async function createLead(input: CreateLeadInput): Promise<CreateLeadResu
   const guard = await guardSalesOrAdmin();
   if (!guard.ok) return { error: guard.error };
 
-  if (!input.practice_name?.trim())      return { error: 'Practice name is required.' };
-  if (!input.contact_first_name?.trim()) return { error: 'Contact first name is required.' };
-  if (!input.contact_last_name?.trim())  return { error: 'Contact last name is required.' };
+  // Three compulsory fields, and only three: a lead you cannot name,
+  // phone or find is not workable. A contact NAME is not among them —
+  // cold-sourced leads routinely arrive as "the practice on Oxford Rd,
+  // this is their number", and refusing to record one loses the lead
+  // rather than improving it. The name is filled in on the lead page
+  // once someone picks up.
+  if (!input.practice_name?.trim()) return { error: 'Practice name is required.' };
+  if (!input.phone?.trim())         return { error: 'A contact number is required.' };
+  if (!input.formatted_address?.trim() && !input.street_address?.trim()) {
+    return { error: 'An address is required.' };
+  }
 
   const source = (input.source ?? 'other').toLowerCase();
   if (!SOURCES.has(source)) return { error: `Invalid source: ${source}` };
@@ -109,8 +120,13 @@ export async function createLead(input: CreateLeadInput): Promise<CreateLeadResu
 
   const insertRow = {
     practice_name:              input.practice_name.trim(),
-    contact_first_name:         input.contact_first_name.trim(),
-    contact_last_name:          input.contact_last_name.trim(),
+    // NOT NULL in crm_leads (0069) and in the primary contact the
+    // insert trigger seeds from them (0075), so an absent name is
+    // stored as '' rather than widening those columns to NULL and every
+    // consumer's type with them. Read back through contactDisplayName
+    // (lib/crm/nameSplit.ts), which renders the no-name case explicitly.
+    contact_first_name:         input.contact_first_name?.trim() ?? '',
+    contact_last_name:          input.contact_last_name?.trim()  ?? '',
     role_at_practice:           input.role_at_practice?.trim()  || null,
     specialty:                  input.specialty?.trim()          || null,
     phone:                      input.phone?.trim()              || null,

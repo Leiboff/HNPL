@@ -6,6 +6,7 @@ import {
   type LeadContact,
 } from './contactsActions';
 import { INTERESTS, INTEREST_LABELS, type Interest } from '@/lib/crm/interest';
+import { contactDisplayName } from '@/lib/crm/nameSplit';
 
 // ─── Contacts card — primary badged, add/edit/remove per contact ────
 //
@@ -135,7 +136,7 @@ export default function ContactsCard({
             ) : (
               <div className="space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-sm font-medium text-gray-900">{c.first_name} {c.last_name}</p>
+                  <p className="text-sm font-medium text-gray-900">{contactDisplayName(c.first_name, c.last_name)}</p>
                   {c.is_primary && (
                     <span
                       className="inline-flex items-center rounded-full bg-[#15A89E]/10 text-[#0F766E] px-2 py-0.5 text-[10px] font-medium"
