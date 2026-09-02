@@ -200,7 +200,14 @@ export function replaySchema(migrations: Migration[] = readMigrations()): Effect
       const table  = pick(m[5], m[6]);
       const events = new Set(
         (m[4] ?? '').toUpperCase().split(/\s+OR\s+/)
-          .map((e) => e.trim())
+          // `UPDATE OF status` is one event with a column list attached, so
+          // take the leading keyword of each clause rather than the whole
+          // clause. Missing this made 0069's
+          // `AFTER UPDATE OF status ON practices` parse to NO events at all —
+          // caught by diffing the replay against pg_trigger, not by
+          // assertFullyParsed, which only counts statements and had correctly
+          // seen this one.
+          .map((e) => e.trim().split(/\s+/)[0] ?? '')
           .filter((e): e is 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE' =>
             e === 'INSERT' || e === 'UPDATE' || e === 'DELETE' || e === 'TRUNCATE'),
       );
