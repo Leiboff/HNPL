@@ -13,6 +13,8 @@ import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { recordIdentitySignals } from '@/lib/security/identitySignals';
+import { requestDeviceId, requestIp } from '@/lib/security/requestSignals';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -509,6 +511,24 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
       })
       .eq('id', loaded.userId);
     if (error) return { error: error.message };
+
+    // ─── The richest observation the ledger ever gets ──────────────────
+    //
+    // The applicant is in front of us, in a browser, about to be verified.
+    // Recorded with NO identity: the pending hash above is a CLAIM, not a
+    // verified fact, and writing it here would let anyone spray identity
+    // submissions carrying other people's ID numbers into the ledger. The
+    // Didit webhook promotes these rows once a registry and a biometric
+    // check agree (migration 0137).
+    await recordIdentitySignals({
+      profileId:    loaded.userId,
+      identityHash: null,
+      surface:      'identity',
+      raw: {
+        deviceId: await requestDeviceId(),
+        ip:       await requestIp(),
+      },
+    });
 
     return { error: null, outcome: 'redirect', url: session.url };
   }

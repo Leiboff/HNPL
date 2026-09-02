@@ -56,6 +56,7 @@ proxy.ts mints hnpl_did cookie ─► correlationKeys.ts  (keyed, one-way link k
 | `lib/security/identitySignals.ts` | Records signals, fetches link counts | I/O |
 | `lib/security/requestSignals.ts` | Assembles one request's context | I/O |
 | `supabase/migrations/0136_…sql` | Ledger + `count_identity_links` RPC | — |
+| `supabase/migrations/0137_…sql` | Identity promotion + practice concentration | — |
 | `lib/underwriting/claimCredit.ts` | `ringGate` — the enforcement point | I/O |
 
 ## The three commitments that shape the thresholds
@@ -160,6 +161,25 @@ browser profile per identity defeats both anyway.
 - **The first members of a ring are recorded but not caught**, because there
   was nobody ahead of them to match. Correlation cannot correlate a first
   observation. The ring is caught partway through.
+- **A disciplined operator can stay under it.** Breaking one axis drops
+  below the corroboration rule: clear cookies between identities (device
+  gone) and use one prepaid card each (card gone) leaves only `ip`/`subnet`,
+  which are capped below the review bar by construction. Batching ≤4
+  identities per device stays inside the household allowance indefinitely.
+  This control raises cost and catches sloppy or large rings; it is not a
+  wall against a disciplined small-batch one.
+- **The SA ID sequence-adjacency signal was removed, deliberately.** Batch-
+  issued IDs hold near-adjacent sequence numbers, which would be real
+  corroboration — but computing it needs plaintext SA IDs at claim time, and
+  the ledger holds only keyed hashes precisely so that comparison is
+  impossible. Shipping it as an unproduced parameter would have been worse
+  than not having it. Doing it properly means computing the neighbour count
+  at identity-submit time (where plaintext is briefly in hand, via a
+  ±3 window of blind-index probes) and persisting the count on the profile.
+  That is a viable design, not a closed door — it is simply not built.
+- **No payout velocity cap.** Concentration is now *detected* on the patient
+  side, but nothing bounds the value or rate of payouts to a single practice.
+  See below.
 - **Assessment fails open.** An attacker who can break the ledger query can
   suppress detection. Acceptable for a first deployment (it is not the only
   or primary control, and a total failure would refuse every patient at

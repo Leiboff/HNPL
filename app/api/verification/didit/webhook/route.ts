@@ -3,6 +3,7 @@
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
+import { promoteIdentitySignals } from '@/lib/security/identitySignals';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { verifyDiditWebhookSignature } from '@/lib/didit/webhook';
 import { validateSaId, saIdAge } from '@/lib/validation';
@@ -262,6 +263,7 @@ async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event
       ...envelopeFields(event),
     })
     .eq('id', userId);
+  if (!error) await promoteApprovedIdentity(userId, lookupHash);
   if (error) {
     console.error('[didit-webhook] ALERT failed to persist approved identity verification', { userId, error: error.message });
   }
@@ -387,6 +389,34 @@ async function handleApprovedDha(supabase: SupabaseClient, userId: string, event
     .eq('id', userId);
   if (error) {
     console.error('[didit-webhook] ALERT failed to persist approved DHA identity verification', { userId, error: error.message });
+    return;
+  }
+  await promoteApprovedIdentity(userId, pendingHash);
+}
+
+// ─── Attaching the verified identity to what we already observed ───────
+//
+// This is the one moment the system learns WHO someone is — and, being a
+// server-to-server webhook, the one moment it cannot see HOW they arrived:
+// no device cookie, and an IP belonging to Didit rather than the
+// applicant.
+//
+// So the signals were recorded earlier, at the applicant's own requests,
+// carrying no identity. This promotes those rows now that a registry and a
+// biometric check agree the person is real. Recording the pending hash at
+// submit time instead would have been simpler and would have broken the
+// invariant that makes the ledger safe — see migration 0137.
+//
+// Best-effort in the strongest sense: the approval has already been
+// persisted above, and nothing about this call may put it at risk.
+async function promoteApprovedIdentity(userId: string, lookupHash: string | null): Promise<void> {
+  if (!lookupHash) return;
+  try {
+    await promoteIdentitySignals({ profileId: userId, identityHash: lookupHash });
+  } catch (err) {
+    console.warn('[didit-webhook] identity signal promotion failed (verification unaffected)', {
+      userId, message: err instanceof Error ? err.message : 'unknown',
+    });
   }
 }
 

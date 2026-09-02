@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   assessRing,
-  saIdSequenceAdjacent,
   RING_BLOCK_SCORE,
   type IdentityLink,
   type RingObservation,
@@ -109,24 +108,62 @@ describe('rings are caught', () => {
     expect(result.verdict).toBe('clear');
   });
 
-  it('adds the collusion signals without letting them decide alone', () => {
+  it('adds the collusion signal without letting it decide alone', () => {
     const shapeOnly = assess({
       links: [],
-      sequentialIdNeighbours: 3,
-      singlePracticeConcentration: true,
+      practiceConcentration: { linkedIdentities: 9, linkedPlans: 12, distinctPractices: 1 },
     });
-    // Neither shape signal is a correlation KIND, so corroboration is
-    // unsatisfied and the verdict cannot exceed watch.
+    // Concentration is not a correlation KIND, so corroboration is
+    // unsatisfied and the verdict cannot exceed watch however stark it is.
     expect(shapeOnly.corroboratingKinds).toBe(0);
     expect(['clear', 'watch']).toContain(shapeOnly.verdict);
 
     const withLinks = assess({
       links: [link('device', 8, 8), link('card', 5, 5)],
-      sequentialIdNeighbours: 3,
-      singlePracticeConcentration: true,
+      practiceConcentration: { linkedIdentities: 9, linkedPlans: 12, distinctPractices: 1 },
     });
     expect(withLinks.score).toBeGreaterThan(shapeOnly.score);
     expect(withLinks.verdict).toBe('block');
+  });
+});
+
+describe('practice concentration', () => {
+  // The collusion case: the practice is paid 94% upfront, so a captured
+  // practice behind every linked identity is the shape of the attack.
+  const conc = (o: Partial<RingObservation['practiceConcentration']> & { linkedIdentities: number; linkedPlans: number; distinctPractices: number }) =>
+    assess({ links: [], practiceConcentration: o });
+
+  it('says nothing about a small group at one clinic', () => {
+    // Two people who went to the same practice is the overwhelmingly
+    // likely innocent outcome, and "100% concentrated" is trivially true
+    // for small groups — which is exactly why this is not a boolean.
+    expect(conc({ linkedIdentities: 2, linkedPlans: 2, distinctPractices: 1 }).score).toBe(0);
+    expect(conc({ linkedIdentities: 3, linkedPlans: 3, distinctPractices: 1 }).score).toBe(0);
+  });
+
+  it('scores a large group billed entirely through one practice', () => {
+    expect(conc({ linkedIdentities: 9, linkedPlans: 14, distinctPractices: 1 }).score).toBeGreaterThan(0);
+  });
+
+  it('scores a heavy skew less than a total one', () => {
+    const total = conc({ linkedIdentities: 9, linkedPlans: 12, distinctPractices: 1 });
+    const skew  = conc({ linkedIdentities: 9, linkedPlans: 12, distinctPractices: 3 });
+    expect(skew.score).toBeGreaterThan(0);
+    expect(skew.score).toBeLessThan(total.score);
+  });
+
+  it('says nothing when the group is genuinely spread across practices', () => {
+    expect(conc({ linkedIdentities: 9, linkedPlans: 12, distinctPractices: 8 }).score).toBe(0);
+  });
+
+  it('never lets concentration alone exceed the log-only band', () => {
+    const extreme = conc({ linkedIdentities: 500, linkedPlans: 900, distinctPractices: 1 });
+    expect(['clear', 'watch']).toContain(extreme.verdict);
+  });
+
+  it('distinguishes an unanswerable question from a spread-out answer', () => {
+    // undefined = we could not look. Zero score, but not a finding.
+    expect(assess({ links: [], practiceConcentration: undefined }).score).toBe(0);
   });
 });
 
@@ -149,26 +186,3 @@ describe('assessRing is total', () => {
   });
 });
 
-describe('saIdSequenceAdjacent', () => {
-  it('flags adjacent sequences on the same birth date', () => {
-    expect(saIdSequenceAdjacent('9001015000081', '9001015001080')).toBe(true); // 5000 vs 5001
-    expect(saIdSequenceAdjacent('9001015000081', '9001015002083')).toBe(true); // 5000 vs 5002, within 3
-    expect(saIdSequenceAdjacent('9001015000081', '9001015009087')).toBe(false); // 5000 vs 5009, outside
-  });
-
-  it('does not flag the same ID against itself', () => {
-    expect(saIdSequenceAdjacent('9001015000081', '9001015000081')).toBe(false);
-  });
-
-  it('does not flag nearby sequences on DIFFERENT birth dates', () => {
-    // The sequence counter is scoped per birth date, so proximity across
-    // dates is meaningless. Missing this would flag unrelated strangers.
-    expect(saIdSequenceAdjacent('9001015000081', '9203115001085')).toBe(false);
-  });
-
-  it('rejects malformed input rather than throwing', () => {
-    expect(saIdSequenceAdjacent('', '9001015000081')).toBe(false);
-    expect(saIdSequenceAdjacent('abc', 'def')).toBe(false);
-    expect(saIdSequenceAdjacent('900101500008', '9001015000081')).toBe(false);
-  });
-});

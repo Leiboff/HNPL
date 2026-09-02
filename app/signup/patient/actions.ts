@@ -12,6 +12,8 @@ import { consentColumns } from '@/lib/legal/documentHash';
 import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { assessBotSignals, type BotObservation } from '@/lib/security/botSignals';
+import { recordIdentitySignals } from '@/lib/security/identitySignals';
+import { requestDeviceId, requestIp } from '@/lib/security/requestSignals';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -578,6 +580,33 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
       success: false,
     };
   }
+
+  // ─── Seed the correlation ledger ────────────────────────────────────
+  //
+  // Recorded with NO identity — this account has not verified anyone yet,
+  // and rows with a null identity_hash are counted toward nobody
+  // (migration 0136). That is what stops anonymous signup spam from being
+  // able to implicate real customers who share a network with it.
+  //
+  // Its value comes later: when Didit approves this person, the webhook
+  // promotes these rows to their verified identity (migration 0137). This
+  // is the only place the device and network they signed up from can be
+  // captured, because the moment we learn who they are is a
+  // server-to-server callback with no browser attached.
+  //
+  // Best-effort and non-blocking by contract — recordIdentitySignals never
+  // throws. The account exists and is accepted by this point; nothing here
+  // may put that at risk.
+  await recordIdentitySignals({
+    profileId:    newUserId,
+    identityHash: null,
+    surface:      'signup',
+    raw: {
+      deviceId: await requestDeviceId(),
+      ip:       await requestIp(),
+      email:    normalizedEmail,
+    },
+  });
 
   if (token) {
     // Cookie posture (hardened 2026-06-21):

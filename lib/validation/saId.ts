@@ -68,26 +68,6 @@ export function saIdAge(id: string, at: Date = new Date()): number | null {
   return age;
 }
 
-/**
- * The sequence number encoded in positions 7–10, or null if the input is
- * not 13 digits.
- *
- * Assigned in issue order WITHIN a birth date, which is what makes it
- * useful beyond the gender bit it also encodes: two IDs sharing a birth
- * date with adjacent sequences were issued together. Callers comparing
- * sequences must therefore compare birth dates too — a sequence is
- * meaningless across dates. See saIdSequenceAdjacent in
- * lib/security/identityGraph.ts, which is the reason this accessor exists.
- *
- * Deliberately shape-only, not Luhn-checked: it lives here so that the
- * 13-digit regex stays in this module (enforced by
- * lib/validation/regression.test.ts), not because it validates anything.
- */
-export function saIdSequence(id: string | null | undefined): number | null {
-  if (typeof id !== 'string' || !/^\d{13}$/.test(id)) return null;
-  return Number(id.slice(6, 10));
-}
-
 // ─── Internals ───────────────────────────────────────────────────────────────
 
 function parseSaIdDate(id: string, now: Date = new Date()): Date | null {

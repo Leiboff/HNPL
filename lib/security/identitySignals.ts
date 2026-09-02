@@ -47,7 +47,13 @@
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { correlationKey, type CorrelationKind } from './correlationKeys';
-import { assessRing, RECENT_WINDOW_HOURS, type IdentityLink, type RingAssessment } from './identityGraph';
+import {
+  assessRing,
+  RECENT_WINDOW_HOURS,
+  type IdentityLink,
+  type PracticeConcentration,
+  type RingAssessment,
+} from './identityGraph';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Svc = any;
@@ -113,15 +119,54 @@ export function keySignals(raw: RawSignals): KeyedSignal[] {
     let hash: string | null = null;
     try {
       hash = correlationKey(kind, value);
-    } catch {
-      // A missing CORRELATION_HMAC_KEY throws. Absent key, absent signal —
-      // never a silent downgrade to an unkeyed hash, which would turn the
-      // ledger into the brute-forceable thing 0136's header rules out.
+    } catch (err) {
+      // A missing or malformed CORRELATION_HMAC_KEY throws. Absent key,
+      // absent signal — never a silent downgrade to an unkeyed hash, which
+      // would turn the ledger into the brute-forceable thing 0136's header
+      // rules out.
+      warnKeyUnavailable(err);
       return [];
     }
     if (hash) out.push({ kind, hash });
   }
   return out;
+}
+
+/**
+ * Say so, loudly, once per process, when the key is missing.
+ *
+ * WHY THIS EXISTS AS ITS OWN FUNCTION
+ *
+ * Without the key this whole subsystem degrades to a no-op: nothing is
+ * recorded, every assessment returns a degraded 'clear', and signups and
+ * checkouts carry on exactly as before. That is the correct failure
+ * posture — a fraud control must not be able to take down the product —
+ * but it is also indistinguishable, from the outside, from a control that
+ * is working and finding nothing.
+ *
+ * A control that is off and silent about it is worse than one that was
+ * never built, because it is trusted. So the degraded state announces
+ * itself.
+ *
+ * Once per process rather than per call: this sits on the signup and
+ * checkout paths, and a per-call error would bury the signal it is trying
+ * to raise.
+ */
+let keyWarningIssued = false;
+function warnKeyUnavailable(err: unknown): void {
+  if (keyWarningIssued) return;
+  keyWarningIssued = true;
+  console.error(
+    '[identity-signals] ALERT correlation key unavailable — ring detection is OFF. ' +
+    'No signals will be recorded and every assessment will return a degraded clear. ' +
+    'Set CORRELATION_HMAC_KEY (32 bytes, base64). See docs/BOT-AND-SYNTHETIC-IDENTITY-DEFENCE.md.',
+    { message: err instanceof Error ? err.message : 'unknown' },
+  );
+}
+
+/** Test seam: lets a test observe the once-per-process warning. */
+export function __resetKeyWarningForTests(): void {
+  keyWarningIssued = false;
 }
 
 /**
@@ -171,6 +216,45 @@ export async function recordIdentitySignals(input: {
   return written;
 }
 
+/**
+ * Attach a newly verified identity to everything this profile recorded
+ * before it had one.
+ *
+ * Called from the Didit webhook at the moment sa_id_lookup_hash is
+ * written. Best-effort and idempotent — see migration 0137 for why the
+ * promotion, rather than recording the pending hash at submit time, is
+ * what keeps "a non-null identity_hash means a verified person" true.
+ */
+export async function promoteIdentitySignals(input: {
+  profileId:    string;
+  identityHash: string;
+  client?:      Svc;
+}): Promise<number> {
+  let client: Svc;
+  try {
+    client = input.client ?? svc();
+  } catch {
+    return 0;
+  }
+
+  try {
+    const { data, error } = await client.rpc('promote_identity_signals', {
+      p_profile_id:    input.profileId,
+      p_identity_hash: input.identityHash,
+    });
+    if (error) {
+      console.error('[identity-signals] promotion failed', { code: error.code, message: error.message });
+      return 0;
+    }
+    return Number(data) || 0;
+  } catch (err) {
+    console.error('[identity-signals] promotion threw', {
+      message: err instanceof Error ? err.message : 'unknown',
+    });
+    return 0;
+  }
+}
+
 export type ApplicantRingAssessment = RingAssessment & {
   /**
    * True when the links could not be read and the assessment is therefore
@@ -190,12 +274,9 @@ export type ApplicantRingAssessment = RingAssessment & {
  * this file for why, and for what that concedes.
  */
 export async function assessApplicantRing(input: {
-  identityHash:  string;
-  raw:           RawSignals;
-  /** Corroborating shape signals, computed by the caller. */
-  sequentialIdNeighbours?:      number;
-  singlePracticeConcentration?: boolean;
-  client?: Svc;
+  identityHash: string;
+  raw:          RawSignals;
+  client?:      Svc;
 }): Promise<ApplicantRingAssessment> {
   const degradedClear = (): ApplicantRingAssessment => ({
     score: 0, verdict: 'clear', signals: [], corroboratingKinds: 0, degraded: true,
@@ -241,13 +322,53 @@ export async function assessApplicantRing(input: {
       recentIdentities:   Number(r.recent_identities)   || 0,
     }));
 
-  const assessment = assessRing({
-    links,
-    sequentialIdNeighbours:      input.sequentialIdNeighbours,
-    singlePracticeConcentration: input.singlePracticeConcentration,
-  });
+  // Practice concentration is a SECOND query rather than a join onto the
+  // first, because the two answer different questions and one of them can
+  // fail without spoiling the other: link counts come from the ledger
+  // alone, while this one reaches into `plans`. A concentration read that
+  // fails leaves the link-based verdict intact and merely unsharpened.
+  const concentration = await readPracticeConcentration(client, input.identityHash, signals);
+
+  const assessment = assessRing({ links, practiceConcentration: concentration });
 
   return { ...assessment, degraded: false };
+}
+
+/**
+ * Where the linked identities' plans were billed. Returns undefined when
+ * the question could not be answered — distinct from "answered, and they
+ * are spread across many practices", which is a real finding.
+ */
+async function readPracticeConcentration(
+  client: Svc,
+  identityHash: string,
+  signals: KeyedSignal[],
+): Promise<PracticeConcentration | undefined> {
+  try {
+    const { data, error } = await client.rpc('linked_practice_concentration', {
+      p_identity_hash: identityHash,
+      p_kinds:         signals.map((s) => s.kind),
+      p_hashes:        signals.map((s) => s.hash),
+    });
+    if (error) {
+      console.error('[identity-signals] practice concentration failed', {
+        code: error.code, message: error.message,
+      });
+      return undefined;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return undefined;
+    return {
+      linkedIdentities:  Number(row.linked_identities)  || 0,
+      linkedPlans:       Number(row.linked_plans)       || 0,
+      distinctPractices: Number(row.distinct_practices) || 0,
+    };
+  } catch (err) {
+    console.error('[identity-signals] practice concentration threw', {
+      message: err instanceof Error ? err.message : 'unknown',
+    });
+    return undefined;
+  }
 }
 
 const CORRELATION_KINDS: ReadonlySet<string> = new Set([
