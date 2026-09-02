@@ -1,11 +1,11 @@
 # HNPL / betternow — adversarial security audit, round three
 
 **Branch:** `claude/outstanding-migrations-9rm40y`
-**Database state:** production project `wcwuqpyjiexkvnilceko`, migrations **0001–0136 applied**. 0125–0134 were applied at the start of this session (the database was at 0124 while the repo carried the round-two fixes); **0135 — the remediation for R3-01 and R3-02 — was written and applied during it.**
-**Scope:** whole repository — `app/` (14 API routes, 24 Server Action modules), `lib/`, `components/`, 135 SQL migrations, `proxy.ts`, `next.config.ts`, `vercel.json` — plus the **live** RLS policy set, trigger set and constraint set read directly from the production database.
+**Database state:** production project `wcwuqpyjiexkvnilceko`, migrations **0001–0137 applied**. 0125–0134 were applied at the start of this session (the database was at 0124 while the repo carried the round-two fixes); **0135 — the remediation for R3-01 and R3-02 — was written and applied during it.**
+**Scope:** whole repository — `app/` (14 API routes, 24 Server Action modules), `lib/`, `components/`, 136 SQL migrations, `proxy.ts`, `next.config.ts`, `vercel.json` — plus the **live** RLS policy set, trigger set and constraint set read directly from the production database.
 **Method:** static review, live schema introspection, dependency audit, and **executable proof-of-concept tests** against real PostgreSQL (pglite) running as non-superuser `anon`/`authenticated`/`service_role` roles.
-**Constraint honoured:** **no production application code was changed by this audit.** Writes to the production database were the ten pending migrations the session was asked to apply, and later — on explicit instruction, after the audit was delivered — migrations 0135 (the R3-01/R3-02 remediation) and 0136 (the R3-08 reconciliation). All exploit proofs run locally against pglite, never against production.
-**Suite:** green throughout. 386 files / 7,052 tests at the start; 389 / 7,100 at the end — the 9 exploit proofs, the 21 assertions pinning 0135, and the 18 schema-invariant assertions.
+**Constraint honoured:** **no production application code was changed by this audit.** Writes to the production database were the ten pending migrations the session was asked to apply, and later — on explicit instruction, after the audit was delivered — migrations 0135 (the R3-01/R3-02 remediation), 0136 (the R3-08 reconciliation) and 0137 (a read-only catalog RPC for drift detection). All exploit proofs run locally against pglite, never against production.
+**Suite:** green throughout. 386 files / 7,052 tests at the start; 390 / 7,113 at the end — the 9 exploit proofs, the 21 assertions pinning 0135, the 18 schema-invariant assertions and the 13 drift-detection assertions. The suite now also runs in CI, which it did not before (R3-09).
 
 **Relationship to the earlier audits.** `SECURITY-AUDIT-2026-09.md` (F-01…F-19) and `SECURITY-AUDIT-2026-09-02.md` (A-01…A-18) were both re-verified. **Their fixes hold.** I could not reopen F-01, F-02, F-03, F-05, F-07, F-09, F-10, F-12, A-01, A-03, A-04, A-05, A-06, A-07, A-08 or A-17. `payments_plan_instalment_uniq` is present; the checkout door's password-reset/session-mint primitive is gone; the onboarding gate is enforced on both doors; `claim_credit_for_plan` is atomic under a row lock with a deferred exposure constraint behind it. **Every finding below is new.**
 
@@ -438,7 +438,21 @@ Three consequences:
 
 The rule that follows: **no hand-edits to RLS.** The drift was only detectable because someone went looking with `lib/security/schemaInvariants.ts`; nothing about the running system looked wrong.
 
-**How to test the fix.** After the reconciling migration, re-run the replay-vs-live diff; it should be empty. `lib/security/schemaInvariants.ts` exposes `replaySchema()` for exactly this, and the comparison is a ten-line script — worth keeping as an ops check that runs against production on a schedule, since CI cannot see the database.
+**How to test the fix.** Built: `pnpm check:rls-drift` (`scripts/check-rls-drift.ts`) compares `replaySchema()` against `rls_catalog_snapshot()` — a read-only, service-role-only RPC added in 0137 — and exits 1 on drift, 2 when it cannot check, never 0 unless the two genuinely agree. The comparison itself is unit-tested on every drift shape in `lib/security/driftDetection.test.ts`, including the rename that R3-08 actually was and a command widening that keeps its policy name.
+
+Run it after any dashboard work. `.github/workflows/rls-drift.yml` can run it on a schedule, but that is deliberately manual-only by default — enabling it means putting `SUPABASE_SERVICE_ROLE_KEY` into GitHub Actions secrets, which widens "compromised GitHub account" to "whole database". The workflow header sets out the three ways to take that trade.
+
+---
+
+### R3-09 — Nothing ran the test suite automatically
+
+**Severity: Low** (process, not code) — **RESOLVED by `.github/workflows/ci.yml`.**
+
+The repository had no CI of any kind: no `.github/`, no workflows, no pipeline. The only automation was a `pre-commit` hook running `typecheck` — skippable with `--no-verify` — and Vercel's build, which runs `pnpm run build` (typecheck + `next build`) and **no tests**.
+
+So 7,113 tests ran only when somebody remembered to, and that includes every security invariant this repo has accumulated: the RLS proof-of-concept suites, the 0121/0128/0135 write-lock assertions, the function allow-list, and `schemaInvariants.test.ts` — whose entire design premise is that a new INSERT policy should *fail the build*. There was no build for it to fail.
+
+Fixed by a workflow running typecheck, lint and the full suite on every push and pull request, with no secrets required. Lint is non-blocking: it currently reports 29 errors on pre-existing code (20 of them the React-compiler `setState`-in-effect rule), and gating on a backlog nobody here introduced teaches people to ignore a red tick. The count is printed on every run, so it cannot grow unnoticed. Clearing those 29 and deleting one line makes it blocking.
 
 ---
 

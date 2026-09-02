@@ -13,6 +13,7 @@
     "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts",
     "test:crm-conversion": "tsx --env-file=.env.local scripts/test-crm-conversion.ts",
     "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts",
+    "check:rls-drift": "tsx --env-file=.env.local scripts/check-rls-drift.ts",
     "prepare": "simple-git-hooks || true",
     "test:serial": "vitest run --no-file-parallelism"
   },

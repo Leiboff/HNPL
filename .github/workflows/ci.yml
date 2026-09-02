@@ -1,0 +1,93 @@
+# ─── The suite actually runs somewhere ────────────────────────────────────
+#
+# Before this workflow the repository had no CI of any kind. The only
+# automation was a `pre-commit` hook running `typecheck` (skippable with
+# `--no-verify`) and Vercel's build, which runs `pnpm run build` — typecheck
+# plus `next build`, and no tests.
+#
+# So 7,100 tests ran only when somebody remembered to run them, and that
+# includes every security invariant this repo has accumulated: the RLS
+# proof-of-concept suites, the 0121/0128/0135 write-lock assertions, the
+# function allow-list, and lib/security/schemaInvariants.test.ts — whose
+# whole design premise is that a new INSERT policy should FAIL THE BUILD.
+# There was no build for it to fail.
+#
+# This is that build.
+#
+# No secrets. Everything here runs against the repository alone — the
+# migration replay reads files, and the pglite suites spin up their own
+# PostgreSQL in-process. The drift check, which does need credentials, is a
+# separate workflow for exactly that reason.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same PR makes the first run irrelevant.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # The suite is ~8 minutes; the ceiling is for a hang, not for the work.
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # corepack honours the `packageManager` field in package.json, so the
+      # pnpm version here cannot drift from the one the lockfile was written
+      # with. That pin is the point — see CLAUDE.md on this project being
+      # pnpm-only.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile is what Vercel deploys with. Matching it here means
+      # a missing lockfile update fails in CI rather than at deploy time,
+      # which is the failure CLAUDE.md warns about (ERR_PNPM_OUTDATED_LOCKFILE).
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      # NON-BLOCKING, and this is a deliberate choice rather than a shrug.
+      #
+      # `pnpm run lint` currently reports 29 errors and 52 warnings on code
+      # that predates this workflow — 20 of them the React-compiler rule
+      # "Calling setState synchronously within an effect", plus two impure
+      # calls during render, one ref access during render, three prefer-const,
+      # two unescaped entities and one require import.
+      #
+      # Gating on that would make CI red on its first run, on a backlog nobody
+      # here introduced, and the predictable result is that people learn to
+      # ignore a red tick — which costs more than the lint debt does. The
+      # setState-in-effect cluster in particular is a real refactor with real
+      # behavioural risk, not a formatting sweep.
+      #
+      # TO MAKE IT BLOCKING: clear the 29 errors, then delete the
+      # continue-on-error line. The warnings can follow separately. Until
+      # then the output is still printed on every run, so the count is
+      # visible and cannot quietly grow unnoticed.
+      - name: Lint (non-blocking — see note)
+        continue-on-error: true
+        run: pnpm run lint
+
+      # Runs last because it is the slowest, and because a type error makes
+      # the test result uninteresting anyway.
+      - name: Test
+        run: pnpm test
