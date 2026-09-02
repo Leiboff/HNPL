@@ -146,10 +146,23 @@ const INSERT_GUARD_EXEMPT: Record<string, string> = {
 /**
  * Tables that may NEVER be exempted, whatever a future reviewer decides.
  *
- * These are the ledger. If one of them ever loses its BEFORE INSERT trigger,
- * the answer is to put it back, not to write a reason.
+ * The first four are the ledger. If one of them ever loses its BEFORE INSERT
+ * trigger, the answer is to put it back, not to write a reason.
+ *
+ * The last two (0138) are here for the inverse reason, and it is worth
+ * spelling out because it is easy to talk yourself out of: identity_signals
+ * and fraud_decisions hold no money and no personal data — only peppered
+ * hashes. The risk is not that somebody READS them, it is that somebody
+ * WRITES them. An attacker who can plant signals onto an innocent account
+ * manufactures the link graph that gets that account blocked, which turns
+ * this platform's fraud defence into a denial-of-service weapon pointed at
+ * its own customers. A future reviewer looking at "it's just hashes" and
+ * relaxing the guard is exactly the mistake this entry exists to stop.
  */
-const MUST_BE_GUARDED = ['plans', 'payments', 'payouts', 'applications'] as const;
+const MUST_BE_GUARDED = [
+  'plans', 'payments', 'payouts', 'applications',
+  'identity_signals', 'fraud_decisions',
+] as const;
 
 // ─── The 0125 allow-list ──────────────────────────────────────────────────
 //
@@ -296,6 +309,33 @@ describe('INVARIANT — EXECUTE stays an allow-list after 0125', () => {
       + 'with the reason it must be reachable from a browser, and to the '
       + 'allow-list in 0125 if it is not already there.',
     ).toEqual([]);
+  });
+
+  it('a quoted grant inside a DO block does not run on into the next statement', () => {
+    // The bug 0138 exposed. `EXECUTE 'GRANT EXECUTE ON FUNCTION f() TO
+    // service_role';` has no semicolon inside the string, so a name span of
+    // `[\s\S]*?` could not stop there and swallowed everything up to the
+    // next `TO <roles>;` in the file — attributing THOSE roles to THIS
+    // function.
+    //
+    // The noisy failure (a table grant misreported as a function grant) is
+    // the harmless half. The dangerous half is the same run-on hiding a real
+    // anon grant behind the wrong function name, so the allow-list would be
+    // policing a name nobody granted while the actual grant went unlisted.
+    const grants = browserCallableGrants([{
+      file: '9999_regression.sql',
+      version: '9999',
+      sql: [
+        'DO $$ BEGIN',
+        "  EXECUTE 'GRANT EXECUTE ON FUNCTION quoted_service_only(UUID) TO service_role';",
+        'END $$;',
+        'GRANT SELECT ON some_table TO authenticated;',
+        'GRANT EXECUTE ON FUNCTION genuinely_public(TEXT) TO anon, authenticated;',
+      ].join('\n'),
+    }]);
+
+    expect(grants.map((g) => g.fn)).toEqual(['genuinely_public']);
+    expect(grants[0].roles).toEqual(['anon', 'authenticated']);
   });
 
   it('the allow-list has no entries nothing grants (so it cannot rot)', () => {

@@ -13,6 +13,8 @@ import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { assessIdentity, FRAUD_BLOCK_MESSAGE } from '@/lib/security/identitySignals';
+import { requestSignals } from '@/lib/security/requestSignals';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -631,6 +633,50 @@ export async function runCreditCheck(): Promise<ActionResult> {
   if (!currentFlags().creditCheck) {
     // Flag off — should be unreachable but never fail on it.
     return { error: null, nextPath: '/onboarding' };
+  }
+
+  // ── Identity linking (audit R3, bot / synthetic-identity defence) ──
+  //
+  // THIS is where a block is enforced, and it is the only place in the
+  // patient flow that enforces one. Everywhere else — signup, card save —
+  // records signals and lets the customer through.
+  //
+  // Three reasons this is the right gate and signup is not:
+  //
+  //   1. It is where money is committed. Below this line a credit limit is
+  //      granted; above it the account can do nothing. Refusing here costs
+  //      a wrongly-flagged customer a support call, not their account.
+  //   2. The link graph is complete here. By this step the account has a
+  //      device, an IP, an OTP-verified phone and usually a card. At signup
+  //      it has two of the four, one of which can never block.
+  //   3. Refusing at signup would delete its own evidence — profiles
+  //      cascades to identity_signals — so the count that triggered the
+  //      block would drop by one on every refusal. See the note in
+  //      app/signup/patient/actions.ts.
+  //
+  // The phone is read here rather than carried through loadUserAndProfile:
+  // that helper's PROFILE_SELECT is the set computeOnboarding reads, and
+  // widening it for one caller would put a fraud column in front of every
+  // onboarding step for no reason.
+  const { data: phoneRow } = await svc()
+    .from('profiles')
+    .select('phone')
+    .eq('id', loaded.userId)
+    .maybeSingle();
+
+  const assessment = await assessIdentity(
+    svc(),
+    loaded.userId,
+    'credit_claim',
+    await requestSignals({ phone: (phoneRow?.phone as string | null) ?? null }),
+  );
+
+  if (assessment.decision === 'block') {
+    // No credit_check_status is written. 'failed' would be a lie — no
+    // affordability decision was made — and it would also be terminal in a
+    // way this is not: an admin releasing the block in fraud_decisions must
+    // leave the customer able to simply try again.
+    return { error: FRAUD_BLOCK_MESSAGE };
   }
 
   const decision = stubAffordabilityPolicy();

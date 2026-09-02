@@ -33,6 +33,11 @@ const ADMIN_PAGES = [
   // action against a practice, a customer or the money — so it is the LAST
   // page that should be reachable by a demoted account.
   'app/admin/audit/page.tsx',
+  // The identity-flag queue. It shows who is linked to whom across accounts
+  // — the link graph is exactly the reconnaissance an attacker probing for a
+  // threshold would want, which is why migration 0138 keeps it away from
+  // even an authenticated user at the database level too.
+  'app/admin/fraud/page.tsx',
 ];
 
 describe('admin routes — server-side admin auth pattern', () => {
@@ -65,6 +70,7 @@ describe('admin server actions — server-side admin auth pattern', () => {
     'app/admin/collections/actions.ts',
     'app/admin/payouts/actions.ts',
     'app/admin/practices/actions.ts',
+    'app/admin/fraud/actions.ts',
   ];
 
   it.each(ADMIN_ACTIONS)('%s enforces profile.role check before mutating', (path) => {

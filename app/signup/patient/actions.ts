@@ -11,6 +11,8 @@ import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { consentColumns } from '@/lib/legal/documentHash';
 import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { assessIdentity } from '@/lib/security/identitySignals';
+import { requestSignals } from '@/lib/security/requestSignals';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -485,6 +487,31 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
       success: false,
     };
   }
+
+  // ── Identity signals (audit R3, bot / synthetic-identity defence) ───
+  //
+  // Runs AFTER the acceptance is safely recorded, so a signal write can
+  // never be the thing that costs somebody their account.
+  //
+  // RECORDED, NOT ENFORCED — and that is a considered choice, not a
+  // half-finished one. Blocking here would be self-defeating in a way that
+  // is easy to miss: the only refusal available at signup is to roll the
+  // auth user back, `profiles` cascades to `identity_signals` and
+  // `fraud_decisions`, and the deleted account's links vanish with it. A
+  // device sitting on six accounts would drop to five the instant we
+  // refused the seventh, and the attacker could retry indefinitely while
+  // the evidence deleted itself. The block would be a loop, not a wall.
+  //
+  // Keeping the account costs nothing: an account with no approved credit
+  // limit cannot transact at all (which is the state all 87 existing
+  // accounts are in today). The refusal that matters happens at
+  // runCreditCheck, where credit is actually granted — by which point the
+  // phone and card signals exist too, and the link graph is worth
+  // something.
+  //
+  // Only device and IP are available at this point. IP never blocks
+  // anyway; device is the one that will carry weight here later.
+  await assessIdentity(svc, newUserId, 'signup', await requestSignals());
 
   if (token) {
     // Cookie posture (hardened 2026-06-21):

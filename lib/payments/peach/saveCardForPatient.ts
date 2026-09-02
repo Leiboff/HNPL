@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { recordSignals } from '@/lib/security/identitySignals';
 
 // ─── saveCardForPatient (Peach flavour) ─────────────────────────────
 //
@@ -118,6 +119,31 @@ export async function saveCardForPatient(
       .maybeSingle();
 
     const action = chooseCardSaveAction(existing as { id: string; token: string } | null, isFirst, card.registrationId);
+
+    // ── The card signal (audit R3, bot / synthetic-identity defence) ──
+    //
+    // `signature` is `peach:BRAND:LAST4:MMYYYY` and has been computed here
+    // since 0019, but only ever compared WITHIN one patient, to de-duplicate
+    // their own cards. It is identical across accounts, which makes it the
+    // strongest link this platform can observe: a card is expensive to
+    // obtain and hard to rotate at scale, unlike an email address or a
+    // cleared cookie.
+    //
+    // Recorded on every branch, `already_saved` included. A card presented
+    // again is a sighting, and the whole point of hits/last_seen_at in
+    // migration 0138 is that "this card has been back eleven times across
+    // four accounts" is a different fact from "we saw it once".
+    //
+    // RECORDED, never enforced here. This runs inside the Peach webhook,
+    // after the money has already moved — refusing to persist the card at
+    // that point would lose the token for a charge that already happened
+    // and fix nothing. Enforcement lives at runCreditCheck, which is where
+    // credit is actually granted.
+    //
+    // `supabase` here is the service-role client (the only caller is
+    // app/api/payments/peach/webhook/route.ts). recordSignals no-ops
+    // harmlessly if that ever stops being true.
+    await recordSignals(supabase, patientId, { card: signature });
 
     if (action.action === 'already_saved') {
       return { kind: 'already_saved', cardId: action.cardId };

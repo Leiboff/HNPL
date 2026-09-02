@@ -11,6 +11,12 @@ import {
   issueConsentToken,
   TERMS_CONSENT_COOKIE,
 } from '@/lib/legal/consentToken';
+import {
+  DEVICE_COOKIE,
+  DEVICE_COOKIE_MAX_AGE,
+  isValidDeviceId,
+  newDeviceId,
+} from '@/lib/security/identitySignals';
 
 // ─── Where the legal acceptance token is minted (audit A-14) ───────────────
 //
@@ -188,6 +194,39 @@ export async function proxy(request: NextRequest) {
       secure:   process.env.NODE_ENV === 'production',
       path:     '/',
       maxAge:   maxAgeSeconds,
+    });
+  }
+
+  // ── Mint the device id (audit R3, bot / synthetic-identity defence) ───
+  //
+  // A first-party random id in an httpOnly cookie. NOT a canvas or WebGL
+  // fingerprint: those are covert, brittle across browser updates, and land
+  // differently under POPIA. This one is honest, already disclosed (privacy
+  // policy §2.1, "Device, browser and usage information … including through
+  // cookies") and covered by §3.1.5's fraud-prevention purpose.
+  //
+  // It is minted HERE rather than at signup, and that is the whole point:
+  // correlation only works if the signal was already present before you
+  // needed to ask about it. A device id first seen at signup tells you
+  // nothing; one that has been on this browser for three weeks and has
+  // already carried two other signups tells you everything. Migration 0138
+  // says the same thing at greater length.
+  //
+  // httpOnly so no script can read it and no script can set it — the second
+  // matters more. If a page could choose the value, one person could pin
+  // fifty accounts to fifty ids, or worse, pin their account to somebody
+  // else's id and drag that person over a threshold.
+  //
+  // Only minted when absent or malformed, so a returning browser keeps its
+  // id and the cookie is not rewritten on every request.
+  const existingDeviceId = request.cookies.get(DEVICE_COOKIE)?.value;
+  if (!isValidDeviceId(existingDeviceId)) {
+    response.cookies.set(DEVICE_COOKIE, newDeviceId(), {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production',
+      path:     '/',
+      maxAge:   DEVICE_COOKIE_MAX_AGE,
     });
   }
 

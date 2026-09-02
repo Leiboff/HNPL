@@ -64,6 +64,12 @@ const CONVERTED = [
   // state, so there is no transition to track. run()'s synchronous ref is
   // also the double-submit guard for a public endpoint that sends mail.
   'app/contact/ContactForm.tsx',
+  // Releasing a customer the fraud rules blocked (audit R3). Built with the
+  // hook from the start. Not a money path, but a double-submitted release
+  // is a second UPDATE against a row migration 0138's trigger refuses on
+  // the "already released" branch — so the operator would see a raw
+  // database error for having tapped twice.
+  'app/admin/fraud/ReleaseForm.tsx',
 ] as const;
 
 /**

@@ -28,6 +28,10 @@ const NAV_LINKS = [
   // is for the queues an operator works from a phone, and reading an audit
   // trail is a desk activity. See app/admin/audit/page.tsx.
   { href: '/admin/audit',                      label: 'Audit log'                                                            },
+  // Identity flags. Desktop only, same reasoning as the audit log: judging
+  // whether a threshold is right means reading counts against each other,
+  // which is a desk activity, not a phone one.
+  { href: '/admin/fraud',                      label: 'Identity flags'                                                       },
 ];
 
 export default function AdminNav({ counts }: { counts: Counts }) {

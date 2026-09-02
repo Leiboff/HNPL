@@ -15,7 +15,8 @@
     "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts",
     "check:rls-drift": "tsx --env-file=.env.local scripts/check-rls-drift.ts",
     "prepare": "simple-git-hooks || true",
-    "test:serial": "vitest run --no-file-parallelism"
+    "test:serial": "vitest run --no-file-parallelism",
+    "backfill:identity-signals": "tsx --env-file=.env.local scripts/backfill-identity-signals.ts"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm run typecheck"

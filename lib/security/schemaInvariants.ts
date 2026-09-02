@@ -294,8 +294,24 @@ export function hasBeforeInsertTrigger(schema: EffectiveSchema, table: string): 
 
 export type FunctionGrant = { fn: string; roles: string[]; migration: string };
 
+// The name span excludes `;` and `'` and the terminator accepts a closing
+// quote, and BOTH of those are load-bearing — found when 0138 made the old
+// form mis-report.
+//
+// Grants inside DO blocks are written as `EXECUTE 'GRANT EXECUTE ON FUNCTION
+// f(...) TO service_role';` — there is no semicolon INSIDE the string, so a
+// `[\s\S]*?` name span could not terminate there and ran on until the next
+// `TO <roles>;` anywhere later in the file. That produced a grant that reads
+// as "the function named at the start, granted to the roles from an
+// unrelated statement at the end" — in 0138's case a table grant several
+// hundred lines away, reported as `identity_link_counts → authenticated`.
+//
+// Wrong in the alarming direction as well as the noisy one: the same run-on
+// would attribute a REAL anon grant to whatever function name happened to
+// come first, so the allow-list check would demand the wrong name and, once
+// that name was added, stop noticing the actual one.
 const RE_GRANT_EXECUTE =
-  /\bGRANT\s+EXECUTE\s+ON\s+FUNCTION\s+([\s\S]*?)\s+TO\s+([A-Za-z_, \t]+?)\s*(?:;|$)/gi;
+  /\bGRANT\s+EXECUTE\s+ON\s+FUNCTION\s+([^;']*?)\s+TO\s+([A-Za-z_, \t]+?)\s*(?:'|;|$)/gi;
 
 export function browserCallableGrants(
   migrations: Migration[] = readMigrations(),
