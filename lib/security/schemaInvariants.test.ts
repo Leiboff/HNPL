@@ -30,17 +30,25 @@
 // ─── WHAT THIS DOES NOT COVER ─────────────────────────────────────────────
 //
 // It replays the MIGRATIONS, so it describes the schema a fresh environment
-// gets. It is not a check against the live database, and there is presently
-// known drift between the two — see SCHEMA-DRIFT in docs/SECURITY-AUDIT-R3.md.
-// A check that needs production credentials cannot run in CI, and a check
-// that only runs when someone remembers to point it at production is a check
-// that stops running. This one runs on the commit that introduces the policy,
-// which is the only moment the fix is cheap.
+// gets, and it cannot see the live database — a check that needs production
+// credentials cannot run in CI, and a check that only runs when someone
+// remembers to point it at production is a check that stops running. This one
+// runs on the commit that introduces the policy, which is the only moment the
+// fix is cheap.
+//
+// The two were reconciled by 0136 (audit R3-08): as of that migration the
+// replay reproduces production exactly — 120 policies and 31 triggers,
+// matching in both directions. The assertions in the R3-08 block below are
+// what stop the repo drifting back. They cannot detect a NEW hand-edit made
+// directly in the dashboard; only a periodic diff of replaySchema() against
+// pg_policies can do that, and it belongs in ops rather than in CI.
 
 import { describe, it, expect } from 'vitest';
 import {
   assertFullyParsed,
+  readMigrations,
   replaySchema,
+  statementText,
   tablesWithUserInsert,
   hasBeforeInsertTrigger,
   browserCallableGrants,
@@ -232,6 +240,43 @@ describe('INVARIANT — a user-insertable table has a write guard', () => {
     // R3-02: practices had an open INSERT policy and an UPDATE-only trigger.
     expect([...schema.policies.keys()]).not.toContain('practices authenticated_insert_practice');
     expect(tablesWithUserInsert(schema).has('practices')).toBe(false);
+  });
+});
+
+describe('INVARIANT — the repo reproduces production RLS (R3-08)', () => {
+  // 0136 reconciled three policies that existed only in the live database.
+  // These assertions are what stops the repo drifting back: the two
+  // superseded names are the LOOSER ones (is_practice_member rather than
+  // is_practice_admin), so their return would be a silent widening.
+  const names = new Set(schema.policies.keys());
+
+  it.each([
+    'plans practice_admins_select_plans',
+    'payments practice_admins_select_payments',
+    'payments provider_select_own_payments',
+  ])('%s is in the migrations, not only in production', (k) => {
+    expect(names.has(k)).toBe(true);
+  });
+
+  it.each([
+    'plans practice_members_select_plans',
+    'payments practice_members_select_payments',
+  ])('%s is gone — it is the looser predicate', (k) => {
+    expect(names.has(k)).toBe(false);
+  });
+
+  it('the practitioner payments predicate uses the 0094 membership model', () => {
+    // 0094 moved every provider predicate off `plans.provider_id = auth.uid()`
+    // so that a DEACTIVATED membership loses access. It named two policies and
+    // there were three; the third was invisible to it because it lived only in
+    // production. Asserted on the migration text because the replay models
+    // policy names and commands, not their expressions.
+    const mig = readMigrations().find((m) => m.version === '0136');
+    expect(mig, 'migration 0136 is missing').toBeDefined();
+    const body = statementText(mig!.sql);
+    const stmt = /CREATE POLICY "provider_select_own_payments"[\s\S]*?;/.exec(body)?.[0] ?? '';
+    expect(stmt).toContain('is_own_active_membership');
+    expect(stmt).not.toContain('provider_id = auth.uid()');
   });
 });
 
