@@ -90,6 +90,20 @@ const SECURITY_HEADERS = [
 ];
 
 const nextConfig: NextConfig = {
+  // ─── The drift cron reads the migrations off disk ─────────────────────
+  //
+  // /api/cron/rls-drift replays supabase/migrations/*.sql to work out what
+  // the repo believes the RLS policy set is, then compares that against the
+  // live catalog. Next traces imports; it cannot see a readdirSync, so
+  // without this entry the .sql files are absent from the lambda and the
+  // route fails at RUNTIME rather than at build.
+  //
+  // Scoped to that one route deliberately — 912KB of SQL has no business in
+  // any other bundle.
+  outputFileTracingIncludes: {
+    '/api/cron/rls-drift': ['./supabase/migrations/**/*.sql'],
+  },
+
   async headers() {
     return [
       {

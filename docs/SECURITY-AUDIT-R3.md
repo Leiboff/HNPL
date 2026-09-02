@@ -2,10 +2,10 @@
 
 **Branch:** `claude/outstanding-migrations-9rm40y`
 **Database state:** production project `wcwuqpyjiexkvnilceko`, migrations **0001–0137 applied**. 0125–0134 were applied at the start of this session (the database was at 0124 while the repo carried the round-two fixes); **0135 — the remediation for R3-01 and R3-02 — was written and applied during it.**
-**Scope:** whole repository — `app/` (14 API routes, 24 Server Action modules), `lib/`, `components/`, 136 SQL migrations, `proxy.ts`, `next.config.ts`, `vercel.json` — plus the **live** RLS policy set, trigger set and constraint set read directly from the production database.
+**Scope:** whole repository — `app/` (15 API routes, 24 Server Action modules), `lib/`, `components/`, 136 SQL migrations, `proxy.ts`, `next.config.ts`, `vercel.json` — plus the **live** RLS policy set, trigger set and constraint set read directly from the production database.
 **Method:** static review, live schema introspection, dependency audit, and **executable proof-of-concept tests** against real PostgreSQL (pglite) running as non-superuser `anon`/`authenticated`/`service_role` roles.
 **Constraint honoured:** **no production application code was changed by this audit.** Writes to the production database were the ten pending migrations the session was asked to apply, and later — on explicit instruction, after the audit was delivered — migrations 0135 (the R3-01/R3-02 remediation), 0136 (the R3-08 reconciliation) and 0137 (a read-only catalog RPC for drift detection). All exploit proofs run locally against pglite, never against production.
-**Suite:** green throughout. 386 files / 7,052 tests at the start; 390 / 7,113 at the end — the 9 exploit proofs, the 21 assertions pinning 0135, the 18 schema-invariant assertions and the 13 drift-detection assertions. The suite now also runs in CI, which it did not before (R3-09).
+**Suite:** green throughout. 386 files / 7,052 tests at the start; 391 / 7,124 at the end — the 9 exploit proofs, the 21 assertions pinning 0135, the 18 schema-invariant assertions, the 13 drift-comparison assertions and the 11 covering the drift cron route. The suite now also runs in CI, which it did not before (R3-09).
 
 **Relationship to the earlier audits.** `SECURITY-AUDIT-2026-09.md` (F-01…F-19) and `SECURITY-AUDIT-2026-09-02.md` (A-01…A-18) were both re-verified. **Their fixes hold.** I could not reopen F-01, F-02, F-03, F-05, F-07, F-09, F-10, F-12, A-01, A-03, A-04, A-05, A-06, A-07, A-08 or A-17. `payments_plan_instalment_uniq` is present; the checkout door's password-reset/session-mint primitive is gone; the onboarding gate is enforced on both doors; `claim_credit_for_plan` is atomic under a row lock with a deferred exposure constraint behind it. **Every finding below is new.**
 
@@ -37,7 +37,7 @@ Chained, those two are the classic BNPL cash-out: stand up a merchant, raise a b
 
 ## 2. Attack-surface inventory
 
-### 2.1 HTTP routes (14)
+### 2.1 HTTP routes (15)
 
 | Route | Method | Auth | Role | State | Money | PII | Rate limit |
 |---|---|---|---|---|---|---|---|
@@ -55,6 +55,7 @@ Chained, those two are the classic BNPL cash-out: stand up a merchant, raise a b
 | `/api/cron/collect-instalments` | GET/POST | `Bearer CRON_SECRET` | — | ✓ | ✓ | — | n/a |
 | `/api/cron/crm-reply-poll` | GET/POST | `Bearer CRON_SECRET` | — | ✓ | — | — | n/a |
 | `/api/cron/payout-batches` | GET/POST | `Bearer CRON_SECRET` | — | ✓ | ✓ | — | n/a |
+| `/api/cron/rls-drift` | GET/POST | `Bearer CRON_SECRET` | — | — | — | — | n/a |
 
 ### 2.2 The surfaces that actually decide money
 
@@ -440,7 +441,9 @@ The rule that follows: **no hand-edits to RLS.** The drift was only detectable b
 
 **How to test the fix.** Built: `pnpm check:rls-drift` (`scripts/check-rls-drift.ts`) compares `replaySchema()` against `rls_catalog_snapshot()` — a read-only, service-role-only RPC added in 0137 — and exits 1 on drift, 2 when it cannot check, never 0 unless the two genuinely agree. The comparison itself is unit-tested on every drift shape in `lib/security/driftDetection.test.ts`, including the rename that R3-08 actually was and a command widening that keeps its policy name.
 
-Run it after any dashboard work. `.github/workflows/rls-drift.yml` can run it on a schedule, but that is deliberately manual-only by default — enabling it means putting `SUPABASE_SERVICE_ROLE_KEY` into GitHub Actions secrets, which widens "compromised GitHub account" to "whole database". The workflow header sets out the three ways to take that trade.
+It also runs **daily at 02:00 UTC as a fourth Vercel cron** (`/api/cron/rls-drift`, `vercel.json`), behind the same `Bearer CRON_SECRET` + `timingSafeEqual` auth the three money crons use. That placement is the point: the service-role key is already present and already scoped there, so the check costs **no new credential anywhere** — the GitHub Actions alternative would have meant putting a key that bypasses RLS into repository secrets, where anyone who can push a workflow could read it.
+
+The migration `.sql` files reach the lambda through a scoped `outputFileTracingIncludes` entry in `next.config.ts`; verified against a real build that all 136 land in that route's trace and none in any other. On drift the job logs an `ALERT` line and writes `ok:false` to `cron_runs`; it deliberately does **not** self-repair, because which side is correct is a judgement call — 0136 is the worked example, where production's predicate was adopted for two policies and deliberately modernised for the third.
 
 ---
 
