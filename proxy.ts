@@ -11,6 +11,12 @@ import {
   issueConsentToken,
   TERMS_CONSENT_COOKIE,
 } from '@/lib/legal/consentToken';
+import {
+  DEVICE_COOKIE,
+  DEVICE_COOKIE_MAX_AGE_SECONDS,
+  isWellFormedDeviceId,
+  mintDeviceId,
+} from '@/lib/security/deviceCookie';
 
 // ─── Where the legal acceptance token is minted (audit A-14) ───────────────
 //
@@ -188,6 +194,31 @@ export async function proxy(request: NextRequest) {
       secure:   process.env.NODE_ENV === 'production',
       path:     '/',
       maxAge:   maxAgeSeconds,
+    });
+  }
+
+  // ─── The device correlation cookie ───────────────────────────────────
+  //
+  // Minted here, on any matched request, for the same reason the consent
+  // token is: the browser must already be carrying it by the time a Server
+  // Action wants to read it, and a value the page asks for after the fact
+  // is one an automated caller can simply decline to request.
+  //
+  // Only ever minted when ABSENT or MALFORMED — never refreshed. Rewriting
+  // a valid cookie on every request would reset a returning household's
+  // device to a stranger and quietly destroy the signal this exists to
+  // provide.
+  //
+  // See lib/security/deviceCookie.ts for why this is an opaque random
+  // value and explicitly not a browser fingerprint.
+  const existingDeviceId = request.cookies.get(DEVICE_COOKIE)?.value;
+  if (!isWellFormedDeviceId(existingDeviceId)) {
+    response.cookies.set(DEVICE_COOKIE, mintDeviceId(), {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production',
+      path:     '/',
+      maxAge:   DEVICE_COOKIE_MAX_AGE_SECONDS,
     });
   }
 

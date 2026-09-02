@@ -5,6 +5,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
+import { buildRingContext } from '@/lib/security/requestSignals';
 import { declineCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 import { calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
@@ -242,6 +243,7 @@ export async function acceptPlan(
     expectedStatus: 'pending_acceptance',
     termsVersion:   TERMS_VERSION,
     privacyVersion: PRIVACY_VERSION,
+    ring:           await buildRingContext(privileged, user.id),
   });
   if (!claim.ok) return { error: claim.message };
 
@@ -542,7 +544,7 @@ export async function payWithSavedCard(
   // Verify payment method is reusable and belongs to this patient
   const { data: paymentMethod } = await supabase
     .from('payment_methods')
-    .select('id, token, expiry_month, expiry_year, last_four, card_brand, reusable')
+    .select('id, token, expiry_month, expiry_year, last_four, card_brand, reusable, signature')
     .eq('id', paymentMethodId)
     .eq('patient_id', user.id)
     .eq('reusable', true)
@@ -725,6 +727,13 @@ export async function payWithSavedCard(
         termsVersion:   TERMS_VERSION,
         privacyVersion: PRIVACY_VERSION,
         now,
+        // The card is in hand on this path. payment_methods.signature is
+        // the synthetic brand:last4:expiry fingerprint from
+        // saveCardForPatient — see the honesty note on the 'card' key in
+        // lib/security/identityGraph.ts for what it can and cannot prove.
+        ring:           await buildRingContext(privileged, user.id, {
+          cardFingerprint: (paymentMethod.signature as string | null) ?? null,
+        }),
       });
       if (!claim.ok) {
         // Nothing was written — the claim is all-or-nothing — so there is

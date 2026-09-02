@@ -11,6 +11,7 @@ import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { consentColumns } from '@/lib/legal/documentHash';
 import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { assessBotSignals, type BotObservation } from '@/lib/security/botSignals';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -34,6 +35,22 @@ import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ServiceClient = any;
 
+/**
+ * The request's User-Agent, or null if it genuinely arrived without one.
+ *
+ * Returns null rather than undefined on a header-read failure: undefined
+ * means "this call site does not report a UA" to the scorer, and that is
+ * not what happened here.
+ */
+async function requestUserAgent(): Promise<string | null> {
+  try {
+    const { headers } = await import('next/headers');
+    return (await headers()).get('user-agent');
+  } catch {
+    return null;
+  }
+}
+
 export type PatientSignupInput = {
   firstName:     string;
   lastName:      string;
@@ -41,6 +58,21 @@ export type PatientSignupInput = {
   password:      string;
   token?:        string;
   termsAccepted: boolean;
+  /**
+   * How the form was filled, reported by the page. Optional because a
+   * client that never sends it must still be able to sign up — see the
+   * not-observed-is-not-observed-absent rule in lib/security/botSignals.ts.
+   *
+   * Client-supplied and therefore NOT TRUSTED. An attacker sets all three
+   * to whatever they like, which is why the scorer weights them low and why
+   * nothing here refuses on any one of them alone.
+   */
+  client?: {
+    honeypot?:         string | null;
+    dwellMs?:          number | null;
+    interactionCount?: number | null;
+    timezone?:         string | null;
+  };
 };
 
 export type PatientSignupResult = {
@@ -242,6 +274,67 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
   if (!await consumeAll('signup', [
     [await clientIp(), RATE_LIMITS.signup.ip],
   ])) {
+    return {
+      error: 'Too many sign-up attempts from this connection. Please wait a few minutes and try again.',
+      success: false,
+    };
+  }
+
+  // ── Automation gate ─────────────────────────────────────────────────
+  //
+  // WHAT THE RATE LIMIT ABOVE DOES NOT COVER
+  //
+  // 10/hour per IP is a throttle on ONE address, and an address is the
+  // cheapest thing in this threat model to rotate — a residential proxy
+  // pool rents thousands by the hour. Ten accounts across a thousand IPs
+  // is ten thousand accounts, every one of them inside budget.
+  //
+  // The accounts are not the prize. Each one is a key to Didit sessions
+  // that cost real money per unit, to transactional email sent from our
+  // sending reputation at any address the attacker names, and to a review
+  // queue that registry outages already depend on being staffed.
+  //
+  // So this scores the SHAPE of the submission and refuses only the cheap,
+  // high-volume version. See lib/security/botSignals.ts for what it does
+  // and — just as important — what it does not claim to catch.
+  //
+  // SPENT AFTER THE RATE LIMIT, BEFORE VALIDATION, for the reason the
+  // comment above gives: a script sends well-formed payloads, so putting
+  // an expensive check behind a cheap validator protects nothing.
+  const botObservation: BotObservation = {
+    honeypot:         input.client?.honeypot,
+    dwellMs:          input.client?.dwellMs,
+    interactionCount: input.client?.interactionCount,
+    timezone:         input.client?.timezone,
+    userAgent:        await requestUserAgent(),
+  };
+  const bot = assessBotSignals(botObservation);
+
+  if (bot.verdict !== 'human') {
+    // Logged for both bands. 'suspect' is not refused — see below — and a
+    // band that produces no record is a band nobody can calibrate.
+    console.warn('[signup-bot]', {
+      verdict: bot.verdict,
+      score:   bot.score,
+      // Codes and weights only. The details are written to carry no user
+      // input, and the assertion that they do not is in botSignals.test.ts.
+      signals: bot.signals.map((s) => `${s.code}:${s.weight}`),
+    });
+  }
+
+  if (bot.verdict === 'automated') {
+    // ─── Deliberately the same copy as the rate limit above ───────────
+    //
+    // Naming the reason would hand an operator a bisection oracle: flip
+    // one input, resubmit, watch the message change, and learn exactly
+    // which signal to defeat. The identical message means a refused script
+    // cannot tell WHICH control refused it.
+    //
+    // The cost, stated honestly: a real person caught by a false positive
+    // gets a message about rate limiting that does not describe their
+    // situation. That is why the refusal band is set so that no single
+    // soft signal can reach it, and why 'suspect' adds nothing at all
+    // today.
     return {
       error: 'Too many sign-up attempts from this connection. Please wait a few minutes and try again.',
       success: false,

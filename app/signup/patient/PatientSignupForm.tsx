@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { signUpPatient } from './actions';
 import {
@@ -85,6 +85,15 @@ const BLANK = {
 
 type Fields = typeof BLANK;
 
+/** The browser's IANA timezone, or null if it will not say. Never throws. */
+function browserTimezone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 export default function PatientSignupForm({ invitation, token, termsAccepted }: Props) {
   const [fields, setFields] = useState<Fields>({
     ...BLANK,
@@ -92,6 +101,43 @@ export default function PatientSignupForm({ invitation, token, termsAccepted }: 
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(false);
+
+  // ─── Automation observations (see lib/security/botSignals.ts) ────────
+  //
+  // Three cheap facts about HOW this form was filled, not about who filled
+  // it. None is stored, none identifies anyone, and all three are scored
+  // server-side — the client is not trusted to draw a conclusion, only to
+  // report what it saw.
+  //
+  // `honeypot` is a field CSS hides from people. Named so password
+  // managers ignore it: managers fill fields that look like credentials,
+  // so this one deliberately does not.
+  //
+  // `mountedAt` is a client clock and can be lied about; the server treats
+  // it as the weak signal it is. It exists because it costs nothing, not
+  // because it is trustworthy.
+  const [honeypot, setHoneypot] = useState('');
+  // 0 = not yet measured. Set in the effect below rather than here:
+  // calling Date.now() during render is impure and can produce a value
+  // that shifts on an unrelated re-render. A 0 is reported as "no dwell
+  // observed" rather than as an impossibly fast one — see the
+  // not-observed-is-not-observed-absent rule in lib/security/botSignals.ts.
+  const mountedAt = useRef<number>(0);
+  const interactions = useRef<number>(0);
+
+  useEffect(() => {
+    mountedAt.current = Date.now();
+    const bump = () => { interactions.current += 1; };
+    // Capture phase so a handler that stops propagation cannot silence the
+    // count. passive so nothing here can delay input.
+    const opts = { capture: true, passive: true } as const;
+    document.addEventListener('keydown',     bump, opts);
+    document.addEventListener('pointerdown', bump, opts);
+    return () => {
+      document.removeEventListener('keydown',     bump, opts);
+      document.removeEventListener('pointerdown', bump, opts);
+    };
+  }, []);
   // Mirrors the flag above for PRESENTATION only — the flag and the call
   // it guards are untouched. pending.disabled follows it immediately
   // (double-tap safety is never delayed); pending.showLabel waits out the
@@ -149,6 +195,12 @@ export default function PatientSignupForm({ invitation, token, termsAccepted }: 
       password:      fields.password,
       token:         token ?? undefined,
       termsAccepted,
+      client: {
+        honeypot,
+        dwellMs:          mountedAt.current === 0 ? null : Date.now() - mountedAt.current,
+        interactionCount: interactions.current,
+        timezone:         browserTimezone(),
+      },
     });
     setLoading(false);
 
@@ -191,6 +243,30 @@ export default function PatientSignupForm({ invitation, token, termsAccepted }: 
           The chooser is the one place the methods compete. */}
 
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
+        {/* ─── Honeypot ───────────────────────────────────────────────
+            Hidden from people, present in the DOM for anything that
+            parses HTML and fills inputs. Not `display:none` alone:
+            some automation skips those, so it is positioned off-screen
+            while remaining a real, focusable-in-DOM field.
+
+            aria-hidden + tabIndex -1 keep it away from screen readers
+            and keyboard users — a honeypot that traps assistive
+            technology is a honeypot that refuses disabled customers.
+
+            autoComplete="off" and the deliberately unappealing name keep
+            password managers out of it. */}
+        <div aria-hidden="true" className="absolute left-[-9999px] top-auto h-px w-px overflow-hidden">
+          <label htmlFor="patient-contact-reference">Leave this field empty</label>
+          <input
+            id="patient-contact-reference"
+            name="contact-reference"
+            type="text"
+            tabIndex={-1}
+            autoComplete="off"
+            value={honeypot}
+            onChange={(e) => setHoneypot(e.target.value)}
+          />
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <FieldLabel label="First name" required />

@@ -27,6 +27,7 @@ import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/state';
 import { currentFlags } from '@/lib/featureFlags';
 import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
+import { buildRingContext } from '@/lib/security/requestSignals';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
@@ -968,6 +969,7 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
     expectedStatus: plan.status as 'pending_acceptance' | 'pending_first_payment',
     termsVersion:   TERMS_VERSION,
     privacyVersion: PRIVACY_VERSION,
+    ring:           await buildRingContext(svc, userId),
   });
   if (!claim.ok) return { ok: false, error: claim.message };
 
