@@ -41,14 +41,21 @@
 -- cannot see a NEW duplicate of an OLD number, and an old number on forty-one
 -- accounts is exactly the one an attacker would pick.
 --
--- Once the legacy rows are resolved, replace this with:
+-- RESOLVED BY 0140. The forty-one rows were one developer's test accounts
+-- on one handset and were removed deliberately and separately, so
+-- `profiles_verified_phone_patient_uniq` now exists and is the guarantee.
 --
---   CREATE UNIQUE INDEX profiles_verified_phone_patient_uniq
---     ON profiles (hnpl_normalise_phone_za(phone))
---    WHERE role = 'patient' AND phone_verified_at IS NOT NULL;
+-- This trigger STAYS, and not out of caution — the two do different jobs.
+-- The index is the guarantee: unforgettable, unbypassable by any role, and
+-- race-proof without help. The trigger is the message: a BEFORE trigger
+-- fires ahead of the index check, so a customer sees "this cell number is
+-- already verified on another account" rather than "duplicate key value
+-- violates unique constraint profiles_verified_phone_patient_uniq". Both
+-- raise 23505, so one handler covers either and neither can fail silently.
+-- 0140's header carries the full reasoning.
 --
--- and keep the trigger until it is in place. `pnpm audit:duplicate-phones`
--- lists what still has to be resolved first.
+-- `pnpm audit:duplicate-phones` remains the way to check the invariant from
+-- outside the database.
 --
 -- ─── WHY IT NORMALISES, AND WHY THAT IS NOT COSMETIC ────────────────────
 --

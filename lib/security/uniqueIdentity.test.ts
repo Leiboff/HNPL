@@ -112,6 +112,27 @@ describe('a verified cell number is unique per patient', () => {
     expect(m().sql).toMatch(/pg_advisory_xact_lock/);
   });
 
+  it('0140 makes it a real unique index, not only a trigger', () => {
+    // 0139 could not create this — forty-one rows violated it. They were one
+    // developer's test accounts on one handset, removed separately, and the
+    // constraint stopped depending on a trigger firing.
+    const m = SQL.find((f) => f.file.startsWith('0140'));
+    expect(m).toBeDefined();
+    expect(m!.sql).toMatch(/CREATE UNIQUE INDEX[\s\S]*profiles_verified_phone_patient_uniq/i);
+    // On the normalised value, never the raw column — production stored both
+    // +27… and 0… shapes, so a bare index on `phone` is evadable.
+    expect(m!.sql).toMatch(/ON profiles \(hnpl_normalise_phone_za\(phone\)\)/);
+    expect(m!.sql).toMatch(/role = 'patient'/);
+    expect(m!.sql).toMatch(/phone_verified_at IS NOT NULL/);
+  });
+
+  it('nothing ever drops the index either', () => {
+    const after = SQL.filter((f) => f.file > '0140_z')
+      .map((f) => f.sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n'))
+      .join('\n');
+    expect(after).not.toMatch(/DROP INDEX[^;]*profiles_verified_phone_patient_uniq/i);
+  });
+
   it('nothing ever drops the trigger', () => {
     const after0139 = SQL.filter((f) => f.file > '0139_z')
       .map((f) => f.sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n'))
