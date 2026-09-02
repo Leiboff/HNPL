@@ -1,11 +1,11 @@
 # HNPL / betternow — adversarial security audit, round three
 
 **Branch:** `claude/outstanding-migrations-9rm40y`
-**Database state:** production project `wcwuqpyjiexkvnilceko`, migrations **0001–0134 applied** (0125–0134 were applied at the start of this session; before that the database was at 0124 while the repo carried the round-two fixes).
+**Database state:** production project `wcwuqpyjiexkvnilceko`, migrations **0001–0135 applied**. 0125–0134 were applied at the start of this session (the database was at 0124 while the repo carried the round-two fixes); **0135 — the remediation for R3-01 and R3-02 — was written and applied during it.**
 **Scope:** whole repository — `app/` (14 API routes, 24 Server Action modules), `lib/`, `components/`, 141 migrations, `proxy.ts`, `next.config.ts`, `vercel.json` — plus the **live** RLS policy set, trigger set and constraint set read directly from the production database.
 **Method:** static review, live schema introspection, dependency audit, and **executable proof-of-concept tests** against real PostgreSQL (pglite) running as non-superuser `anon`/`authenticated`/`service_role` roles.
-**Constraint honoured:** no production code changed. Nothing was written to the production database except the ten pending migrations the session was asked to apply. All exploit proofs run locally.
-**Suite:** green before and after — 386 files / 7,052 tests, plus 9 new proof-of-concept assertions.
+**Constraint honoured:** **no production application code was changed by this audit.** Writes to the production database were the ten pending migrations the session was asked to apply, and later — on explicit instruction, after the audit was delivered — migration 0135 itself. All exploit proofs run locally against pglite, never against production.
+**Suite:** green throughout. 386 files / 7,052 tests at the start; 389 / 7,094 at the end — the 9 exploit proofs, the 21 assertions pinning 0135, and the 12 schema-invariant assertions.
 
 **Relationship to the earlier audits.** `SECURITY-AUDIT-2026-09.md` (F-01…F-19) and `SECURITY-AUDIT-2026-09-02.md` (A-01…A-18) were both re-verified. **Their fixes hold.** I could not reopen F-01, F-02, F-03, F-05, F-07, F-09, F-10, F-12, A-01, A-03, A-04, A-05, A-06, A-07, A-08 or A-17. `payments_plan_instalment_uniq` is present; the checkout door's password-reset/session-mint primitive is gone; the onboarding gate is enforced on both doors; `claim_credit_for_plan` is atomic under a row lock with a deferred exposure constraint behind it. **Every finding below is new.**
 
@@ -13,7 +13,7 @@
 
 ## 1. Executive summary
 
-**Overall security level: HIGH RISK — two ordinary-user-to-money paths are open. Do not take real money on this build until R3-01 and R3-02 are closed.**
+**Overall security level as audited: HIGH RISK — two ordinary-user-to-money paths were open. Both are now closed (0135, applied). Post-remediation: MEDIUM.**
 
 Both criticals require a session, but only the cheapest kind: R3-02 needs any authenticated account, R3-01 needs a patient account with one live bill on it. Neither needs a privileged role, an admin mistake, or a stolen credential.
 
@@ -404,6 +404,36 @@ ALTER TABLE plans ADD CONSTRAINT plans_total_amount_sane
 
 ---
 
+### R3-08 — SCHEMA-DRIFT: three RLS policies in production exist in no migration
+
+**Severity: Medium** (found while building the invariant tests, by diffing the migration replay against the live catalog)
+
+**Location:** live project `wcwuqpyjiexkvnilceko` vs `supabase/migrations/0002_rls_policies.sql:175,195`
+
+**What is wrong.** Replaying every migration in version order produces 119 policies. The live database has 120, and they do not match:
+
+| | migrations say | production has |
+|---|---|---|
+| `plans` | `practice_members_select_plans` | `practice_admins_select_plans` |
+| `payments` | `practice_members_select_payments` | `practice_admins_select_payments` |
+| `payments` | — | `provider_select_own_payments` |
+
+`grep -E "(CREATE\|DROP) POLICY"` across all 141 migrations confirms the three production names appear **nowhere in the repo**. They were created by hand — dashboard or `psql` — and never written back as a migration.
+
+**Why it matters, and which direction.** The hand-edit went the *safe* way: `is_practice_admin` is strictly narrower than `is_practice_member`, so production is **tighter** than the repo. That is the good news and also the problem — **the repository is the insecure version.**
+
+Three consequences:
+
+1. **A rebuild loosens production.** Any environment built from migrations — a new staging project, a disaster-recovery restore, a `supabase db reset` — gets `practice_members_select_plans`, under which *any* active practice member (including `role='staff'`) reads every plan and payment for their practice. Production restricts that to practice admins. The recovery path silently downgrades the security posture.
+2. **`provider_select_own_payments` disappears entirely** in a rebuild, so a practitioner loses a read they have in production. That is a functional regression hiding inside a security one.
+3. **It invalidates reasoning from the repo.** Both previous audits, and parts of this one, reason about RLS by reading migrations. For these two tables that reasoning was wrong — in the safe direction here, but nothing guarantees the next hand-edit will be.
+
+**Recommended fix.** Write the production state back as a migration (`DROP POLICY IF EXISTS` the `practice_members_*` names, `CREATE POLICY` the three that exist live) so the repo reproduces production, then decide deliberately which version is correct rather than inheriting whichever was typed last. After that, treat "no hand-edits to RLS" as a rule — the drift is only detectable because someone went looking.
+
+**How to test the fix.** After the reconciling migration, re-run the replay-vs-live diff; it should be empty. `lib/security/schemaInvariants.ts` exposes `replaySchema()` for exactly this, and the comparison is a ten-line script — worth keeping as an ops check that runs against production on a schedule, since CI cannot see the database.
+
+---
+
 ### R3-07 — Residual notes
 
 Not findings on their own.
@@ -501,6 +531,7 @@ C1 and C2 are the same afternoon's work for one attacker, and they compose: C1 s
 
 ### Fix before launch
 
+3b. **R3-08 (schema drift)** — write production's three hand-made policies back as a migration so a rebuild cannot silently loosen RLS.
 4. **R3-03** — allow-list push endpoints at write time and at send time.
 5. **R3-06** — `plans_total_amount_sane` CHECK.
 6. **`owners_insert_own_membership`** — pin `role` and the capability flags, or move the self-heal to service-role.
