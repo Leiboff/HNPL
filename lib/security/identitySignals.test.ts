@@ -51,37 +51,58 @@ describe('thresholdsFor', () => {
     expect(thresholdsFor('ip').blockAt).toBeNull();
   });
 
-  it('every other kind blocks strictly above where it flags', () => {
+  it('the household signals block strictly above where they flag', () => {
     // If blockAt <= flagAt the flag tier is unreachable and the whole
-    // "watch before you refuse" posture collapses into a bare block.
-    for (const kind of K.filter((k) => k !== 'ip')) {
+    // "watch before you refuse" posture collapses into a bare block. True
+    // of device and card, which are evidence about a household. NOT true of
+    // phone, which is a duplicate rather than evidence — see below.
+    for (const kind of ['device', 'card'] as const) {
       const t = thresholdsFor(kind);
       expect(t.blockAt).not.toBeNull();
       expect(t.blockAt!).toBeGreaterThan(t.flagAt);
     }
   });
 
-  it('phone is tighter than card, because a phone is OTP-verified', () => {
+  it('a verified phone blocks on the FIRST other account', () => {
+    // People do not share cell numbers. OTP proves possession of the
+    // handset, so two accounts that verified the same number are one person
+    // — there is no household reading of it the way there is for a mother's
+    // card on two children's plans.
+    expect(thresholdsFor('phone')).toEqual({ flagAt: 1, blockAt: 1 });
+  });
+
+  it('phone is stricter than card, not merely tighter', () => {
     expect(thresholdsFor('phone').blockAt!).toBeLessThan(thresholdsFor('card').blockAt!);
   });
 
-  it('is overridable by env, so the first weeks of traffic can retune it', () => {
+  it('is overridable by env for the household signals', () => {
     vi.stubEnv('FRAUD_CARD_BLOCK_AT', '9');
     expect(thresholdsFor('card').blockAt).toBe(9);
+    vi.stubEnv('FRAUD_DEVICE_FLAG_AT', '4');
+    expect(thresholdsFor('device').flagAt).toBe(4);
   });
 
   it('ignores nonsense env values rather than disabling itself', () => {
     // A typo in a Vercel env var must not silently become "block at NaN",
     // which compares false against everything and turns the rule off.
     for (const bad of ['', 'abc', '0', '-3']) {
-      vi.stubEnv('FRAUD_PHONE_BLOCK_AT', bad);
-      expect(thresholdsFor('phone').blockAt).toBe(4);
+      vi.stubEnv('FRAUD_CARD_BLOCK_AT', bad);
+      expect(thresholdsFor('card').blockAt).toBe(6);
     }
   });
 
-  it('an env override cannot give IP a block threshold', () => {
+  it('no env override can loosen phone or give IP a block threshold', () => {
+    // The two thresholds that are facts about the domain rather than dials:
+    // an IP that blocks refuses suburbs, and a phone that does not block
+    // permits the duplicate account this whole mechanism exists to stop.
     vi.stubEnv('FRAUD_IP_BLOCK_AT', '3');
     expect(thresholdsFor('ip').blockAt).toBeNull();
+
+    for (const loose of ['4', '99', '0']) {
+      vi.stubEnv('FRAUD_PHONE_BLOCK_AT', loose);
+      vi.stubEnv('FRAUD_PHONE_FLAG_AT',  loose);
+      expect(thresholdsFor('phone')).toEqual({ flagAt: 1, blockAt: 1 });
+    }
   });
 });
 
@@ -96,18 +117,29 @@ describe('evaluateLinks — the boundaries', () => {
     expect(evaluateLinks(links({ device: 0, ip: 0, card: 0, phone: 0 })).decision).toBe('allow');
   });
 
-  it.each(K)('%s allows one below its flag threshold and flags exactly at it', (kind) => {
+  it.each(K)('%s allows one below its flag threshold', (kind) => {
     const { flagAt } = thresholdsFor(kind);
     expect(evaluateLinks(links({ [kind]: flagAt - 1 })).decision).toBe('allow');
-    expect(evaluateLinks(links({ [kind]: flagAt })).decision).toBe('flag');
   });
 
-  it.each(K.filter((k) => k !== 'ip'))(
+  it.each(['device', 'card', 'ip'] as const)(
+    '%s flags exactly at its flag threshold', (kind) => {
+      expect(evaluateLinks(links({ [kind]: thresholdsFor(kind).flagAt })).decision).toBe('flag');
+    });
+
+  it.each(['device', 'card'] as const)(
     '%s flags one below its block threshold and blocks exactly at it', (kind) => {
       const { blockAt } = thresholdsFor(kind);
       expect(evaluateLinks(links({ [kind]: blockAt! - 1 })).decision).toBe('flag');
       expect(evaluateLinks(links({ [kind]: blockAt! })).decision).toBe('block');
     });
+
+  it('phone never merely flags — it is allow at zero and block at one', () => {
+    expect(evaluateLinks(links({ phone: 0 })).decision).toBe('allow');
+    for (const n of [1, 2, 5, 40]) {
+      expect(evaluateLinks(links({ phone: n })).decision).toBe('block');
+    }
+  });
 
   it('IP never blocks, however extreme the count', () => {
     // 40 000 accounts behind one Vodacom egress is not a hypothetical.

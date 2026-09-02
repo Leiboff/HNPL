@@ -27,16 +27,24 @@
 //
 //   • A family shares a card. A mother paying for two children's dentistry
 //     is the ordinary case. Two or three accounts on one card is normal.
-//   • A family shares a phone. Same reasoning, and more so at the lower end
-//     of the market this serves.
+//   • A family shares a browser. Same reasoning, and more so at the lower
+//     end of the market this serves.
 //   • South African mobile carriers NAT enormously. Tens of thousands of
 //     subscribers egress from one address, so a shared IP means close to
 //     nothing on its own.
 //
 // So: IP NEVER blocks, at any count. Device and card block at six or more
-// distinct accounts, which is past any family and into a ring. Phone blocks
-// at four — tighter, because unlike a card a phone number is verified by
-// OTP, so sharing one implies the same person controls the handset.
+// distinct accounts, which is past any family and into a ring.
+//
+// A VERIFIED PHONE NUMBER IS NOT IN THAT FAMILY OF SIGNALS AT ALL, and
+// treating it as one was the mistake in the first version of this file. The
+// three above are evidence about a household — circumstantial, gradual,
+// worth a threshold. A verified number is a duplicate: OTP proves
+// possession, so two accounts that verified the same number are one person
+// with one handset. It blocks on the first other account, and the schema
+// enforces it directly (migration 0139) rather than waiting for the credit
+// step. Email and SA ID belong to that same class and were already
+// hard-unique; phone was the only one of the three with no constraint.
 //
 // Every threshold is overridable by env without a deploy, because the first
 // weeks of real traffic will teach us something and waiting for a release to
@@ -90,12 +98,30 @@ export function thresholdsFor(kind: SignalKind): Thresholds {
         blockAt: envInt('FRAUD_CARD_BLOCK_AT', 6),
       };
     case 'phone':
-      // Tighter than card: a phone is OTP-verified, so sharing one implies
-      // the same person holds the handset.
-      return {
-        flagAt:  envInt('FRAUD_PHONE_FLAG_AT', 2),
-        blockAt: envInt('FRAUD_PHONE_BLOCK_AT', 4),
-      };
+      // Blocks on ONE other account. Not a tuning choice — a different kind
+      // of signal from the other three.
+      //
+      // A shared browser or a shared card is evidence about a household. A
+      // shared VERIFIED number is not evidence of anything, it is a
+      // duplicate: OTP proves possession of the handset, so two accounts
+      // that both verified it are one person holding one phone. There is no
+      // family reading of it the way there is for a mother's card on two
+      // children's plans.
+      //
+      // Email and SA ID are the same class of fact and are already
+      // hard-unique in the schema (auth.users.users_email_partial_key and
+      // profiles_email_key; profiles_sa_id_lookup_hash_patient_uniq since
+      // 0097). Phone was the one of the three with no constraint at all —
+      // which is how production reached fifty accounts on one number, forty
+      // one of them verified, with nothing to notice it. Migration 0139 is
+      // now the primary enforcement, at the moment of verification; this is
+      // the backstop that catches an account which got verified before 0139
+      // existed and only reaches the credit step now.
+      //
+      // Note these counts are OTHER accounts, so 1 means "shared with
+      // anybody at all". blockAt is not env-overridable for the same reason
+      // ip's is not: both are facts about the domain rather than dials.
+      return { flagAt: 1, blockAt: 1 };
   }
 }
 

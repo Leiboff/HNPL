@@ -130,6 +130,12 @@ function otpErrorCopy(code: string): string {
     case 'expired':             return 'That code expired. Tap Resend to get a fresh one.';
     case 'too_many_attempts':   return 'Too many wrong codes. Tap Resend to start over.';
     case 'not_found':           return 'We couldn’t find your verification — tap Resend.';
+    // Migration 0139. Deliberately says the number is in use and NOT which
+    // account holds it — whoever is holding the handset is entitled to know
+    // it is spoken for, and to nothing else. The support route is the way
+    // out for the one honest case (a recycled number), and it is a person
+    // rather than a self-service flow on purpose.
+    case 'phone_in_use':        return 'This number is already verified on another account. If you think that’s wrong, contact us on hello@betternow.co.za.';
     case 'sms_failed':          return 'We couldn’t send the SMS just now. Tap Resend to retry.';
     case 'sms_not_configured':  return 'SMS isn’t set up in this environment.';
     default:                    return 'Something went wrong. Tap Resend to try again.';

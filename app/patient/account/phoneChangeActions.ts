@@ -4,6 +4,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { normalizePhoneZA } from '@/lib/validation';
+import { isPhoneAlreadyVerifiedElsewhere } from '@/lib/validation/phoneInUse';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
 
@@ -250,6 +251,8 @@ export type PhoneChangeOtpVerifyResult =
         | 'too_many_attempts'
         | 'not_found'
         | 'stale_verification'
+        // Migration 0139 — another patient has already verified this number.
+        | 'phone_in_use'
         | 'unknown';
     };
 
@@ -338,6 +341,15 @@ export async function verifyPhoneChangeOtp(enteredCode: string): Promise<PhoneCh
     })
     .eq('id', user.id);
   if (promoteErr) {
+    if (isPhoneAlreadyVerifiedElsewhere(promoteErr)) {
+      // The staged number stays in phone_pending and the current number is
+      // untouched — the patient is still on the number they had, which is
+      // the right place to leave somebody whose change was refused.
+      console.warn('[phone-change] refused — number already verified on another account', {
+        userId: user.id,
+      });
+      return { ok: false, code: 'phone_in_use' };
+    }
     console.error('[phone-change] promotion failed', promoteErr.message);
     return { ok: false, code: 'unknown' };
   }

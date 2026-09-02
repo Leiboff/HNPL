@@ -28,6 +28,7 @@ import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/s
 import { currentFlags } from '@/lib/featureFlags';
 import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { isPhoneAlreadyVerifiedElsewhere } from '@/lib/validation/phoneInUse';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
@@ -886,6 +887,28 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
       // profile in. Cascade is now in place (migration 0044) so this
       // succeeds even if a minimal trigger row was written.
       await svc.auth.admin.deleteUser(userId).catch(() => {});
+    }
+    // Migration 0139: another patient account has already verified this cell
+    // number. The most consequential place in the product to be refused —
+    // the patient is standing at a practice counter — so it gets its own
+    // message with a route out, rather than "Failed to save your details:"
+    // in front of a raw database error string.
+    //
+    // Still refused. This is also the point where a duplicate account
+    // matters most: below this line a plan is created and money moves. The
+    // honest false positive is a recycled number, and an operator clearing
+    // the stale row is a five-minute fix; a duplicate identity that reaches
+    // a credit agreement is not.
+    if (isPhoneAlreadyVerifiedElsewhere(profileErr)) {
+      console.warn('[checkout] ALERT refused — cell number already verified on another account', {
+        planId: plan.id,
+      });
+      return {
+        ok: false,
+        error: 'This cell number is already verified on another betternow account. '
+          + 'Please sign in to that account, or contact us on hello@betternow.co.za '
+          + 'and we\'ll sort it out.',
+      };
     }
     return { ok: false, error: `Failed to save your details: ${profileErr.message}` };
   }

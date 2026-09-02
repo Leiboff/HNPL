@@ -3,6 +3,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { normalizePhoneZA } from '@/lib/validation';
+import { isPhoneAlreadyVerifiedElsewhere } from '@/lib/validation/phoneInUse';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
 
@@ -141,6 +142,11 @@ export type PhoneOtpVerifyResultForUser =
         | 'expired'
         | 'too_many_attempts'
         | 'not_found'
+        // Migration 0139: another patient account has already verified this
+        // number. People do not share cell numbers — OTP proves possession
+        // of the handset, so two accounts on one verified number is one
+        // person, which for a lender is the whole question.
+        | 'phone_in_use'
         | 'unknown';
     };
 
@@ -215,12 +221,27 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
     .eq('phone_e164', normalizedPhone)
     .maybeSingle();
 
-  if (!vrow?.verified_at) {
-    // Defensive — shouldn't happen, the RPC just set it. Fall back
-    // to now() rather than fail the action.
-    await svc.from('profiles').update({ phone_verified_at: new Date().toISOString() }).eq('id', user.id);
-  } else {
-    await svc.from('profiles').update({ phone_verified_at: vrow.verified_at }).eq('id', user.id);
+  // The stamp can now be REFUSED by the database (migration 0139) when
+  // another patient has already verified this number, so both branches are
+  // checked. Previously neither return value was looked at, which was
+  // survivable while nothing could refuse and is not any more: an ignored
+  // error here would report success to a customer whose phone step never
+  // completed, and strand them on a screen that keeps sending them back.
+  const stamp = vrow?.verified_at
+    ? await svc.from('profiles').update({ phone_verified_at: vrow.verified_at }).eq('id', user.id)
+    // Defensive — shouldn't happen, the RPC just set it. Fall back to now()
+    // rather than fail the action.
+    : await svc.from('profiles').update({ phone_verified_at: new Date().toISOString() }).eq('id', user.id);
+
+  if (stamp.error) {
+    if (isPhoneAlreadyVerifiedElsewhere(stamp.error)) {
+      console.warn('[verify-phone] refused — number already verified on another account', {
+        userId: user.id,
+      });
+      return { ok: false, code: 'phone_in_use' };
+    }
+    console.error('[verify-phone] could not stamp phone_verified_at', stamp.error.message);
+    return { ok: false, code: 'unknown' };
   }
 
   return { ok: true };

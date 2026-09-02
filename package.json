@@ -16,7 +16,8 @@
     "check:rls-drift": "tsx --env-file=.env.local scripts/check-rls-drift.ts",
     "prepare": "simple-git-hooks || true",
     "test:serial": "vitest run --no-file-parallelism",
-    "backfill:identity-signals": "tsx --env-file=.env.local scripts/backfill-identity-signals.ts"
+    "backfill:identity-signals": "tsx --env-file=.env.local scripts/backfill-identity-signals.ts",
+    "audit:duplicate-phones": "tsx --env-file=.env.local scripts/audit-duplicate-phones.ts"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm run typecheck"
