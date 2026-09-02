@@ -1,0 +1,81 @@
+# ─── Has anyone hand-edited RLS since the last deploy? ────────────────────
+#
+# Audit R3-08: three RLS policies existed only in the live database for
+# months. Production was TIGHTER than the repo, so nothing looked wrong —
+# and a `supabase db reset` or a disaster-recovery rebuild would have
+# silently loosened it. 0136 reconciled them; nothing stops it recurring.
+#
+# `ci.yml` cannot catch this. It replays the migrations, which tells you what
+# a FRESH environment gets — by construction it has no idea what production
+# actually has. Only a comparison against the live catalog can, and that
+# needs credentials.
+#
+# ─── THIS WORKFLOW IS MANUAL BY DEFAULT, ON PURPOSE ───────────────────────
+#
+# The `schedule:` trigger below is commented out, and turning it on is a
+# decision somebody should make deliberately rather than inherit:
+#
+#   Running this on a schedule means putting SUPABASE_SERVICE_ROLE_KEY into
+#   GitHub Actions secrets. That key bypasses RLS entirely. Anyone who can
+#   push a workflow to this repository can then read it — so the blast radius
+#   of "compromised GitHub account" grows to include the whole database.
+#
+# For a credit provider holding SA ID numbers and card tokens that is a real
+# trade, not a formality. Three ways to take it, roughly in order of how much
+# they cost:
+#
+#   1. Leave it manual. Run it from a laptop after any dashboard work:
+#        pnpm check:rls-drift
+#      Costs nothing, catches drift only when someone remembers — which is
+#      the failure mode that produced R3-08 in the first place.
+#
+#   2. Enable the schedule and accept the key in GitHub secrets, with
+#      environment protection rules and a restricted set of people who can
+#      approve workflow changes.
+#
+#   3. Move the check to somewhere that already holds the key: a fourth
+#      Vercel cron against a `Bearer CRON_SECRET` route that runs the same
+#      comparison. No new credential anywhere, and it reuses the cron auth
+#      pattern the three existing jobs already use. More code than this file,
+#      and the better answer if the schedule matters.
+#
+# The script exits 2 — "cannot check" — when the env is missing, never 0, so
+# a half-configured job cannot be mistaken for a clean result.
+
+name: RLS drift
+
+on:
+  workflow_dispatch:
+  # Uncomment to run daily at 03:00 UTC. Read the note above first.
+  # schedule:
+  #   - cron: '0 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # tsx directly rather than `pnpm check:rls-drift`, because that script
+      # passes --env-file=.env.local, which does not exist here.
+      - name: Compare the live RLS catalog against the migrations
+        env:
+          NEXT_PUBLIC_SUPABASE_URL:  ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: pnpm exec tsx scripts/check-rls-drift.ts

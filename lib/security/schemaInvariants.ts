@@ -320,3 +320,105 @@ export function browserCallableGrants(
   }
   return out;
 }
+
+// ─── Drift detection against the live catalog ─────────────────────────────
+//
+// The invariant test replays the migrations, which tells you what a fresh
+// environment gets. It cannot tell you what PRODUCTION has — and R3-08 was
+// exactly a case where those differed, undetected, for months.
+//
+// This is the comparison, as a pure function so it can be tested without a
+// database. `scripts/check-rls-drift.ts` supplies the snapshot by calling
+// `rls_catalog_snapshot()` (migration 0137) on the service-role client.
+//
+// Both directions matter and they mean different things:
+//
+//   only in the DATABASE   — a hand-edit. It will vanish on the next rebuild.
+//   only in the MIGRATIONS — the migration did not reach this environment, or
+//                            something dropped the object by hand. Either way
+//                            the repo is describing a defence that is not
+//                            actually running.
+//
+// Neither is more urgent in general, so neither is downgraded to a warning.
+
+export type CatalogSnapshot = {
+  policies: Array<{ table: string; name: string; cmd: string }>;
+  triggers: Array<{ table: string; name: string; timing: string; events: string[] | null }>;
+};
+
+export type DriftReport = {
+  ok: boolean;
+  policiesOnlyInDatabase:   string[];
+  policiesOnlyInMigrations: string[];
+  policiesDiffering:        string[];
+  triggersOnlyInDatabase:   string[];
+  triggersOnlyInMigrations: string[];
+  triggersDiffering:        string[];
+};
+
+const normEvents = (e: Iterable<string> | null | undefined): string =>
+  [...(e ?? [])].map((x) => x.toUpperCase()).sort().join('+');
+
+/** Compare the migration replay against a live catalog snapshot. */
+export function diffSchemaAgainstCatalog(
+  schema:   EffectiveSchema,
+  snapshot: CatalogSnapshot,
+): DriftReport {
+  const dbPolicies = new Map(
+    (snapshot.policies ?? []).map((p) => [
+      key(p.table.toLowerCase(), p.name.toLowerCase()),
+      (p.cmd ?? 'ALL').toUpperCase(),
+    ]),
+  );
+  const dbTriggers = new Map(
+    (snapshot.triggers ?? []).map((t) => [
+      key(t.table.toLowerCase(), t.name.toLowerCase()),
+      `${(t.timing ?? '').toUpperCase()}|${normEvents(t.events)}`,
+    ]),
+  );
+
+  const migPolicies = new Map(
+    [...schema.policies.values()].map((p) => [key(p.table, p.name), p.command]),
+  );
+  const migTriggers = new Map(
+    [...schema.triggers.values()].map((t) => [
+      key(t.table, t.name), `${t.timing}|${normEvents(t.events)}`,
+    ]),
+  );
+
+  const onlyIn = (a: Map<string, string>, b: Map<string, string>): string[] =>
+    [...a.keys()].filter((k) => !b.has(k)).sort();
+
+  const differing = (a: Map<string, string>, b: Map<string, string>): string[] =>
+    [...a.entries()]
+      .filter(([k, v]) => b.has(k) && b.get(k) !== v)
+      .map(([k, v]) => `${k}: database=${v} migrations=${b.get(k)}`)
+      .sort();
+
+  const report: DriftReport = {
+    ok: true,
+    policiesOnlyInDatabase:   onlyIn(dbPolicies,  migPolicies),
+    policiesOnlyInMigrations: onlyIn(migPolicies, dbPolicies),
+    policiesDiffering:        differing(dbPolicies, migPolicies),
+    triggersOnlyInDatabase:   onlyIn(dbTriggers,  migTriggers),
+    triggersOnlyInMigrations: onlyIn(migTriggers, dbTriggers),
+    triggersDiffering:        differing(dbTriggers, migTriggers),
+  };
+  report.ok = Object.values(report).every((v) => v === true || (Array.isArray(v) && v.length === 0));
+  return report;
+}
+
+/** Human-readable drift report. Empty string when there is none. */
+export function formatDriftReport(r: DriftReport): string {
+  if (r.ok) return '';
+  const section = (title: string, items: string[]): string =>
+    items.length ? `\n  ${title}\n${items.map((i) => `    - ${i}`).join('\n')}` : '';
+  return [
+    section('POLICIES present in the DATABASE but in no migration (hand-edits):', r.policiesOnlyInDatabase),
+    section('POLICIES in the migrations but MISSING from the database:',          r.policiesOnlyInMigrations),
+    section('POLICIES whose command differs:',                                     r.policiesDiffering),
+    section('TRIGGERS present in the DATABASE but in no migration (hand-edits):', r.triggersOnlyInDatabase),
+    section('TRIGGERS in the migrations but MISSING from the database:',          r.triggersOnlyInMigrations),
+    section('TRIGGERS whose timing or events differ:',                             r.triggersDiffering),
+  ].join('');
+}
