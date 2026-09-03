@@ -769,7 +769,7 @@ export async function runCreditCheck(): Promise<ActionResult> {
   // the plaintext never leaves this function except into the SOAP body.
   const state = await svc()
     .from('profiles')
-    .select('sa_id_number, liveness_verified_at, scorecard_band, salary_amount')
+    .select('sa_id_number, liveness_verified_at, scorecard_band, salary_amount, last_score_snapshot')
     .eq('id', loaded.userId)
     .maybeSingle();
 
@@ -778,6 +778,7 @@ export async function runCreditCheck(): Promise<ActionResult> {
     liveness_verified_at: string | null;
     scorecard_band: string | null;
     salary_amount: number | string | null;
+    last_score_snapshot: { resultType?: string | null } | null;
   } | null;
 
   if (!row?.sa_id_number) {
@@ -811,6 +812,9 @@ export async function runCreditCheck(): Promise<ActionResult> {
     {
       scoreDecision: null,
       band,
+      // Which card decided. Some carry a cap tighter than their band —
+      // Sigma Transcend at R1,000 — so the pricing needs to know.
+      resultType: row.last_score_snapshot?.resultType ?? null,
       // Read, not assumed. Both columns are written by the webhook on
       // approval, in one update — the same pair lib/onboarding/state.ts
       // treats as "identity satisfied".

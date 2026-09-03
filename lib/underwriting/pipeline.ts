@@ -171,6 +171,12 @@ export async function gateAffordabilityOnIdentity(
     idNumber: string;
     /** The band the score gate produced. */
     scoreBand: ScorecardBand;
+    /**
+     * The card that produced it. Some cards carry a cap of their own on
+     * top of the band ceiling — see SCORECARD_LIMIT_CAPS — so the limit
+     * calculation needs to know which one decided, not just what it said.
+     */
+    scoreResultType?: string | null;
     /** From the income page. Can only ever lower the limit. */
     declared: DeclaredGross | null;
   },
@@ -191,6 +197,7 @@ export async function gateAffordabilityOnIdentity(
     band:       resolution.band,
     prediction: resolution.prediction,
     declared:   input.declared,
+    resultType: input.scoreResultType ?? null,
   });
 
   return { kind: 'assessed', limit, resolution, band: resolution.band };
@@ -293,7 +300,12 @@ export async function reassess(
 
   const assessment = await gateAffordabilityOnIdentity(
     { identityStatus: deps.identityStatus, affordability: deps.affordability },
-    { idNumber: input.idNumber, scoreBand: band, declared: input.declared },
+    {
+      idNumber: input.idNumber,
+      scoreBand: band,
+      scoreResultType: 'resultType' in decision ? decision.resultType : null,
+      declared: input.declared,
+    },
   );
 
   if (assessment.kind === 'identity_not_passed') return assessment;

@@ -231,6 +231,8 @@ export async function assessAffordability(
   input: {
     scoreDecision: ScoreGateDecision | null;
     band: Parameters<typeof gateAffordabilityOnIdentity>[1]['scoreBand'];
+    /** The card that produced the band. Carries its own cap, if any. */
+    resultType?: string | null;
     identityStatus: () => Promise<'passed' | 'failed' | 'pending'>;
     declaredIncomeRands: number | null;
   },
@@ -249,7 +251,14 @@ export async function assessAffordability(
       identityStatus: input.identityStatus,
       affordability:  (id) => doAffordability(id),
     },
-    { idNumber: ctx.idNumber, scoreBand: input.band, declared },
+    {
+      idNumber: ctx.idNumber,
+      scoreBand: input.band,
+      // From the snapshot the identity step left behind — the pricing
+      // request has no score decision of its own.
+      scoreResultType: input.resultType ?? scoreSnapshot?.resultType ?? null,
+      declared,
+    },
   );
 
   if (result.kind === 'assessed') {

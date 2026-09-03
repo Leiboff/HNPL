@@ -300,3 +300,103 @@ describe('every outcome carries its coefficient version', () => {
     expect(declined.workings.coefficientVersion).toBe(approved.workings.coefficientVersion);
   });
 });
+
+// ─── The Sigma Transcend cap ────────────────────────────────────────────
+//
+// Transcend scores people the traditional cards cannot, so reading it
+// serves applicants who would otherwise be declined outright. But a Low
+// Risk on the thin-file card is not the evidence a Low Risk on the
+// unsecured-credit card is, and must not buy the same exposure.
+
+describe('a scorecard cap applies on top of the band ceiling', () => {
+  const rich = () => prediction({
+    gross: predictedGross(50_000), calcLivingExpenses: 5_000, bureauExpenses: 2_000,
+  });
+
+  it('STS caps at R1,000 even on Low Risk', () => {
+    // The captured UAT applicant: unscorable on SU, 620 on STS = Low Risk.
+    // The band ceiling says R10,000; the card says R1,000.
+    const result = calculateCreditLimit(input({
+      band: 'low', prediction: rich(), resultType: 'STS',
+    }));
+
+    expect(result.decision).toBe('approved');
+    expect(result.decision === 'approved' && result.limit).toBe(1_000);
+    expect(result.binding).toBe('scorecard_cap');
+  });
+
+  it('STS caps at R1,000 even on Minimum Risk', () => {
+    const result = calculateCreditLimit(input({
+      band: 'minimum', prediction: rich(), resultType: 'STS',
+    }));
+    expect(result.decision === 'approved' && result.limit).toBe(1_000);
+    expect(result.binding).toBe('scorecard_cap');
+  });
+
+  it('SU is uncapped and keeps its band ceiling', () => {
+    const result = calculateCreditLimit(input({
+      band: 'low', prediction: rich(), resultType: 'SU',
+    }));
+    expect(result.decision === 'approved' && result.limit).toBe(10_000);
+    expect(result.binding).toBe('band_ceiling');
+  });
+
+  it('an absent card behaves exactly as before', () => {
+    const withNone = calculateCreditLimit(input({ band: 'low', prediction: rich() }));
+    const withSu   = calculateCreditLimit(input({ band: 'low', prediction: rich(), resultType: 'SU' }));
+    expect(withNone.decision === 'approved' && withNone.limit).toBe(10_000);
+    expect(withSu.decision === 'approved' && withSu.limit).toBe(10_000);
+  });
+
+  it('the cap does NOT rescue a declining band', () => {
+    // We take Transcend's risk signal and decline on it. We just do not
+    // take the exposure when it says yes.
+    for (const band of ['high', 'very_high'] as const) {
+      const result = calculateCreditLimit(input({ band, prediction: rich(), resultType: 'STS' }));
+      expect(result.decision, band).toBe('declined');
+      expect(result.decision === 'declined' && result.reason).toBe('band');
+    }
+  });
+
+  it('the formula still binds when it lands below the cap', () => {
+    // A capped card does not raise anything: if affordability says less
+    // than R1,000 the applicant is declined, not granted the cap.
+    const result = calculateCreditLimit(input({
+      band: 'low', resultType: 'STS',
+      prediction: prediction({
+        gross: predictedGross(5_000), calcLivingExpenses: 2_000, bureauExpenses: 2_000,
+      }),
+    }));
+    expect(result.decision).toBe('declined');
+    expect(result.decision === 'declined' && result.reason).toBe('below_minimum');
+  });
+
+  it('records the true band and the cap separately', () => {
+    // The band must stay visible in the log: "how many Low-Risk Transcend
+    // applicants did the cap bind on" is the number that justifies
+    // keeping or relaxing it.
+    const result = calculateCreditLimit(input({
+      band: 'low', prediction: rich(), resultType: 'STS',
+    }));
+    expect(result.workings.band).toBe('low');
+    expect(result.workings.bandCeiling).toBe(10_000);
+    expect(result.workings.scorecardCap).toBe(1_000);
+    expect(result.workings.effectiveCeiling).toBe(1_000);
+    expect(result.workings.resultType).toBe('STS');
+  });
+
+  it('is case- and whitespace-insensitive on the card name', () => {
+    for (const card of ['sts', ' STS ', 'Sts']) {
+      const r = calculateCreditLimit(input({ band: 'low', prediction: rich(), resultType: card }));
+      expect(r.decision === 'approved' && r.limit, card).toBe(1_000);
+    }
+  });
+
+  it('applies on the thin-file path too, where it is a no-op', () => {
+    // Both ceilings are already R1,000 there.
+    const result = calculateCreditLimit({
+      band: 'thin_file', prediction: null, declared: null, resultType: 'STS',
+    });
+    expect(result.decision === 'approved' && result.limit).toBe(1_000);
+  });
+});

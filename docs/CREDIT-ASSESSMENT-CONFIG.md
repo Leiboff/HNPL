@@ -59,11 +59,35 @@ bands the applicant. First card with a usable score wins.
 The captured UAT applicant came back `SU = -1` (Sigma Unsecured Credit
 cannot score them — no accounts open more than three months) and
 `STS = 620` (Sigma Transcend, the thin-file card). With the default
-`SU,STS` they are **Low Risk → R10,000**. With `SU` alone they are a
-**thin file → R1,000**.
+`SU,STS` they are banded **Low Risk** off Transcend — and then capped at
+**R1,000** by the Transcend cap below, rather than taking the R10,000 the
+Low Risk band would otherwise allow.
 
-That 10x sits entirely in this variable. Both readings are pinned by
-tests so a change is deliberate rather than incidental.
+So the fallback decides whether the applicant is *served at all*; the cap
+decides *how much*. Both are pinned by tests.
+
+### The Sigma Transcend cap
+
+`SCORECARD_LIMIT_CAPS` in `lib/underwriting/coefficients.ts` caps any
+limit decided by **STS at R1,000**, on top of whatever the band ceiling
+allows. It is a versioned coefficient, not an env var — changing it forces
+a `COEFFICIENT_VERSION` bump, so limits priced under the cap stay
+distinguishable from limits priced without it.
+
+The reasoning: Transcend scores people the traditional cards cannot, from
+non-traditional data. Reading it serves applicants who would otherwise be
+declined outright. But a Low Risk on the thin-file card is not the same
+evidence as a Low Risk on Sigma Unsecured Credit, and should not buy the
+same exposure.
+
+The band still does its job — a Very High Risk on Transcend **declines**,
+it is not capped to R1,000. We take the risk signal and refuse on it; we
+just do not take the exposure when it says yes.
+
+The assessment log records the true band, the band ceiling and the cap
+separately, with `binding_constraint = 'scorecard_cap'` when the cap is
+what bound. Counting how often that fires is what will justify relaxing
+the cap on evidence — or keeping it.
 
 Falling back happens **only** on an unscorable card. A band decline or a
 hard sentinel (`-2` deceased, `-3` sequestrated, `-4` debt review, `-6`
@@ -132,11 +156,16 @@ and calls a function they create.
   message or client payload. `credit_assessments` has RLS enabled with no
   policies, so the anon key has no path to those rows at all.
 
-## One thing to decide before going live
+## Worth revisiting once UAT has data
 
-`EXPERIAN_SCORECARD_PREFERENCE=SU,STS` prices the thin-file population —
-most of this book — off Sigma Transcend rather than capping them at
-R1,000. That is what Transcend is built for, and it is the recorded
-decision, but it means the thin-file ceiling now binds only when **no**
-card scores at all. Worth confirming against your risk appetite once UAT
-has produced a few dozen real assessments to look at.
+The Transcend cap is deliberately conservative: every applicant priced off
+STS gets R1,000 regardless of band. That is the safe starting point, but
+it means a Minimum Risk on Transcend and a bare thin file are worth the
+same to us today.
+
+Once there are Transcend-priced outcomes to look at, query
+`credit_assessments` for rows with `binding_constraint = 'scorecard_cap'`
+and join them to plan performance. If the Minimum and Low Risk Transcend
+cohorts behave, the cap can be raised on evidence — by band, not
+wholesale — with a `COEFFICIENT_VERSION` bump keeping the two populations
+apart in the data.

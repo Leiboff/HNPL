@@ -44,6 +44,7 @@ import {
   MINIMUM_LIMIT,
   NDI_INSTALMENT_RATIO,
   COEFFICIENT_VERSION,
+  scorecardCapFor,
   type ScorecardBand,
 } from './coefficients';
 import { netIncomeFromMonthlyGross, type NetIncomeBreakdown } from './tax';
@@ -114,6 +115,16 @@ export type LimitInput = {
   prediction: GmipPrediction | null;
   /** Null when the patient has not given a figure. */
   declared: DeclaredGross | null;
+  /**
+   * The scorecard that produced the band — 'SU', 'STS', and so on.
+   *
+   * Some cards carry a cap of their own on top of the band ceiling
+   * (SCORECARD_LIMIT_CAPS): a Low Risk on the thin-file card is not the
+   * same evidence as a Low Risk on the unsecured-credit card, and should
+   * not buy the same exposure. Null leaves the band ceiling to stand
+   * alone, which is the behaviour for every uncapped card.
+   */
+  resultType?: string | null;
 };
 
 /** Which of the four constraints produced the final number. */
@@ -124,6 +135,8 @@ export type BindingConstraint =
   | 'band_ceiling'
   /** One month's income (predicted, or declared where lower). */
   | 'income_cap'
+  /** A cap attached to the deciding scorecard, tighter than its band. */
+  | 'scorecard_cap'
   /** Fell under the R1,000 floor after rounding — always a decline. */
   | 'minimum';
 
@@ -155,6 +168,12 @@ export type LimitWorkings = {
   facility: number | null;
   /** The band ceiling in force. Null means the band declines. */
   bandCeiling: number | null;
+  /** The card that produced the band, when known. */
+  resultType: string | null;
+  /** That card's own cap, when it has one. Null means uncapped. */
+  scorecardCap: number | null;
+  /** min(bandCeiling, scorecardCap) — what actually capped the limit. */
+  effectiveCeiling: number | null;
   /** The limit before rounding. */
   rawLimit: number | null;
 };
@@ -191,9 +210,18 @@ export function roundDownToStep(value: number, step: number = LIMIT_ROUNDING_STE
  * below R1,000.
  */
 export function calculateCreditLimit(input: LimitInput): LimitOutcome {
-  const bandCeiling = BAND_CEILINGS[input.band];
-  const predicted   = input.prediction?.gross ?? null;
-  const incomeBasis = resolveIncomeBasis(predicted, input.declared);
+  const bandCeiling  = BAND_CEILINGS[input.band];
+  const resultType   = input.resultType ?? null;
+  const scorecardCap = scorecardCapFor(resultType);
+  const predicted    = input.prediction?.gross ?? null;
+  const incomeBasis  = resolveIncomeBasis(predicted, input.declared);
+
+  // The card's own cap applies ON TOP of the band ceiling. It never
+  // rescues a declining band: a Very High Risk on a capped card still
+  // declines below, rather than being capped to the cap.
+  const effectiveCeiling = bandCeiling === null
+    ? null
+    : (scorecardCap === null ? bandCeiling : Math.min(bandCeiling, scorecardCap));
 
   const declaredLoweredBasis =
     predicted !== null
@@ -226,6 +254,9 @@ export function calculateCreditLimit(input: LimitInput): LimitOutcome {
         haircutApplied: false,
         facility: null,
         bandCeiling: null,
+        resultType,
+        scorecardCap,
+        effectiveCeiling: null,
         rawLimit: null,
       },
     };
@@ -235,10 +266,13 @@ export function calculateCreditLimit(input: LimitInput): LimitOutcome {
   if (input.prediction === null) {
     // The income cap still applies. A patient who declares R800/month does
     // not get a R1,000 facility just because the band ceiling allows one.
-    const capped   = incomeBasis === null ? bandCeiling : Math.min(bandCeiling, incomeBasis);
+    const ceiling  = effectiveCeiling as number;
+    const capped   = incomeBasis === null ? ceiling : Math.min(ceiling, incomeBasis);
     const rounded  = roundDownToStep(capped);
     const binding: BindingConstraint =
-      incomeBasis !== null && incomeBasis < bandCeiling ? 'income_cap' : 'band_ceiling';
+        incomeBasis !== null && incomeBasis < ceiling ? 'income_cap'
+      : scorecardCap !== null && scorecardCap < (bandCeiling as number) ? 'scorecard_cap'
+      : 'band_ceiling';
 
     const workings: LimitWorkings = {
       coefficientVersion: COEFFICIENT_VERSION,
@@ -253,6 +287,9 @@ export function calculateCreditLimit(input: LimitInput): LimitOutcome {
       haircutApplied: false,
       facility: null,
       bandCeiling,
+      resultType,
+      scorecardCap,
+      effectiveCeiling,
       rawLimit: capped,
     };
 
@@ -282,11 +319,18 @@ export function calculateCreditLimit(input: LimitInput): LimitOutcome {
   // min(facility, ceiling, income). Ties resolve toward the formula: when
   // the arithmetic lands exactly on a cap, the calculation is what produced
   // the number and the cap is not restricting anything.
-  const rawLimit = Math.min(facility, bandCeiling, basis);
+  const ceiling  = effectiveCeiling as number;
+  const rawLimit = Math.min(facility, ceiling, basis);
   const binding: BindingConstraint =
-      facility    <= rawLimit ? 'formula'
-    : basis       <= rawLimit ? 'income_cap'
-    :                           'band_ceiling';
+      facility <= rawLimit ? 'formula'
+    : basis    <= rawLimit ? 'income_cap'
+    // The ceiling bound it. Say WHICH ceiling: a scorecard cap tighter
+    // than the band's is a different fact about the applicant, and
+    // conflating the two would hide how often Transcend is the binding
+    // constraint — the number needed to revisit the cap on evidence.
+    : (scorecardCap !== null && scorecardCap <= (bandCeiling as number))
+        ? 'scorecard_cap'
+        : 'band_ceiling';
 
   const rounded = roundDownToStep(rawLimit);
 
@@ -303,6 +347,9 @@ export function calculateCreditLimit(input: LimitInput): LimitOutcome {
     haircutApplied,
     facility,
     bandCeiling,
+    resultType,
+    scorecardCap,
+    effectiveCeiling,
     rawLimit,
   };
 

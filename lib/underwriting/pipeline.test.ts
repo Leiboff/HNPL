@@ -17,6 +17,10 @@ const PREF  = [...DEFAULT_SCORECARD_PREFERENCE];
 const CARDS = SIGMA_BANDS;
 const ID    = score.FIXTURE_ID;
 
+function scoreDeps_(xml: string, over: Record<string, unknown> = {}) {
+  return scoreDeps(xml, over);
+}
+
 function scoreDeps(xml: string, over: Record<string, unknown> = {}) {
   return {
     score: vi.fn(async () => parseGetScoreResponse(xml)),
@@ -334,5 +338,56 @@ describe('only substantive refusals enter the cooldown', () => {
     expect(entersCooldown({ kind: 'blocked', reason: 'x' } as never)).toBe(false);
     expect(entersCooldown({ kind: 'identity_not_passed', status: 'failed' } as never)).toBe(false);
     expect(entersCooldown({ kind: 'identity_started' } as never)).toBe(false);
+  });
+});
+
+// ─── The Transcend cap, end to end ──────────────────────────────────────
+
+describe('the captured applicant prices at the Transcend cap', () => {
+  it('SU unscorable + STS 620 yields R1,000, not R10,000', async () => {
+    // The fallback still runs — reading Transcend is what lets this
+    // applicant be served at all rather than declined as a thin file.
+    // What the cap changes is the exposure it buys.
+    const scoreDeps = scoreDeps_(score.SCORE_SUCCESS_SU_UNSCORABLE_STS_620);
+    const gate = await gateIdentityOnScore(scoreDeps, ID);
+    expect(gate.kind).toBe('identity_started');
+    if (gate.kind !== 'identity_started') return;
+    expect(gate.band).toBe('low');
+
+    const deps = affordDeps('passed', afford.AFFORD_SUCCESS_HIGH);
+    const result = await gateAffordabilityOnIdentity(deps, {
+      idNumber: ID,
+      scoreBand: gate.band,
+      scoreResultType: gate.decision.kind === 'pass' ? gate.decision.resultType : null,
+      declared: null,
+    });
+
+    if (result.kind !== 'assessed') throw new Error('expected an assessment');
+    expect(result.limit.decision === 'approved' && result.limit.limit).toBe(1_000);
+    expect(result.limit.binding).toBe('scorecard_cap');
+    // The real band is still on the row.
+    expect(result.limit.workings.band).toBe('low');
+    expect(result.limit.workings.resultType).toBe('STS');
+  });
+
+  it('the same applicant scored on SU instead is uncapped', async () => {
+    const deps = affordDeps('passed', afford.AFFORD_SUCCESS_HIGH);
+    const result = await gateAffordabilityOnIdentity(deps, {
+      idNumber: ID, scoreBand: 'low', scoreResultType: 'SU', declared: null,
+    });
+    if (result.kind !== 'assessed') throw new Error('expected an assessment');
+    expect(result.limit.decision === 'approved' && result.limit.limit).toBe(10_000);
+  });
+
+  it('a Very High Risk on Transcend still declines rather than capping', async () => {
+    const veryHigh = score.scoreReplyWith([
+      { resultType: 'SU', score: '-1' },
+      { resultType: 'STS', score: '590' },   // < 598 = very high
+    ]);
+    const deps = scoreDeps_(veryHigh);
+    const gate = await gateIdentityOnScore(deps, ID);
+
+    expect(gate.kind).toBe('declined');
+    expect(deps.startIdentity).not.toHaveBeenCalled();
   });
 });

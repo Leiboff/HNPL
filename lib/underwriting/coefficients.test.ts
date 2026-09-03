@@ -34,11 +34,11 @@ describe('coefficient provenance', () => {
       digestCoefficients(),
       'Coefficients changed. Bump COEFFICIENT_VERSION and update this digest '
       + 'in the same commit, so calibration data can tell the two pricings apart.',
-    ).toBe('fb26082fda6686bb');
+    ).toBe('f9a83709ea29cc8f');
   });
 
   it('the version is the one those values are labelled with', () => {
-    expect(COEFFICIENT_VERSION).toBe('2026.27-r1');
+    expect(COEFFICIENT_VERSION).toBe('2026.27-r2');
     expect(COEFFICIENTS.version).toBe(COEFFICIENT_VERSION);
   });
 

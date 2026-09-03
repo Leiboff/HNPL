@@ -23,7 +23,7 @@
 // likely to force a change and they change annually.
 
 /** Written to `credit_assessments.coefficient_version` on every row. */
-export const COEFFICIENT_VERSION = '2026.27-r1';
+export const COEFFICIENT_VERSION = '2026.27-r2';
 
 // ── SARS PAYE, 2026/27 tax year (1 Mar 2026 – 28 Feb 2027) ─────────────
 //
@@ -123,6 +123,45 @@ export const BAND_CEILINGS: Readonly<Record<ScorecardBand, number | null>> = {
   very_high:   null,
 } as const;
 
+// ── Per-scorecard limit caps ──────────────────────────────────────────
+//
+// A ceiling applied ON TOP of the band ceiling, keyed on the card that
+// actually decided. The band says how likely this person is to default;
+// this says how much we trust the card that produced the band.
+//
+// ─── WHY SIGMA TRANSCEND IS CAPPED AT R1,000 ───────────────────────────
+//
+// Transcend is the thin-file card: it scores people the traditional
+// models cannot, from non-traditional data. Reading it lets us serve
+// applicants who would otherwise be declined outright — which is why the
+// fallback exists — but a Low Risk on Transcend is not the same evidence
+// as a Low Risk on Sigma Unsecured Credit, and it should not buy the same
+// exposure.
+//
+// Without this, the captured UAT applicant (unscorable on SU, 620 on STS)
+// would price at R10,000 off a card built for people with almost no
+// credit history. With it they get R1,000 — the thin-file amount, which
+// is what they are.
+//
+// The BAND still does its job: a Very High Risk on Transcend declines,
+// it does not get capped to R1,000. We take the risk signal and decline
+// on it; we just do not take the exposure.
+//
+// Recorded separately from the band ceiling in the assessment log
+// (binding_constraint = 'scorecard_cap'), so the real band stays visible
+// and this cap can be relaxed on evidence rather than guesswork once
+// there are Transcend-priced outcomes to look at.
+
+export const SCORECARD_LIMIT_CAPS: Readonly<Record<string, number>> = {
+  STS: 1_000,
+} as const;
+
+/** The cap in force for a scorecard, or null when it is uncapped. */
+export function scorecardCapFor(resultType: string | null | undefined): number | null {
+  if (!resultType) return null;
+  return SCORECARD_LIMIT_CAPS[resultType.trim().toUpperCase()] ?? null;
+}
+
 // ── Lifecycle windows ──────────────────────────────────────────────────
 //
 // Both are env-overridable so they can be shortened in UAT without a
@@ -171,4 +210,5 @@ export const COEFFICIENTS = {
   limitRoundingStep:          LIMIT_ROUNDING_STEP,
   minimumLimit:               MINIMUM_LIMIT,
   bandCeilings:               BAND_CEILINGS,
+  scorecardLimitCaps:         SCORECARD_LIMIT_CAPS,
 } as const;

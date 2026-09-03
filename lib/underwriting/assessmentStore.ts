@@ -61,6 +61,8 @@ export type AssessmentRow = {
   computed_facility: number | null;
   final_limit: number | null;
   binding_constraint: string | null;
+  /** The deciding card's own cap, when it had one. */
+  scorecard_cap: number | null;
 
   declared_income: number | null;
   coefficient_version: string;
@@ -205,6 +207,9 @@ export function buildAssessmentRow(input: BuildAssessmentInput): AssessmentRow {
     computed_facility:  workings?.facility ?? null,
     final_limit:        limit?.decision === 'approved' ? limit.limit : null,
     binding_constraint: limit?.binding ?? null,
+    // Recorded separately from the band ceiling so the true band stays
+    // visible and the cap can be revisited on evidence.
+    scorecard_cap:      workings?.scorecardCap ?? null,
 
     declared_income:     input.declaredIncome,
     coefficient_version: workings?.coefficientVersion ?? COEFFICIENT_VERSION,

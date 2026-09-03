@@ -181,8 +181,16 @@ CREATE TABLE IF NOT EXISTS credit_assessments (
   -- Which of the four constraints produced the number.
   binding_constraint TEXT
     CHECK (binding_constraint IS NULL OR binding_constraint IN (
-      'formula', 'band_ceiling', 'income_cap', 'minimum'
+      'formula', 'band_ceiling', 'income_cap', 'scorecard_cap', 'minimum'
     )),
+
+  -- The deciding scorecard's own cap, when it had one. Kept apart from
+  -- the band ceiling on purpose: Sigma Transcend is capped at R1,000
+  -- because a Low Risk on the thin-file card is not the evidence a Low
+  -- Risk on the unsecured-credit card is, and the two must stay
+  -- distinguishable. Counting how often this is the binding constraint is
+  -- what will justify relaxing it later — or keeping it.
+  scorecard_cap NUMERIC(12,2),
 
   -- Stored for calibration whether or not it moved the limit. It can only
   -- ever have lowered it.
