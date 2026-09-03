@@ -23,7 +23,8 @@ import {
 
 /** Digest of every pricing coefficient, excluding the version label itself. */
 function digestCoefficients(): string {
-  const { version: _version, ...priced } = COEFFICIENTS;
+  const priced: Record<string, unknown> = { ...COEFFICIENTS };
+  delete priced.version;
   return createHash('sha256').update(JSON.stringify(priced)).digest('hex').slice(0, 16);
 }
 
