@@ -37,6 +37,15 @@ const CONSENT_TOKEN_PATHS = new Set([
 export async function proxy(request: NextRequest) {
   const isApiRoute = request.nextUrl.pathname === '/api'
     || request.nextUrl.pathname.startsWith('/api/');
+  // Some API-prefixed handlers (notably OAuth connect/callback routes) are
+  // browser-facing endpoints reached through links or provider redirects.
+  // Fetch Metadata is the strongest signal that the browser is loading a
+  // document; Accept is a fallback for clients that do not send Sec-Fetch-Mode.
+  const acceptsHtml = request.headers.get('accept')
+    ?.split(',')
+    .some((value) => value.trim().split(';', 1)[0] === 'text/html') ?? false;
+  const isDocumentNavigation = request.headers.get('sec-fetch-mode') === 'navigate'
+    || ((request.method === 'GET' || request.method === 'HEAD') && acceptsHtml);
 
   // A fresh unpredictable nonce per HTML request is the prerequisite for a
   // strict CSP. Next reads this request header while rendering and applies
@@ -88,12 +97,14 @@ export async function proxy(request: NextRequest) {
     }
 
     let capped: NextResponse;
-    if (isApiRoute) {
+    if (isApiRoute && !isDocumentNavigation) {
       // A fetch follows redirects without navigating the document. Returning
       // the login page here would therefore turn an expired API session into
       // HTML (or a 405 for POSTs), which callers may mistake for a transient
       // network or JSON-decoding failure. Give every API method an explicit,
-      // machine-readable authentication failure instead.
+      // machine-readable authentication failure instead. API-prefixed routes
+      // loaded as browser documents still use the redirect below so OAuth
+      // links and callbacks can carry the user back to the login screen.
       capped = NextResponse.json(
         { error: 'unauthenticated', reason: SESSION_CAP_REDIRECT_REASON },
         { status: 401 },
