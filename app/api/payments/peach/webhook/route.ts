@@ -981,7 +981,17 @@ function computeWebhookUrl(request: NextRequest): string | null {
 
 export async function POST(request: NextRequest) {
   const contentType = (request.headers.get('content-type') ?? '').toLowerCase();
+  const contentLength = Number(request.headers.get('content-length') ?? '0');
+  // The only JSON delivery Peach sends is a small registration handshake.
+  // Reject large JSON before reading it so the unsigned probe branch cannot
+  // become a log- or memory-amplification endpoint.
+  if (contentType.includes('application/json') && (!Number.isFinite(contentLength) || contentLength > 16_384)) {
+    return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+  }
   const body = await request.text();
+  if (contentType.includes('application/json') && Buffer.byteLength(body, 'utf8') > 16_384) {
+    return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+  }
 
   // ── (1) Verification / initial configuration probe ──────────────
   //
@@ -999,26 +1009,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Body did not parse as JSON' }, { status: 400 });
     }
 
-    // Prominent, greppable log lines. Peach does NOT document which
-    // field carries the verification code on the initial probe, so
-    // extracting a specific field would risk logging "undefined" if
-    // the guess is wrong — leaving us unable to register without a
-    // redeploy. Instead we dump the whole parsed body in TWO forms:
-    //
-    //   PEACH WEBHOOK VERIFICATION CODE: <single-line JSON>
-    //     — one greppable line, useful for log-searching.
-    //
-    //   PEACH WEBHOOK PROBE BODY:
-    //   <pretty-printed multi-line JSON>
-    //     — readable dump, useful for eyeballing the object even when
-    //       the field name is unfamiliar.
-    //
-    // The probe carries setup metadata, NOT card data — redacting
-    // nothing is safe here. Do NOT copy this pattern to the event
-    // path (which does carry card fingerprints).
-    console.log('PEACH WEBHOOK VERIFICATION CODE:', JSON.stringify(parsed));
-    console.log('PEACH WEBHOOK PROBE BODY:\n' + JSON.stringify(parsed, null, 2));
-    console.log('[peach-webhook] verification probe: full JSON body logged above.');
+    // This handshake can be unsigned during initial vendor provisioning.
+    // Do not make that exception a general log-ingestion endpoint: retain
+    // only field names and a bounded printable candidate code.
+    const candidate = ['verificationCode', 'verification_code', 'code']
+      .map((key) => parsed[key])
+      .find((value): value is string => typeof value === 'string' && value.length <= 128)
+      ?.replace(/[^\x20-\x7E]/g, '');
+    console.log('[peach-webhook] verification probe received', {
+      keys: Object.keys(parsed).slice(0, 20),
+      verificationCode: candidate ?? '<unrecognised field>',
+    });
 
     // Optional: if signature headers are present, verify them and log
     // the outcome — informative but not blocking.

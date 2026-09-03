@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server';
 // Owned surface:
 //   • Auth (401 for anon).
 //   • Input validation (400 for non-finite / out-of-bounds coords).
-//   • Rate limiting (429 after N calls per window per user).
+//   • Shared rate limiting (429 when its account/IP budget is exhausted).
 //   • Server key gating (missing key → { label: null } + warn).
 //   • Geocoding API integration (fixture-tested): OK path parses
 //     legacy shape into a "Suburb, City" label; ZERO_RESULTS + other
@@ -25,14 +25,21 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
-import { GET, __resetRateBucketsForTests } from './route';
+const { consumeAll } = vi.hoisted(() => ({ consumeAll: vi.fn(async () => true) }));
+vi.mock('@/lib/security/rateLimit', () => ({
+  clientIp: async () => '203.0.113.9',
+  consumeAll,
+  RATE_LIMITS: { reverse_geocode: { ip: { max: 60, windowSecs: 300 }, account: { max: 30, windowSecs: 300 } } },
+}));
+
+import { GET } from './route';
 
 const OLD_ENV = process.env.GOOGLE_GEOCODING_SERVER_KEY;
 
 beforeEach(() => {
   sessionUser = { id: 'user-abc' };
   process.env.GOOGLE_GEOCODING_SERVER_KEY = 'server-test-key';
-  __resetRateBucketsForTests();
+  consumeAll.mockResolvedValue(true);
   vi.restoreAllMocks();
 });
 
@@ -75,6 +82,15 @@ describe('GET /api/reverse-geocode — auth', () => {
     const res = await GET(reverseGeocodeReq('-26.10', '28.05'));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'unauthenticated' });
+  });
+});
+
+describe('GET /api/reverse-geocode — shared rate limit', () => {
+  it('returns 429 when the shared account/IP budget is exhausted', async () => {
+    consumeAll.mockResolvedValue(false);
+    const res = await GET(reverseGeocodeReq('-26.10', '28.05'));
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: 'rate_limited' });
   });
 });
 
@@ -140,6 +156,7 @@ describe('GET /api/reverse-geocode — Google integration', () => {
     // not on the exact encoding.
     expect(urlStr).toMatch(/latlng=-26\.1(?:%2C|,)28\.05/);
     expect(urlStr).toContain('key=server-test-key');
+    expect(fetchSpy.mock.calls[0]![1]).toMatchObject({ signal: expect.any(AbortSignal) });
   });
 
   it('ZERO_RESULTS → { label: null } (expected in remote areas, no warn)', async () => {
@@ -236,32 +253,15 @@ describe('GET /api/reverse-geocode — legacy → Places-New shape adapter', () 
 // ─── Rate limiting ─────────────────────────────────────────────────────
 
 describe('GET /api/reverse-geocode — rate limit', () => {
-  it('returns 429 after 30 requests within the 5-minute window (per user)', async () => {
+  it('spends both IP and account keys from the shared limiter', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify(OK_FIXTURE_GLENHAZEL), { status: 200 }),
     );
-    // 30 permitted
-    for (let i = 0; i < 30; i++) {
-      const r = await GET(reverseGeocodeReq('-26.10', '28.05'));
-      expect(r.status).toBe(200);
-    }
-    // 31st is throttled
-    const r31 = await GET(reverseGeocodeReq('-26.10', '28.05'));
-    expect(r31.status).toBe(429);
-    expect(await r31.json()).toEqual({ error: 'rate_limited' });
-  });
-
-  it('rate limits are per-user (a different user has their own bucket)', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify(OK_FIXTURE_GLENHAZEL), { status: 200 }),
-    );
-    for (let i = 0; i < 30; i++) {
-      await GET(reverseGeocodeReq('-26.10', '28.05'));
-    }
-    // user-abc exhausted
-    expect((await GET(reverseGeocodeReq('-26.10', '28.05'))).status).toBe(429);
-    // switch to a new user — clean bucket
-    sessionUser = { id: 'user-def' };
-    expect((await GET(reverseGeocodeReq('-26.10', '28.05'))).status).toBe(200);
+    const res = await GET(reverseGeocodeReq('-26.10', '28.05'));
+    expect(res.status).toBe(200);
+    expect(consumeAll).toHaveBeenCalledWith('reverse_geocode', [
+      ['203.0.113.9', { max: 60, windowSecs: 300 }],
+      ['user-abc', { max: 30, windowSecs: 300 }],
+    ]);
   });
 });

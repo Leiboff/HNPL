@@ -2,7 +2,8 @@
 //
 // Backed by migration 0124's consume_rate_limit RPC, so the budget is
 // shared across every serverless instance rather than per-lambda. See that
-// migration for why this lives in Postgres and why it fails open.
+// migration for why this lives in Postgres. Application-side failures now
+// fail closed and emit a structured, alertable decision event.
 //
 // WHAT TO KEY ON
 //
@@ -18,6 +19,7 @@
 // windows are short enough that the extra hits cost nothing.
 
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { createHmac } from 'node:crypto';
 
 export type RateLimitBucket =
   | 'signup'
@@ -34,9 +36,17 @@ export type RateLimitBucket =
   | 'pay_saved_card'
   | 'self_settle'
   | 'counter_session'
-  | 'credit_check';
+  | 'credit_check'
+  | 'reverse_geocode';
 
 export type RateLimitRule = { max: number; windowSecs: number };
+export type RateLimitOutcome = 'allowed' | 'limited' | 'unavailable' | 'missing_subject';
+export type RateLimitDecision = { allowed: boolean; outcome: RateLimitOutcome };
+
+type RateLimitSubjectKind = 'ip' | 'account';
+
+/** Keep dependency failures shorter than the calling action's own timeout. */
+export const RATE_LIMIT_RPC_TIMEOUT_MS = 2_500;
 
 /**
  * The limits, in one table so they can be reviewed as a set rather than
@@ -112,6 +122,9 @@ export const RATE_LIMITS: Record<RateLimitBucket, { ip: RateLimitRule; account?:
   // needs exactly one — the retries are for a failed lookup, not for a
   // second opinion.
   credit_check:        { ip: { max: 10, windowSecs: 86400 }, account: { max: 5, windowSecs: 86400 } },
+
+  // Billable server-side Google Geocoding API calls.
+  reverse_geocode:     { ip: { max: 60, windowSecs: 300 }, account: { max: 30, windowSecs: 300 } },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,12 +138,146 @@ function svc(): Svc {
   );
 }
 
+function subjectFingerprint(subject: string | null | undefined): string | null {
+  if (!subject) return null;
+  // Key the digest so low-entropy values such as IPv4 addresses and phone
+  // numbers cannot be recovered with an offline dictionary. A dedicated key
+  // is preferred; the already-required service key is a safe fallback.
+  const key = process.env.RATE_LIMIT_LOG_HMAC_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return null;
+  return createHmac('sha256', key).update(subject).digest('hex').slice(0, 16);
+}
+
+function emitDecision(input: {
+  bucket: RateLimitBucket;
+  outcome: Exclude<RateLimitOutcome, 'allowed'>;
+  subject: string | null | undefined;
+  subjectKind: RateLimitSubjectKind;
+  rule: RateLimitRule;
+  dependencyStage?: 'client_init' | 'rpc' | 'rpc_timeout';
+  dependencyCode?: string;
+}): void {
+  const event = {
+    event: 'rate_limit_decision',
+    schema_version: 1,
+    occurred_at: new Date().toISOString(),
+    bucket: input.bucket,
+    outcome: input.outcome,
+    subject_kind: input.subjectKind,
+    subject_hash: subjectFingerprint(input.subject),
+    limit_max: input.rule.max,
+    window_seconds: input.rule.windowSecs,
+    ...(input.dependencyStage ? { dependency_stage: input.dependencyStage } : {}),
+    ...(input.dependencyCode ? { dependency_code: input.dependencyCode.slice(0, 64) } : {}),
+  };
+
+  const line = JSON.stringify(event);
+  if (input.outcome === 'unavailable') console.error(line);
+  else console.warn(line);
+}
+
+class RateLimitRpcTimeoutError extends Error {
+  constructor() {
+    super('rate-limit RPC timed out');
+    this.name = 'RateLimitRpcTimeoutError';
+  }
+}
+
+async function withRpcTimeout<T>(operation: PromiseLike<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(operation),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new RateLimitRpcTimeoutError()), RATE_LIMIT_RPC_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Detailed decision for observability-aware callers and tests. No successful
+ * decision is logged: allowed traffic is high-volume and the database hit is
+ * already its durable counter. Every refusal is emitted as one JSON line.
+ */
+export async function consumeRateLimitDetailed(
+  bucket: RateLimitBucket,
+  subject: string | null | undefined,
+  rule: RateLimitRule,
+  client?: Svc,
+  subjectKind: RateLimitSubjectKind = 'account',
+): Promise<RateLimitDecision> {
+  if (!subject) {
+    emitDecision({ bucket, outcome: 'missing_subject', subject, subjectKind, rule });
+    return { allowed: false, outcome: 'missing_subject' };
+  }
+
+  let db: Svc;
+  try {
+    db = client ?? svc();
+  } catch (err) {
+    emitDecision({
+      bucket,
+      outcome: 'unavailable',
+      subject,
+      subjectKind,
+      rule,
+      dependencyStage: 'client_init',
+      dependencyCode: err instanceof Error ? err.name : 'UnknownError',
+    });
+    return { allowed: false, outcome: 'unavailable' };
+  }
+
+  try {
+    const operation = db.rpc('consume_rate_limit', {
+      p_bucket: bucket,
+      p_subject: subject,
+      p_max: rule.max,
+      p_window_secs: rule.windowSecs,
+    }) as PromiseLike<{
+      data: boolean | null;
+      error: { code?: string } | null;
+    }>;
+    const { data, error } = await withRpcTimeout(operation);
+    if (error) {
+      emitDecision({
+        bucket,
+        outcome: 'unavailable',
+        subject,
+        subjectKind,
+        rule,
+        dependencyStage: 'rpc',
+        dependencyCode: typeof error.code === 'string' ? error.code : 'RpcError',
+      });
+      return { allowed: false, outcome: 'unavailable' };
+    }
+    if (data === false) {
+      emitDecision({ bucket, outcome: 'limited', subject, subjectKind, rule });
+      return { allowed: false, outcome: 'limited' };
+    }
+    return { allowed: true, outcome: 'allowed' };
+  } catch (err) {
+    const timedOut = err instanceof RateLimitRpcTimeoutError;
+    emitDecision({
+      bucket,
+      outcome: 'unavailable',
+      subject,
+      subjectKind,
+      rule,
+      dependencyStage: timedOut ? 'rpc_timeout' : 'rpc',
+      dependencyCode: err instanceof Error ? err.name : 'UnknownError',
+    });
+    return { allowed: false, outcome: 'unavailable' };
+  }
+}
+
 /**
  * Spend one unit from `bucket:subject`. True when the caller may proceed.
  *
- * Fails OPEN on an RPC error — see the 0124 header. The error is logged so
- * a limiter that has silently stopped limiting is visible in the logs
- * rather than only in the bill.
+ * Fails CLOSED on an RPC error. These buckets front actions that can spend
+ * money, create credit exposure, or send paid third-party requests.
  */
 export async function consumeRateLimit(
   bucket:  RateLimitBucket,
@@ -138,64 +285,44 @@ export async function consumeRateLimit(
   rule:    RateLimitRule,
   client?: Svc,
 ): Promise<boolean> {
-  if (!subject) return true;
-  try {
-    // svc() is constructed INSIDE the try, not in a `client ?? svc()`
-    // default. createClient throws outright when the Supabase env vars are
-    // absent, and a limiter that cannot even build a client has to fail
-    // open like every other failure here — otherwise "this action now has
-    // a rate limit" becomes "this action now throws wherever the env is
-    // not fully configured", which is every unit test of every guarded
-    // action and any environment mid-provision.
-    const db = client ?? svc();
-    const { data, error } = await db.rpc('consume_rate_limit', {
-      p_bucket:      bucket,
-      p_subject:     subject,
-      p_max:         rule.max,
-      p_window_secs: rule.windowSecs,
-    });
-    if (error) {
-      console.error('[rate-limit] RPC failed — allowing through', { bucket, error: error.message });
-      return true;
-    }
-    return data !== false;
-  } catch (err) {
-    console.error('[rate-limit] threw — allowing through', {
-      bucket, error: err instanceof Error ? err.message : String(err),
-    });
-    return true;
-  }
+  return (await consumeRateLimitDetailed(bucket, subject, rule, client)).allowed;
 }
 
 /**
  * Spend from every supplied key and refuse if any is exhausted.
  *
  * `keys` are `[subject, rule]` pairs — typically the IP and the account /
- * token / email. A null subject is skipped rather than treated as a
- * refusal (an unresolvable IP is our problem, not the caller's).
+ * token / email. A missing key refuses the request: every protected action
+ * needs a subject for the shared limiter to enforce.
  */
 export async function consumeAll(
   bucket: RateLimitBucket,
   keys:   Array<[subject: string | null | undefined, rule: RateLimitRule]>,
   client?: Svc,
 ): Promise<boolean> {
-  // Same fail-open construction as consumeRateLimit: a client we cannot
-  // build must not throw out of here.
+  // Build once so both subjects use the same client. Detailed evaluation
+  // emits a structured unavailable event if construction fails.
   let shared: Svc | undefined;
   try {
     shared = client ?? svc();
   } catch {
-    console.error('[rate-limit] could not build a client — allowing through', { bucket });
-    return true;
+    // Leave undefined: each key is evaluated and logged with its subject
+    // kind and privacy-safe fingerprint rather than one context-free error.
   }
 
   // Sequential rather than parallel: these are two cheap statements
   // against one connection, and Promise.all here would spend budget in a
   // nondeterministic order for no measurable gain.
   let allowed = true;
-  for (const [subject, rule] of keys) {
-    const ok = await consumeRateLimit(bucket, subject, rule, shared);
-    if (!ok) allowed = false;
+  for (const [index, [subject, rule]] of keys.entries()) {
+    const decision = await consumeRateLimitDetailed(
+      bucket,
+      subject,
+      rule,
+      shared,
+      index === 0 ? 'ip' : 'account',
+    );
+    if (!decision.allowed) allowed = false;
   }
   return allowed;
 }
@@ -209,9 +336,9 @@ export async function consumeAll(
  *
  * Two reasons, and the second is the one that was learned the hard way.
  *
- * A rate limiter must never be able to take down the action it guards. It
- * is a damping mechanism on abuse; if resolving the caller's IP throws,
- * the correct outcome is an unkeyed pass, not a 500 on somebody's signup.
+ * Failure to resolve the caller's IP returns null. The fail-closed decision
+ * path records `missing_subject`, so proxy/header drift becomes visible and
+ * the action never silently runs without its IP budget.
  *
  * And a static `import { headers } from 'next/headers'` at the top of a
  * server action is a hard dependency for every test of that action.
@@ -235,11 +362,8 @@ export async function clientIp(): Promise<string | null> {
  * Takes the FIRST entry of x-forwarded-for — the closest thing to the
  * origin client — and falls back to x-real-ip. Spoofable in principle;
  * on Vercel the platform rewrites x-forwarded-for, so in this deployment
- * it is the honest value. Returns null rather than a placeholder when
- * neither header is present, so consumeRateLimit skips instead of
- * lumping every unresolved caller into one shared 'anon' bucket — which
- * would let one attacker exhaust the budget for everybody behind a proxy
- * we failed to parse.
+ * it is the honest value. Returns null when neither header is present;
+ * protected actions deny rather than running without an abuse-control key.
  */
 export function clientIpFrom(headers: Headers): string | null {
   const fwd = headers.get('x-forwarded-for');

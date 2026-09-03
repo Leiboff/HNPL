@@ -132,27 +132,22 @@ function makeFormRequest(body: string, headers: Record<string, string> = {}): Ne
 // ─── (A) Verification probe ─────────────────────────────────────────
 
 describe('POST /api/payments/peach/webhook — JSON verification probe', () => {
-  it('returns 200 for a JSON body regardless of missing signature (registration handshake)', async () => {
+  it('returns 200 for a small JSON body regardless of missing signature (registration handshake)', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const body = JSON.stringify({ code: 'VERIFY-42', event: 'setup' });
     const req  = makeJsonRequest(body);
     const res  = await POST(req);
     expect(res.status).toBe(200);
-    // Prominent, greppable line for the operator.
+    // Bounded, structured operator log (never the complete body).
     const emitted = logSpy.mock.calls.map((c) => JSON.stringify(c)).join('\n');
-    expect(emitted).toContain('PEACH WEBHOOK VERIFICATION CODE');
+    expect(emitted).toContain('verification probe received');
     expect(emitted).toContain('VERIFY-42');
     logSpy.mockRestore();
   });
 
-  it('also logs the ENTIRE parsed probe body under a PEACH WEBHOOK PROBE BODY prefix (whatever the code field is called)', async () => {
-    // The field name Peach uses for the verification code isn't
-    // documented — dumping the whole body under a second, pretty-
-    // printed prefix guarantees the code is findable in Vercel logs
-    // even if it's named something we didn't anticipate.
+  it('logs only bounded metadata for a probe with an unrecognised code field', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    // Use a field name we WOULDN'T have hardcoded — pins that we're
-    // not extracting a specific key.
+    // Use a field name we do not recognise.
     const body = JSON.stringify({
       unexpectedFieldName: 'CODE-XYZ',
       nested: { anotherOddName: 'inner-value' },
@@ -162,14 +157,10 @@ describe('POST /api/payments/peach/webhook — JSON verification probe', () => {
     expect(res.status).toBe(200);
 
     const emitted = logSpy.mock.calls.map((c) => JSON.stringify(c)).join('\n');
-    expect(emitted).toContain('PEACH WEBHOOK PROBE BODY');
-    // Every value from the body must appear — no field extraction.
-    expect(emitted).toContain('CODE-XYZ');
+    expect(emitted).toContain('verification probe received');
     expect(emitted).toContain('unexpectedFieldName');
-    expect(emitted).toContain('anotherOddName');
-    expect(emitted).toContain('inner-value');
-    // Never the string "undefined" from an extraction miss.
-    expect(emitted).not.toMatch(/PEACH WEBHOOK[^\n]*undefined/);
+    expect(emitted).not.toContain('CODE-XYZ');
+    expect(emitted).not.toContain('inner-value');
     logSpy.mockRestore();
   });
 
@@ -184,6 +175,15 @@ describe('POST /api/payments/peach/webhook — JSON verification probe', () => {
     const req = makeJsonRequest('this is not json at all {');
     const res = await POST(req);
     expect(res.status).toBe(400);
+  });
+
+  it('rejects oversized unsigned JSON before logging or parsing it', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const req = makeJsonRequest(JSON.stringify({ code: 'x'.repeat(17_000) }));
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(logSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
   });
 });
 
