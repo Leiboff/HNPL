@@ -206,3 +206,137 @@ export function entersCooldown(
   // are refusals.
   return false;
 }
+
+// ═══ Stage 3: re-assessment, and the plan-request gate ═════════════════
+//
+// ─── ONE PATH FOR ALL THREE TRIGGERS ───────────────────────────────────
+//
+// Staleness, an increase request and an admin trigger all run the SAME
+// pipeline, score gate included. A patient whose band has dropped below
+// average risk should not keep drawing on a stale limit just because the
+// original assessment said yes.
+//
+// What re-assessment does NOT redo is identity. The face match already
+// happened and the registry binding does not go stale the way bureau data
+// does; re-running it would spend a Didit unit to learn something we
+// already know. It is still CHECKED — a patient whose identity was later
+// revoked must not be repriced — but it is read, not re-purchased.
+//
+// ─── AND WHAT IT MUST NOT DO ───────────────────────────────────────────
+//
+// A reduced limit does not touch plans already in flight. Those were
+// written against a limit that was valid when they were accepted, and
+// clawing back committed credit because a score moved would break
+// schedules the patient is already paying. The new limit binds the NEXT
+// request; `patient_credit_exposure` keeps counting the existing plans
+// until they complete on their own terms.
+
+import {
+  gatePlanRequest,
+  type AssessmentSnapshot,
+  type PlanRequestGate,
+} from './assessmentState';
+
+export type ReassessDeps = {
+  score: (idNumber: string) => Promise<ScoreCallOutcome>;
+  affordability: (idNumber: string) => Promise<AffordabilityCallOutcome>;
+  /** Read, never re-purchased. See the header. */
+  identityStatus: () => Promise<IdentityStatus>;
+  preference: readonly string[];
+  cards: Readonly<Record<string, BandCutoffs>>;
+};
+
+export type ReassessResult =
+  | { kind: 'assessed'; limit: LimitOutcome; band: ScorecardBand; scoreDecision: ScoreGateDecision }
+  /** The score gate refused. Nothing further was spent. */
+  | { kind: 'declined'; scoreDecision: ScoreGateDecision }
+  | { kind: 'identity_not_passed'; status: IdentityStatus }
+  | { kind: 'pending'; detail: string; alert: boolean };
+
+/**
+ * Run the full assessment again for a patient who already has an account.
+ *
+ * The score gate still guards the affordability spend: a band that has
+ * dropped below average risk stops here, and the billable affordability
+ * enquiry is never reached.
+ */
+export async function reassess(
+  deps: ReassessDeps,
+  input: { idNumber: string; declared: DeclaredGross | null },
+): Promise<ReassessResult> {
+  const outcome  = await deps.score(input.idNumber);
+  const decision = decideScoreGate(outcome, deps.preference, deps.cards);
+
+  if (decision.kind === 'decline') return { kind: 'declined', scoreDecision: decision };
+
+  if (!scoreGatePasses(decision)) {
+    const detail = decision.kind === 'pending' ? decision.detail : 'score unavailable';
+    const alert  = decision.kind === 'pending' ? decision.alert : false;
+    return { kind: 'pending', detail, alert };
+  }
+
+  const band = bandFromDecision(decision);
+  if (band === null) return { kind: 'pending', detail: 'no band from a passing score', alert: true };
+
+  const assessment = await gateAffordabilityOnIdentity(
+    { identityStatus: deps.identityStatus, affordability: deps.affordability },
+    { idNumber: input.idNumber, scoreBand: band, declared: input.declared },
+  );
+
+  if (assessment.kind === 'identity_not_passed') return assessment;
+  if (assessment.kind === 'pending')             return assessment;
+
+  return { kind: 'assessed', limit: assessment.limit, band: assessment.band, scoreDecision: decision };
+}
+
+export type PlanRequestOutcome =
+  /** A valid limit is already in force. NO bureau call was made. */
+  | { kind: 'allowed'; limit: number; gate: PlanRequestGate }
+  /** Inside the decline cooldown. NO bureau call was made. */
+  | { kind: 'blocked'; reason: 'cooldown'; until: Date }
+  /** An assessment is in flight. NO bureau call was made. */
+  | { kind: 'pending_assessment' }
+  /** A re-assessment ran. Its result is attached. */
+  | { kind: 'reassessed'; reason: string; result: ReassessResult };
+
+/**
+ * The gate every plan request passes through.
+ *
+ * The common case — a patient with a valid, unexpired limit taking another
+ * plan — returns `allowed` WITHOUT touching `deps`. That is the point: an
+ * individual plan draws against the standing limit and triggers no
+ * assessment. The deps are only reached on a re-assessment trigger, which
+ * is what makes "zero Experian calls on a second plan" testable rather
+ * than merely intended.
+ */
+export async function handlePlanRequest(
+  deps: ReassessDeps,
+  snapshot: AssessmentSnapshot,
+  now: Date,
+  input: {
+    idNumber: string;
+    declared: DeclaredGross | null;
+    requestedIncrease?: boolean;
+    adminTriggered?: boolean;
+    stalenessMonths?: number;
+  },
+): Promise<PlanRequestOutcome> {
+  const gate = gatePlanRequest(snapshot, now, {
+    requestedIncrease: input.requestedIncrease,
+    adminTriggered:    input.adminTriggered,
+    stalenessMonths:   input.stalenessMonths,
+  });
+
+  switch (gate.kind) {
+    case 'allowed':
+      return { kind: 'allowed', limit: gate.limit, gate };
+    case 'blocked':
+      return { kind: 'blocked', reason: 'cooldown', until: gate.until };
+    case 'pending':
+      return { kind: 'pending_assessment' };
+    case 'reassess': {
+      const result = await reassess(deps, { idNumber: input.idNumber, declared: input.declared });
+      return { kind: 'reassessed', reason: gate.reason, result };
+    }
+  }
+}
