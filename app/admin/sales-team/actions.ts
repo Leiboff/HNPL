@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { isValidEmail } from '@/lib/validation/email';
 import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
+import { requireAAL2 } from '@/lib/auth/aal';
 
 // ─── Admin actions: grant / revoke the 'sales' role ──────────────────────
 //
@@ -53,6 +54,11 @@ export async function grantSalesRole(email: string): Promise<{
 }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (CRITICAL tier) — granting the sales role hands out CRM-wide
+  // customer read. Before svc().
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
 
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail || !isValidEmail(cleanEmail)) {
@@ -121,6 +127,10 @@ export async function grantSalesRole(email: string): Promise<{
 export async function revokeSalesRole(userId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (CRITICAL tier) — revoking the sales role. Before svc().
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
 
   const s = svc();
 

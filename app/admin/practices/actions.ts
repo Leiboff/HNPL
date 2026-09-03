@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { isWithinSouthAfrica, SA_BOUNDS } from '@/lib/maps/saBounds';
+import { requireAAL2 } from '@/lib/auth/aal';
 
 // ─── Server-side admin guard ─────────────────────────────────────────────────
 //
@@ -67,6 +68,12 @@ export async function approvePractice(practiceId: string): Promise<{ error: stri
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
+  // AAL2 (standard tier). Merchant approval is one of the seven privileged
+  // operations. Runs BEFORE svc() is constructed — the service-role client
+  // bypasses RLS, so this guard is the only control on the write.
+  const aal = await requireAAL2('standard');
+  if (!aal.ok) return { error: aal.error };
+
   const { error } = await svc()
     .from('practices')
     .update({
@@ -91,6 +98,10 @@ export async function approvePractice(practiceId: string): Promise<{ error: stri
 export async function suspendPractice(practiceId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (standard tier) — merchant suspension. Before svc().
+  const aal = await requireAAL2('standard');
+  if (!aal.ok) return { error: aal.error };
 
   const { error } = await svc()
     .from('practices')

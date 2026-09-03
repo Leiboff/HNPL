@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
+import { requireAAL2 } from '@/lib/auth/aal';
 
 // ─── Platform-admin actions for practice groups (brand layer) ──────────
 //
@@ -54,6 +55,11 @@ export type CreateGroupInput = {
 export async function createGroup(input: CreateGroupInput): Promise<{ groupId: string | null; error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { groupId: null, error: guard.error };
+
+  // AAL2 (CRITICAL tier) — group creation can carry banking details, and a
+  // banking-detail write is a critical operation. Before svc().
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { groupId: null, error: aal.error };
 
   if (!input.name.trim()) return { groupId: null, error: 'Group name is required.' };
 
@@ -109,6 +115,11 @@ export async function updateGroupBanking(input: UpdateGroupBankingInput): Promis
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
+  // AAL2 (CRITICAL tier) — this is the highest-value banking edit on the
+  // platform: one write redirects a whole brand's payouts. Before svc().
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
+
   // The brand-level fallback account: every branch with no banking of its
   // own settles here, so one edit can redirect a whole brand's money.
   // 0131's trigger records the from→to (with the account number reduced to a
@@ -162,6 +173,12 @@ export async function assignPracticeToGroup(practiceId: string, groupId: string)
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
+  // AAL2 (standard tier) — reassigning a practice between brands is a
+  // privileged platform-support write; it changes visibility and banking
+  // fallback but does not itself set an account number. Before svc().
+  const aal = await requireAAL2('standard');
+  if (!aal.ok) return { error: aal.error };
+
   // Moving a branch between brands moves which group's banking it falls back
   // to, and which brand admins can see it. No UI affordance, called by
   // platform support directly — which is exactly the kind of action that
@@ -195,6 +212,10 @@ export async function grantBrandAdmin(groupId: string, userId: string): Promise<
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
 
+  // AAL2 (CRITICAL tier) — granting privilege. Before svc().
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
+
   // A brand admin can edit their branches' banking, which is why this is in
   // the log. No trigger covers it: practice_group_members is a membership
   // ROW appearing, not a column changing on an existing one.
@@ -223,6 +244,10 @@ export async function grantBrandAdmin(groupId: string, userId: string): Promise<
 export async function revokeBrandAdmin(groupId: string, userId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (CRITICAL tier) — revoking privilege. Before svc().
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
 
   await recordAdminAction({
     actorId:    guard.userId,

@@ -1,5 +1,25 @@
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { getSessionAssurance, SECURITY_CHALLENGE_ROUTE, SECURITY_ENROL_ROUTE } from '@/lib/auth/aal';
+
+// ─── Sign-in step-up (C) ───────────────────────────────────────────────
+//
+// For admin / sales only — the two roles the MFA mandate covers. After a
+// first-factor sign-in their session is aal1. If a second factor CAN raise
+// it (nextLevel === 'aal2', i.e. a verified factor exists) they are sent to
+// the challenge screen; if they have no verified factor at all they are
+// sent to FORCED enrolment. That enrolment route is the only destination an
+// unenrolled privileged user can reach — it is not a general bypass, and it
+// is where they obtain the assurance every privileged operation demands.
+//
+// A session already at aal2 falls straight through to the area redirect.
+// Patient / practice roles never enter this path — the caller only invokes
+// it in the 'admin' and 'sales' switch arms.
+async function stepUpPrivilegedOrRedirect(): Promise<void> {
+  const assurance = await getSessionAssurance();
+  if (assurance.level === 'aal2' && !assurance.malformed) return;
+  redirect(assurance.hasVerifiedFactor ? SECURITY_CHALLENGE_ROUTE : SECURITY_ENROL_ROUTE);
+}
 
 // ─── Post-auth role dispatcher ─────────────────────────────────────────
 //
@@ -61,8 +81,10 @@ export default async function DashboardPage() {
     case 'practice_provider':
       redirect('/provider');
     case 'admin':
+      await stepUpPrivilegedOrRedirect();
       redirect('/admin');
     case 'sales':
+      await stepUpPrivilegedOrRedirect();
       redirect('/crm');
   }
 

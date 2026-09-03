@@ -15,6 +15,16 @@ vi.mock('next/cache', () => ({
 }));
 
 // Session client — used by guardAdmin() to read the caller's role.
+// A fresh-aal2 session so the requireAAL2 guard (added with the privileged
+// MFA work) passes and the success-path assertions still reach the write.
+// The auth-role cases below flip userId/profileRole and refuse earlier, at
+// guardAdmin, before the assurance check.
+const nowSec = () => Math.floor(Date.now() / 1000);
+const freshAmr = () => [
+  { method: 'password', timestamp: nowSec() - 30 },
+  { method: 'mfa/totp', timestamp: nowSec() - 30 },
+];
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: {
@@ -22,6 +32,16 @@ vi.mock('@/lib/supabase/server', () => ({
         data: { user: userId.value ? { id: userId.value } : null },
         error: null,
       }),
+      getClaims: async () => ({
+        data: { claims: { sub: userId.value, aal: 'aal2', amr: freshAmr(), iat: nowSec() } },
+        error: null,
+      }),
+      mfa: {
+        getAuthenticatorAssuranceLevel: async () => ({
+          data: { currentLevel: 'aal2', currentAuthenticationMethods: freshAmr(), nextLevel: 'aal2' },
+          error: null,
+        }),
+      },
     },
     from(_table: string) {
       function selectChain() {
