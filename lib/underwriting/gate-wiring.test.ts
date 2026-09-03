@@ -204,3 +204,24 @@ describe('an assessment already in force is not paid for twice', () => {
     expect(block).toMatch(/!isStale/);
   });
 });
+
+describe('a declined applicant cannot re-buy enquiries from the step they land on', () => {
+  it('runCreditCheck refuses inside the cooldown before spending', () => {
+    // A limit-stage decline leaves the onboarding step unsatisfied, so the
+    // patient lands back on the affordability screen with a working
+    // button. Every tap would otherwise buy another enquiry until the
+    // daily rate limit trips.
+    expect(ONBOARDING).toMatch(/isInCooldown\(existing, new Date\(\)\)/);
+
+    const cooldown = ONBOARDING.indexOf('isInCooldown(existing, new Date())');
+    const spend    = ONBOARDING.indexOf('assessAffordability(');
+    expect(cooldown).toBeGreaterThan(-1);
+    expect(spend).toBeGreaterThan(cooldown);
+  });
+
+  it('and the identity step refuses inside the cooldown before the score call', () => {
+    const GLUE_SRC = read('lib/onboarding/creditAssessment.ts');
+    expect(GLUE_SRC).toMatch(/assessmentPrecheck/);
+    expect(GLUE_SRC).toMatch(/cooldownForIdHash/);
+  });
+});

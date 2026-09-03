@@ -22,7 +22,7 @@ import {
 } from '@/lib/onboarding/creditAssessment';
 import type { ScorecardBand } from '@/lib/underwriting/coefficients';
 import { readSnapshot } from '@/lib/underwriting/assessmentStore';
-import { isStale } from '@/lib/underwriting/assessmentState';
+import { isStale, isInCooldown } from '@/lib/underwriting/assessmentState';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -744,6 +744,22 @@ export async function runCreditCheck(): Promise<ActionResult> {
     };
     const done = await maybeFinalize(loaded.userId, loaded.user, already);
     return { error: null, nextPath: done.nextPath };
+  }
+
+  // ── Inside a decline cooldown? Then spend nothing ────────────────
+  //
+  // A decline at the LIMIT stage (the arithmetic came out under R1,000)
+  // leaves credit_check_status = 'failed', which leaves the onboarding
+  // step unsatisfied — so the patient lands back on this screen with a
+  // working button. Without this check every tap buys another
+  // affordability enquiry until the daily rate limit trips, which is
+  // precisely what the cooldown exists to stop.
+  //
+  // A score-stage decline cannot reach here (identity never started), but
+  // the check is not conditional on which gate refused: the cooldown is a
+  // property of the applicant, not of the stage.
+  if (existing !== null && isInCooldown(existing, new Date())) {
+    return { error: cooldownMessage(new Date(existing.cooldownUntil as string)) };
   }
 
   // ── The ID, and the band the score gate produced ─────────────────
