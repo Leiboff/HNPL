@@ -18,7 +18,7 @@ export function createCsp(nonce: string, isDevelopment: boolean): string {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     "img-src 'self' data: blob: https://*.googleapis.com https://*.gstatic.com https://*.peachpayments.com",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.peachpayments.com https://maps.googleapis.com https://*.didit.me",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.peachpayments.com https://maps.googleapis.com https://places.googleapis.com https://*.didit.me",
     "frame-src 'self' https://*.peachpayments.com https://*.didit.me",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -28,4 +28,9 @@ export function createCsp(nonce: string, isDevelopment: boolean): string {
     "manifest-src 'self'",
     "upgrade-insecure-requests",
   ].join('; ');
+}
+
+/** API responses do not render nonce-bearing HTML, but still pass through the proxy for auth. */
+export function shouldApplyCsp(pathname: string): boolean {
+  return pathname !== '/api' && !pathname.startsWith('/api/');
 }
