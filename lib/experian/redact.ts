@@ -15,6 +15,7 @@
 // last-four form everywhere and no surface leaks a date of birth.
 
 import { maskSaId } from '@/lib/saIdMask';
+import { replaceSaIdsInText } from '@/lib/validation/saId';
 
 /** Elements whose contents are replaced wholesale. */
 const SECRET_ELEMENTS = ['pUsername', 'pPassword'];
@@ -57,15 +58,20 @@ export function redactEnvelope(xml: string | null | undefined): string {
 }
 
 /**
- * Mask any bare 13-digit SA ID appearing in free text — a fault string, an
- * error description, a JSON payload echoed back by the bureau.
+ * Mask any bare SA ID appearing in free text — a fault string, an error
+ * description, a JSON payload echoed back by the bureau.
  *
  * Complements `redactEnvelope`, which only knows about elements it can
  * name. Applied to anything from the wire that reaches a log.
+ *
+ * The 13-digit pattern itself lives in lib/validation/saId.ts, which is
+ * the only place in the tree allowed to spell it out — see
+ * lib/validation/regression.test.ts. This function supplies the masking,
+ * not the definition of an ID's shape.
  */
 export function maskIdsInText(text: string | null | undefined): string {
   if (!text) return '';
-  return text.replace(/\b\d{13}\b/g, (id) => maskSaId(id));
+  return replaceSaIdsInText(text, maskSaId);
 }
 
 /**

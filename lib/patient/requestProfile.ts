@@ -51,7 +51,7 @@ export const getPatientProfileForRequest = cache(async (userId: string) => {
       phone_verified_at, sa_id_number, salary_day, salary_amount,
       credit_check_status, liveness_verified_at, onboarding_completed,
       terms_accepted_at,
-      approved_credit_limit
+      approved_credit_limit, current_credit_assessment_id
     `)
     .eq('id', userId)
     .single();

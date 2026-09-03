@@ -131,3 +131,27 @@ function luhnValid(digits: string): boolean {
   }
   return sum % 10 === 0;
 }
+
+/**
+ * Replace every run of exactly 13 digits in free text.
+ *
+ * ─── WHY THIS LIVES HERE ───────────────────────────────────────────────
+ *
+ * The "13 consecutive digits" pattern is the definition of an SA ID's
+ * shape, and this folder is the only place that definition is allowed to
+ * appear — enforced by regression.test.ts, which scans the whole tree for
+ * the literal. That rule exists so there is one answer to "what does an SA
+ * ID look like" rather than a dozen slightly different regexes.
+ *
+ * The caller that needed this was log redaction: a bureau fault string or
+ * error description can echo the applicant's ID back at us, and it has to
+ * be masked before it reaches a log. That is a legitimate need for the
+ * pattern, so the pattern stays here and the caller passes in what to do
+ * with each match.
+ *
+ * `replace` with a global regex resets lastIndex on completion, so the
+ * module-level literal below carries no state between calls.
+ */
+export function replaceSaIdsInText(text: string, replacer: (id: string) => string): string {
+  return text.replace(/\b\d{13}\b/g, (id) => replacer(id));
+}

@@ -13,7 +13,7 @@ export {
   ZA_NATIONAL_DIGITS,
 } from './phone';
 export type { PhoneNormalizeOptions } from './phone';
-export { validateSaId, saIdDateOfBirth, saIdAge } from './saId';
+export { validateSaId, saIdDateOfBirth, saIdAge, replaceSaIdsInText } from './saId';
 export type { SaIdInvalidReason, SaIdValidation } from './saId';
 export { checkPassword } from './passwordGuard';
 export type { PasswordWeakReason, PasswordCheck } from './passwordGuard';

@@ -1,59 +1,70 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 
-// ─── Stub onboarding scaffolding — isolation + safety invariants ───────
+// ─── Pre-launch scaffolding — pinned ABSENT ────────────────────────────
 //
-// Proves the pre-launch stubs are (1) isolated in one clearly-marked
-// module each, (2) the R5,000 has exactly one source, (3) genuinely
-// swappable (the actions read the modules, never a literal), (4) do no
-// real bureau/liveness/credit work, and (5) never show a balance without
-// the shared test-balance notice.
+// This file used to prove the onboarding stubs were well-isolated,
+// clearly marked and swappable. Both are now gone, and the file's job has
+// inverted: it proves they cannot come back.
+//
+//   • stubLivenessCheck() always returned 'pass' without calling any
+//     provider. Removed when the Didit face match landed.
+//
+//   • stubAffordabilityPolicy() approved an unconditional R5,000 with no
+//     bureau call and no affordability computation of any kind. Its own
+//     banner said to replace the entire module before any real customer
+//     was onboarded. Removed when the assessment pipeline landed.
+//
+// Both are pinned absent for the same reason, and it is the reason the
+// liveness section already gave: a dormant always-approves policy in a
+// lender's onboarding flow is a liability, not an option. Left in the
+// tree it would be one import away from granting R5,000 to anybody, and
+// it would look — to a reader and to a future edit — like a supported
+// fallback rather than a decommissioned stub.
 
 const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
-const ACTIONS  = read('lib/onboarding/actions.ts');
-const AFFORD   = read('lib/underwriting/stubAffordabilityPolicy.ts');
-// Whitespace-collapsed views so phrase checks survive comment line-wraps.
-const AFFORD1  = AFFORD.replace(/\s+/g, ' ');
-const HOME     = read('app/patient/page.tsx');
-const BAL_CARD = read('app/patient/ApprovedBalanceCard.tsx');
-const NOTICE   = read('app/patient/TestBalanceNotice.tsx');
+const ACTIONS = read('lib/onboarding/actions.ts');
+const HOME    = read('app/patient/page.tsx');
 
-describe('affordability — one isolated, clearly-marked stub', () => {
-  it('carries a prominent STUB / not-a-real-assessment warning', () => {
-    expect(AFFORD).toMatch(/STUB/);
-    expect(AFFORD).toMatch(/NOT an NCA affordability assessment/i);
-    expect(AFFORD).toMatch(/NO credit check/i);
-    expect(AFFORD1).toMatch(/replace this entire module.*before/i);
+describe('affordability — the stub is gone, and the real pipeline is wired', () => {
+  it('the stub module no longer exists', () => {
+    expect(existsSync(resolve(ROOT, 'lib/underwriting/stubAffordabilityPolicy.ts'))).toBe(false);
   });
 
-  it('runCreditCheck grants the limit FROM the policy, never a hardcoded amount', () => {
-    expect(ACTIONS).toMatch(/from '@\/lib\/underwriting\/stubAffordabilityPolicy'/);
-    expect(ACTIONS).toMatch(/const decision = stubAffordabilityPolicy\(\)/);
-    // The persisted rands are derived from the policy's cents — no literal.
-    expect(ACTIONS).toMatch(/approved_credit_limit:\s*decision\.limitCents\s*\/\s*100/);
-    expect(ACTIONS).toMatch(/credit_check_status:\s*'passed'/);
-    // A non-approval path exists (proves the decision is load-bearing).
-    expect(ACTIONS).toMatch(/if \(!decision\.approved\)/);
+  it('nothing imports it', () => {
+    const hits: string[] = [];
+    walkSources((rel, src) => {
+      if (/stubAffordabilityPolicy/.test(src)) hits.push(rel);
+    });
+    expect(hits).toEqual([]);
+  });
+
+  it('runCreditCheck calls the real affordability assessment', () => {
+    expect(ACTIONS).toMatch(/assessAffordability\(/);
+    expect(ACTIONS).toMatch(/from '@\/lib\/onboarding\/creditAssessment'/);
+  });
+
+  it('runCreditCheck no longer grants any hardcoded amount', () => {
+    // The limit is whatever the pure calculation returned, persisted by
+    // the store. No literal rand figure appears on this path.
+    expect(ACTIONS).not.toMatch(/approved_credit_limit:\s*\d/);
+    expect(ACTIONS).not.toMatch(/limitCents/);
+  });
+
+  it('the R5,000 test grant appears nowhere in the tree', () => {
+    const hits: string[] = [];
+    walkSources((rel, src) => {
+      if (/\b500_?000\b/.test(src)) hits.push(rel);
+    });
+    expect(hits).toEqual([]);
   });
 });
 
 describe('liveness — NOT a stub, and NOT a separate step', () => {
-  // There used to be a stubLivenessCheck() module here that always
-  // returned 'pass' without calling any provider, gated behind
-  // ENABLE_LIVENESS. Both are gone.
-  //
-  // Liveness is now proven for real, inside the identity step: the Didit
-  // session created there runs passive liveness and face-matches the
-  // selfie against the identity-registry portrait, and its webhook
-  // writes liveness_verified_at only on approval.
-  //
-  // Pinned as absent because a dormant always-passes liveness check in a
-  // lender's onboarding flow is a liability. If it were ever switched on
-  // it would stamp verified on anyone.
-
   it('the stub module no longer exists', () => {
     expect(existsSync(resolve(ROOT, 'lib/onboarding/liveness/stubLivenessCheck.ts'))).toBe(false);
   });
@@ -73,53 +84,64 @@ describe('liveness — NOT a stub, and NOT a separate step', () => {
   });
 });
 
-describe('the R5,000 has exactly ONE source (grep proves no second)', () => {
-  it('500_000 / 500000 appears only in stubAffordabilityPolicy.ts', () => {
-    const hits: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        if (['node_modules', '.next', '.design-sync', '.git'].includes(name)) continue;
-        const full = join(dir, name);
-        if (statSync(full).isDirectory()) { walk(full); continue; }
-        if (!/\.(ts|tsx)$/.test(name) || name.includes('.test.')) continue;
-        const rel = full.slice(ROOT.length + 1).replace(/\\/g, '/');
-        if (/\b500_?000\b/.test(readFileSync(full, 'utf8'))) hits.push(rel);
-      }
-    };
-    walk(join(ROOT, 'lib'));
-    walk(join(ROOT, 'app'));
-    expect(hits).toEqual(['lib/underwriting/stubAffordabilityPolicy.ts']);
+describe('the test-balance notice now tracks whether a limit was assessed', () => {
+  it('renders only when the limit has no backing assessment', () => {
+    // Telling a really-assessed patient that no affordability assessment
+    // has been performed would be a false statement on a money surface.
+    // Deleting it outright would be the opposite problem, because stub-era
+    // limits still exist on real accounts.
+    expect(HOME).toMatch(/approvedLimit != null && !assessed && <TestBalanceNotice \/>/);
+    expect(HOME).toMatch(/const assessed =/);
+    expect(HOME).toMatch(/current_credit_assessment_id/);
   });
-});
 
-describe('adversarial — no real bureau / credit computation', () => {
-  it('the affordability stub makes no network / provider calls and takes no inputs', () => {
-    for (const src of [AFFORD]) {
-      expect(src).not.toMatch(/\bfetch\s*\(/);
-      expect(src).not.toMatch(/https?:\/\//);
-      expect(src).not.toMatch(/\b(axios|XMLHttpRequest)\b/);
-    }
-    // Zero-arg policy — no income/expense inputs are collected to compute from.
-    expect(AFFORD).toMatch(/export function stubAffordabilityPolicy\(\):/);
-  });
-});
-
-describe('test-balance notice — shared, non-dismissable, always with the balance', () => {
-  it('the notice has no dismiss control and no client state', () => {
-    // Look for actual dismiss affordances / interactivity, not the word
-    // "dismiss" in the component's own explanatory comment.
+  it('the notice itself is still non-dismissable where it does apply', () => {
+    const NOTICE = read('app/patient/TestBalanceNotice.tsx');
     expect(NOTICE).not.toMatch(/useState|onClick|<button|'use client'/);
     expect(NOTICE).toMatch(/not real credit/i);
     expect(NOTICE).toMatch(/testing only/i);
   });
+});
 
-  it('the dashboard renders it whenever a limit is set', () => {
-    expect(HOME).toMatch(/import TestBalanceNotice from '\.\/TestBalanceNotice'/);
-    expect(HOME).toMatch(/approvedLimit != null && <TestBalanceNotice \/>/);
+describe('the dashboard shows the full limit alongside what is committed', () => {
+  it('never reduces the displayed limit for a first-timer', () => {
+    // The concurrency rule is spelled out instead, so the figure on the
+    // dashboard agrees with the one quoted at sign-up.
+    expect(HOME).toMatch(/const firstTimer =/);
+    expect(HOME).toMatch(/home-first-timer-caveat/);
+    expect(HOME).toMatch(/\{formatRand\(approvedLimit\)\} limit/);
   });
 
-  it('ApprovedBalanceCard renders it inseparably from the amount', () => {
-    expect(BAL_CARD).toMatch(/import TestBalanceNotice from '\.\/TestBalanceNotice'/);
-    expect(BAL_CARD).toMatch(/<TestBalanceNotice \/>/);
+  it('computes the balance from plans, not a separate scan of payments', () => {
+    // Three definitions of exposure was how the number a patient saw came
+    // to differ from the number that refused them.
+    expect(HOME).toMatch(/availableBalance\(approvedLimit, allPlans\)/);
+    expect(HOME).toMatch(/committedExposure\(allPlans\)/);
   });
 });
+
+/**
+ * Walk every non-test TS/TSX source under lib/ and app/, with COMMENTS
+ * STRIPPED.
+ *
+ * These scans assert that nothing imports the stub and that the R5,000
+ * appears nowhere — claims about code, not about prose. Several files
+ * legitimately discuss the decommissioned stub in their headers (that is
+ * how the decision documents itself), and a raw text scan would count
+ * those as violations, pushing the next person to delete the explanation
+ * rather than the code.
+ */
+function walkSources(visit: (rel: string, src: string) => void): void {
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      if (['node_modules', '.next', '.design-sync', '.git'].includes(name)) continue;
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (!/\.(ts|tsx)$/.test(name) || name.includes('.test.')) continue;
+      const rel = full.slice(ROOT.length + 1).replace(/\\/g, '/');
+      visit(rel, stripComments(readFileSync(full, 'utf8'), { preserveUrls: true, jsxBraces: true }));
+    }
+  };
+  walk(join(ROOT, 'lib'));
+  walk(join(ROOT, 'app'));
+}

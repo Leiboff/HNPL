@@ -49,11 +49,13 @@
 //
 // It is the exposure arithmetic and the refusal, in one place, so the
 // acceptance paths cannot drift. It is NOT underwriting: the limit it
-// enforces is whatever `stubAffordabilityPolicy` granted, and that module's
-// own header is emphatic that it performs no assessment of any kind.
-// Enforcing a stub limit does not make the stub a policy. It does mean that
-// when the stub is replaced, the number the real policy returns starts
-// binding immediately with no further wiring.
+// enforces is whatever the assessment pipeline granted.
+//
+// It used to enforce a stubbed unconditional R5,000 and said so here. That
+// stub is gone; the limit now comes from lib/underwriting/limit.ts via the
+// assessment pipeline, and — exactly as this comment predicted — the number
+// the real policy returns started binding with no further wiring, because
+// the enforcement never cared where the figure came from.
 //
 // FAIL CLOSED ON A NULL LIMIT
 //

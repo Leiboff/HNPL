@@ -1,16 +1,26 @@
 // ─── Test-balance notice — shared, non-dismissable ────────────────────
 //
-// The approved balance shown to patients is a STUBBED test grant (see
-// lib/underwriting/stubAffordabilityPolicy), not real credit and not the
-// result of any affordability assessment. Anywhere the balance is shown,
-// this notice MUST accompany it — so it lives in one shared component
-// that every balance surface renders, rather than copy-pasted markup that
-// could be shown in one place and forgotten in another.
+// ─── WHEN THIS RENDERS, AND WHY IT IS CONDITIONAL NOW ──────────────────
 //
-// It is deliberately a plain server component with NO dismiss control and
-// NO client state: there is no way for a patient to hide it. It renders
-// unconditionally whenever it is mounted; callers mount it exactly when a
-// balance is displayed.
+// It used to render beside EVERY balance, because every balance was a
+// stubbed R5,000 grant with no assessment behind it. That is no longer
+// true: a limit produced by the assessment pipeline is a real
+// affordability decision, and telling that patient "no credit or
+// affordability assessment has been performed" would be a false statement
+// on a money surface.
+//
+// It is not simply deleted either, because limits granted by the old stub
+// still exist on real accounts and are still exactly what this notice
+// says they are.
+//
+// So the callers render it only when the limit has NO backing assessment
+// — `profiles.current_credit_assessment_id IS NULL`. That marker is
+// written by the pipeline and by nothing else, so the notice retires
+// itself account by account as patients are re-assessed, with no flag to
+// remember to flip.
+//
+// Still a plain server component with NO dismiss control and NO client
+// state: where it applies, there is no way for a patient to hide it.
 
 export default function TestBalanceNotice() {
   return (

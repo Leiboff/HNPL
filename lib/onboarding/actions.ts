@@ -8,11 +8,19 @@ import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
-import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
-import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { encryptId, hashIdForLookup, decryptId } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import {
+  gateIdentityOnBureauScore,
+  SCORE_DECLINE_MESSAGE,
+  ASSESSMENT_PENDING_MESSAGE,
+  ASSESSMENT_REVIEW_MESSAGE,
+  cooldownMessage,
+  assessAffordability,
+} from '@/lib/onboarding/creditAssessment';
+import type { ScorecardBand } from '@/lib/underwriting/coefficients';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -30,7 +38,15 @@ import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 type ActionResult =
   | { error: null; nextPath: string }
-  | { error: string; nextPath?: string };
+  /**
+   * `pending` marks a failure that is OURS, not a decision about the
+   * patient — a bureau we could not reach, a timeout, a service that is
+   * not activated. The step is not satisfied and the message is not a
+   * refusal, so the UI renders it as a "try again in a moment" state
+   * rather than in the red error treatment. Getting this wrong tells
+   * someone they were rejected for credit when no such decision exists.
+   */
+  | { error: string; nextPath?: string; pending?: boolean };
 
 function svc() {
   return createServiceClient(
@@ -462,145 +478,221 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
     })
     .eq('id', loaded.userId);
 
-  const { provider, route } = await resolveIdentityRouteForProvider(cleanedId, loaded.userId);
+  // Bound out of `loaded` before the closure below: the narrowing from the
+  // `if (!loaded.ok) return` guard at the top does not survive into a
+  // nested function declaration, so the closure would otherwise see every
+  // field as possibly-undefined.
+  const { userId, claimedFirstName, claimedLastName } = loaded;
 
-  if (route.kind === 'dha') {
-    let session;
-    try {
-      session = await createDhaFaceMatchSession({
-        vendorData:          loaded.userId,
-        callback,
-        portraitImageBase64: route.photoBase64,
+  // ─── The billable identity ceremony, as a callback ───────────────────
+  //
+  // Everything below — the registry lookup AND the Didit face-match
+  // session — costs money per call. It is packaged as a function rather
+  // than run inline so that the score gate can decide whether it happens
+  // at all, and so the not-called guarantee is enforced by the pipeline
+  // instead of by a `return` someone might later move.
+  async function startIdentityCeremony(): Promise<SubmitIdentityResult> {
+    const { provider, route } = await resolveIdentityRouteForProvider(cleanedId, userId);
+
+    if (route.kind === 'dha') {
+      let session;
+      try {
+        session = await createDhaFaceMatchSession({
+          vendorData:          userId,
+          callback,
+          portraitImageBase64: route.photoBase64,
+        });
+      } catch (err) {
+        console.error('[onboarding] DHA session create failed:', err instanceof Error ? err.message : err);
+        return { error: 'Could not start identity verification. Please try again.' };
+      }
+
+      let encrypted: string;
+      let lookupHash: string;
+      try {
+        encrypted  = encryptId(cleanedId);
+        lookupHash = hashIdForLookup(cleanedId);
+      } catch {
+        return { error: 'Encryption error — please contact support.' };
+      }
+
+      const mismatch = givenNamesMismatch(claimedFirstName, route.dhaFirstName)
+        || surnameMismatch(claimedLastName, route.dhaLastName);
+
+      const { error } = await svc()
+        .from('profiles')
+        .update({
+          didit_session_id:                 session.session_id,
+          identity_verification_status:     'pending',
+          identity_verification_path:       'dha',
+          identity_verification_updated_at: new Date().toISOString(),
+          dha_lookup_request_id:            route.requestId ?? null,
+          dha_lookup_outcome_code:          route.outcomeCode,
+          dha_first_name:                   route.dhaFirstName ?? null,
+          dha_last_name:                    route.dhaLastName  ?? null,
+          dha_name_mismatch:                mismatch,
+          identity_verification_provider:   provider,
+          identity_source_offline:          route.sourceOffline ?? null,
+          identity_source_last_updated:     route.sourceLastUpdated ?? null,
+          pending_sa_id_number:             encrypted,
+          pending_sa_id_lookup_hash:        lookupHash,
+        })
+        .eq('id', userId);
+      if (error) return { error: error.message };
+
+      return { error: null, outcome: 'redirect', url: session.url };
+    }
+
+    // The 'ocr_fallback' branch that used to sit here has been REMOVED.
+    //
+    // It called startIdentityVerification() to spin up a document-scan
+    // session whenever the registry failed to answer. That silently
+    // substituted weaker evidence (a selfie matched against a photo of a
+    // plastic card) for stronger evidence (a selfie matched against the
+    // registry's own biometric) — on a vendor timeout, without telling
+    // anyone. Those cases are now { kind: 'review' } with reason
+    // 'registry_unavailable' or 'biometric_image_unusable' and fall
+    // through to the review handler below.
+    //
+    // It also masked bugs: a failure inside the fallback threw over
+    // whatever caused the fallback in the first place, which is exactly
+    // how a missing DIDIT_WORKFLOW_ID came to hide a portrait-resize
+    // failure in production.
+
+    if (route.kind === 'reject') {
+      const now = new Date().toISOString();
+      await svc()
+        .from('profiles')
+        .update({
+          identity_verification_status:     'declined',
+          identity_verification_reason:     route.reason,
+          identity_verification_updated_at: now,
+          // Provenance matters most on a DECLINE: "which source refused
+          // this person, and how current was it" is the first question in
+          // any dispute or complaint.
+          identity_verification_provider:   provider,
+        })
+        .eq('id', userId);
+      return { error: DECLINE_MESSAGE_BY_REASON[route.reason] ?? 'We couldn\'t verify your identity. Please try again.' };
+    }
+
+    if (route.kind === 'review') {
+      const now = new Date().toISOString();
+
+      // Logged at WARN because two of these reasons — registry_unavailable
+      // and biometric_image_unusable — used to complete silently via the
+      // OCR fallback. Now they park a real applicant in a queue, so a rise
+      // in either is an OUTAGE signal, not routine business. Without this
+      // line a provider going down looks like a quiet drop in signups.
+      console.warn('[onboarding] identity routed to review', {
+        userId: userId, provider, reason: route.reason,
       });
-    } catch (err) {
-      console.error('[onboarding] DHA session create failed:', err instanceof Error ? err.message : err);
-      return { error: 'Could not start identity verification. Please try again.' };
+
+      await svc()
+        .from('profiles')
+        .update({
+          identity_verification_status:     'in_review',
+          identity_verification_reason:     route.reason,
+          identity_verification_updated_at: now,
+          identity_verification_provider:   provider,
+          // Record the path even on review: the webhook resolves its
+          // handler from this column, and leaving it NULL would make any
+          // later event for this profile unresolvable.
+          identity_verification_path:       'dha',
+        })
+        .eq('id', userId);
+      return { error: null, outcome: 'review' };
     }
 
-    let encrypted: string;
-    let lookupHash: string;
-    try {
-      encrypted  = encryptId(cleanedId);
-      lookupHash = hashIdForLookup(cleanedId);
-    } catch {
-      return { error: 'Encryption error — please contact support.' };
-    }
-
-    const mismatch = givenNamesMismatch(loaded.claimedFirstName, route.dhaFirstName)
-      || surnameMismatch(loaded.claimedLastName, route.dhaLastName);
-
-    const { error } = await svc()
-      .from('profiles')
-      .update({
-        didit_session_id:                 session.session_id,
-        identity_verification_status:     'pending',
-        identity_verification_path:       'dha',
-        identity_verification_updated_at: new Date().toISOString(),
-        dha_lookup_request_id:            route.requestId ?? null,
-        dha_lookup_outcome_code:          route.outcomeCode,
-        dha_first_name:                   route.dhaFirstName ?? null,
-        dha_last_name:                    route.dhaLastName  ?? null,
-        dha_name_mismatch:                mismatch,
-        identity_verification_provider:   provider,
-        identity_source_offline:          route.sourceOffline ?? null,
-        identity_source_last_updated:     route.sourceLastUpdated ?? null,
-        pending_sa_id_number:             encrypted,
-        pending_sa_id_lookup_hash:        lookupHash,
-      })
-      .eq('id', loaded.userId);
-    if (error) return { error: error.message };
-
-    return { error: null, outcome: 'redirect', url: session.url };
-  }
-
-  // The 'ocr_fallback' branch that used to sit here has been REMOVED.
-  //
-  // It called startIdentityVerification() to spin up a document-scan
-  // session whenever the registry failed to answer. That silently
-  // substituted weaker evidence (a selfie matched against a photo of a
-  // plastic card) for stronger evidence (a selfie matched against the
-  // registry's own biometric) — on a vendor timeout, without telling
-  // anyone. Those cases are now { kind: 'review' } with reason
-  // 'registry_unavailable' or 'biometric_image_unusable' and fall
-  // through to the review handler below.
-  //
-  // It also masked bugs: a failure inside the fallback threw over
-  // whatever caused the fallback in the first place, which is exactly
-  // how a missing DIDIT_WORKFLOW_ID came to hide a portrait-resize
-  // failure in production.
-
-  if (route.kind === 'reject') {
-    const now = new Date().toISOString();
-    await svc()
-      .from('profiles')
-      .update({
-        identity_verification_status:     'declined',
-        identity_verification_reason:     route.reason,
-        identity_verification_updated_at: now,
-        // Provenance matters most on a DECLINE: "which source refused
-        // this person, and how current was it" is the first question in
-        // any dispute or complaint.
-        identity_verification_provider:   provider,
-      })
-      .eq('id', loaded.userId);
-    return { error: DECLINE_MESSAGE_BY_REASON[route.reason] ?? 'We couldn\'t verify your identity. Please try again.' };
-  }
-
-  if (route.kind === 'review') {
-    const now = new Date().toISOString();
-
-    // Logged at WARN because two of these reasons — registry_unavailable
-    // and biometric_image_unusable — used to complete silently via the
-    // OCR fallback. Now they park a real applicant in a queue, so a rise
-    // in either is an OUTAGE signal, not routine business. Without this
-    // line a provider going down looks like a quiet drop in signups.
-    console.warn('[onboarding] identity routed to review', {
-      userId: loaded.userId, provider, reason: route.reason,
+    // route.kind === 'error' — our own request was rejected by DHA. Not a
+    // decision about the applicant: identity_verification_status is left
+    // untouched, deliberately not written as 'declined' or 'in_review'.
+    console.error('[onboarding] ALERT DHA request_error — integration bug, not an applicant decision', {
+      userId: userId, status: route.status, detail: route.detail,
     });
-
-    await svc()
-      .from('profiles')
-      .update({
-        identity_verification_status:     'in_review',
-        identity_verification_reason:     route.reason,
-        identity_verification_updated_at: now,
-        identity_verification_provider:   provider,
-        // Record the path even on review: the webhook resolves its
-        // handler from this column, and leaving it NULL would make any
-        // later event for this profile unresolvable.
-        identity_verification_path:       'dha',
-      })
-      .eq('id', loaded.userId);
-    return { error: null, outcome: 'review' };
+    return { error: 'We could not verify your identity right now. Please try again shortly.' };
   }
 
-  // route.kind === 'error' — our own request was rejected by DHA. Not a
-  // decision about the applicant: identity_verification_status is left
-  // untouched, deliberately not written as 'declined' or 'in_review'.
-  console.error('[onboarding] ALERT DHA request_error — integration bug, not an applicant decision', {
-    userId: loaded.userId, status: route.status, detail: route.detail,
-  });
-  return { error: 'We could not verify your identity right now. Please try again shortly.' };
+  // ─── STEP 1: the bureau score, before anything billable ──────────────
+  //
+  // The cheap gate. A below-average-risk applicant is refused here having
+  // cost one score enquiry, rather than a score PLUS a registry lookup
+  // PLUS a face-match session.
+  //
+  // The ID reaching this point is checksum-valid, belongs to someone 18 or
+  // over, and carries explicit consent recorded a few lines above — but it
+  // is NOT yet confirmed as the applicant's own. That is the deliberate
+  // trade of running the score first, and it means a typo or a fraudulent
+  // registration can put an enquiry footprint on a third party's file.
+  // The checksum check bounds the damage; the remaining exposure is why
+  // the enquiry TYPE matters (see lib/experian/config.ts — there is no
+  // parameter for it on this operation, so it is an Experian account
+  // setting).
+  //
+  // Flag off → no bureau call at all, and the ceremony runs exactly as it
+  // did before this pipeline existed.
+  if (!currentFlags().creditCheck) {
+    return startIdentityCeremony();
+  }
+
+  const scoreGate = await gateIdentityOnBureauScore<SubmitIdentityResult>(
+    { svc: svc(), userId: loaded.userId, idNumber: cleanedId, trigger: 'signup' },
+    startIdentityCeremony,
+  );
+
+  switch (scoreGate.kind) {
+    case 'identity_started':
+      return scoreGate.result;
+
+    case 'declined':
+      // A substantive refusal. The applicant is now in the cooldown, which
+      // recordScore has already written.
+      return { error: SCORE_DECLINE_MESSAGE };
+
+    case 'pending':
+      // We could not get an answer. NOT a refusal: no cooldown, and the
+      // copy says to come back rather than that they were turned down.
+      return {
+        error: scoreGate.decision.kind === 'pending' && scoreGate.decision.review
+          ? ASSESSMENT_REVIEW_MESSAGE
+          : ASSESSMENT_PENDING_MESSAGE,
+      };
+
+    case 'blocked':
+      return { error: cooldownMessage(scoreGate.until) };
+  }
 }
 
 // ─── runCreditCheck (affordability step) ───────────────────────────────
 //
-// Integration seam. The pass/fail decision AND the granted limit come
-// from ONE isolated policy module — lib/underwriting/stubAffordabilityPolicy
-// — which currently STUBS an unconditional R5,000 grant with no bureau
-// call and no affordability computation (see that module's banner). A real
-// underwriting integration replaces that module; this action needs no
-// change because it already persists whatever the policy returns.
+// Steps 3-6 of the assessment: the declared income already collected on
+// the salary step, then the BILLABLE affordability enquiry, then the pure
+// limit calculation, then persistence.
 //
-// On approval we persist BOTH:
-//   • approved_credit_limit  (rands = limitCents/100) — the granted test
-//     balance the dashboard reads. Written via service-role so the 0065
-//     column-lock permits it. The amount is NEVER hardcoded here — it is
-//     read from the policy's limitCents.
-//   • credit_check_status='passed' — satisfies the onboarding step.
-// A non-approval (the stub never returns one today, but the real policy
-// will) records 'failed' and does not advance — proving the decision is
-// genuinely load-bearing and swappable.
+// The stub this replaces (lib/underwriting/stubAffordabilityPolicy) granted
+// an unconditional R5,000 with no bureau call and no assessment of any
+// kind. Its own banner said to replace the whole module before any real
+// customer was onboarded; it is now unreferenced by any production path.
+//
+// ─── WHAT GUARDS THE SPEND ─────────────────────────────────────────────
+//
+// Two gates, both upstream and both already passed by the time a patient
+// reaches this screen:
+//
+//   • the SCORE gate, at the identity step — a below-average-risk
+//     applicant never got a Didit session, let alone this
+//   • IDENTITY, re-read here rather than assumed. The onboarding step
+//     order makes it true in practice; `gateAffordabilityOnIdentity`
+//     checks it anyway, because "two gates disagree about whether you may
+//     borrow" is how F-05 turned into a financial hole.
+//
+// ─── THE THREE OUTCOMES ────────────────────────────────────────────────
+//
+// approved  limit persisted, step satisfied, onboarding advances
+// declined  a substantive refusal — cooldown set, step marked failed
+// pending   we could not reach the bureau. NOT a refusal: no cooldown, no
+//           limit cleared, step left unsatisfied so the patient can retry.
+//           The copy says so.
 
 export async function runCreditCheck(): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
@@ -608,19 +700,15 @@ export async function runCreditCheck(): Promise<ActionResult> {
 
   // ── Rate limit (audit A-11's second half) ────────────────────────
   //
-  // Today this calls stubAffordabilityPolicy and costs nothing, which is
-  // exactly why the limit goes in NOW: the stub is a placeholder for a
-  // credit-bureau call that bills per enquiry, and the surface that spends
-  // real money at a vendor should not acquire its first limiter on the same
-  // day it acquires the cost.
+  // This surface now genuinely bills per call, which is what the limiter
+  // was put here in anticipation of. A patient needs one check; the
+  // retries a real person makes are for a failed lookup, not for a second
+  // opinion — and a second opinion is exactly what an unlimited endpoint
+  // would let them shop for, since the policy is not deterministic.
   //
-  // A patient needs one check. The retries a real person makes are for a
-  // failed lookup, not for a second opinion — and a second opinion is what
-  // an unlimited endpoint would let them shop for, since the policy that
-  // replaces the stub will not be deterministic.
-  //
-  // Placed after the profile load so the account key is a real user id, and
-  // before the flag check so a flag flip cannot uncover an unlimited path.
+  // Placed after the profile load so the account key is a real user id,
+  // and before the flag check so a flag flip cannot uncover an unlimited
+  // path.
   if (!await consumeAll('credit_check', [
     [await clientIp(),  RATE_LIMITS.credit_check.ip],
     [loaded.userId,     RATE_LIMITS.credit_check.account!],
@@ -633,28 +721,82 @@ export async function runCreditCheck(): Promise<ActionResult> {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  const decision = stubAffordabilityPolicy();
-  const now = new Date().toISOString();
+  // ── The ID, and the band the score gate produced ─────────────────
+  //
+  // sa_id_number is written by the identity webhook on approval, so its
+  // presence is itself evidence identity passed. It is stored encrypted;
+  // the plaintext never leaves this function except into the SOAP body.
+  const state = await svc()
+    .from('profiles')
+    .select('sa_id_number, liveness_verified_at, scorecard_band, salary_amount')
+    .eq('id', loaded.userId)
+    .maybeSingle();
 
-  if (!decision.approved) {
-    await svc()
-      .from('profiles')
-      .update({ credit_check_status: 'failed', credit_check_completed_at: now })
-      .eq('id', loaded.userId);
-    return { error: 'We could not approve an amount right now.' };
+  const row = state.data as {
+    sa_id_number: string | null;
+    liveness_verified_at: string | null;
+    scorecard_band: string | null;
+    salary_amount: number | string | null;
+  } | null;
+
+  if (!row?.sa_id_number) {
+    // No verified identity on file. Not a decline — the patient simply is
+    // not at this step yet.
+    return { error: 'Please finish verifying your identity first.' };
   }
 
-  const { error } = await svc()
-    .from('profiles')
-    .update({
-      // Granted test balance — amount comes from the policy, not a literal.
-      approved_credit_limit:     decision.limitCents / 100,
-      credit_check_status:       'passed',
-      credit_check_completed_at: now,
-    })
-    .eq('id', loaded.userId);
-  if (error) return { error: error.message };
+  let idNumber: string;
+  try {
+    idNumber = decryptId(row.sa_id_number);
+  } catch {
+    console.error('[onboarding] ALERT could not decrypt a stored SA ID for affordability', {
+      userId: loaded.userId,
+    });
+    return { error: ASSESSMENT_PENDING_MESSAGE, pending: true };
+  }
 
+  // The band the score produced at the identity step. Absent only if the
+  // score never ran (flag flipped on mid-journey) — treated as thin file,
+  // which caps rather than refuses.
+  const band = (row.scorecard_band as ScorecardBand | null) ?? 'thin_file';
+
+  // Declared gross, from the salary step. It can only ever LOWER the
+  // limit, and it is never sent to Experian — see the affordability
+  // client's header.
+  const declaredIncome = row.salary_amount === null ? null : Number(row.salary_amount);
+
+  const result = await assessAffordability(
+    { svc: svc(), userId: loaded.userId, idNumber, trigger: 'signup' },
+    {
+      scoreDecision: null,
+      band,
+      // Read, not assumed. Both columns are written by the webhook on
+      // approval, in one update — the same pair lib/onboarding/state.ts
+      // treats as "identity satisfied".
+      identityStatus: async () =>
+        row.sa_id_number && row.liveness_verified_at ? 'passed' : 'pending',
+      declaredIncomeRands: declaredIncome !== null && Number.isFinite(declaredIncome)
+        ? declaredIncome
+        : null,
+    },
+  );
+
+  if (result.kind === 'identity_not_passed') {
+    return { error: 'Please finish verifying your identity first.' };
+  }
+
+  if (result.kind === 'pending') {
+    // A bureau we could not reach. The step stays unsatisfied so the
+    // patient can retry, and neither the copy nor the treatment says they
+    // were refused.
+    return { error: ASSESSMENT_PENDING_MESSAGE, pending: true };
+  }
+
+  if (result.limit.decision === 'declined') {
+    return { error: SCORE_DECLINE_MESSAGE };
+  }
+
+  // assessAffordability has already written the limit and the log row.
   const nextProfile: ProfileForOnboarding = {
     ...loaded.profile,
     credit_check_status: 'passed',
@@ -662,13 +804,6 @@ export async function runCreditCheck(): Promise<ActionResult> {
   const finalize = await maybeFinalize(loaded.userId, loaded.user, nextProfile);
   return { error: null, nextPath: finalize.nextPath };
 }
-
-// ─── refreshOnboardingState ───────────────────────────────────────────
-//
-// The phone step uses the existing `verifyPhoneOtpForUser` RPC to set
-// phone_verified_at. That code path doesn't know about the onboarding
-// finalize helper, so after a successful OTP the client calls THIS
-// action to re-run maybeFinalize and get its next redirect target.
 
 export async function refreshOnboardingState(): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();

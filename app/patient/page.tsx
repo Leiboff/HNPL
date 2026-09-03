@@ -142,6 +142,18 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
   // not move it — the whole amount is released when the plan completes.
   const available = approvedLimit != null ? availableBalance(approvedLimit, allPlans) : 0;
   const used = approvedLimit != null ? committedExposure(allPlans) : 0;
+
+  // Was this limit produced by the assessment pipeline, or granted by the
+  // pre-launch stub? The marker is written by the pipeline and by nothing
+  // else, so the test-balance notice retires itself account by account.
+  const assessed = (profile?.current_credit_assessment_id as string | null | undefined) != null;
+
+  // A patient who has never COMPLETED a plan may hold only one at a time,
+  // whatever the headroom says. Gated on completion specifically: a
+  // defaulted or cancelled first plan does not earn the multi-plan
+  // privilege. Mirrors isBlockedFromNewPlan and the check inside
+  // claim_credit_for_plan.
+  const firstTimer = !allPlans.some((p) => p.status === 'completed');
   const usedPct = approvedLimit && approvedLimit > 0 ? Math.min(100, Math.max(0, (used / approvedLimit) * 100)) : 0;
 
   const effectiveDate = (p: UpcomingPayment): string => p.next_attempt_date ?? p.due_date;
@@ -267,6 +279,19 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
           <p className="mt-[10px] text-[13px] tabular-nums" style={{ color: 'rgba(255,255,255,.6)' }}>
             {formatRand(used)} in use · {formatRand(approvedLimit)} limit
           </p>
+          {firstTimer && (
+            // The FULL limit stays on screen above. Showing a first-timer a
+            // reduced figure would hide what they actually qualified for
+            // and disagree with what they were told at sign-up, so the
+            // constraint is spelled out instead.
+            <p
+              className="mt-[10px] text-[13px]"
+              style={{ color: 'rgba(255,255,255,.6)' }}
+              data-testid="home-first-timer-caveat"
+            >
+              You can hold one plan at a time until your first is paid off.
+            </p>
+          )}
         </div>
       ) : (
         <p className="mt-[22px] text-[14px]" style={{ color: 'rgba(255,255,255,.7)' }}>
@@ -280,10 +305,13 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
     <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
 
-        {/* Test-balance notice — MUST accompany the balance hero above.
-            Shown whenever a limit is set (the balance is a stubbed test
-            grant, not real credit). Shared, non-dismissable component. */}
-        {approvedLimit != null && <TestBalanceNotice />}
+        {/* Test-balance notice — MUST accompany the balance hero above,
+            but ONLY for a limit with no assessment behind it. Telling a
+            really-assessed patient that no affordability assessment has
+            been performed would be a false statement on a money surface;
+            omitting it for a stub-era limit would be the opposite
+            problem. See TestBalanceNotice's header. */}
+        {approvedLimit != null && !assessed && <TestBalanceNotice />}
 
         {welcome === '1' && <PatientWelcomeBanner firstName={firstName} />}
 
