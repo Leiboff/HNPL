@@ -76,7 +76,7 @@ describe('[named 11] the sign-in step-up fires for admin/sales only', () => {
 });
 
 describe('[named 11] the RLS backstop restricts only payout tables', () => {
-  const mig = read('supabase/migrations/0139_privileged_aal2_backstop.sql');
+  const mig = read('supabase/migrations/0141_privileged_aal2_backstop.sql');
 
   it('adds RESTRICTIVE policies on payouts and payout_batches only', () => {
     const restrictive = [...mig.matchAll(/AS RESTRICTIVE/gi)];

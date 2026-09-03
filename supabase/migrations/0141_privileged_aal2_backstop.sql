@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────
--- 0139  Privileged MFA / AAL2 — database backstop, audit surface, factor
+-- 0141  Privileged MFA / AAL2 — database backstop, audit surface, factor
 --        snapshot for the scheduled diff.
 --
 -- Companion to the application guard in lib/auth/aal.ts. The app guard is
@@ -26,9 +26,11 @@
 --     platform admin updating a payout — pass unchanged. service_role
 --     bypasses RLS, so the cron settlement/insert paths are unaffected.
 --
--- NOT APPLIED TO PRODUCTION. This file is produced for review and for the
--- test suite (pglite) to apply. Apply it through the normal migration
--- pipeline.
+-- Numbered 0141 to sit after production's 0139/0140 (unique_verified_phone,
+-- verified_phone_unique_index), which are not yet mirrored in this repo —
+-- see the reconciliation note below. Applied to production on 2026-09-03 via
+-- the Supabase MCP; the schema_migrations version row was reconciled from the
+-- MCP's timestamp to 0141 so a future `supabase db push` does not re-run it.
 -- ─────────────────────────────────────────────────────────────────────
 
 
@@ -81,6 +83,9 @@ CREATE OR REPLACE FUNCTION public.session_meets_aal2(max_age interval)
 RETURNS boolean
 LANGUAGE sql
 STABLE
+-- Pinned search_path: the body calls only pg_catalog builtins, so this is
+-- safe and satisfies the function_search_path_mutable linter.
+SET search_path = pg_catalog
 AS $$
   WITH claims AS (
     SELECT nullif(current_setting('request.jwt.claims', true), '')::jsonb AS c
