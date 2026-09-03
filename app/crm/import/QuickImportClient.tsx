@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { buildQuickTemplateCsv, type QuickRowError } from '@/lib/crm/quickImportCsv';
-import { xlsxToCsv, isExcelFile } from '@/lib/crm/xlsxToCsv';
+import { readCsvFile } from '@/lib/crm/csvUpload';
 import { previewQuickImport, commitQuickImport, type QuickPreviewRow } from './quickActions';
 
 // ─── Quick import: name + specialty + neighbourhood only ─────────────
@@ -29,23 +29,15 @@ export default function QuickImportClient() {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   function onFile(f: File) {
-    if (isExcelFile(f)) {
-      // xlsxToCsv now REFUSES an oversized workbook and one that disturbs
-      // Object.prototype while parsing (see that file for why the parser
-      // needs watching). Both arrive as a thrown WorkbookRejectedError with
-      // copy meant for this banner — previously any parse failure rejected
-      // an unhandled promise and the file simply appeared to do nothing.
-      f.arrayBuffer()
-        .then(buf => { setCsvText(xlsxToCsv(buf)); setMsg(null); })
-        .catch((err: unknown) => setMsg({
+    readCsvFile(f)
+      .then(text => { setCsvText(text); setMsg(null); })
+      .catch((err: unknown) => {
+        setCsvText('');
+        setMsg({
           kind: 'err',
-          text: err instanceof Error ? err.message : 'We couldn\'t read that spreadsheet.',
-        }));
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => setCsvText(String(reader.result ?? ''));
-    reader.readAsText(f);
+          text: err instanceof Error ? err.message : 'We couldn\'t read that CSV file.',
+        });
+      });
   }
 
   function doPreview() {
@@ -94,8 +86,8 @@ export default function QuickImportClient() {
             <p className="text-xs text-gray-500 mt-1">
               Columns: name, specialty, location (e.g. &quot;Springs, Springs, Gauteng&quot;). Any other column
               (like a &quot;page&quot; number) is ignored. Location is geocoded to an approximate neighbourhood
-              centre, not a precise street address — good enough to plot leads on the map today. Accepts
-              .csv or .xlsx/.xls (only the first sheet of a workbook is read).
+              centre, not a precise street address — good enough to plot leads on the map today. Export
+              spreadsheets as CSV before uploading.
             </p>
           </div>
           <button
@@ -109,7 +101,7 @@ export default function QuickImportClient() {
 
         <input
           type="file"
-          accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+          accept=".csv,text/csv"
           onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }}
           className="block text-xs text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#13294B] file:text-white file:px-3 file:py-2 file:text-xs file:font-medium file:cursor-pointer"
         />

@@ -62,6 +62,14 @@ vi.mock('next/headers', () => ({
   }),
 }));
 
+// This suite owns the action's local public-lead bucket assertions. The
+// durable limiter has dedicated database tests and is allowed here so the
+// CRM-shaped service mock cannot accidentally intercept its RPC.
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 vi.mock('next/cache', () => ({
   revalidatePath: () => { /* no-op in tests */ },
 }));

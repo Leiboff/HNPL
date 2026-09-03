@@ -51,6 +51,11 @@ vi.mock('@/lib/supabase/server', () => ({
   })),
 }));
 
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 beforeEach(() => {
   process.env.SA_ID_ENCRYPTION_KEY  = randomBytes(32).toString('base64');
   process.env.SA_ID_LOOKUP_HMAC_KEY = randomBytes(32).toString('base64');

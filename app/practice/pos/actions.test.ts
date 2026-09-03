@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
 import { randomBytes } from 'crypto';
 
 // ─── issueCounterSession — POS/counter bill issuance (device-gated) ────

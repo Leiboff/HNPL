@@ -28,6 +28,7 @@
 
 import webpush from 'web-push';
 import { createClient } from '@supabase/supabase-js';
+import { isAllowedPushEndpoint } from './pushEndpoint';
 
 // ─── Notification type taxonomy ──────────────────────────────────────────
 //
@@ -160,6 +161,22 @@ export async function sendPushToUser(
   // Fan out in parallel. Each send is independent; one failure must
   // not block another patient device receiving the same payload.
   await Promise.all(rows.map(async (sub) => {
+    // Re-check at the sink. This prevents legacy rows written before endpoint
+    // validation (or rows inserted outside the route) from issuing arbitrary
+    // outbound requests. Retire them without ever handing the URL to web-push.
+    if (!isAllowedPushEndpoint(sub.endpoint)) {
+      await svc
+        .from('push_subscriptions')
+        .update({ deleted_at: nowIso })
+        .eq('id', sub.id);
+      result.retired += 1;
+      console.warn('[push] retired subscription with an untrusted endpoint', {
+        userId,
+        subscriptionId: sub.id,
+      });
+      return;
+    }
+
     try {
       await webpush.sendNotification(
         {
@@ -185,7 +202,7 @@ export async function sendPushToUser(
       result.failed += 1;
       console.warn('[push] send failed', {
         userId,
-        endpoint: sub.endpoint.slice(0, 60),
+        subscriptionId: sub.id,
         status,
         message: (err as Error).message,
       });
