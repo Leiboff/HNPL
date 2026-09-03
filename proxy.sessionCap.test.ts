@@ -78,12 +78,16 @@ describe('proxy absolute session cap responses', () => {
   });
 
   it('does not mistake an API fetch for a document navigation', async () => {
-    const response = await proxy(new NextRequest('https://example.test/api/orders', {
+    const request = new NextRequest('https://example.test/api/orders', {
       headers: {
-        accept: 'application/json',
-        'sec-fetch-mode': 'cors',
+        accept: 'text/html',
       },
-    }));
+    });
+    // happy-dom strips Fetch Metadata from RequestInit, so model the header
+    // that arrives at the Next.js proxy by setting it on the request directly.
+    request.headers.set('sec-fetch-mode', 'cors');
+
+    const response = await proxy(request);
 
     expect(response.status).toBe(401);
     expect(response.headers.get('location')).toBeNull();

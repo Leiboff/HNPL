@@ -44,8 +44,11 @@ export async function proxy(request: NextRequest) {
   const acceptsHtml = request.headers.get('accept')
     ?.split(',')
     .some((value) => value.trim().split(';', 1)[0] === 'text/html') ?? false;
-  const isDocumentNavigation = request.headers.get('sec-fetch-mode') === 'navigate'
-    || ((request.method === 'GET' || request.method === 'HEAD') && acceptsHtml);
+  const fetchMode = request.headers.get('sec-fetch-mode');
+  const isDocumentNavigation = fetchMode === 'navigate'
+    || (fetchMode === null
+      && (request.method === 'GET' || request.method === 'HEAD')
+      && acceptsHtml);
 
   // A fresh unpredictable nonce per HTML request is the prerequisite for a
   // strict CSP. Next reads this request header while rendering and applies
