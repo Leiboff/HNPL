@@ -87,12 +87,24 @@ export async function proxy(request: NextRequest) {
       console.error('[proxy] session-cap revocation failed', err);
     }
 
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = '/login';
-    loginUrl.search = '';
-    loginUrl.searchParams.set('reason', SESSION_CAP_REDIRECT_REASON);
-
-    const capped = NextResponse.redirect(loginUrl);
+    let capped: NextResponse;
+    if (isApiRoute) {
+      // A fetch follows redirects without navigating the document. Returning
+      // the login page here would therefore turn an expired API session into
+      // HTML (or a 405 for POSTs), which callers may mistake for a transient
+      // network or JSON-decoding failure. Give every API method an explicit,
+      // machine-readable authentication failure instead.
+      capped = NextResponse.json(
+        { error: 'unauthenticated', reason: SESSION_CAP_REDIRECT_REASON },
+        { status: 401 },
+      );
+    } else {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = '/login';
+      loginUrl.search = '';
+      loginUrl.searchParams.set('reason', SESSION_CAP_REDIRECT_REASON);
+      capped = NextResponse.redirect(loginUrl);
+    }
     if (csp) capped.headers.set('Content-Security-Policy', csp);
 
     // Delete on the RESPONSE we are actually returning: signOut's own
