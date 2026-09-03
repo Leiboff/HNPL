@@ -11,6 +11,7 @@ import {
   issueConsentToken,
   TERMS_CONSENT_COOKIE,
 } from '@/lib/legal/consentToken';
+import { createCsp } from '@/lib/security/csp';
 
 // ─── Where the legal acceptance token is minted (audit A-14) ───────────────
 //
@@ -34,13 +35,21 @@ const CONSENT_TOKEN_PATHS = new Set([
 ]);
 
 export async function proxy(request: NextRequest) {
+  // A fresh unpredictable nonce per HTML request is the prerequisite for a
+  // strict CSP. Next reads this request header while rendering and applies
+  // the nonce to its framework scripts automatically.
+  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+  const csp = createCsp(nonce, process.env.NODE_ENV === 'development');
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-pathname', request.nextUrl.pathname);
+  requestHeaders.set('x-nonce', nonce);
+  requestHeaders.set('Content-Security-Policy', csp);
 
   // Save reference so we can read its cookies after updateSession may refresh them.
   const modifiedRequest = new NextRequest(request, { headers: requestHeaders });
   const { response, user, supabase } = await updateSession(modifiedRequest);
   response.headers.set('x-pathname', request.nextUrl.pathname);
+  response.headers.set('Content-Security-Policy', csp);
 
   // ── Absolute session cap ─────────────────────────────────────────────
   // Enforced HERE, on the server, and not in the client: the whole value
@@ -73,6 +82,7 @@ export async function proxy(request: NextRequest) {
     loginUrl.searchParams.set('reason', SESSION_CAP_REDIRECT_REASON);
 
     const capped = NextResponse.redirect(loginUrl);
+    capped.headers.set('Content-Security-Policy', csp);
 
     // Delete on the RESPONSE we are actually returning: signOut's own
     // cookie writes landed on `response`, which this branch discards.
@@ -201,6 +211,12 @@ export const config = {
     // auth cookies attached to the response — the browser scopes
     // SW registrations to origin, and a Set-Cookie on the SW body
     // bytes could nudge a confused cache state.
-    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.webmanifest|sw\\.js|icon-\\d+\\.png|icon-maskable\\.png|apple-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    {
+      source: '/((?!api|_next/static|_next/image|favicon\\.ico|manifest\\.webmanifest|sw\\.js|icon-\\d+\\.png|icon-maskable\\.png|apple-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+      missing: [
+        { type: 'header', key: 'next-router-prefetch' },
+        { type: 'header', key: 'purpose', value: 'prefetch' },
+      ],
+    },
   ],
 };

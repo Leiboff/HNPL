@@ -62,6 +62,11 @@ export const viewport: Viewport = {
   colorScheme: "light",
 };
 
+// proxy.ts supplies a fresh CSP nonce for every document request. Nonces are
+// only applied during dynamic rendering, so the root layout must not be
+// statically generated.
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: Readonly<{

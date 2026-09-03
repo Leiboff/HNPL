@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { extractSuburbLabel } from '@/lib/maps/reverseGeocode';
+import { clientIp, consumeAll, RATE_LIMITS } from '@/lib/security/rateLimit';
 
 export const runtime = 'nodejs';
 
@@ -19,11 +20,9 @@ export const runtime = 'nodejs';
 //     returns nothing in POI-sparse suburbs — most residential SA.
 //     The Geocoding API returns address components for ANY coord.
 //
-// The route is auth-gated (only signed-in patients) and rate-limited
-// per user (in-memory, per-instance, best-effort — the sole purpose
-// is to damp a runaway client, not to be a true edge rate limit).
-// Google itself rate-limits at the key level; the app's upstream
-// 5-second timeout in ChangeLocationSheet caps concurrency naturally.
+// The route is auth-gated and uses the shared Postgres limiter, keyed by
+// both account and IP. This is billable server-side traffic: a process-local
+// Map is not an abuse control on a horizontally scaling serverless runtime.
 //
 // Contract with the client:
 //   • 200 { label: string | null }
@@ -40,34 +39,7 @@ export const runtime = 'nodejs';
 
 const GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
 
-// Per-user in-memory limiter. Vercel serverless instances are ephemeral
-// and don't share state — this is per-instance, best-effort, and only
-// meaningful as protection against a single misbehaving client. If
-// abuse patterns emerge, replace with Upstash / Redis. Keep the values
-// generous enough that the legitimate flow (a patient picking a couple
-// of locations while exploring) never trips it.
-const RATE_LIMIT_MAX       = 30;
-const RATE_LIMIT_WINDOW_MS = 5 * 60_000;
-const rateBuckets = new Map<string, number[]>();
-
-function consumeRateBudget(userId: string, now: number): boolean {
-  const cutoff = now - RATE_LIMIT_WINDOW_MS;
-  const existing = rateBuckets.get(userId) ?? [];
-  const fresh = existing.filter((t) => t > cutoff);
-  if (fresh.length >= RATE_LIMIT_MAX) {
-    rateBuckets.set(userId, fresh);
-    return false;
-  }
-  fresh.push(now);
-  rateBuckets.set(userId, fresh);
-  return true;
-}
-
-// Exported for the unit test's between-test cleanup — production code
-// doesn't touch this.
-export function __resetRateBucketsForTests(): void {
-  rateBuckets.clear();
-}
+const GOOGLE_TIMEOUT_MS = 5_000;
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const supabase = await createClient();
@@ -87,7 +59,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'invalid_params' }, { status: 400 });
   }
 
-  if (!consumeRateBudget(user.id, Date.now())) {
+  if (!await consumeAll('reverse_geocode', [
+    [await clientIp(), RATE_LIMITS.reverse_geocode.ip],
+    [user.id,           RATE_LIMITS.reverse_geocode.account!],
+  ])) {
     return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
   }
 
@@ -99,7 +74,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const url = `${GEOCODE_URL}?latlng=${encodeURIComponent(lat)},${encodeURIComponent(lng)}&key=${encodeURIComponent(apiKey)}`;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS) });
     if (!res.ok) {
       console.warn('[reverse-geocode] non-2xx from Geocoding API', { status: res.status });
       return NextResponse.json({ label: null });

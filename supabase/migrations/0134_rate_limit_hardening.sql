@@ -65,7 +65,8 @@ AS $$
     'pay_saved_card',
     'self_settle',
     'counter_session',
-    'credit_check'
+    'credit_check',
+    'reverse_geocode'
   );
 $$;
 
