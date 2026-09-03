@@ -18,6 +18,11 @@ vi.mock('@/lib/payments/provider', () => ({
 
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 // Session client — only used for auth.getUser in this action.
 const sessionUser: { value: { id: string } | null } = { value: null };
 vi.mock('@/lib/supabase/server', () => ({

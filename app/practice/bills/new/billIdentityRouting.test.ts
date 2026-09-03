@@ -34,6 +34,11 @@ let emailOwner: Account | null = null;
 const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
 const emailsSent: Array<{ kind: string; to: string }> = [];
 
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 vi.mock('@/lib/practice/tradingGate', () => ({
   checkTradingGate: vi.fn(async () => ({ ok: true })),
   PENDING_APPROVAL_MESSAGE: 'x',

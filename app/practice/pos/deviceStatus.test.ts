@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 // ─── redeemDeviceRegistrationCode + checkDeviceStatus ──────────────────────
 //
 // redeemDeviceRegistrationCode: TS-level format validation + error mapping

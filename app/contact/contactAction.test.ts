@@ -51,6 +51,14 @@ vi.mock('next/headers', () => ({
   }),
 }));
 
+// The assertions in this file exercise the action's local contact bucket.
+// Shared Postgres limiter behavior is covered by lib/security; allow it here
+// so the email/validation fixture does not need a second database client.
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 import { submitContactEnquiry } from './contactAction';
 import { resetForTests, CONTACT_RATE_LIMIT_MAX } from '@/lib/contact/contactRateLimit';
 import { SUPPORT_EMAIL } from '@/lib/config/contact';

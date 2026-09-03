@@ -33,6 +33,11 @@ const db: { row: Row; updateError: unknown; inserts: Record<string, unknown>[] }
 
 vi.mock('next/headers', () => ({ cookies: async () => ({ set: vi.fn() }) }));
 
+vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
+  ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
+}));
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ auth: { signUp: signUpSpy } }),
 }));

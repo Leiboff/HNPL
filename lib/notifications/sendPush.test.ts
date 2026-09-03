@@ -102,8 +102,8 @@ beforeEach(() => {
 describe('sendPushToUser — preference respect (master switch governs ALL types)', () => {
   it('does NOT send when ALL subs are soft-deleted (toggle off)', async () => {
     stubSubs = [
-      { id: 's1', user_id: 'user-1', endpoint: 'https://fcm/x', p256dh: 'p1', auth: 'a1', deleted_at: '2026-06-18T00:00:00Z' },
-      { id: 's2', user_id: 'user-1', endpoint: 'https://fcm/y', p256dh: 'p2', auth: 'a2', deleted_at: '2026-06-18T00:00:00Z' },
+      { id: 's1', user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/x', p256dh: 'p1', auth: 'a1', deleted_at: '2026-06-18T00:00:00Z' },
+      { id: 's2', user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/y', p256dh: 'p2', auth: 'a2', deleted_at: '2026-06-18T00:00:00Z' },
     ];
 
     const result = await sendPushToUser('user-1', { type: 'payment', title: 't', body: 'b' });
@@ -114,8 +114,8 @@ describe('sendPushToUser — preference respect (master switch governs ALL types
 
   it('sends to active subs and ignores soft-deleted ones at the same time', async () => {
     stubSubs = [
-      { id: 'live',  user_id: 'user-1', endpoint: 'https://fcm/a', p256dh: 'p1', auth: 'a1', deleted_at: null },
-      { id: 'dead',  user_id: 'user-1', endpoint: 'https://fcm/b', p256dh: 'p2', auth: 'a2', deleted_at: '2026-06-18T00:00:00Z' },
+      { id: 'live',  user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/a', p256dh: 'p1', auth: 'a1', deleted_at: null },
+      { id: 'dead',  user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/b', p256dh: 'p2', auth: 'a2', deleted_at: '2026-06-18T00:00:00Z' },
     ];
     sendNotificationMock.mockResolvedValue({});
 
@@ -132,7 +132,7 @@ describe('sendPushToUser — preference respect (master switch governs ALL types
     // just no payment messages — that's the whole point of the
     // generalisation.
     stubSubs = [
-      { id: 'off', user_id: 'user-1', endpoint: 'https://fcm/x', p256dh: 'p', auth: 'a', deleted_at: '2026-06-18T00:00:00Z' },
+      { id: 'off', user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/x', p256dh: 'p', auth: 'a', deleted_at: '2026-06-18T00:00:00Z' },
     ];
 
     const r1 = await sendPushToUser('user-1', { type: 'payment', title: 'p', body: 'p' });
@@ -148,7 +148,7 @@ describe('sendPushToUser — preference respect (master switch governs ALL types
     // The SW can read `type` from the JSON payload — important for
     // future per-category styling without a protocol change.
     stubSubs = [
-      { id: 'live', user_id: 'user-1', endpoint: 'https://fcm/a', p256dh: 'p', auth: 'a', deleted_at: null },
+      { id: 'live', user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/a', p256dh: 'p', auth: 'a', deleted_at: null },
     ];
     sendNotificationMock.mockResolvedValue({});
 
@@ -164,7 +164,7 @@ describe('sendPushToUser — preference respect (master switch governs ALL types
 describe('sendPushToUser — retire on 410 Gone', () => {
   it('soft-deletes a sub whose endpoint returns 410', async () => {
     stubSubs = [
-      { id: 'gone', user_id: 'user-1', endpoint: 'https://fcm/x', p256dh: 'p', auth: 'a', deleted_at: null },
+      { id: 'gone', user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/x', p256dh: 'p', auth: 'a', deleted_at: null },
     ];
     sendNotificationMock.mockRejectedValueOnce({ statusCode: 410, message: 'Gone' });
 
@@ -178,7 +178,7 @@ describe('sendPushToUser — retire on 410 Gone', () => {
 
   it('does NOT soft-delete on a transient 5xx', async () => {
     stubSubs = [
-      { id: 'flaky', user_id: 'user-1', endpoint: 'https://fcm/x', p256dh: 'p', auth: 'a', deleted_at: null },
+      { id: 'flaky', user_id: 'user-1', endpoint: 'https://fcm.googleapis.com/fcm/send/x', p256dh: 'p', auth: 'a', deleted_at: null },
     ];
     sendNotificationMock.mockRejectedValueOnce({ statusCode: 502, message: 'Bad Gateway' });
 
@@ -186,5 +186,17 @@ describe('sendPushToUser — retire on 410 Gone', () => {
 
     expect(result.failed).toBe(1);
     expect(stubSubs[0].deleted_at).toBeNull();
+  });
+
+  it('retires a legacy untrusted endpoint without making an outbound request', async () => {
+    stubSubs = [
+      { id: 'legacy-ssrf', user_id: 'user-1', endpoint: 'https://10.0.0.7/internal', p256dh: 'p', auth: 'a', deleted_at: null },
+    ];
+
+    const result = await sendPushToUser('user-1', { type: 'account', title: 't', body: 'b' });
+
+    expect(sendNotificationMock).not.toHaveBeenCalled();
+    expect(result.retired).toBe(1);
+    expect(stubSubs[0].deleted_at).not.toBeNull();
   });
 });

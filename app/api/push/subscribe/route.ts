@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { isAllowedPushEndpoint } from '@/lib/notifications/pushEndpoint';
 
 // ─── POST /api/push/subscribe ────────────────────────────────────────────
 //
@@ -41,6 +42,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (!body?.endpoint || !body?.keys?.p256dh || !body?.keys?.auth) {
+    return NextResponse.json({ error: 'invalid_subscription' }, { status: 400 });
+  }
+
+  // This value is not trustworthy merely because PushManager normally
+  // creates it. Direct API callers can supply any URL, and sendPushToUser
+  // later performs a server-side request to it. Only browser push providers
+  // we explicitly support may cross that outbound trust boundary.
+  if (!isAllowedPushEndpoint(body.endpoint)) {
     return NextResponse.json({ error: 'invalid_subscription' }, { status: 400 });
   }
 

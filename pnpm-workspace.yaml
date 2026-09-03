@@ -29,8 +29,7 @@ allowBuilds:
 #
 # Five more of the same shape, none of them shipped. They are pinned for
 # one reason only: a `pnpm audit` that is permanently noisy is a report
-# nobody reads, and the runtime advisory that DOES matter (`xlsx`) needs to
-# be the thing that stands out in it.
+# nobody reads, so every remaining report continues to stand out.
 #
 #   brace-expansion  four DoS advisories, reached via
 #                    eslint-config-next → eslint → minimatch. Two major
@@ -47,14 +46,9 @@ allowBuilds:
 #                    Windows dev only.
 #   browserslist     ReDoS, via next's build chain
 #
-# What is NOT here, deliberately: `xlsx`. It is a RUNTIME dependency with
-# two high advisories, SheetJS left npm at 0.20, and the fixed builds are
-# on the vendor's CDN only — repointing a dependency at a non-registry URL
-# is a supply-chain decision for a human, not something to slip into an
-# overrides block. lib/crm/xlsxToCsv.ts bounds it (workbook size cap, and
-# a refusal on any workbook that disturbs Object.prototype) and the caller
-# must already hold a sales session. The open decision is: accept the CDN
-# pin, or move the read path to `exceljs`, which needs only sheet-to-CSV.
+# The former `xlsx` runtime dependency is intentionally absent. Its fixed
+# builds are not on npm; CRM imports accept CSV instead of trusting the
+# vulnerable registry release or adding a vendor CDN supply-chain source.
 overrides:
   nanoid: ^3.3.18
   postcss: ^8.5.23

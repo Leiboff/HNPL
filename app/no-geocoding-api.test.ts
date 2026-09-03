@@ -154,6 +154,10 @@ describe('Places API (New) — wired in the right places, no server-side key lea
       // (GOOGLE_PLACES_SERVER_KEY), never the browser one.
       'lib/crm/localityGeocode.ts',
       'lib/crm/localityGeocode.test.ts',
+      // CSP must name the browser Places origin explicitly; this is a
+      // connect-src permission, not another API call implementation.
+      'lib/security/csp.ts',
+      'lib/security/csp.test.ts',
     ]);
     for (const f of files) {
       expect(ALLOWED.has(f)).toBe(true);
