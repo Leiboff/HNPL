@@ -251,3 +251,124 @@ export async function assessAffordability(
 
   return result;
 }
+
+// ─── The plan-request entry point ──────────────────────────────────────
+//
+// Called before a plan is claimed. In the overwhelmingly common case — a
+// patient with a valid, unexpired limit taking another plan — it makes NO
+// bureau call and returns immediately. That is the point of a standing
+// limit: individual plans draw against it, they do not re-buy it.
+//
+// The billable path is reached only on a re-assessment trigger, and the
+// score gate still guards the affordability spend inside it, so a patient
+// whose band has dropped is refused having spent one enquiry rather than
+// two.
+
+import { handlePlanRequest } from '@/lib/underwriting/pipeline';
+import { scoreFamily as _scoreFamily } from '@/lib/experian/config';
+
+export type AssessmentCurrency =
+  | { ok: true; limit: number | null; reassessed: boolean }
+  | { ok: false; error: string };
+
+/**
+ * Make sure the patient's limit is current enough to lend against.
+ *
+ * `requestedIncrease` and `adminTriggered` force a re-assessment even on a
+ * valid limit — they are the other two triggers, sharing this one path.
+ */
+export async function ensureAssessmentCurrent(
+  ctx: AssessmentContext,
+  opts: { requestedIncrease?: boolean; adminTriggered?: boolean; declaredIncomeRands?: number | null } = {},
+): Promise<AssessmentCurrency> {
+  const now = ctx.now ?? new Date();
+
+  const snapshot = await readSnapshot(ctx.svc, ctx.userId);
+  if (snapshot === null) {
+    // Could not read the patient's state. Not permission to proceed — the
+    // same posture the exposure read takes, for the same reason.
+    return { ok: false, error: ASSESSMENT_PENDING_MESSAGE };
+  }
+
+  const declared = opts.declaredIncomeRands ?? null;
+
+  const outcome = await handlePlanRequest(
+    {
+      score:          (id) => getPersonScore(id),
+      affordability:  (id) => doAffordability(id),
+      identityStatus: async () => {
+        const row = await ctx.svc
+          .from('profiles')
+          .select('sa_id_number, liveness_verified_at')
+          .eq('id', ctx.userId)
+          .maybeSingle();
+        const p = row.data as { sa_id_number: string | null; liveness_verified_at: string | null } | null;
+        return p?.sa_id_number && p.liveness_verified_at ? 'passed' : 'pending';
+      },
+      preference: scorecardPreference(),
+      cards:      _scoreFamily().cards,
+    },
+    snapshot,
+    now,
+    {
+      idNumber: ctx.idNumber,
+      declared: declared !== null && declared > 0 ? declaredGross(declared) : null,
+      requestedIncrease: opts.requestedIncrease,
+      adminTriggered:    opts.adminTriggered,
+    },
+  );
+
+  switch (outcome.kind) {
+    case 'allowed':
+      return { ok: true, limit: outcome.limit, reassessed: false };
+
+    case 'blocked':
+      return { ok: false, error: cooldownMessage(outcome.until) };
+
+    case 'pending_assessment':
+      return { ok: false, error: ASSESSMENT_PENDING_MESSAGE };
+
+    case 'reassessed': {
+      const r = outcome.result;
+
+      if (r.kind === 'declined') {
+        await persist(ctx, {
+          scoreDecision: r.scoreDecision, resolution: null, limit: null, declaredIncome: declared,
+        });
+        return { ok: false, error: SCORE_DECLINE_MESSAGE };
+      }
+
+      if (r.kind === 'identity_not_passed') {
+        return { ok: false, error: 'Please finish verifying your identity first.' };
+      }
+
+      if (r.kind === 'pending') {
+        await persist(ctx, {
+          scoreDecision: null,
+          resolution: { kind: 'pending', detail: r.detail, alert: r.alert },
+          limit: null,
+          declaredIncome: declared,
+        });
+        return { ok: false, error: ASSESSMENT_PENDING_MESSAGE };
+      }
+
+      // Assessed. Persist whatever it decided — including a decline, which
+      // sets the cooldown and clears the stale limit.
+      await persist(ctx, {
+        scoreDecision:  r.scoreDecision,
+        resolution:     null,
+        limit:          r.limit,
+        declaredIncome: declared,
+      });
+
+      if (r.limit.decision === 'declined') {
+        return { ok: false, error: SCORE_DECLINE_MESSAGE };
+      }
+
+      // A REDUCED limit is fine here. Plans already in flight keep running
+      // against the limit they were written under; the new figure binds
+      // this request and the ones after it.
+      return { ok: true, limit: r.limit.limit, reassessed: true };
+    }
+  }
+}

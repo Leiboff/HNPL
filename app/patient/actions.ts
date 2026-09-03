@@ -5,6 +5,8 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
+import { ensureAssessmentCurrent } from '@/lib/onboarding/creditAssessment';
+import { decryptId } from '@/lib/idEncryption';
 import { declineCheckoutSessionsForPlan } from '@/lib/checkout/declineCheckoutSessions';
 import { calculatePaymentDates } from '@/lib/finance';
 import { getPaymentProvider } from '@/lib/payments/provider';
@@ -98,6 +100,52 @@ async function requireOnboarded(
     reason: 'not_onboarded',
     href:   '/onboarding',
   };
+}
+
+/**
+ * Re-assess the patient's limit if it has gone stale, before a plan is
+ * claimed against it.
+ *
+ * Decrypts the stored SA ID only when a re-assessment might actually be
+ * needed — the plaintext never leaves this call except into the SOAP body.
+ * A profile with no verified ID cannot be re-assessed, and is left to the
+ * onboarding gate above rather than refused here.
+ */
+async function ensureLimitCurrentForPlan(
+  patientId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const privileged = svc();
+
+  const { data } = await privileged
+    .from('profiles')
+    .select('sa_id_number, salary_amount')
+    .eq('id', patientId)
+    .maybeSingle();
+
+  const row = data as { sa_id_number: string | null; salary_amount: number | string | null } | null;
+  if (!row?.sa_id_number) return { ok: true };   // requireOnboarded already covers this
+
+  let idNumber: string;
+  try {
+    idNumber = decryptId(row.sa_id_number);
+  } catch {
+    console.error('[patient] ALERT could not decrypt a stored SA ID for the staleness check', {
+      patientId,
+    });
+    // Cannot verify currency. Refusing every plan on a key problem would
+    // be worse than proceeding against the limit already on file, which
+    // was itself written by a real assessment.
+    return { ok: true };
+  }
+
+  const declared = row.salary_amount === null ? null : Number(row.salary_amount);
+
+  const result = await ensureAssessmentCurrent(
+    { svc: privileged, userId: patientId, idNumber, trigger: 'staleness' },
+    { declaredIncomeRands: Number.isFinite(declared as number) ? declared as number : null },
+  );
+
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 async function isBlockedFromNewPlan(patientId: string): Promise<boolean> {
@@ -214,6 +262,28 @@ export async function acceptPlan(
   }
 
   const totalAmount = Number(plan.total_amount);
+
+  // ─── Staleness gate: re-assess before approving, never refuse ────────
+  //
+  // Bureau data ages. `Bureau_Expenses` is a snapshot taken at assessment
+  // and cannot include what the patient has taken on since — least of all
+  // plans with other BNPL providers, most of whom do not report on the
+  // traditional monthly cadence.
+  //
+  // In the common case this makes NO bureau call at all: a patient with a
+  // valid, unexpired limit is waved through immediately, because an
+  // individual plan draws against a standing limit rather than re-buying
+  // it. The billable path is reached only when the limit has actually aged
+  // out, and the score gate still guards the affordability spend inside
+  // it.
+  //
+  // An expired limit is a re-assessment, NOT a decline. A patient whose
+  // limit aged out has not been judged a bad risk; they have been judged a
+  // while ago.
+  if (currentFlags().creditCheck) {
+    const staleness = await ensureLimitCurrentForPlan(user.id);
+    if (!staleness.ok) return { error: staleness.error };
+  }
 
   // ─── The claim: decide and write in ONE transaction ──────────────
   //
