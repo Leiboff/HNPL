@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
+import { requireAAL2 } from '@/lib/auth/aal';
 
 // ─── Settlement actions ─────────────────────────────────────────────────────
 //
@@ -44,6 +45,12 @@ async function guardAdmin() {
 export async function markBatchPaid(batchId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (CRITICAL tier) — payout settlement moves money and is
+  // irreversible, so a factor presented within 5 minutes is required, not
+  // merely an aal2 session from earlier in the day.
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
 
   const { data: batch } = await guard.supabase!
     .from('payout_batches')
@@ -101,6 +108,10 @@ export async function markBatchPaid(batchId: string): Promise<{ error: string | 
 export async function markPayoutPaid(payoutId: string): Promise<{ error: string | null }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (CRITICAL tier) — payout settlement. See markBatchPaid.
+  const aal = await requireAAL2('critical');
+  if (!aal.ok) return { error: aal.error };
 
   const { data: payout } = await guard.supabase!
     .from('payouts')

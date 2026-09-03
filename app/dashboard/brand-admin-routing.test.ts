@@ -64,10 +64,18 @@ describe('Dispatcher — brand-admin membership check', () => {
     expect(DISPATCHER).not.toMatch(/branches?\.length/);
   });
 
-  it('patient / provider / admin routing is unchanged', () => {
+  it('patient / provider routing is unchanged', () => {
     expect(DISPATCHER).toMatch(/case 'patient':\s*redirect\('\/patient'\)/);
     expect(DISPATCHER).toMatch(/case 'practice_provider':\s*redirect\('\/provider'\)/);
-    expect(DISPATCHER).toMatch(/case 'admin':\s*redirect\('\/admin'\)/);
+  });
+
+  it('admin still routes to /admin, now behind the MFA step-up', () => {
+    // The privileged-MFA work inserts a sign-in step-up before the area
+    // redirect for admin (and sales): an aal2-fresh session falls through
+    // to /admin, an aal1 one is diverted to /security. Patient / provider
+    // are untouched — the step-up is only in the admin and sales arms.
+    expect(DISPATCHER).toMatch(/case 'admin':\s*await stepUpPrivilegedOrRedirect\(\);\s*redirect\('\/admin'\)/);
+    expect(DISPATCHER).toMatch(/case 'sales':\s*await stepUpPrivilegedOrRedirect\(\);\s*redirect\('\/crm'\)/);
   });
 });
 

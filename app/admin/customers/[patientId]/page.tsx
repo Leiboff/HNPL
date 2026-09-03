@@ -14,6 +14,7 @@ import {
 } from '../../_lib/standing';
 import AdminNotes from '../../_components/AdminNotes';
 import { decryptIdForDisplay } from '@/lib/idEncryption';
+import { requireAAL2Page } from '@/lib/auth/requireAAL2Page';
 import { maskSaId } from '@/lib/saIdMask';
 
 // ─── /admin/customers/[patientId] ───────────────────────────────────────────
@@ -175,6 +176,10 @@ export default async function CustomerDetailPage({
     else if (profile?.role === 'practice_provider')                                   redirect('/provider');
     else                                                                              redirect('/login');
   }
+
+  // AAL2 (standard tier) — customer-PII access. After the role gate, before
+  // the patient record (SA ID, contact, plans, cards) is read.
+  await requireAAL2Page('standard');
 
   // ── 1. Patient profile (the customer being viewed) ──────────────────────
   const { data: patientRaw } = await supabase

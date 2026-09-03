@@ -5,6 +5,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { attemptChargeInstalment } from '@/lib/payments/chargeInstalment';
 import { recordAdminAttempt } from '@/app/admin/_lib/adminAudit';
+import { requireAAL2 } from '@/lib/auth/aal';
 
 // ─── Admin "retry now" for a single installment ─────────────────────────────
 //
@@ -28,6 +29,11 @@ export async function retryCollection(
 ): Promise<{ error: string | null; outcome?: string }> {
   const guard = await guardAdmin();
   if (!guard.ok) return { error: guard.error };
+
+  // AAL2 (standard tier) — admin-initiated collection retry fires a card
+  // charge. Before the service-role client is constructed.
+  const aal = await requireAAL2('standard');
+  if (!aal.ok) return { error: aal.error };
 
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

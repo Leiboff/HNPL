@@ -16,6 +16,10 @@
     {
       "path": "/api/cron/rls-drift",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/mfa-factor-audit",
+      "schedule": "0 3 * * *"
     }
   ]
 }

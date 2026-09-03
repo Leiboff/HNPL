@@ -176,6 +176,12 @@ const BROWSER_CALLABLE_FUNCTIONS = new Set([
   // Added by 0129: the single definition of CRM lead visibility, used inside
   // every crm_* child policy, so it must stay executable by the querying role.
   'crm_can_see_lead',
+  // Added by 0139: a read-only snapshot of auth.mfa_factors for the MFA
+  // factor-audit cron. Self-scoped — its body returns rows only to a
+  // platform admin or service_role — so an authenticated grant is a
+  // deliberate decision, not an accidental widening. The cron calls it as
+  // service_role; the authenticated grant lets a platform admin inspect.
+  'mfa_factor_snapshot',
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────

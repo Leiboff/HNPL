@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
+import { requireAAL2Page } from '@/lib/auth/requireAAL2Page';
 import { formatRand, formatDateStr } from '../_lib/format';
 import {
   computeReliability,
@@ -79,6 +80,14 @@ export default async function AdminCustomersPage({
     else if (profile?.role === 'practice_provider')                                   redirect('/provider');
     else                                                                              redirect('/login');
   }
+
+  // AAL2 (standard tier) — customer-PII access. Runs AFTER the role gate,
+  // BEFORE any customer data is read, and redirects an unassured admin to
+  // /security rather than rendering the list. Standard (not critical) tier:
+  // browsing customer records is ordinary support work and a 5-minute
+  // re-challenge on page reads would be unworkable; the money-moving and
+  // privilege-granting operations carry the critical tier instead.
+  await requireAAL2Page('standard');
 
   const params = await searchParams;
   const q      = sanitizeQ(params.q);

@@ -132,6 +132,11 @@ const NOT_YET_CONVERTED = [
   'app/practice/setup/SetupForm.tsx',
   'app/practices/PublicLeadForm.tsx',
   'app/provider/setup/page.tsx',
+  // MFA enrolment / step-up. Manages its own busy flag around the direct
+  // browser calls to supabase.auth.mfa.* (enroll/challenge/verify/unenroll),
+  // several of which end in window.location.href rather than a re-render —
+  // the auth-shaped case that must NOT be forced onto useTransition.
+  'app/security/SecurityClient.tsx',
 ] as const;
 
 function walk(dir: string, out: string[] = []): string[] {

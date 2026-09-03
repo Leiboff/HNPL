@@ -25,6 +25,7 @@
 import { revalidatePath } from 'next/cache';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { requireAAL2 } from '@/lib/auth/aal';
 
 // AUTHZ POSTURE NOTE (2026-06-22, fix 0054):
 //   changePracticeFeePercent's UPDATE of practices.fee_percent now
@@ -104,6 +105,10 @@ export async function changePracticeFeePercent(
 
   const { user, supabase, error } = await guardAdmin();
   if (error || !user || !supabase) return { ok: false, error: 'Unauthorized' };
+
+  // AAL2 (standard tier) — fee change. Before svc().
+  const aal = await requireAAL2('standard');
+  if (!aal.ok) return { ok: false, error: aal.error };
 
   // Read the current value to record the from→to delta in the audit
   // log. If the row doesn't exist, bail without writing.

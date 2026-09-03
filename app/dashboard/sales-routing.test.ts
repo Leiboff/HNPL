@@ -27,10 +27,21 @@ type ProfileFixture = {
 const state: {
   user: { id: string; email: string | null } | null;
   profile: ProfileFixture | null;
+  // Assurance for the sign-in step-up. Defaults to aal2-fresh so the
+  // role-routing assertions below exercise the routing, not the step-up.
+  assurance: { level: 'aal1' | 'aal2'; hasVerifiedFactor: boolean; malformed: string | null };
 } = {
   user: { id: 'user-sales', email: 'steve@x.com' },
   profile: { role: 'sales' },
+  assurance: { level: 'aal2', hasVerifiedFactor: true, malformed: null },
 };
+
+// The AAL2 guard the dashboard consults for the admin/sales step-up.
+vi.mock('@/lib/auth/aal', () => ({
+  getSessionAssurance: async () => state.assurance,
+  SECURITY_CHALLENGE_ROUTE: '/security?step=challenge',
+  SECURITY_ENROL_ROUTE: '/security?step=enrol',
+}));
 
 // Mock next/navigation.redirect so we can capture what path was
 // chosen. redirect() is expected to throw in real Next; we mimic that
@@ -92,6 +103,7 @@ beforeEach(() => {
   redirectCalls.length = 0;
   state.user    = { id: 'user-sales', email: 'steve@x.com' };
   state.profile = { role: 'sales' };
+  state.assurance = { level: 'aal2', hasVerifiedFactor: true, malformed: null };
 });
 
 async function callDashboard(): Promise<void> {
@@ -129,6 +141,22 @@ describe('/dashboard dispatcher — sales', () => {
     state.profile = { role: 'patient' };
     await callDashboard();
     expect(redirectCalls).toContain('/patient');
+  });
+
+  it('routes an aal1 sales user with a factor to the step-up challenge, not /crm', async () => {
+    state.profile = { role: 'sales' };
+    state.assurance = { level: 'aal1', hasVerifiedFactor: true, malformed: null };
+    await callDashboard();
+    expect(redirectCalls).toContain('/security?step=challenge');
+    expect(redirectCalls).not.toContain('/crm');
+  });
+
+  it('routes an aal1 admin with NO factor into forced enrolment, not /admin', async () => {
+    state.profile = { role: 'admin' };
+    state.assurance = { level: 'aal1', hasVerifiedFactor: false, malformed: null };
+    await callDashboard();
+    expect(redirectCalls).toContain('/security?step=enrol');
+    expect(redirectCalls).not.toContain('/admin');
   });
 });
 
