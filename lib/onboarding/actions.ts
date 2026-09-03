@@ -21,6 +21,8 @@ import {
   assessAffordability,
 } from '@/lib/onboarding/creditAssessment';
 import type { ScorecardBand } from '@/lib/underwriting/coefficients';
+import { readSnapshot } from '@/lib/underwriting/assessmentStore';
+import { isStale } from '@/lib/underwriting/assessmentState';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -719,6 +721,29 @@ export async function runCreditCheck(): Promise<ActionResult> {
   if (!currentFlags().creditCheck) {
     // Flag off — should be unreachable but never fail on it.
     return { error: null, nextPath: '/onboarding' };
+  }
+
+  // ── Already assessed? Then do not pay for it again ───────────────
+  //
+  // A refresh, a back-button, or a double tap would otherwise spend a
+  // second billable enquiry to re-derive a limit we already hold. The
+  // rate limiter bounds that at five a day; this makes the common case
+  // cost nothing at all.
+  //
+  // Only a CURRENT approval short-circuits. A stale one falls through and
+  // is re-assessed, and a declined or pending one is not an assessment to
+  // reuse.
+  const existing = await readSnapshot(svc(), loaded.userId);
+  if (existing !== null
+      && existing.status === 'active'
+      && existing.limit !== null
+      && !isStale(existing, new Date())) {
+    const already: ProfileForOnboarding = {
+      ...loaded.profile,
+      credit_check_status: 'passed',
+    };
+    const done = await maybeFinalize(loaded.userId, loaded.user, already);
+    return { error: null, nextPath: done.nextPath };
   }
 
   // ── The ID, and the band the score gate produced ─────────────────

@@ -176,3 +176,31 @@ describe('pending never becomes a decline in the wiring', () => {
     expect(pendingBranch).not.toMatch(/AUTH_ERROR_CLS/);
   });
 });
+
+describe('an assessment already in force is not paid for twice', () => {
+  it('runCreditCheck short-circuits on a current approval', () => {
+    // A refresh or a double tap would otherwise spend a second billable
+    // enquiry to re-derive a limit already on file.
+    expect(ONBOARDING).toMatch(/readSnapshot\(svc\(\), loaded\.userId\)/);
+    expect(ONBOARDING).toMatch(/existing\.status === 'active'/);
+    expect(ONBOARDING).toMatch(/!isStale\(existing, new Date\(\)\)/);
+  });
+
+  it('the short-circuit happens BEFORE the affordability call', () => {
+    const guard = ONBOARDING.indexOf("existing.status === 'active'");
+    const spend = ONBOARDING.indexOf('assessAffordability(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(spend).toBeGreaterThan(guard);
+  });
+
+  it('a stale or declined assessment is NOT reused', () => {
+    // Only a current approval short-circuits; everything else falls
+    // through to a real assessment.
+    const block = ONBOARDING.slice(
+      ONBOARDING.indexOf('const existing = await readSnapshot'),
+      ONBOARDING.indexOf('assessAffordability('),
+    );
+    expect(block).toMatch(/existing\.limit !== null/);
+    expect(block).toMatch(/!isStale/);
+  });
+});
