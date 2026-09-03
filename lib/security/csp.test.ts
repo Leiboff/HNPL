@@ -19,6 +19,14 @@ describe('createCsp', () => {
     expect(createCsp('nonce-for-test', true)).toContain("'unsafe-eval'");
   });
 
+  it('allows client-side requests to the Google Places API', () => {
+    const connectSrc = createCsp('nonce-for-test', false)
+      .split('; ')
+      .find((directive) => directive.startsWith('connect-src '));
+
+    expect(connectSrc?.split(' ')).toContain('https://places.googleapis.com');
+  });
+
   it('wires the nonce into the proxy request and response, and forces dynamic rendering', () => {
     const proxy = read('proxy.ts');
     const layout = read('app/layout.tsx');
