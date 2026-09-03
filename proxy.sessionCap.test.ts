@@ -56,4 +56,36 @@ describe('proxy absolute session cap responses', () => {
       `https://example.test/login?reason=${SESSION_CAP_REDIRECT_REASON}`,
     );
   });
+
+  it.each([
+    [
+      'link navigation',
+      '/api/crm/gmail/connect',
+      { accept: 'text/html,application/xhtml+xml' },
+    ],
+    [
+      'OAuth callback',
+      '/api/crm/gmail/callback?code=oauth-code',
+      { accept: 'text/html,application/xhtml+xml' },
+    ],
+  ])('keeps the login redirect for an API route used as a %s', async (_case, path, headers) => {
+    const response = await proxy(new NextRequest(`https://example.test${path}`, { headers }));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe(
+      `https://example.test/login?reason=${SESSION_CAP_REDIRECT_REASON}`,
+    );
+  });
+
+  it('does not mistake an API fetch for a document navigation', async () => {
+    const response = await proxy(new NextRequest('https://example.test/api/orders', {
+      headers: {
+        accept: 'application/json',
+        'sec-fetch-mode': 'cors',
+      },
+    }));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('location')).toBeNull();
+  });
 });
