@@ -979,18 +979,61 @@ function computeWebhookUrl(request: NextRequest): string | null {
   return `${proto}://${host}${pathname}`;
 }
 
+const MAX_CONFIG_WEBHOOK_BODY_BYTES = 16_384;
+
+type BoundedBody =
+  | { ok: true; body: string }
+  | { ok: false };
+
+async function readBodyWithByteLimit(request: NextRequest, limit: number): Promise<BoundedBody> {
+  if (!request.body) return { ok: true, body: '' };
+
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let body = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      bytesRead += value.byteLength;
+      if (bytesRead > limit) {
+        // Stop asking the runtime for more chunks as soon as the cap is
+        // crossed. In particular, do not decode or retain the excess chunk.
+        await reader.cancel().catch(() => undefined);
+        return { ok: false };
+      }
+      body += decoder.decode(value, { stream: true });
+    }
+    body += decoder.decode();
+    return { ok: true, body };
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function POST(request: NextRequest) {
   const contentType = (request.headers.get('content-type') ?? '').toLowerCase();
-  const contentLength = Number(request.headers.get('content-length') ?? '0');
+  const isJson = contentType.includes('application/json');
+  const contentLengthHeader = request.headers.get('content-length');
+  const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
   // The only JSON delivery Peach sends is a small registration handshake.
-  // Reject large JSON before reading it so the unsigned probe branch cannot
-  // become a log- or memory-amplification endpoint.
-  if (contentType.includes('application/json') && (!Number.isFinite(contentLength) || contentLength > 16_384)) {
+  // Content-Length is only an early rejection optimization: the streaming
+  // read below enforces the cap when it is missing or understated.
+  if (isJson && contentLength !== null && (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > MAX_CONFIG_WEBHOOK_BODY_BYTES)) {
     return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
   }
-  const body = await request.text();
-  if (contentType.includes('application/json') && Buffer.byteLength(body, 'utf8') > 16_384) {
-    return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+  let body: string;
+  if (isJson) {
+    const result = await readBodyWithByteLimit(request, MAX_CONFIG_WEBHOOK_BODY_BYTES);
+    if (!result.ok) {
+      return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+    }
+    body = result.body;
+  } else {
+    body = await request.text();
   }
 
   // ── (1) Verification / initial configuration probe ──────────────
@@ -999,7 +1042,7 @@ export async function POST(request: NextRequest) {
   // carries the verification code the merchant must paste back into
   // the Dashboard to complete registration. Signature MAY be missing
   // (the merchant has not yet configured HMAC signing at this point).
-  if (contentType.includes('application/json')) {
+  if (isJson) {
     const parsed = parseConfigWebhookBody(body);
     if (!parsed) {
       // JSON claimed by content-type but body doesn't parse. Not a

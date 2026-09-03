@@ -118,6 +118,36 @@ function makeJsonRequest(body: string, headers: Record<string, string> = {}): Ne
   });
 }
 
+function makeStreamingJsonRequest(
+  chunks: string[],
+  headers: Record<string, string> = {},
+  onPull?: (index: number) => void,
+): NextRequest {
+  const encoder = new TextEncoder();
+  let index = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      onPull?.(index);
+      if (index === chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(chunks[index++]));
+    },
+  });
+
+  const init = {
+    method: 'POST',
+    body,
+    duplex: 'half' as const,
+    headers: {
+      'content-type': 'application/json',
+      ...headers,
+    },
+  };
+  return new NextRequest(WEBHOOK_URL, init);
+}
+
 function makeFormRequest(body: string, headers: Record<string, string> = {}): NextRequest {
   return new NextRequest(WEBHOOK_URL, {
     method:  'POST',
@@ -184,6 +214,31 @@ describe('POST /api/payments/peach/webhook — JSON verification probe', () => {
     expect(res.status).toBe(413);
     expect(logSpy).not.toHaveBeenCalled();
     logSpy.mockRestore();
+  });
+
+  it('stops streaming an oversized JSON body when Content-Length is missing', async () => {
+    const pulled: number[] = [];
+    const req = makeStreamingJsonRequest(
+      ['x'.repeat(10_000), 'x'.repeat(7_000), 'must-not-be-read'],
+      {},
+      (index) => pulled.push(index),
+    );
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(413);
+    expect(pulled).not.toContain(2);
+  });
+
+  it('enforces the streaming byte cap when Content-Length is understated', async () => {
+    const req = makeStreamingJsonRequest(
+      ['{"code":"', '€'.repeat(5_500), '"}'],
+      { 'content-length': '12' },
+    );
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(413);
   });
 });
 
