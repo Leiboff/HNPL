@@ -35,21 +35,32 @@ const CONSENT_TOKEN_PATHS = new Set([
 ]);
 
 export async function proxy(request: NextRequest) {
+  const isApiRoute = request.nextUrl.pathname === '/api'
+    || request.nextUrl.pathname.startsWith('/api/');
+
   // A fresh unpredictable nonce per HTML request is the prerequisite for a
   // strict CSP. Next reads this request header while rendering and applies
-  // the nonce to its framework scripts automatically.
-  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
-  const csp = createCsp(nonce, process.env.NODE_ENV === 'development');
+  // the nonce to its framework scripts automatically. API requests still run
+  // through the authentication/session-cap logic below, but do not need HTML
+  // CSP headers or a nonce.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-pathname', request.nextUrl.pathname);
-  requestHeaders.set('x-nonce', nonce);
-  requestHeaders.set('Content-Security-Policy', csp);
+  const nonce = isApiRoute
+    ? null
+    : Buffer.from(crypto.randomUUID()).toString('base64');
+  const csp = nonce
+    ? createCsp(nonce, process.env.NODE_ENV === 'development')
+    : null;
+  if (nonce && csp) {
+    requestHeaders.set('x-nonce', nonce);
+    requestHeaders.set('Content-Security-Policy', csp);
+  }
 
   // Save reference so we can read its cookies after updateSession may refresh them.
   const modifiedRequest = new NextRequest(request, { headers: requestHeaders });
   const { response, user, supabase } = await updateSession(modifiedRequest);
   response.headers.set('x-pathname', request.nextUrl.pathname);
-  response.headers.set('Content-Security-Policy', csp);
+  if (csp) response.headers.set('Content-Security-Policy', csp);
 
   // ── Absolute session cap ─────────────────────────────────────────────
   // Enforced HERE, on the server, and not in the client: the whole value
@@ -82,7 +93,7 @@ export async function proxy(request: NextRequest) {
     loginUrl.searchParams.set('reason', SESSION_CAP_REDIRECT_REASON);
 
     const capped = NextResponse.redirect(loginUrl);
-    capped.headers.set('Content-Security-Policy', csp);
+    if (csp) capped.headers.set('Content-Security-Policy', csp);
 
     // Delete on the RESPONSE we are actually returning: signOut's own
     // cookie writes landed on `response`, which this branch discards.
@@ -206,6 +217,10 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    // API requests always pass through authentication/session-cap handling.
+    // Keep this separate from the document matcher so a client cannot bypass
+    // those checks by attaching one of Next's prefetch headers.
+    '/api/:path*',
     // Excludes static assets + the PWA surfaces (manifest + SW +
     // generated icons). The SW route in particular must never have
     // auth cookies attached to the response — the browser scopes
