@@ -42,6 +42,7 @@
 
 ALTER TABLE profiles
   ADD COLUMN IF NOT EXISTS scorecard_band                TEXT,
+  ADD COLUMN IF NOT EXISTS last_score_snapshot           JSONB,
   ADD COLUMN IF NOT EXISTS credit_assessment_status      TEXT,
   ADD COLUMN IF NOT EXISTS credit_decline_cooldown_until TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS current_credit_assessment_id  UUID;
@@ -54,6 +55,16 @@ COMMENT ON COLUMN profiles.credit_check_completed_at IS
   'When the current limit was assessed. Staleness is measured from here '
   '(CREDIT_STALENESS_MONTHS, default 6). Past that window a new plan '
   'request triggers RE-ASSESSMENT before approval — never a decline.';
+
+COMMENT ON COLUMN profiles.last_score_snapshot IS
+  'The score result currently in force: raw value, deciding scorecard, '
+  'band, family, and every card the bureau returned. Carried here because '
+  'the assessment runs in TWO requests — the score at the identity step, '
+  'the pricing at the affordability step — and credit_assessments is '
+  'append-only, so the pricing row cannot be an update of the score row. '
+  'Without it a completed assessment would either be split across two '
+  'rows or lose its score fields entirely, and the whole table exists to '
+  'be joined on exactly those.';
 
 COMMENT ON COLUMN profiles.scorecard_band IS
   'Band of the assessment currently in force: minimum / low / average / '

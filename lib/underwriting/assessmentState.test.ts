@@ -11,6 +11,7 @@ import {
   type AssessmentSnapshot,
 } from './assessmentState';
 import { handlePlanRequest, reassess } from './pipeline';
+import { buildAssessmentRow } from './assessmentStore';
 import { parseGetScoreResponse } from '@/lib/experian/scoreClient';
 import { parseAffordabilityResponse } from '@/lib/experian/affordabilityClient';
 import { SIGMA_BANDS } from '@/lib/experian/bands';
@@ -315,5 +316,49 @@ describe('gatePlanRequest', () => {
   it('a malformed timestamp does not silently read as fresh', () => {
     const gate = gatePlanRequest(snapshot({ assessedAt: 'not-a-date' }), NOW);
     expect(gate.kind).toBe('reassess');
+  });
+});
+
+// ─── The re-assessment row has to be as complete as the first one ───────
+
+describe('a re-assessment logs the same fields a first assessment does', () => {
+  it('carries the affordability figures through, not just the limit', async () => {
+    // Dropping the resolution here logs NULL for GMIP_Value,
+    // Bureau_Expenses, Calc_Living_Expenses, Disposable_Income and the
+    // enquiry id — on every re-assessment, which is a growing share of all
+    // of them as the book ages. The row would still look present in a
+    // count and be useless in a join.
+    const result = await reassess(deps(), { idNumber: ID, declared: null });
+
+    expect(result.kind).toBe('assessed');
+    if (result.kind !== 'assessed') return;
+    expect(result.resolution.kind).toBe('ready');
+    if (result.resolution.kind !== 'ready') return;
+    expect(result.resolution.data?.gmipValue).toBe(30_000);
+    expect(result.resolution.data?.enqId).toBe('ENQ-1000001');
+    expect(result.resolution.data?.disposableIncome).toBe(17_200);
+  });
+
+  it('builds a complete log row from a re-assessment', async () => {
+    const result = await reassess(deps(), { idNumber: ID, declared: null });
+    if (result.kind !== 'assessed') throw new Error('expected an assessment');
+
+    const row = buildAssessmentRow({
+      patientId: 'p1',
+      saIdLookupHash: 'h',
+      trigger: 'staleness',
+      scoreFamilyLabel: 'Sigma',
+      scoreDecision: result.scoreDecision,
+      resolution: result.resolution,
+      limit: result.limit,
+      declaredIncome: null,
+    });
+
+    expect(row.trigger).toBe('staleness');
+    expect(row.gmip_value).toBe(30_000);
+    expect(row.enq_id).toBe('ENQ-1000001');
+    expect(row.experian_disposable_income).toBe(17_200);
+    expect(row.bureau_expenses).toBe(2_000);
+    expect(row.final_limit).toBe(10_000);
   });
 });

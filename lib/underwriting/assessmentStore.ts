@@ -16,7 +16,7 @@
 
 import { COEFFICIENT_VERSION, type ScorecardBand } from './coefficients';
 import type { LimitOutcome } from './limit';
-import type { ScoreGateDecision } from './scoreGate';
+import type { ScoreGateDecision, ScoreSnapshot } from './scoreGate';
 import type { AffordabilityResolution } from './affordabilityGate';
 import {
   cooldownFrom,
@@ -80,6 +80,12 @@ export type BuildAssessmentInput = {
   /** Set when identity is why this stopped. */
   identityFailed?: boolean;
   declaredIncome: number | null;
+  /**
+   * The score result carried forward from the identity step, for the
+   * pricing row written in a LATER request. Used only when
+   * `scoreDecision` is absent — a decision in hand always wins.
+   */
+  scoreSnapshot?: ScoreSnapshot | null;
 };
 
 function scoreDeclineReason(decision: ScoreGateDecision): string | null {
@@ -149,10 +155,14 @@ export function buildAssessmentRow(input: BuildAssessmentInput): AssessmentRow {
 
   // The band actually applied — the affordability stage can downgrade the
   // score's band to thin_file, and the log must show which one priced it.
+  const snap = input.scoreSnapshot ?? null;
+
   const band: ScorecardBand | null =
     workings?.band
     ?? (resolution?.kind === 'ready' ? resolution.band : null)
-    ?? scoreBand(sd);
+    ?? scoreBand(sd)
+    ?? snap?.band
+    ?? null;
 
   return {
     patient_id:        input.patientId,
@@ -163,15 +173,20 @@ export function buildAssessmentRow(input: BuildAssessmentInput): AssessmentRow {
     decline_reason:    declineReason,
     pending_reason:    pendingReason,
 
+    // A decision in hand wins; otherwise the snapshot carried from the
+    // identity step. Without the fallback the pricing row — the ONE row a
+    // completed assessment produces — would have no score on it at all.
     score_value:       sd?.kind === 'pass' ? sd.score
                        : sd?.kind === 'decline' ? sd.score
                        : sd?.kind === 'thin_file' ? sd.score
-                       : null,
-    score_result_type: sd && 'resultType' in sd ? sd.resultType : null,
+                       : snap?.value ?? null,
+    score_result_type: sd && 'resultType' in sd ? sd.resultType : (snap?.resultType ?? null),
     score_family:      input.scoreFamilyLabel,
     scorecard_band:    band,
     // Every card, not just the deciding one.
-    score_results:     sd && 'results' in sd && sd.results.length > 0 ? sd.results : null,
+    score_results:     sd && 'results' in sd && sd.results.length > 0
+                         ? sd.results
+                         : (snap && snap.results.length > 0 ? snap.results : null),
 
     gmip_value:                 data?.gmipValue ?? null,
     gmip_confidence_level:      data?.gmipConfidenceLevel ?? null,
@@ -339,4 +354,44 @@ export async function cooldownForIdHash(
 
   const until = cooldownFrom(new Date(rows[0].created_at));
   return until.getTime() > now.getTime() ? until : null;
+}
+
+/**
+ * The score snapshot the identity step left on the profile.
+ *
+ * Returns null when there is none — a patient assessed before this
+ * existed, or one whose score stage has not run. The pricing row is still
+ * written; it simply carries no score fields, which is visible in the data
+ * rather than silently wrong.
+ */
+export async function readScoreSnapshot(
+  svc: Svc,
+  patientId: string,
+): Promise<ScoreSnapshot | null> {
+  const { data, error } = await svc
+    .from('profiles')
+    .select('last_score_snapshot')
+    .eq('id', patientId)
+    .maybeSingle();
+
+  if (error || !data?.last_score_snapshot) return null;
+  return data.last_score_snapshot as ScoreSnapshot;
+}
+
+/** Persist the score snapshot and band without writing an assessment row. */
+export async function saveScoreSnapshot(
+  svc: Svc,
+  patientId: string,
+  snapshot: ScoreSnapshot,
+): Promise<void> {
+  const { error } = await svc
+    .from('profiles')
+    .update({ last_score_snapshot: snapshot, scorecard_band: snapshot.band })
+    .eq('id', patientId);
+
+  if (error) {
+    console.error('[assessment] failed to save the score snapshot', {
+      patientId, error: error.message,
+    });
+  }
 }

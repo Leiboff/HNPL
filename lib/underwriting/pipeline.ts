@@ -247,7 +247,20 @@ export type ReassessDeps = {
 };
 
 export type ReassessResult =
-  | { kind: 'assessed'; limit: LimitOutcome; band: ScorecardBand; scoreDecision: ScoreGateDecision }
+  | {
+      kind: 'assessed';
+      limit: LimitOutcome;
+      band: ScorecardBand;
+      scoreDecision: ScoreGateDecision;
+      /**
+       * Carried through deliberately. The caller writes the assessment
+       * row, and without this every re-assessment would log NULL for
+       * GMIP_Value, Bureau_Expenses, Calc_Living_Expenses, the enquiry id
+       * and Experian's own disposable income — the exact fields the
+       * calibration join needs, on a growing share of all assessments.
+       */
+      resolution: AffordabilityResolution;
+    }
   /** The score gate refused. Nothing further was spent. */
   | { kind: 'declined'; scoreDecision: ScoreGateDecision }
   | { kind: 'identity_not_passed'; status: IdentityStatus }
@@ -286,7 +299,13 @@ export async function reassess(
   if (assessment.kind === 'identity_not_passed') return assessment;
   if (assessment.kind === 'pending')             return assessment;
 
-  return { kind: 'assessed', limit: assessment.limit, band: assessment.band, scoreDecision: decision };
+  return {
+    kind: 'assessed',
+    limit: assessment.limit,
+    band: assessment.band,
+    scoreDecision: decision,
+    resolution: assessment.resolution,
+  };
 }
 
 export type PlanRequestOutcome =

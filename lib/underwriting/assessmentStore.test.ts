@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAssessmentRow, profileUpdateFor, type BuildAssessmentInput } from './assessmentStore';
-import { decideScoreGate } from './scoreGate';
+import { decideScoreGate, scoreSnapshotOf } from './scoreGate';
 import { resolveAffordability } from './affordabilityGate';
 import { calculateCreditLimit, declaredGross } from './limit';
 import { parseGetScoreResponse } from '@/lib/experian/scoreClient';
@@ -248,5 +248,87 @@ describe('profileUpdateFor', () => {
         buildAssessmentRow(base({ scoreDecision: gate(xml) })), 'assess-x', NOW);
       expect(update.current_credit_assessment_id).toBe('assess-x');
     }
+  });
+});
+
+// ─── One row per assessment, across two requests ────────────────────────
+
+describe('the score carried forward from the identity step', () => {
+  const snapshot = {
+    value: 660,
+    resultType: 'SU',
+    band: 'low' as const,
+    results: [
+      { resultType: 'SU',  score: '660', reasons: [] },
+      { resultType: 'STS', score: '615', reasons: [] },
+    ],
+  };
+
+  it('populates the score fields on the pricing row', () => {
+    // The pricing step runs in a LATER request with no score decision in
+    // hand. Without the carry-forward the one row a completed assessment
+    // produces would have no score on it at all — and "scorecard band and
+    // raw score" is exactly what the table exists to be joined on.
+    const run = approvedRun();
+    const row = buildAssessmentRow({ ...run, scoreDecision: null, scoreSnapshot: snapshot });
+
+    expect(row.score_value).toBe(660);
+    expect(row.score_result_type).toBe('SU');
+    expect(row.score_results).toHaveLength(2);
+    expect(row.outcome).toBe('approved');
+    expect(row.final_limit).toBe(10_000);
+  });
+
+  it('a decision in hand always beats the snapshot', () => {
+    const run = approvedRun();
+    const row = buildAssessmentRow({
+      ...run,
+      scoreDecision: gate(score.SCORE_SUCCESS_SU_UNSCORABLE_STS_620),
+      scoreSnapshot: snapshot,
+    });
+    expect(row.score_value).toBe(620);
+    expect(row.score_result_type).toBe('STS');
+  });
+
+  it('a missing snapshot leaves the score fields null rather than wrong', () => {
+    const row = buildAssessmentRow({ ...approvedRun(), scoreDecision: null, scoreSnapshot: null });
+    expect(row.score_value).toBeNull();
+    expect(row.score_result_type).toBeNull();
+    // The band still comes from the affordability resolution, so the row
+    // is usable even without it.
+    expect(row.scorecard_band).toBe('low');
+    expect(row.outcome).toBe('approved');
+  });
+
+  it('the band falls back to the snapshot when nothing else has one', () => {
+    const row = buildAssessmentRow({
+      ...base(), scoreDecision: null, scoreSnapshot: snapshot,
+    });
+    expect(row.scorecard_band).toBe('low');
+  });
+});
+
+describe('scoreSnapshotOf decides which stage writes the row', () => {
+  it('a pass or thin file is carried forward, not logged as pending', () => {
+    // Logging a passing score would record every eventually-approved
+    // customer as a `pending` assessment.
+    expect(scoreSnapshotOf(gate(score.SCORE_SUCCESS_SU_SCORED_660))).not.toBeNull();
+    expect(scoreSnapshotOf(gate(score.SCORE_BOTH_UNSCORABLE))).not.toBeNull();
+  });
+
+  it('a terminal score returns null, so its own row is written there', () => {
+    expect(scoreSnapshotOf(gate(score.SCORE_SUCCESS_SU_VERY_HIGH))).toBeNull();
+    expect(scoreSnapshotOf(gate(score.SCORE_SENTINEL_DECEASED))).toBeNull();
+    expect(scoreSnapshotOf(gate(score.SCORE_SOAP_FAULT_500))).toBeNull();
+  });
+
+  it('a thin-file snapshot carries the thin_file band', () => {
+    expect(scoreSnapshotOf(gate(score.SCORE_BOTH_UNSCORABLE))?.band).toBe('thin_file');
+  });
+
+  it('carries every card, not just the deciding one', () => {
+    const snap = scoreSnapshotOf(gate(score.SCORE_SUCCESS_SU_UNSCORABLE_STS_620));
+    expect(snap?.results.map((r) => r.resultType)).toEqual(['SU', 'STS']);
+    expect(snap?.resultType).toBe('STS');
   });
 });

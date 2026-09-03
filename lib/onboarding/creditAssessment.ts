@@ -37,7 +37,10 @@ import {
   applyAssessment,
   cooldownForIdHash,
   readSnapshot,
+  readScoreSnapshot,
+  saveScoreSnapshot,
 } from '@/lib/underwriting/assessmentStore';
+import { scoreSnapshotOf } from '@/lib/underwriting/scoreGate';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Svc = any;
@@ -110,6 +113,7 @@ async function persist(
     limit: Parameters<typeof buildAssessmentRow>[0]['limit'];
     identityFailed?: boolean;
     declaredIncome: number | null;
+    scoreSnapshot?: Parameters<typeof buildAssessmentRow>[0]['scoreSnapshot'];
   },
 ): Promise<void> {
   const now = ctx.now ?? new Date();
@@ -124,6 +128,7 @@ async function persist(
     limit:            parts.limit,
     identityFailed:   parts.identityFailed,
     declaredIncome:   parts.declaredIncome,
+    scoreSnapshot:    parts.scoreSnapshot ?? null,
   });
 
   const id = await recordAssessment(ctx.svc, row);
@@ -182,9 +187,29 @@ export async function gateIdentityOnBureauScore<T>(
     startIdentity,
     precheck:    () => assessmentPrecheck(ctx),
     recordScore: async (decision) => {
-      // Written for every outcome, including the declines and the
-      // pendings — a log that only records the applicants we accepted
-      // cannot calibrate anything.
+      // ─── One row per ASSESSMENT, not one per stage ─────────────────
+      //
+      // The assessment spans two requests: the score here, the pricing at
+      // the affordability step. `credit_assessments` is append-only, so
+      // the second cannot amend the first.
+      //
+      // Writing a row here on a PASS would log every eventually-approved
+      // customer as a `pending` assessment — inflating the pending count
+      // by one per approval and splitting each assessment across two
+      // rows, neither of them complete. So a passing score is carried
+      // forward on the profile instead, and the pricing step writes the
+      // single row with both halves on it.
+      //
+      // A TERMINAL score — a decline, or a pending we cannot get past —
+      // ends the assessment here, so it writes its row here. Declines
+      // especially: they are half the population calibration needs.
+      const snapshot = scoreSnapshotOf(decision);
+
+      if (snapshot !== null) {
+        await saveScoreSnapshot(ctx.svc, ctx.userId, snapshot);
+        return;
+      }
+
       await persist(ctx, {
         scoreDecision: decision,
         resolution: null,
@@ -215,6 +240,10 @@ export async function assessAffordability(
       ? declaredGross(input.declaredIncomeRands)
       : null;
 
+  // The score the identity step left behind, so the row written below is
+  // the complete record of one assessment rather than half of one.
+  const scoreSnapshot = await readScoreSnapshot(ctx.svc, ctx.userId);
+
   const result = await gateAffordabilityOnIdentity(
     {
       identityStatus: input.identityStatus,
@@ -229,6 +258,7 @@ export async function assessAffordability(
       resolution:     result.resolution,
       limit:          result.limit,
       declaredIncome: input.declaredIncomeRands,
+      scoreSnapshot,
     });
   } else if (result.kind === 'pending') {
     await persist(ctx, {
@@ -236,6 +266,7 @@ export async function assessAffordability(
       resolution:     { kind: 'pending', detail: result.detail, alert: result.alert },
       limit:          null,
       declaredIncome: input.declaredIncomeRands,
+      scoreSnapshot,
     });
   } else {
     // identity_not_passed. Recorded as an identity-gate stop rather than a
@@ -246,6 +277,7 @@ export async function assessAffordability(
       limit:          null,
       identityFailed: result.status === 'failed',
       declaredIncome: input.declaredIncomeRands,
+      scoreSnapshot,
     });
   }
 
@@ -356,7 +388,9 @@ export async function ensureAssessmentCurrent(
       // sets the cooldown and clears the stale limit.
       await persist(ctx, {
         scoreDecision:  r.scoreDecision,
-        resolution:     null,
+        // The affordability figures, not null: a re-assessment row with no
+        // GMIP or enquiry id is invisible to calibration.
+        resolution:     r.resolution,
         limit:          r.limit,
         declaredIncome: declared,
       });

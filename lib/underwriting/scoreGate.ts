@@ -250,3 +250,36 @@ export function bandFromDecision(decision: ScoreGateDecision): ScorecardBand | n
   if (decision.kind === 'thin_file') return 'thin_file';
   return null;
 }
+
+/**
+ * A score decision, flattened for storage between pipeline stages.
+ *
+ * The assessment happens in two requests — the score at the identity step
+ * and the pricing at the affordability step — and `credit_assessments` is
+ * append-only, so the second cannot amend the first. This travels on the
+ * profile so the ONE row written at the end carries both halves.
+ */
+export type ScoreSnapshot = {
+  value: number | null;
+  resultType: string | null;
+  band: ScorecardBand | null;
+  results: ScoreResultRow[];
+};
+
+export function scoreSnapshotOf(decision: ScoreGateDecision): ScoreSnapshot | null {
+  if (decision.kind === 'pass') {
+    return {
+      value: decision.score, resultType: decision.resultType,
+      band: decision.band, results: decision.results,
+    };
+  }
+  if (decision.kind === 'thin_file') {
+    return {
+      value: decision.score, resultType: decision.resultType,
+      band: 'thin_file', results: decision.results,
+    };
+  }
+  // A terminal decision writes its own assessment row; there is nothing to
+  // carry forward.
+  return null;
+}
