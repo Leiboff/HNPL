@@ -36,4 +36,12 @@ describe('createCsp', () => {
     expect(proxy).toContain("response.headers.set('Content-Security-Policy', csp)");
     expect(layout).toMatch(/export const dynamic = 'force-dynamic'/);
   });
+
+  it('limits HTML CSP headers to non-API requests without bypassing the proxy', () => {
+    const proxy = read('proxy.ts');
+
+    expect(proxy).toMatch(/const isApiRoute = request\.nextUrl\.pathname === '\/api'/);
+    expect(proxy).toMatch(/const csp = nonce\s*\? createCsp/);
+    expect(proxy).toMatch(/if \(csp\) response\.headers\.set\('Content-Security-Policy', csp\)/);
+  });
 });
