@@ -14,6 +14,7 @@
     "test:crm-conversion": "tsx --env-file=.env.local scripts/test-crm-conversion.ts",
     "audit:default-mismatch": "tsx --env-file=.env.local scripts/audit-card-default-mismatch.ts",
     "check:rls-drift": "tsx --env-file=.env.local scripts/check-rls-drift.ts",
+    "design-sync:css": "pnpm --package=@tailwindcss/cli@4.3.0 dlx tailwindcss -i .design-sync/ds-input.css -o .design-sync/ds.css",
     "prepare": "simple-git-hooks || true",
     "test:serial": "vitest run --no-file-parallelism"
   },

@@ -27,8 +27,7 @@ Regenerate CSS, then run the driver:
 
 ```sh
 # 1. generate the ignored Tailwind build artifact
-node .design-sync/.cache/tw/node_modules/@tailwindcss/cli/dist/index.mjs \
-  -i .design-sync/ds-input.css -o .design-sync/ds.css
+pnpm run design-sync:css
 # 2. driver: build → diff → validate → capture
 node .ds-sync/resync.mjs --config .design-sync/config.json \
   --node-modules ./node_modules --entry ./.design-sync/entry.tsx \
@@ -43,8 +42,8 @@ None outstanding — 23/23 render cleanly; no `[RENDER_THIN]`/`variantsIdentical
 
 ## Re-sync risks (what can silently go stale)
 
-- **`.design-sync/ds.css` is an ignored build artifact.** Generate it in step 1 before invoking the sync driver. `@tailwindcss/cli` lives in the gitignored `.design-sync/.cache/tw`, so a fresh clone must install it there before regenerating.
-- **`@tailwindcss/cli` version pin.** Compiled with tailwindcss v4.3.3; a major Tailwind bump in the app could change output — regenerate + eyeball.
+- **`.design-sync/ds.css` is an ignored build artifact.** Generate it in step 1 before invoking the sync driver. The package script bootstraps the CLI through `pnpm dlx`, so it also works on a fresh clone.
+- **`@tailwindcss/cli` version pin.** The package script pins the generator to v4.3.0, matching the Tailwind packages currently resolved for the app. Keep these aligned; a Tailwind bump could change output — regenerate + eyeball.
 - **Components are app-coupled.** Adding more of the app's ~118 client components will usually drag in Supabase / server actions / more `next/*` — each needs shim coverage or exclusion. The 23 chosen are the ones that are genuinely self-contained. Don't assume a new one "just works" — build + render-check it.
 - **`next/*` shims are lossy by design.** `<Link>` renders as `<a>` (no client routing), navigation hooks are no-ops. Fine for static preview render; never represents runtime behaviour.
 - **Grades are tied to the app source + previews.** Editing a curated component in `app/` invalidates that component's grade on the next sync (correct — re-verify it).
