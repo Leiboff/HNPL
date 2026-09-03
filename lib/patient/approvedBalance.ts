@@ -1,68 +1,125 @@
 // ─── Approved-balance computation — pure helper ────────────────────────
 //
-// Given a patient's approved credit limit and their currently-active
-// plans, returns the "available" balance to display on the home
-// dashboard's Approved Balance widget:
+// What the home dashboard's Approved Balance widget shows:
 //
-//   available = max(0, limit - Σ outstanding_principal_on_active_plans)
+//   limit      the patient's full standing limit — ALWAYS shown in full
+//   committed  what active plans are holding against it
+//   available  limit − committed, floored at zero
 //
-// Where the outstanding principal is the sum of `amount` on `payments`
-// rows that are STILL owed:
-//   status ∈ { scheduled, processing, failed, defaulted }
-// A `defaulted` instalment IS still owed — the patient hasn't paid it —
-// so it MUST keep consuming the limit. (It also freezes the patient out
-// of new plans entirely; see lib/patient/freeze.ts. Excluding it here
-// would perversely FREE the limit on default, which was the old bug.)
-// Statuses NOT counted (already paid or forgiven):
-//   collected — paid; retried — legacy; written_off — explicit
-//   forgiveness (no debt).
+// ─── IT MUST AGREE WITH THE THING THAT ACTUALLY REFUSES ────────────────
 //
-// The widget is DISPLAY-ONLY:
-//   • Renders nothing when limit is NULL (no fake placeholder, no "R0
-//     available" — see the home dashboard page for the null-guard).
-//   • This module never fetches; it just computes.
+// This module used to sum outstanding PAYMENT rows, which was a third
+// definition of exposure sitting alongside `outstandingExposure` and the
+// plpgsql in `claim_credit_for_plan`. Three definitions meant the number a
+// patient was shown could differ from the number that refused them, which
+// is a support ticket at best and a trust problem at worst.
+//
+// It now mirrors migration 0140's model exactly:
+//
+//   • a plan marked `full_value_exposure` holds its ENTIRE financed value
+//     for its whole life — paying an instalment frees nothing, and the
+//     whole amount is released in one step on completion
+//   • a plan written before 0140 keeps the declining-balance arithmetic it
+//     was accepted under
+//   • a defaulted plan still holds its value under the new model; the debt
+//     has not gone anywhere
+//
+// This is DISPLAY ONLY and still never fetches — the caller passes rows
+// in. The authority is `patient_credit_exposure()` under the row lock.
 
 export type PaymentForBalance = {
-  amount: number;
+  amount: number | string;
   status: string;
+  kind?: string | null;
+  instalment_number?: number | null;
 };
 
+export type PlanForBalance = {
+  status: string;
+  full_value_exposure?: boolean | null;
+  financed_amount?: number | string | null;
+  total_amount?: number | string | null;
+  excess_amount?: number | string | null;
+  payments?: PaymentForBalance[] | null;
+};
+
+/** Statuses a legacy plan is counted in — unchanged from 0130. */
+const LEGACY_LIVE = ['pending_first_payment', 'active'];
+
+/** Under the full-value model a defaulted plan keeps holding its value. */
+const FULL_VALUE_LIVE = [...LEGACY_LIVE, 'defaulted'];
+
+/** Statuses that are NOT collected, i.e. still owed. */
 const OUTSTANDING_STATUSES = new Set(['scheduled', 'processing', 'failed', 'defaulted']);
 
-/**
- * Sum the outstanding principal across every payment row on the
- * patient's active plans. Non-outstanding statuses (collected /
- * retried / written_off) don't count — the widget measures "what's
- * still yours to owe". A `defaulted` row IS still owed and counts.
- *
- * Pass ONLY the payments belonging to active plans (the caller
- * filters upstream) — this function trusts its input and doesn't
- * re-check plan status.
- */
-export function outstandingPrincipal(payments: PaymentForBalance[]): number {
-  let total = 0;
-  for (const p of payments) {
-    if (OUTSTANDING_STATUSES.has(p.status)) {
-      total += Number(p.amount) || 0;
-    }
-  }
-  return round2(total);
-}
-
-/**
- * Approved balance available to spend on new bills.
- *   available = max(0, limit - outstanding)
- * Floored at zero so a patient who has slightly overshot never sees
- * a negative number.
- */
-export function availableBalance(
-  limit:       number,
-  payments:    PaymentForBalance[],
-): number {
-  const outstanding = outstandingPrincipal(payments);
-  return Math.max(0, round2(limit - outstanding));
+function num(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
+}
+
+/** Does this plan currently hold anything against the limit? */
+function isLive(plan: PlanForBalance): boolean {
+  return plan.full_value_exposure === true
+    ? FULL_VALUE_LIVE.includes(plan.status)
+    : LEGACY_LIVE.includes(plan.status);
+}
+
+/** What one plan holds. */
+export function planExposure(plan: PlanForBalance): number {
+  if (!isLive(plan)) return 0;
+
+  if (plan.full_value_exposure === true) {
+    // The full originated value, whatever has been paid so far.
+    return round2(num(plan.financed_amount ?? plan.total_amount));
+  }
+
+  const instalments = (plan.payments ?? []).filter(
+    (p) => (p.kind ?? 'instalment') === 'instalment' && OUTSTANDING_STATUSES.has(p.status),
+  );
+  if (instalments.length === 0) return 0;
+
+  let total = instalments.reduce((sum, p) => sum + num(p.amount), 0);
+
+  // The excess is the customer's own money in flight, not credit.
+  if (instalments.some((p) => Number(p.instalment_number) === 1)) {
+    total -= num(plan.excess_amount);
+  }
+  return round2(Math.max(0, total));
+}
+
+/** Total committed across every live plan. */
+export function committedExposure(plans: PlanForBalance[]): number {
+  return round2(plans.reduce((sum, p) => sum + planExposure(p), 0));
+}
+
+/**
+ * Available headroom.
+ *
+ * Floored at zero so a patient whose limit was reduced on re-assessment
+ * below their in-flight exposure never sees a negative number. Their
+ * existing plans run to term regardless — a reduced limit does not claw
+ * back a plan already written.
+ */
+export function availableBalance(limit: number, plans: PlanForBalance[]): number {
+  return Math.max(0, round2(limit - committedExposure(plans)));
+}
+
+/**
+ * The three figures the widget renders together.
+ *
+ * The full limit is always included: a first-time patient is shown their
+ * real limit alongside the one-plan-at-a-time caveat, rather than being
+ * shown a reduced figure that quietly hides what they qualified for.
+ */
+export function balanceSummary(limit: number, plans: PlanForBalance[]): {
+  limit: number;
+  committed: number;
+  available: number;
+} {
+  const committed = committedExposure(plans);
+  return { limit, committed, available: Math.max(0, round2(limit - committed)) };
 }

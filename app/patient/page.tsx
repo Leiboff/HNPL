@@ -11,7 +11,7 @@ import DefaultFreezeBanner from './DefaultFreezeBanner';
 import PatientWelcomeBanner from './PatientWelcomeBanner';
 import TestBalanceNotice from './TestBalanceNotice';
 import { declinePlan } from './actions';
-import { availableBalance, type PaymentForBalance } from '@/lib/patient/approvedBalance';
+import { availableBalance, committedExposure } from '@/lib/patient/approvedBalance';
 import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computePlanProgress } from '@/lib/planProgress';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
@@ -43,12 +43,18 @@ function getPracticeName(practice: PracticeEmbed): string {
 }
 
 type PlanSummary = {
-  id:           string;
-  status:       string;
-  total_amount: number;
-  plan_type:    number | null;
-  practice:     PracticeEmbed;
-  payments:     Array<{ amount: number | string; status: string; kind: string | null }> | null;
+  id:                   string;
+  status:               string;
+  total_amount:         number;
+  plan_type:            number | null;
+  full_value_exposure:  boolean | null;
+  financed_amount:      number | string | null;
+  excess_amount:        number | string | null;
+  practice:             PracticeEmbed;
+  payments:             Array<{
+    amount: number | string; status: string; kind: string | null;
+    instalment_number: number | null;
+  }> | null;
 };
 
 type PaymentPlanEmbed = { id: string; plan_type: number | null; practice: PracticeEmbed } | null;
@@ -89,7 +95,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
     getPatientProfileForRequest(user.id).then((data) => ({ data })),
     supabase
       .from('plans')
-      .select('id, status, total_amount, plan_type, practice:practices(name), payments(amount, status, kind)')
+      .select('id, status, total_amount, plan_type, full_value_exposure, financed_amount, excess_amount, practice:practices(name), payments(amount, status, kind, instalment_number)')
       .eq('patient_id', user.id),
     supabase
       .from('payments')
@@ -130,12 +136,12 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
 
   // ── Approved balance ──────────────────────────────────────────────
   const approvedLimit: number | null = (profile?.approved_credit_limit as number | null) ?? null;
-  const activePlanIds = new Set(allPlans.filter((p) => p.status === 'active').map((p) => p.id));
-  const paymentsForBalance: PaymentForBalance[] = payments
-    .filter((p) => p.plan_id != null && activePlanIds.has(p.plan_id as string))
-    .map((p) => ({ amount: Number(p.amount), status: p.status }));
-  const available = approvedLimit != null ? availableBalance(approvedLimit, paymentsForBalance) : 0;
-  const used = approvedLimit != null ? Math.max(0, approvedLimit - available) : 0;
+  // Computed from the PLANS, not from a separate scan of payment rows, so
+  // the figure shown here is the same one claim_credit_for_plan enforces.
+  // Under the full-value model (migration 0140) paying an instalment does
+  // not move it — the whole amount is released when the plan completes.
+  const available = approvedLimit != null ? availableBalance(approvedLimit, allPlans) : 0;
+  const used = approvedLimit != null ? committedExposure(allPlans) : 0;
   const usedPct = approvedLimit && approvedLimit > 0 ? Math.min(100, Math.max(0, (used / approvedLimit) * 100)) : 0;
 
   const effectiveDate = (p: UpcomingPayment): string => p.next_attempt_date ?? p.due_date;

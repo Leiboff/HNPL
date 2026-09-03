@@ -91,14 +91,58 @@ export const CREDIT_LIMIT_UNAVAILABLE_REFUSAL =
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Svc = any;
 
+type PlanExposureRow = {
+  id: string;
+  status: string;
+  full_value_exposure: boolean | null;
+  financed_amount: number | string | null;
+  total_amount: number | string | null;
+  excess_amount: number | string | null;
+};
+
+/** Statuses a legacy (declining-balance) plan counts in. Unchanged from 0130. */
+const LEGACY_STATUSES = ['pending_first_payment', 'active'];
+
 /**
- * Sum of uncollected instalments across the patient's live plans, in rands.
+ * Everything we need to fetch. `defaulted` is here for the full-value model
+ * only — the filter below drops it for legacy plans, so no plan accepted
+ * under the old rules starts consuming more than it did.
+ */
+const EXPOSURE_STATUSES = [...LEGACY_STATUSES, 'defaulted'];
+
+/**
+ * A patient's committed credit exposure, in rands.
  *
- * `excludePlanId` is the plan being accepted right now. On the resume paths
- * (payWithSavedCard re-entering an abandoned pending_first_payment plan,
- * initiateCheckout re-entering its own) that plan's rows are ALREADY in the
- * table, so counting them and then adding the bill total again would charge
- * the customer twice for one bill and refuse a legitimate resume.
+ * ─── TWO MODELS, DISCRIMINATED PER PLAN ───────────────────────────────
+ *
+ * Plans originated from migration 0140 onward carry
+ * `full_value_exposure = TRUE` and hold their ENTIRE financed value for
+ * their whole life. Two instalments into a three-instalment plan is the
+ * same exposure as day one; the whole amount is released in one step at
+ * completion, and partial payments free nothing.
+ *
+ * Plans written before that keep the declining-balance arithmetic they
+ * were accepted under — uncollected instalments less this plan's own
+ * excess while instalment 1 is outstanding — so no in-flight plan's
+ * headroom moved when the model changed. The two coexist until the last
+ * legacy plan closes.
+ *
+ * Under the new model a DEFAULTED plan still counts: the debt is still
+ * owed. A cancelled or completed one does not.
+ *
+ * This is the optimistic, UNLOCKED read used to compute a split before
+ * calling the claim RPC. The RPC re-derives the same quantity under a row
+ * lock via `patient_credit_exposure()` and is the authority; the two
+ * implementations are pinned against each other by
+ * 0130_claim_credit_for_plan.rpc.test.ts. Two copies is a known cost —
+ * one copy that is not under a lock was the A-04 bug.
+ *
+ * `excludePlanId` is the plan being accepted right now. On the resume
+ * paths (payWithSavedCard re-entering an abandoned pending_first_payment
+ * plan, initiateCheckout re-entering its own) that plan's rows are ALREADY
+ * in the table, so counting them and then adding the bill total again
+ * would charge the customer twice for one bill and refuse a legitimate
+ * resume.
  */
 export async function outstandingExposure(
   svc:  Svc,
@@ -107,32 +151,63 @@ export async function outstandingExposure(
 ): Promise<{ ok: true; rands: number } | { ok: false }> {
   const { data: livePlans, error: planErr } = await svc
     .from('plans')
-    .select('id')
+    .select('id, status, full_value_exposure, financed_amount, total_amount, excess_amount')
     .eq('patient_id', patientId)
-    .in('status', ['pending_first_payment', 'active']);
+    .in('status', EXPOSURE_STATUSES);
 
   // A failed lookup is not permission to proceed — same posture as the SA-ID
   // duplicate check in checkout. We cannot tell "no exposure" apart from
   // "could not read", and one of those answers gives away money.
   if (planErr) return { ok: false };
 
-  const planIds = ((livePlans ?? []) as Array<{ id: string }>)
-    .map((p) => p.id)
-    .filter((id) => id !== opts?.excludePlanId);
+  const plans = ((livePlans ?? []) as PlanExposureRow[])
+    .filter((p) => p.id !== opts?.excludePlanId)
+    // A defaulted plan counts only under the full-value model. Under the
+    // legacy one it never did, and this read must not retroactively change
+    // what an in-flight plan consumes.
+    .filter((p) => p.full_value_exposure === true || LEGACY_STATUSES.includes(p.status));
 
-  if (planIds.length === 0) return { ok: true, rands: 0 };
+  if (plans.length === 0) return { ok: true, rands: 0 };
 
-  const { data: rows, error: payErr } = await svc
-    .from('payments')
-    .select('amount')
-    .in('plan_id', planIds)
-    .eq('kind', 'instalment')
-    .neq('status', 'collected');
+  let cents = 0;
 
-  if (payErr) return { ok: false };
+  // Full-value plans need no payment rows at all — that is the point.
+  const fullValue = plans.filter((p) => p.full_value_exposure === true);
+  for (const p of fullValue) {
+    const value = p.financed_amount ?? p.total_amount ?? 0;
+    cents += Math.round(Number(value) * 100);
+  }
 
-  const cents = ((rows ?? []) as Array<{ amount: number | string }>)
-    .reduce((sum, r) => sum + Math.round(Number(r.amount) * 100), 0);
+  const legacy = plans.filter((p) => p.full_value_exposure !== true);
+  if (legacy.length > 0) {
+    const { data: rows, error: payErr } = await svc
+      .from('payments')
+      .select('plan_id, amount, instalment_number')
+      .in('plan_id', legacy.map((p) => p.id))
+      .eq('kind', 'instalment')
+      .neq('status', 'collected');
+
+    if (payErr) return { ok: false };
+
+    const uncollected = (rows ?? []) as Array<{
+      plan_id: string; amount: number | string; instalment_number: number | null;
+    }>;
+
+    for (const plan of legacy) {
+      const mine = uncollected.filter((r) => r.plan_id === plan.id);
+      if (mine.length === 0) continue;
+
+      let planCents = mine.reduce(
+        (sum, r) => sum + Math.round(Number(r.amount) * 100), 0);
+
+      // The excess is the customer's own money in flight, not credit, and
+      // comes off while instalment 1 is still uncollected.
+      if (mine.some((r) => Number(r.instalment_number) === 1)) {
+        planCents -= Math.round(Number(plan.excess_amount ?? 0) * 100);
+      }
+      cents += planCents;
+    }
+  }
 
   return { ok: true, rands: cents / 100 };
 }

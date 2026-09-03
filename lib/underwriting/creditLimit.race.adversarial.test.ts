@@ -167,6 +167,36 @@ describe('A-04 CLOSED — there is no longer a check-then-act to interleave', ()
     expect(fn.indexOf('INTO v_outstanding')).toBeLessThan(fn.indexOf('INSERT INTO payments'));
   });
 
+  it('the CURRENT definition (0140) still locks before it derives exposure', () => {
+    // 0130 is no longer the live definition — 0140 rebuilt the function on
+    // the shared patient_credit_exposure() derivation. The assertion above
+    // pins history; this one pins what actually runs, so a future rewrite
+    // cannot quietly reintroduce a read-then-write by editing the newer
+    // file.
+    const SQL_0140 = readSrc('supabase/migrations/0140_full_value_exposure.sql');
+    const fn = SQL_0140.slice(
+      SQL_0140.indexOf('CREATE OR REPLACE FUNCTION claim_credit_for_plan('),
+      SQL_0140.indexOf('CREATE OR REPLACE FUNCTION enforce_credit_exposure()'),
+    );
+    expect(fn).toMatch(/FROM profiles\s+WHERE id = p_patient_id\s+FOR UPDATE/);
+    expect(fn.indexOf('FOR UPDATE'))
+      .toBeLessThan(fn.indexOf('patient_credit_exposure(p_patient_id, p_plan_id)'));
+    expect(fn.indexOf('patient_credit_exposure(p_patient_id, p_plan_id)'))
+      .toBeLessThan(fn.indexOf('INSERT INTO payments'));
+  });
+
+  it('the claim and the deferred invariant share ONE exposure derivation', () => {
+    // 0130 wrote the arithmetic out twice in plpgsql. Changing the model in
+    // one copy and not the other would leave the constraint enforcing a
+    // different definition of what a patient owes than the procedure it
+    // guards.
+    const SQL_0140 = readSrc('supabase/migrations/0140_full_value_exposure.sql');
+    expect(SQL_0140).toMatch(/CREATE OR REPLACE FUNCTION patient_credit_exposure\(/);
+    // Both callers, and no second hand-rolled SUM in either.
+    expect(SQL_0140).toMatch(/v_outstanding := patient_credit_exposure\(/);
+    expect(SQL_0140).toMatch(/v_exposure := patient_credit_exposure\(/);
+  });
+
   it('and a second, independent backstop re-checks the aggregate at COMMIT', () => {
     // So a future writer that inserts payments without going through the RPC
     // still cannot leave the invariant broken.

@@ -84,6 +84,8 @@ export type ClaimCreditOutcome =
         | 'below_minimum'
         | 'plan_not_found'
         | 'schedule_survived'
+        | 'first_plan_in_progress'
+        | 'prior_default_review'
         | 'unavailable';
       /** Copy for the customer. Never the raw database message. */
       message: string;
@@ -107,6 +109,17 @@ export const CLAIM_MESSAGES = {
   /** over_limit is only reachable after the retry, so the copy says so. */
   over_limit:
     'Your available balance changed while we were setting this up. Please try again.',
+  /** The first-timer one-at-a-time rule, enforced under the lock by 0140.
+   *  app/patient/actions.ts refuses earlier with the same words; this is
+   *  the copy for the race it cannot catch. */
+  first_plan_in_progress:
+    'Please complete your current payment plan before starting another.',
+  /** A patient whose only plan defaulted, before ever completing one. Held
+   *  for review rather than refused outright — the copy points at support
+   *  rather than reading as a credit decision, because it is not one. */
+  prior_default_review:
+    'We need to review your account before you can start another plan. '
+    + 'Please contact us and we\'ll help you sort it out.',
 } as const;
 
 /**
@@ -248,6 +261,14 @@ function refusal(code: string | undefined): ClaimCreditOutcome {
     case 'over_limit':        return { ok: false, reason: 'over_limit',        message: CLAIM_MESSAGES.over_limit };
     case 'schedule_survived': return { ok: false, reason: 'schedule_survived', message: CLAIM_MESSAGES.schedule_survived };
     case 'plan_not_found':    return { ok: false, reason: 'plan_not_found',    message: CLAIM_MESSAGES.plan_not_found };
+    // Both added by 0140. The concurrency rule is also checked earlier in
+    // app/patient/actions.ts for a friendlier flow; these are the answers
+    // for the race that check cannot catch, and for the callers that do not
+    // run it at all.
+    case 'first_plan_in_progress':
+      return { ok: false, reason: 'first_plan_in_progress', message: CLAIM_MESSAGES.first_plan_in_progress };
+    case 'prior_default_review':
+      return { ok: false, reason: 'prior_default_review',   message: CLAIM_MESSAGES.prior_default_review };
     // amounts_mismatch and excess_misplaced mean THIS code computed a split
     // the RPC would not accept — a bug here, not a customer problem. Report
     // it as unavailable and log loudly.
