@@ -13,7 +13,7 @@ Shape: **package** (synth-entry — this repo has no built `dist/`).
 ## Key setup (how the build is made to work)
 
 - **`next/link` / `next/navigation` / `next/image` are shimmed** to plain-anchor / no-op modules (`.design-sync/shims/`) via `cfg.tsconfig` = `.design-sync/tsconfig.dssync.json`, whose `compilerOptions.paths` alias those specifiers. esbuild's tsconfig-paths plugin resolves them. This is what lets `SiteHeader`/`SiteFooter`/`StatCard`/etc. bundle + render outside Next. Any NEW curated component that imports other `next/*` subpaths needs a matching shim + paths entry.
-- **CSS is generated, not shipped.** The app uses Tailwind v4 (`@import "tailwindcss"`), whose utilities are produced at build time. `cfg.cssEntry` = `.design-sync/ds.css`, compiled by the Tailwind CLI from `.design-sync/ds-input.css` (which imports `app/globals.css` + `app/landing.css` and `@source "../app"`). **Regenerate it whenever app styles/classes change** (see Re-sync).
+- **CSS is generated, not shipped or committed.** The app uses Tailwind v4 (`@import "tailwindcss"`), whose utilities are produced at build time. `cfg.cssEntry` = `.design-sync/ds.css`, compiled by the Tailwind CLI from `.design-sync/ds-input.css` (which imports `app/globals.css` + `app/landing.css` and `@source "../app"`). **Generate it before every re-sync** (see Re-sync).
 - **Poppins is the brand display font** (`.lp-root`, loaded via `next/font` in the app → not shippable). The real Poppins woff2 (400/500/600/700, latin) were fetched from Google Fonts into `.design-sync/fonts/` and wired via `cfg.extraFonts`. Resolves the `[FONT_MISSING]` warning. Poppins is SIL OFL — redistribution is fine.
 - **Guidelines disabled** (`cfg.guidelinesGlob: []`). The default glob (`docs/*.md`) matched only **internal engineering docs** (`peach-integration-audit.md`, `PASSKEYS_TESTING.md`) — NOT design guidance, and potentially sensitive. They were briefly uploaded then reconciled away. Keep guidelines off unless real design-guideline markdown is added.
 
@@ -26,7 +26,7 @@ Shape: **package** (synth-entry — this repo has no built `dist/`).
 Regenerate CSS, then run the driver:
 
 ```sh
-# 1. regenerate the Tailwind CSS (only if app styles/classes changed)
+# 1. generate the ignored Tailwind build artifact
 node .design-sync/.cache/tw/node_modules/@tailwindcss/cli/dist/index.mjs \
   -i .design-sync/ds-input.css -o .design-sync/ds.css
 # 2. driver: build → diff → validate → capture
@@ -43,7 +43,7 @@ None outstanding — 23/23 render cleanly; no `[RENDER_THIN]`/`variantsIdentical
 
 ## Re-sync risks (what can silently go stale)
 
-- **`.design-sync/ds.css` is a generated snapshot.** If the app adds new Tailwind classes/tokens (or changes `globals.css`/`landing.css`), the committed `ds.css` won't contain them until regenerated (step 1 above). Symptom: previews using new utilities render unstyled. `@tailwindcss/cli` lives in the gitignored `.design-sync/.cache/tw` — a fresh clone must reinstall it (`npm i @tailwindcss/cli@4` there) before regenerating.
+- **`.design-sync/ds.css` is an ignored build artifact.** Generate it in step 1 before invoking the sync driver. `@tailwindcss/cli` lives in the gitignored `.design-sync/.cache/tw`, so a fresh clone must install it there before regenerating.
 - **`@tailwindcss/cli` version pin.** Compiled with tailwindcss v4.3.3; a major Tailwind bump in the app could change output — regenerate + eyeball.
 - **Components are app-coupled.** Adding more of the app's ~118 client components will usually drag in Supabase / server actions / more `next/*` — each needs shim coverage or exclusion. The 23 chosen are the ones that are genuinely self-contained. Don't assume a new one "just works" — build + render-check it.
 - **`next/*` shims are lossy by design.** `<Link>` renders as `<a>` (no client routing), navigation hooks are no-ops. Fine for static preview render; never represents runtime behaviour.
