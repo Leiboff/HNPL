@@ -87,8 +87,15 @@ export default function SecurityClient({ initialStep, nextPath }: Props) {
       });
       if (enrolErr || !data) { setError(enrolErr?.message ?? 'Could not start enrolment.'); return; }
 
-      // qr_code is an SVG string; render it as a data URI.
-      setQr(`data:image/svg+xml;utf-8,${encodeURIComponent(data.totp.qr_code)}`);
+      // Render the QR as an <img> data URI. @supabase/auth-js already
+      // prepends `data:image/svg+xml;utf-8,` to totp.qr_code with the raw SVG
+      // markup UNENCODED — which renders unreliably (the `#` in fill colours
+      // starts a URI fragment, and double-wrapping breaks it entirely). Strip
+      // whatever prefix it added, then re-encode the SVG with charset=utf-8 so
+      // every byte is safe. If the prefix is ever absent, the regex no-ops and
+      // we encode the raw SVG.
+      const rawSvg = (data.totp.qr_code ?? '').replace(/^data:image\/svg\+xml[^,]*,/, '');
+      setQr(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(rawSvg)}`);
       setSecret(data.totp.secret);
       setPendingId(data.id);
       setStep('enrol');

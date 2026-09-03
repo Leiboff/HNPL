@@ -26,7 +26,7 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 // out-of-band change) and is never taken from a request body.
 //
 // entity_type is 'auth_factor', added to the admin_audit_log CHECK by
-// migration 0139. entity_id is the user whose factor changed — so a
+// migration 0141. entity_id is the user whose factor changed — so a
 // customer-360 style lookup by that id surfaces the factor history
 // alongside everything else about the account.
 

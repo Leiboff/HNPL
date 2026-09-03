@@ -1,6 +1,6 @@
 // @vitest-environment node
 //
-// ─── 0139 — the AAL2 database backstop, against real Postgres ──────────
+// ─── 0141 — the AAL2 database backstop, against real Postgres ──────────
 //
 // Runs the migration verbatim on a non-superuser role (pglite's default
 // role bypasses RLS; `authenticated` here does not) and asserts:
@@ -26,7 +26,7 @@ import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 
 const MIG = readFileSync(
-  resolve(process.cwd(), 'supabase/migrations/0139_privileged_aal2_backstop.sql'),
+  resolve(process.cwd(), 'supabase/migrations/0141_privileged_aal2_backstop.sql'),
   'utf8',
 ).replace(/\r\n/g, '\n');
 
