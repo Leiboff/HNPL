@@ -58,6 +58,12 @@ const CONVERTED = [
   'app/signup/practice/page.tsx',
   // password set
   'app/update-password/UpdatePasswordForm.tsx',
+  // the fraud review queue and the kill switches (audit S-07). Built with
+  // the hook from the start, and the immediate ref-backed guard is the
+  // reason: double-clicking "Reject" would fire a second decision on a
+  // review the first click already decided, and double-clicking a kill
+  // switch would flip it and flip it back.
+  'app/admin/risk/RiskControls.tsx',
   // public contact enquiry — built with the hook from the start. Uses
   // p.run() rather than a mirrored useTransition, because nothing
   // revalidates: success swaps the card for a confirmation held in local

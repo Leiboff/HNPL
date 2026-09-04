@@ -70,6 +70,11 @@ vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
   ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
 }));
 
+vi.mock('@/lib/risk/evaluate', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/risk/evaluate')>(),
+  ...(await import('@/lib/testing/riskTestMock')).allowTestRisk,
+}));
+
 vi.mock('next/cache', () => ({
   revalidatePath: () => { /* no-op in tests */ },
 }));

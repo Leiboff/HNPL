@@ -4,6 +4,49 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { recordAdminAction } from '@/app/admin/_lib/adminAudit';
 import { requireAAL2 } from '@/lib/auth/aal';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
+import { resolvePayoutBanking } from '@/lib/practice/banking';
+
+// ─── The payout risk gate (audit 2026-09-03, S-07) ──────────────────────────
+//
+// The last point at which money can be held. Everything earlier in the loss
+// chain is recoverable in principle — a plan can be cancelled, a card charge
+// reversed. Once the EFT leaves, the ring has been paid and the remaining
+// instalments are never going to arrive.
+//
+// So this gate asks a different question from the ones above it. Not "is this
+// admin allowed to settle" (guardAdmin and requireAAL2 answer that, and both
+// are correct) but "is this merchant one we should still be paying". The
+// distinction matters because both answers can be yes and no at the same
+// time: an entirely legitimate admin settling an entirely valid batch for a
+// practice whose first-payment rate collapsed on Tuesday.
+//
+// It reads a tripped circuit breaker (a standing block on the practice
+// dimension, written by trip_practice_circuit_breaker) and the daily
+// platform payout ceiling, and refuses on either. Refusal here is a HOLD, not
+// a cancellation: nothing is written, the batch stays pending, and it settles
+// normally once a reviewer clears it.
+async function payoutRiskRefusal(
+  supabase: Parameters<typeof resolvePayoutBanking>[0],
+  practiceId: string,
+  amount: number,
+): Promise<string | null> {
+  const banking = await resolvePayoutBanking(supabase, practiceId);
+  const decision = await evaluateRisk({
+    event:       'payout_release',
+    practiceId,
+    bankAccount: banking.source === 'none' ? null : banking.banking.bank_account_number,
+    amount,
+    // An admin's own browser is not a signal about the merchant, and
+    // clustering every practice an admin settles onto one device token would
+    // make the duplicate-device rule fire on the admin.
+    skipDevice:  true,
+  });
+  if (mayProceed(decision)) return null;
+  return decision.reviewId
+    ? 'This practice is held for review — payouts are paused until it is cleared. See the risk queue.'
+    : decision.refusalMessage;
+}
 
 // ─── Settlement actions ─────────────────────────────────────────────────────
 //
@@ -54,11 +97,21 @@ export async function markBatchPaid(batchId: string): Promise<{ error: string | 
 
   const { data: batch } = await guard.supabase!
     .from('payout_batches')
-    .select('id, status')
+    .select('id, status, practice_id, total_net')
     .eq('id', batchId)
     .eq('status', 'pending')
     .maybeSingle();
   if (!batch) return { error: 'Batch not found or already paid.' };
+
+  // Held BEFORE the audit row and before either write. A settlement that is
+  // recorded as intended and then refused would leave the trail claiming an
+  // EFT was asserted when it was not.
+  const held = await payoutRiskRefusal(
+    guard.supabase!,
+    batch.practice_id as string,
+    Number(batch.total_net ?? 0),
+  );
+  if (held) return { error: held };
 
   const paidAt = new Date().toISOString();
 
@@ -115,7 +168,7 @@ export async function markPayoutPaid(payoutId: string): Promise<{ error: string 
 
   const { data: payout } = await guard.supabase!
     .from('payouts')
-    .select('id, status, batch_id')
+    .select('id, status, batch_id, practice_id, net_amount')
     .eq('id', payoutId)
     .eq('status', 'pending')
     .maybeSingle();
@@ -127,6 +180,16 @@ export async function markPayoutPaid(payoutId: string): Promise<{ error: string 
              'so the practice can reconcile the full deposit.',
     };
   }
+
+  // The same gate as the batch path. An unbatched payout is the smaller
+  // door into the same room, and leaving it ungated would make the control
+  // trivially avoidable by settling rows one at a time.
+  const heldPayout = await payoutRiskRefusal(
+    guard.supabase!,
+    payout.practice_id as string,
+    Number(payout.net_amount ?? 0),
+  );
+  if (heldPayout) return { error: heldPayout };
 
   const paidAt = new Date().toISOString();
 

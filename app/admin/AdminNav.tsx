@@ -28,6 +28,12 @@ const NAV_LINKS = [
   // is for the queues an operator works from a phone, and reading an audit
   // trail is a desk activity. See app/admin/audit/page.tsx.
   { href: '/admin/audit',                      label: 'Audit log'                                                            },
+  // The fraud review queue and the platform kill switches (audit S-07).
+  // Desktop only for the same reason as the audit log: deciding whether a
+  // held customer is a ring or a household is a desk activity, and the one
+  // control here that must be reachable in a hurry — a kill switch — is
+  // reachable by URL from anywhere.
+  { href: '/admin/risk',                       label: 'Risk'                                                                 },
 ];
 
 export default function AdminNav({ counts }: { counts: Counts }) {

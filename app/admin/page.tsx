@@ -4,6 +4,7 @@ import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import StatCard from './_components/StatCard';
 import { formatRand, timeAgo } from './_lib/format';
 import { classifyCronHealth, type CronRunRow } from './_lib/cronHealth';
+import { budgetPressure } from '@/lib/risk/notify';
 
 // ─── /admin (dashboard) ─────────────────────────────────────────────────────
 //
@@ -53,6 +54,10 @@ export default async function AdminDashboardPage() {
     { data: collectedThisMonthRows },
     { data: lastCronRunRow },
     { data: atRiskPaymentRows },
+    { count: openRiskReviewsCount },
+    { data: engagedKillSwitchRows },
+    { data: heldPracticeRows },
+    { data: riskBudgetRows },
   ] = await Promise.all([
     supabase.from('practices').select('*',     { count: 'exact', head: true }).eq('status', 'pending'),
     supabase.from('practices').select('*',     { count: 'exact', head: true }),
@@ -83,6 +88,28 @@ export default async function AdminDashboardPage() {
       .select('patient_id, plan_id, amount, status')
       .eq('kind', 'instalment')
       .in('status', ['failed', 'retried', 'defaulted', 'written_off']),
+    // ── The aggregate fraud controls (0142/0143) ──────────────────────
+    //
+    // Four reads, all cheap, all counting or filtering an indexed column.
+    // They are here rather than only on /admin/risk for the reason this
+    // page exists: an operator opens the dashboard, and a control whose
+    // output lives exclusively on a page nobody has a habit of visiting is
+    // a control with an email and nothing else behind it.
+    //
+    // Read through the SESSION client like everything else here, so 0142's
+    // is_platform_admin() policies do the gating and a demoted account
+    // cannot see the queue.
+    supabase.from('risk_reviews').select('*', { count: 'exact', head: true })
+      .in('state', ['open', 'in_review']),
+    supabase.from('risk_kill_switches').select('name').eq('engaged', true),
+    // A practice held by the nightly circuit breaker. Unexpired blocks
+    // only — a lapsed hold enforces nothing and reporting it would send
+    // somebody to look at a practice that is trading normally.
+    supabase.from('risk_blocks').select('token, action, reason, expires_at')
+      .eq('dimension', 'practice')
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`),
+    supabase.from('risk_budget_usage').select('budget, consumed')
+      .eq('usage_day', todayStr),
   ]);
 
   const dueToday    = (dueTodayRows           ?? []) as Array<{ amount: number }>;
@@ -125,6 +152,14 @@ export default async function AdminDashboardPage() {
   const cronHealth   = classifyCronHealth(lastCronRunRow as CronRunRow | null);
   const cronAttention = cronHealth.state !== 'green';
 
+  // ── Risk controls ────────────────────────────────────────────────────
+  const openRiskReviews = openRiskReviewsCount ?? 0;
+  const engagedSwitches = ((engagedKillSwitchRows ?? []) as Array<{ name: string }>)
+    .map((r) => r.name);
+  const heldPractices   = (heldPracticeRows ?? []) as Array<{ token: string; action: string }>;
+  const riskBudgets     = (riskBudgetRows ?? []) as Array<{ budget: string; consumed: number | string }>;
+  const pressuredBudgets = budgetPressure(riskBudgets);
+
   // Build the attention list — each item declares its own copy + link.
   // Empty list = the all-clear state below.
   type AttentionItem = {
@@ -135,6 +170,70 @@ export default async function AdminDashboardPage() {
     href:    string;
   };
   const attention: AttentionItem[] = [];
+
+  // ── Risk first, and unconditionally at the top ───────────────────────
+  //
+  // An engaged kill switch means customers are being refused RIGHT NOW,
+  // platform-wide. It outranks every other item on this page — an operator
+  // reading "3 practices awaiting approval" above "new credit is switched
+  // off" has been told the wrong thing first.
+  if (engagedSwitches.length > 0) {
+    attention.push({
+      key:    'risk-kill-switches',
+      tone:   'alert',
+      label:  `${engagedSwitches.length === 1 ? 'A kill switch is' : `${engagedSwitches.length} kill switches are`} engaged · ${engagedSwitches.join(', ').replace(/_/g, ' ')}`,
+      detail: 'Customers on these paths are being refused. Release when the incident is over.',
+      href:   '/admin/risk',
+    });
+  }
+
+  // Exhausted before merely-pressured, because the first is refusing
+  // customers and the second is only going to.
+  const exhausted = pressuredBudgets.filter((b) => b.fraction >= 1);
+  const nearing   = pressuredBudgets.filter((b) => b.fraction < 1);
+
+  if (exhausted.length > 0) {
+    attention.push({
+      key:    'risk-budgets-exhausted',
+      tone:   'alert',
+      label:  `${exhausted.length} daily budget${exhausted.length === 1 ? '' : 's'} exhausted · ${exhausted.map((b) => b.budget.replace(/_/g, ' ')).join(', ')}`,
+      detail: 'Requests against these are being refused until midnight UTC. Raise the ceiling or find out why.',
+      href:   '/admin/risk',
+    });
+  }
+
+  if (nearing.length > 0) {
+    attention.push({
+      key:    'risk-budgets-nearing',
+      tone:   'warn',
+      label:  `${nearing.length} daily budget${nearing.length === 1 ? '' : 's'} above 80% · ${nearing.map((b) => `${b.budget.replace(/_/g, ' ')} ${Math.round(b.fraction * 100)}%`).join(', ')}`,
+      detail: 'Not yet refusing anything. Worth knowing before it does.',
+      href:   '/admin/risk',
+    });
+  }
+
+  if (openRiskReviews > 0) {
+    attention.push({
+      key:    'risk-reviews',
+      tone:   'alert',
+      label:  `${openRiskReviews} held for risk review`,
+      detail: 'Customers or practices the fraud controls stopped. Each one is waiting on a human decision.',
+      href:   '/admin/risk',
+    });
+  }
+
+  if (heldPractices.length > 0) {
+    const denied = heldPractices.filter((p) => p.action === 'deny').length;
+    attention.push({
+      key:    'risk-practices-held',
+      tone:   'alert',
+      label:  `${heldPractices.length} practice${heldPractices.length === 1 ? '' : 's'} held by the circuit breaker`,
+      detail: denied > 0
+        ? `${denied} with payouts stopped. Exposure, payout volume, new-customer inflow or first-payment rate breached.`
+        : 'Parked for review — one threshold breached, not yet two.',
+      href:   '/admin/risk',
+    });
+  }
 
   if ((pendingPracticesCount ?? 0) > 0) {
     attention.push({

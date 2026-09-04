@@ -25,6 +25,33 @@ describe('vercel.json — cron entries', () => {
     expect(collect.schedule).toBe('0 11 * * *');
   });
 
+  it('has the risk monitor daily, before the weekly payout batcher closes', () => {
+    // 01:00 UTC on a Thursday is three hours before the payout batcher makes
+    // a practice's money eligible to leave, so a practice whose first-payment
+    // rate collapsed on Wednesday is held BEFORE Thursday's batch exists
+    // rather than after.
+    const monitor = config.crons.find((c: { path: string }) => c.path === '/api/cron/risk-monitor');
+    expect(monitor).toBeDefined();
+    expect(monitor.schedule).toBe('0 1 * * *');
+
+    const batcher = config.crons.find((c: { path: string }) => c.path === '/api/cron/payout-batches');
+    const monitorHour = Number(monitor.schedule.split(' ')[1]);
+    const batcherHour = Number(batcher.schedule.split(' ')[1]);
+    expect(monitorHour).toBeGreaterThan(batcherHour);
+  });
+
+  it('has the risk alert digest on a sub-hourly cadence', () => {
+    // The digest is the only thing that gets a held customer or a stopped
+    // payout in front of a person. A daily cadence would mean a ring caught
+    // at 02:00 sits unlooked-at until the next morning, so this one has to
+    // stay frequent — and a change to it should have to argue with this test.
+    const alerts = config.crons.find((c: { path: string }) => c.path === '/api/cron/risk-alerts');
+    expect(alerts).toBeDefined();
+    expect(alerts.schedule).toMatch(/^\*\/(\d+) \* \* \* \*$/);
+    const everyMinutes = Number(alerts.schedule.match(/^\*\/(\d+)/)![1]);
+    expect(everyMinutes).toBeLessThanOrEqual(30);
+  });
+
   it('has the CRM reply-poll cron on a daily safety-net cadence (since 0072)', () => {
     // Since 0072 the primary channel is Gmail push (Pub/Sub → the push
     // endpoint). The cron is a once-a-day safety-net sweep + watch

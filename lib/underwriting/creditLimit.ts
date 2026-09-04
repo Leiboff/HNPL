@@ -49,11 +49,11 @@
 //
 // It is the exposure arithmetic and the refusal, in one place, so the
 // acceptance paths cannot drift. It is NOT underwriting: the limit it
-// enforces is whatever `stubAffordabilityPolicy` granted, and that module's
-// own header is emphatic that it performs no assessment of any kind.
-// Enforcing a stub limit does not make the stub a policy. It does mean that
-// when the stub is replaced, the number the real policy returns starts
-// binding immediately with no further wiring.
+// enforces is whatever lib/underwriting/affordabilityPolicy returned, and
+// that module currently returns no limit at all — the R5,000 stub that used
+// to grant one unconditionally has been removed. So this arithmetic binds
+// immediately once the real credit check is configured, with no further
+// wiring, and until then it refuses every acceptance for want of a number.
 //
 // FAIL CLOSED ON A NULL LIMIT
 //
@@ -81,9 +81,15 @@ export const CREDIT_LIMIT_REFUSAL =
   'This bill would take you over your approved limit. Pay down your current '
   + 'plan first, or contact us if you think your limit should be higher.';
 
+// Reached by an applicant who IS fully onboarded — acceptPlan runs the
+// onboarding gate before the credit claim — so the old copy ("please finish
+// setting up your account") sent them to a screen with nothing left to do.
+// Since the R5,000 stub was removed, this is the normal state for everyone
+// until the real credit check is live, so it has to say something true and
+// actionable.
 export const CREDIT_LIMIT_UNSET_REFUSAL =
-  'We don\'t have an approved limit on your account yet. Please finish setting '
-  + 'up your account before taking on a bill.';
+  'We\'re still assessing how much you can spend, so we can\'t set up a plan '
+  + 'just yet. We\'ll let you know as soon as your limit is ready.';
 
 export const CREDIT_LIMIT_UNAVAILABLE_REFUSAL =
   'We couldn\'t check your available balance just now. Please try again in a moment.';

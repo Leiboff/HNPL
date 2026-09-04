@@ -224,7 +224,23 @@ function stepIsSatisfied(
       // patient typing into a form.
       return !!profile.sa_id_number && !!profile.liveness_verified_at;
     case 'credit-check':
-      return profile.credit_check_status === 'passed';
+      // 'passed' means a limit was granted. 'pending' means the assessment
+      // was taken and no decision came back — the policy is not live yet,
+      // or the provider was unreachable (lib/underwriting/
+      // affordabilityPolicy.ts).
+      //
+      // BOTH satisfy the step, because the step means "we have taken your
+      // application", not "you have been approved". Those are different
+      // facts, and conflating them leaves only bad options: strand every
+      // applicant on a spinner forever, or write 'passed' when nothing
+      // passed. What a pending applicant cannot do is take a plan — the
+      // credit claim refuses without an approved limit, whatever this step
+      // says.
+      //
+      // 'failed' deliberately does NOT satisfy it: that is a real decision
+      // on the applicant's file, and it is not the same as no decision.
+      return profile.credit_check_status === 'passed'
+          || profile.credit_check_status === 'pending';
   }
 }
 
