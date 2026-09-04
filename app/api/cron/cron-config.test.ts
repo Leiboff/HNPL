@@ -26,18 +26,21 @@ describe('vercel.json — cron entries', () => {
   });
 
   it('has the risk monitor daily, before the weekly payout batcher closes', () => {
-    // 01:00 UTC on a Thursday is three hours before the payout batcher makes
-    // a practice's money eligible to leave, so a practice whose first-payment
-    // rate collapsed on Wednesday is held BEFORE Thursday's batch exists
-    // rather than after.
+    // 23:30 UTC Wednesday is 30 minutes before the Thursday 00:00 UTC batch.
+    // Keep this explicit: comparing hour numbers alone previously asserted the
+    // reverse ordering and left Wednesday-night activity outside the breaker.
     const monitor = config.crons.find((c: { path: string }) => c.path === '/api/cron/risk-monitor');
     expect(monitor).toBeDefined();
-    expect(monitor.schedule).toBe('0 1 * * *');
+    expect(monitor.schedule).toBe('30 23 * * *');
 
     const batcher = config.crons.find((c: { path: string }) => c.path === '/api/cron/payout-batches');
-    const monitorHour = Number(monitor.schedule.split(' ')[1]);
-    const batcherHour = Number(batcher.schedule.split(' ')[1]);
-    expect(monitorHour).toBeGreaterThan(batcherHour);
+    expect(batcher.schedule).toBe('0 0 * * 4');
+
+    const [monitorMinute, monitorHour] = monitor.schedule.split(' ').map(Number);
+    const [batchMinute, batchHour] = batcher.schedule.split(' ').map(Number);
+    const monitorMinutesBeforeThursday = 24 * 60 - (monitorHour * 60 + monitorMinute);
+    const batchMinutesAfterThursday = batchHour * 60 + batchMinute;
+    expect(monitorMinutesBeforeThursday + batchMinutesAfterThursday).toBe(30);
   });
 
   it('has the risk alert digest on a sub-hourly cadence', () => {

@@ -105,6 +105,14 @@ describe('the cron closes the batch early Thursday morning SAST', () => {
     expect(byPath.get('/api/cron/crm-reply-poll')).toBe('0 6 * * *');
   });
 
+  it('runs the risk monitor 30 minutes before the Thursday batch and retains an in-run backstop', () => {
+    const cfg = JSON.parse(VERCEL) as { crons: Array<{ path: string; schedule: string }> };
+    const monitor = cfg.crons.find((c) => c.path === '/api/cron/risk-monitor');
+    expect(monitor?.schedule).toBe('30 23 * * *');
+    expect(RUNNER).toMatch(/evaluatePracticeBreaker/);
+    expect(RUNNER).toMatch(/risk posture unavailable; refusing to batch/);
+  });
+
   it('the runner formats dates through payoutWindow, never by slicing an ISO string', () => {
     // toISOString().slice(0,10) gives the UTC calendar day, which is the
     // PREVIOUS day for any SAST-midnight boundary — it labelled every window a

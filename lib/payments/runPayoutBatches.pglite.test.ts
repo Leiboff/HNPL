@@ -83,6 +83,26 @@ type Filter = { col: string; op: 'eq' | 'gte' | 'lt' | 'is' | 'in'; val: unknown
 
 function makeSqlClient() {
   return {
+    async rpc(
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> {
+      if (name === 'practice_risk_posture') {
+        return {
+          data: {
+            practice_id: args.p_practice_id,
+            window_days: args.p_window_days,
+            open_exposure: 0,
+            window_payout: 0,
+            new_customers: 0,
+            plans_in_window: 0,
+            first_payment_rate: null,
+          },
+          error: null,
+        };
+      }
+      throw new Error(`unexpected RPC in payout test: ${name}`);
+    },
     from(table: string) {
       const filters: Filter[] = [];
       let mode: 'select' | 'update' | 'upsert' = 'select';
@@ -254,6 +274,58 @@ afterAll(async () => {
 // ─── The window, end to end through the runner ───────────────────────────
 
 describe('window membership', () => {
+  it('re-evaluates practice risk at the batch boundary and excludes a held practice', async () => {
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T09:00:00`), net: 500 });
+    await seedActivatedPlan({ practiceId: practiceB, activatedAt: sast(`${THU_06}T10:00:00`), net: 100 });
+
+    const client = makeSqlClient();
+    client.rpc = async (name: string, args: Record<string, unknown>) => {
+      if (name === 'practice_risk_posture') {
+        const held = args.p_practice_id === practiceA;
+        return {
+          data: {
+            practice_id: args.p_practice_id,
+            window_days: args.p_window_days,
+            open_exposure: held ? 500_000 : 0,
+            window_payout: held ? 400_000 : 0,
+            new_customers: 0,
+            plans_in_window: held ? 20 : 0,
+            first_payment_rate: held ? 0.2 : null,
+          },
+          error: null,
+        };
+      }
+      if (name === 'trip_practice_circuit_breaker') {
+        return { data: { review_id: 'review-1' }, error: null };
+      }
+      throw new Error(`unexpected RPC in payout test: ${name}`);
+    };
+
+    const summary = await runPayoutBatches(client, { now: RUN_FRIDAY });
+
+    expect(summary.practices_held).toEqual([practiceA]);
+    expect(summary.practices.map((p) => p.practiceId)).toEqual([practiceB]);
+    expect(summary.payouts_claimed).toBe(1);
+    const { rows } = await q<{ practice_id: string; batch_id: string | null }>(
+      `select practice_id, batch_id from payouts order by practice_id`,
+    );
+    expect(rows.find((r) => r.practice_id === practiceA)?.batch_id).toBeNull();
+    expect(rows.find((r) => r.practice_id === practiceB)?.batch_id).not.toBeNull();
+  });
+
+  it('fails closed when practice posture cannot be read', async () => {
+    await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T09:00:00`), net: 500 });
+    const client = makeSqlClient();
+    client.rpc = async () => ({ data: null, error: { message: 'risk database unavailable' } });
+
+    const summary = await runPayoutBatches(client, { now: RUN_FRIDAY });
+
+    expect(summary.payouts_claimed).toBe(0);
+    expect(summary.errors).toContain(`practice ${practiceA}: risk posture unavailable; refusing to batch`);
+    const { rows } = await q<{ batch_id: string | null }>(`select batch_id from payouts`);
+    expect(rows[0].batch_id).toBeNull();
+  });
+
   it('a Thursday activation and the following Wednesday land in the SAME batch', async () => {
     await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast(`${THU_06}T00:00:00`), net: 100 });
     await seedActivatedPlan({ practiceId: practiceA, activatedAt: sast('2026-08-12T23:00:00'), net: 250 });

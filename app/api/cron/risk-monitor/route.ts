@@ -27,11 +27,11 @@ import {
 //
 // ─── WHY THIS RUNS BEFORE THE PAYOUT BATCHER ────────────────────────────
 //
-// The weekly batcher (Thursday 00:00) is what makes a practice's money
-// eligible to leave. This runs daily at 01:00, so on batch day the breaker
-// has already been evaluated against the same week's numbers the batch is
-// about to close — a practice whose first-payment rate collapsed on
-// Wednesday is held before Thursday's batch exists, not after.
+// The weekly batcher (Thursday 00:00 UTC) is what makes a practice's money
+// eligible to leave. This runs daily at 23:30 UTC, so Wednesday's pass lands
+// 30 minutes before that batch closes. The batch runner also re-evaluates
+// every candidate practice synchronously: cron delivery is best-effort, so
+// schedule ordering is useful defence in depth, never the money boundary.
 //
 // ─── ORDER: BREAKERS FIRST, PRUNE SECOND ────────────────────────────────
 //

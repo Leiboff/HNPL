@@ -4,6 +4,7 @@ import {
   describePayoutWindow,
   type PayoutWindow,
 } from './payoutWindow';
+import { breakerThresholds, evaluatePracticeBreaker } from '@/lib/risk/circuitBreaker';
 
 // ─── Weekly payout batching ─────────────────────────────────────────────
 //
@@ -88,6 +89,8 @@ export type PayoutRunSummary = {
   payouts_claimed:     number;
   total_net:           number;
   practices:           BatchResult[];
+  /** Candidate practices excluded by the synchronous fraud backstop. */
+  practices_held:      string[];
   /**
    * Pending, unbatched payouts that ACTIVATED BEFORE this window — i.e. a
    * previous week's run was missed. Reported rather than silently swept in,
@@ -147,7 +150,7 @@ export async function runPayoutBatches(
       window_start: startIso, window_end: endIso,
       window_label: describePayoutWindow(window),
       batches_created: 0, batches_reused: 0, payouts_claimed: 0, total_net: 0,
-      practices: [], stranded_payouts: 0, orphan_active_plans: 0,
+      practices: [], practices_held: [], stranded_payouts: 0, orphan_active_plans: 0,
       errors: [`candidate query failed: ${candidateErr.message}`],
     };
   }
@@ -159,11 +162,28 @@ export async function runPayoutBatches(
 
   // ── 2. One batch per practice ─────────────────────────────────────────
   const results: BatchResult[] = [];
+  const held: string[] = [];
   let created = 0;
   let reused  = 0;
 
   for (const practiceId of practiceIds) {
     try {
+      // This is the actual money-boundary backstop. The scheduled monitor
+      // makes holds visible before batching, but Vercel cron delivery is
+      // best-effort and must never be the only thing between fresh fraud and
+      // a payable batch. Re-read posture immediately before claiming rows.
+      const risk = await evaluatePracticeBreaker(practiceId, {
+        thresholds: breakerThresholds(),
+        client: supabase,
+      });
+      if (risk.posture === null) {
+        throw new Error('risk posture unavailable; refusing to batch');
+      }
+      if (risk.tripped) {
+        held.push(practiceId);
+        continue;
+      }
+
       const outcome = await batchOnePractice(supabase, practiceId, window, runAt);
       results.push(outcome.result);
       if (outcome.createdBatch) created++; else reused++;
@@ -185,6 +205,7 @@ export async function runPayoutBatches(
     payouts_claimed:     results.reduce((s, r) => s + r.claimed, 0),
     total_net:           round2(results.reduce((s, r) => s + r.totalNet, 0)),
     practices:           results,
+    practices_held:      held,
     stranded_payouts:    stranded,
     orphan_active_plans: orphans,
     errors,
