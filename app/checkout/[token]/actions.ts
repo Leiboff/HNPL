@@ -28,6 +28,7 @@ import { computeOnboarding, type ProfileForOnboarding } from '@/lib/onboarding/s
 import { currentFlags } from '@/lib/featureFlags';
 import { claimCreditForPlan } from '@/lib/underwriting/claimCredit';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 import { generateTempPassword } from '@/lib/auth/tempPassword';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
@@ -410,6 +411,25 @@ export async function initiateCheckout(input: InitiateCheckoutInput): Promise<In
   // ── 1. Resolve the token — invitation OR POS session ──────────────────
   const resolved = await resolveCheckoutToken(svc, token);
   if (!resolved) return { ok: false, error: 'This checkout link is no longer valid.' };
+
+  // ── Aggregate risk (audit 2026-09-03, S-07) ─────────────────────────
+  //
+  // The third door onto an account on this system, and the one an attacker
+  // reaches with a bill token rather than a signup form. The bucket above
+  // bounds one IP and one token; it cannot see one device walking a
+  // hundred different tokens, or one practice converting bill tokens at a
+  // rate no clinic works at — which is the merchant side of the collusion
+  // the audit describes.
+  //
+  // Placed here, after the token resolves and before any account or plan
+  // is created, because the practice is the signal that matters most on
+  // this surface and it is not known until the token has been read.
+  const risk = await evaluateRisk({
+    event:      'checkout_initiate',
+    practiceId: resolved.practiceId,
+    phone:      normalizedPhone,
+  });
+  if (!mayProceed(risk)) return { ok: false, error: risk.refusalMessage! };
 
   // saIdNumber source + validation forks on token kind:
   //   • invitation — patient-typed, validated here as always, and since
@@ -1460,6 +1480,11 @@ export type PhoneOtpStartResult =
         | 'token_daily_limit'    // 10 sends in 24h cap hit for this token across all phones (SMS-burn guard, 0055)
         | 'sms_failed'           // SMSPortal returned non-2xx / timeout
         | 'sms_not_configured'   // creds missing (dev safety)
+        // The aggregate fraud controls refused this send (audit S-07). A
+        // separate code from the caps above because it is a different
+        // judgement: those say "this token has had enough today", this says
+        // "this number, or this device, or the platform's SMS bill, has".
+        | 'risk_refused'
         | 'unknown';
     };
 
@@ -1477,6 +1502,20 @@ export async function requestPhoneOtp(
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } },
   );
+
+  // ── Aggregate risk + the daily SMS budget (audit S-07) ────────────
+  //
+  // The anonymous twin of requestPhoneOtpForUser, and the one that matters
+  // more: this path has no account behind it at all, so 0055's per-token
+  // caps are the only limit and a fresh bill token buys a fresh allowance.
+  // What this adds is the view across tokens — one number being verified
+  // under several of them, one device walking a list, and the platform's
+  // SMS bill for the day.
+  //
+  // Placed before the code is generated, so a refused send costs nothing
+  // and writes nothing.
+  const risk = await evaluateRisk({ event: 'phone_otp', phone: normalizedPhone });
+  if (!mayProceed(risk)) return { ok: false, code: 'risk_refused' };
 
   // Generate + hash entirely server-side. The plaintext code is held
   // in a local variable for at most one fetch round-trip before it

@@ -11,6 +11,7 @@ import { findExistingAuthUser } from '@/lib/auth/findExistingAuthUser';
 import { consentColumns } from '@/lib/legal/documentHash';
 import { currentServiceKeyKind, serviceKeyProblem } from '@/lib/supabase/serviceRoleKey';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 
 // ─── signUpPatient — slim, account-only ────────────────────────────────
 //
@@ -246,6 +247,30 @@ export async function signUpPatient(input: PatientSignupInput): Promise<PatientS
       error: 'Too many sign-up attempts from this connection. Please wait a few minutes and try again.',
       success: false,
     };
+  }
+
+  // ── Aggregate risk (audit 2026-09-03, S-07) ─────────────────────────
+  //
+  // The limiter above stops ONE connection signing up thirty times. It
+  // cannot see thirty connections signing up once each from one browser,
+  // which is the first step of the loss chain and costs an attacker a
+  // proxy rotation. This does: the device, the subnet, the ASN, the
+  // hosting/proxy class and the mailbox domain are all joined here.
+  //
+  // Spent AFTER the bucket, not before. The bucket is one cheap statement
+  // against an index; this is a locked, multi-dimensional evaluation. An
+  // attacker who is already over their per-IP budget should be refused by
+  // the cheap thing, and should not get to make us do the expensive thing
+  // by asking again.
+  //
+  // The email is passed but nothing is created yet — this is a decision
+  // about the ATTEMPT. Signup offers no step-up (there is no account to
+  // challenge), so the policy uses review and deny only; `mayProceed`
+  // therefore reduces to `allowed` here, and is used anyway so the two
+  // stay in step if a step-up is ever added.
+  const risk = await evaluateRisk({ event: 'signup', email });
+  if (!mayProceed(risk)) {
+    return { error: risk.refusalMessage!, success: false };
   }
 
   if (!firstName.trim())      return { error: 'First name is required.', success: false };

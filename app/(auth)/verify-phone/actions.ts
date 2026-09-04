@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { normalizePhoneZA } from '@/lib/validation';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 
 // ─── Organic-signup phone-verification server actions ────────────────────
 //
@@ -46,6 +47,13 @@ export type PhoneOtpStartResultForUser =
         | 'user_daily_limit'        // 10 sends in 24h across all phones (0055)
         | 'sms_failed'
         | 'sms_not_configured'
+        // The aggregate fraud controls refused this send (audit S-07). A
+        // separate code from the per-user caps above because it is a
+        // different judgement: those say "you personally have had enough
+        // today", this says "this number, or this device, or the platform's
+        // SMS bill, has". The page maps it to the generic risk copy rather
+        // than to a wait-and-retry message, because retrying will not help.
+        | 'risk_refused'
         | 'unknown';
     };
 
@@ -86,6 +94,24 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
     .not('verified_at', 'is', null)
     .maybeSingle();
   if (priorVerification?.verified_at) return { ok: true };
+
+  // ── Aggregate risk + the daily SMS budget (audit S-07) ────────────────
+  //
+  // Every send past this line costs a real unit at SMSPortal. 0052/0055's
+  // caps bound one user and one number; they cannot see one device
+  // verifying six numbers, one number being attached to three accounts —
+  // the planted-verification pattern the 2026-09-02 audit describes — or
+  // the platform's SMS bill for the day.
+  //
+  // Placed AFTER the already-verified short-circuit, so a returning user
+  // whose number is already verified never touches it, and BEFORE the code
+  // is generated, so a refused send costs nothing and writes nothing.
+  const risk = await evaluateRisk({
+    event:     'phone_otp',
+    accountId: user.id,
+    phone:     normalizedPhone,
+  });
+  if (!mayProceed(risk)) return { ok: false, code: 'risk_refused' };
 
   let code: string;
   let codeHash: string;

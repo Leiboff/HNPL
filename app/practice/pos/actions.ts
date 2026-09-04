@@ -28,6 +28,7 @@ import {
   type ProviderMemberRef,
 } from '@/lib/practice/providerIdentity';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 import {
   resolveTodaysTillActivity,
   type TillActivity,
@@ -352,6 +353,35 @@ export async function issueCounterSession(
 
   const gate = await checkTradingGate(client, practiceId);
   if (!gate.ok) return { error: gate.message };
+
+  // ── Aggregate risk on the merchant (audit 2026-09-03, S-07) ──────
+  //
+  // The trading gate answers "is this practice allowed to trade at all" —
+  // approved, has a provider, has banking. It is a registration check and
+  // it says nothing about behaviour. This answers the other question: is
+  // this practice, right now, behaving like one that is raising bills for
+  // patients who exist.
+  //
+  // It is also where a tripped circuit breaker lands. `trip_practice_
+  // circuit_breaker` writes a standing block on the practice dimension,
+  // and every evaluation that carries a practice reads it — so a merchant
+  // held by the breaker stops raising bills here without this call site
+  // knowing a breaker exists.
+  //
+  // Placed after the trading gate so a practice that cannot trade gets the
+  // specific, actionable message it already had rather than a generic
+  // refusal.
+  const risk = await evaluateRisk({
+    event:      'counter_session',
+    practiceId,
+    providerId: providerMemberId,
+    amount:     billAmount,
+    // A till device is a shared counter tablet, not a person's browser: the
+    // device cookie on it would link every patient billed at that practice
+    // into one cluster and swamp the duplicate-device signal with noise.
+    skipDevice: true,
+  });
+  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
 
   // Membership-keyed since 0094 so a roster-only practitioner can be billed
   // for at the till too. practice_id is still asserted alongside the id.

@@ -23,6 +23,11 @@ vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
   ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
 }));
 
+vi.mock('@/lib/risk/evaluate', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/risk/evaluate')>(),
+  ...(await import('@/lib/testing/riskTestMock')).allowTestRisk,
+}));
+
 // Session client — only used for auth.getUser in this action.
 const sessionUser: { value: { id: string } | null } = { value: null };
 vi.mock('@/lib/supabase/server', () => ({

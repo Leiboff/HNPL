@@ -132,6 +132,11 @@ function otpErrorCopy(code: string): string {
     case 'not_found':           return 'We couldn’t find your verification — tap Resend.';
     case 'sms_failed':          return 'We couldn’t send the SMS just now. Tap Resend to retry.';
     case 'sms_not_configured':  return 'SMS isn’t set up in this environment.';
+    // The aggregate fraud controls refused the send. Deliberately not a
+    // "try again later" message: unlike the daily caps above, retrying will
+    // not clear this, and telling someone to wait for something that will
+    // not happen is worse than pointing them at a human.
+    case 'risk_refused':        return 'We can’t send a code to this number right now. Please contact support and we’ll help.';
     default:                    return 'Something went wrong. Tap Resend to try again.';
   }
 }

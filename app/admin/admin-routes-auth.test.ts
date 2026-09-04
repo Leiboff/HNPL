@@ -33,6 +33,11 @@ const ADMIN_PAGES = [
   // action against a practice, a customer or the money — so it is the LAST
   // page that should be reachable by a demoted account.
   'app/admin/audit/page.tsx',
+  // The fraud review queue and the kill switches (audit S-07). Clearing a
+  // review lets a held subject transact and releasing a kill switch restarts
+  // credit issuance platform-wide, so a demoted account reaching this page
+  // would be worse than reaching the audit log.
+  'app/admin/risk/page.tsx',
 ];
 
 describe('admin routes — server-side admin auth pattern', () => {
@@ -65,6 +70,7 @@ describe('admin server actions — server-side admin auth pattern', () => {
     'app/admin/collections/actions.ts',
     'app/admin/payouts/actions.ts',
     'app/admin/practices/actions.ts',
+    'app/admin/risk/actions.ts',
   ];
 
   it.each(ADMIN_ACTIONS)('%s enforces profile.role check before mutating', (path) => {

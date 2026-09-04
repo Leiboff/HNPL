@@ -39,6 +39,11 @@ vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
   ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
 }));
 
+vi.mock('@/lib/risk/evaluate', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/risk/evaluate')>(),
+  ...(await import('@/lib/testing/riskTestMock')).allowTestRisk,
+}));
+
 vi.mock('@/lib/practice/tradingGate', () => ({
   checkTradingGate: vi.fn(async () => ({ ok: true })),
   PENDING_APPROVAL_MESSAGE: 'x',

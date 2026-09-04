@@ -13,6 +13,7 @@ import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -45,7 +46,13 @@ function svc() {
 // don't feed computeOnboarding; sa_id_number/liveness_verified_at do that).
 const PROFILE_SELECT =
   'phone_verified_at, sa_id_number, salary_day, salary_amount, credit_check_status, liveness_verified_at, ' +
-  'onboarding_completed, identity_verification_status, didit_session_id, first_name, last_name';
+  'onboarding_completed, identity_verification_status, didit_session_id, first_name, last_name, ' +
+  // Correlation inputs for the aggregate fraud controls (audit S-07). The
+  // blind index is read rather than the ID itself: lib/risk never sees a
+  // plaintext SA ID, and the index is what the duplicate-identity rule
+  // compares. Everything here is re-tokenised under the risk key before it
+  // reaches the correlation store (lib/risk/tokens.ts).
+  'sa_id_lookup_hash, phone, email';
 
 async function loadUserAndProfile() {
   const supabase = await createClient();
@@ -80,6 +87,15 @@ async function loadUserAndProfile() {
     identityVerificationStatus: profile.identity_verification_status as string | null,
     claimedFirstName: profile.first_name as string | null,
     claimedLastName:  profile.last_name  as string | null,
+    // Kept OUT of `profile` above: that object is `satisfies
+    // ProfileForOnboarding`, which is the onboarding state model's input and
+    // must not grow fields the state model does not read.
+    riskFacts: {
+      identityHash:  profile.sa_id_lookup_hash as string | null,
+      phone:         profile.phone             as string | null,
+      email:         profile.email             as string | null,
+      kycSessionRef: profile.didit_session_id  as string | null,
+    },
   };
 }
 
@@ -245,6 +261,29 @@ export async function startIdentityVerification(): Promise<StartVerificationResu
   ])) {
     return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
   }
+
+  // ── Aggregate risk + the daily KYC budget (audit S-07) ──────────────
+  //
+  // The bucket above bounds ONE account and ONE address. It cannot see the
+  // shape the audit describes: many accounts, each with its own budget,
+  // each spending one paid unit, all from one device or one subnet — nor
+  // can it see that today's platform-wide KYC bill has already reached the
+  // ceiling. Both are decided here.
+  //
+  // Spent AFTER the bucket and BEFORE the vendor call, so a caller who is
+  // already over their per-account budget never reaches the expensive
+  // evaluation, and a caller the evaluation refuses never reaches the
+  // vendor. That ordering is the whole point: the budget is only meaningful
+  // if it is checked while the money is still ours.
+  const risk = await evaluateRisk({
+    event:         'kyc_session',
+    accountId:     loaded.userId,
+    identityHash:  loaded.riskFacts.identityHash,
+    phone:         loaded.riskFacts.phone,
+    email:         loaded.riskFacts.email,
+    kycSessionRef: loaded.riskFacts.kycSessionRef,
+  });
+  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
 
   let session;
   try {
@@ -451,6 +490,29 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
     return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
   }
 
+  // ── Aggregate risk, on the ID the caller just typed (audit S-07) ─────
+  //
+  // The sharpest placement of the duplicate-identity control in the whole
+  // system, and the reason this call passes `hashIdForLookup(cleanedId)`
+  // rather than the profile's stored hash: at this point the ID is a CLAIM
+  // and nothing has been written. The 0097 unique index would eventually
+  // refuse a second profile carrying it — but only after a DHA registry
+  // lookup and a Didit face-match session have both been paid for, and
+  // 0103's `pending_sa_id_lookup_hash` deliberately carries no uniqueness
+  // constraint at all, so on that path nothing refuses it until approval.
+  //
+  // Deciding here means a ring working through a list of leaked SA IDs
+  // stops at the first one already on the platform, before the first cent
+  // is spent at either vendor.
+  const risk = await evaluateRisk({
+    event:        'kyc_session',
+    accountId:    loaded.userId,
+    identityHash: hashIdForLookup(cleanedId),
+    phone:        loaded.riskFacts.phone,
+    email:        loaded.riskFacts.email,
+  });
+  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
+
   const callback = `${diditAppBaseUrl()}/onboarding/identity?didit=callback`;
 
   // Consent is durable from here regardless of what the DHA call does.
@@ -627,6 +689,25 @@ export async function runCreditCheck(): Promise<ActionResult> {
   ])) {
     return { error: 'Too many affordability checks today. Please try again tomorrow, or contact support.' };
   }
+
+  // ── Aggregate risk + the daily bureau budget (audit S-07) ────────────
+  //
+  // Same argument as the KYC surface, and the same placement: after the
+  // per-account bucket, before the decision. The stub costs nothing today,
+  // which is precisely why the ceiling goes in now — the surface that will
+  // bill per enquiry should not acquire its first aggregate control on the
+  // day it acquires the cost.
+  //
+  // Note this sits BEFORE the feature-flag check below, for the reason the
+  // rate limit does: a flag flip must not uncover an unmeasured path.
+  const risk = await evaluateRisk({
+    event:        'credit_check',
+    accountId:    loaded.userId,
+    identityHash: loaded.riskFacts.identityHash,
+    phone:        loaded.riskFacts.phone,
+    email:        loaded.riskFacts.email,
+  });
+  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
 
   if (!currentFlags().creditCheck) {
     // Flag off — should be unreachable but never fail on it.

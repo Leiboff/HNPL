@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/mfa-factor-audit",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/risk-monitor",
+      "schedule": "0 1 * * *"
     }
   ]
 }

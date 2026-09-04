@@ -4,6 +4,11 @@ vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/security/rateLimit')>(),
   ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
 }));
+
+vi.mock('@/lib/risk/evaluate', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/risk/evaluate')>(),
+  ...(await import('@/lib/testing/riskTestMock')).allowTestRisk,
+}));
 import { randomBytes } from 'crypto';
 
 // ─── issueCounterSession — POS/counter bill issuance (device-gated) ────

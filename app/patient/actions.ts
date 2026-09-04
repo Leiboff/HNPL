@@ -17,6 +17,8 @@ import { PRIVACY_VERSION } from '@/lib/legal/privacy';
 import type { User } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
+import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
+import { loadPlanRiskFacts } from '@/lib/risk/planFacts';
 
 // ─── The privileged client, and why these actions now need one ─────────
 //
@@ -214,6 +216,38 @@ export async function acceptPlan(
   }
 
   const totalAmount = Number(plan.total_amount);
+
+  // ─── Aggregate risk, at the point credit is committed (audit S-07) ─
+  //
+  // This is the step the loss chain is built to reach. Everything before it
+  // costs the ring a little; this hands them money, and after the payout it
+  // is gone. So it is the densest evaluation in the system: the identity,
+  // the device, the instrument, the practice, the brand, the payout
+  // destination, and the customer-merchant edge itself, all joined under
+  // one lock — plus the platform's daily ceiling on NEW credit, which is
+  // the last thing standing if every correlation rule has been evaded.
+  //
+  // Ordering, and it is deliberate: AFTER the freeze and one-plan gates,
+  // which are cheap and specific and carry their own copy, and BEFORE
+  // claimCreditForPlan, which is the write. A risk decision taken after
+  // the credit is committed is not a control.
+  //
+  // A `review` here does not decline the customer. It parks the plan and
+  // says someone will be in touch — the household that shares a router with
+  // three relatives is a customer, not a ring, and the difference is a
+  // judgement a human makes from the queue.
+  const riskFacts = await loadPlanRiskFacts(svc(), {
+    patientId:  user.id,
+    practiceId: plan.practice_id as string | null,
+  });
+  const risk = await evaluateRisk({
+    event:      'plan_acceptance',
+    accountId:  user.id,
+    practiceId: plan.practice_id as string | null,
+    amount:     totalAmount,
+    ...riskFacts,
+  });
+  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
 
   // ─── The claim: decide and write in ONE transaction ──────────────
   //
@@ -471,6 +505,27 @@ export async function payWithSavedCard(
   ])) {
     return { error: 'Too many payment attempts. Please wait a few minutes and try again.' };
   }
+
+  // ── Aggregate risk, keyed on the INSTRUMENT (audit S-07) ─────────
+  //
+  // The bucket above bounds this account's attempts. What it cannot see is
+  // one card being charged under several accounts, or one card absorbing
+  // twelve attempts an hour across them — which is card testing, and is the
+  // shape that per-account limits are structurally blind to.
+  //
+  // The specific payment method is named rather than the default, because
+  // this call is about to charge THAT card and a decision about a different
+  // one would be about a different instrument.
+  const payRiskFacts = await loadPlanRiskFacts(svc(), {
+    patientId:       user.id,
+    paymentMethodId: paymentMethodId,
+  });
+  const payRisk = await evaluateRisk({
+    event:     'card_payment',
+    accountId: user.id,
+    ...payRiskFacts,
+  });
+  if (!mayProceed(payRisk)) return { error: payRisk.refusalMessage! };
 
   // ─── Default freeze gate ─────────────────────────────────────────
   // The saved-card one-click is the returning-patient equivalent of

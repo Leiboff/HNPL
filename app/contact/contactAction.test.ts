@@ -59,6 +59,11 @@ vi.mock('@/lib/security/rateLimit', async (importOriginal) => ({
   ...(await import('@/lib/testing/rateLimitTestMock')).allowTestRateLimit,
 }));
 
+vi.mock('@/lib/risk/evaluate', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/risk/evaluate')>(),
+  ...(await import('@/lib/testing/riskTestMock')).allowTestRisk,
+}));
+
 import { submitContactEnquiry } from './contactAction';
 import { resetForTests, CONTACT_RATE_LIMIT_MAX } from '@/lib/contact/contactRateLimit';
 import { SUPPORT_EMAIL } from '@/lib/config/contact';
