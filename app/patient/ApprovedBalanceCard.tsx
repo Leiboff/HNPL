@@ -9,14 +9,20 @@
 //
 // This is a server component (no interactivity). The patient dashboard
 // server-renders it into the page. No client-side state, no client
-// writes — the limit is admin-set only (0065 column-lock).
+// writes — the limit is written only by runCreditCheck, from the
+// affordability policy (0065 column-lock).
 //
-// The displayed limit is currently a STUBBED test grant (see
-// lib/underwriting/stubAffordabilityPolicy), so this card ALWAYS renders
-// the shared TestBalanceNotice alongside the amount — the notice can't be
-// shown here and forgotten, because it's part of the card itself.
-
-import TestBalanceNotice from './TestBalanceNotice';
+// ─── THE TEST-BALANCE NOTICE IS GONE, WITH THE STUB ────────────────────
+//
+// This card used to render a permanent red "Test balance — not real credit"
+// banner, because the amount came from an unconditional R5,000 stub that
+// performed no assessment. Both are removed: the only thing that can set a
+// limit now is the real credit check (lib/underwriting/affordabilityPolicy),
+// and a card that told a real customer their real limit was "for testing
+// only" would be worse than no card at all.
+//
+// The null-guard below is what covers the interim. Until the credit check is
+// live no limit exists, so this renders nothing rather than a zero.
 
 type Props = {
   /** Patient's approved credit limit — NULL when no limit set. */
@@ -59,8 +65,6 @@ export default function ApprovedBalanceCard({ limit, available }: Props) {
           available of {formatRand(limit)} approved
         </p>
       </div>
-      {/* Inseparable from the balance — a stubbed test grant, not real credit. */}
-      <TestBalanceNotice />
     </div>
   );
 }

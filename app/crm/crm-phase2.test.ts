@@ -161,11 +161,21 @@ describe('crm-reply-poll cron — safety-net + watch renewal (since 0072)', () =
   });
 
   it('is registered in vercel.json crons with a daily safety-net cadence', () => {
-    const cron = read('vercel.json');
-    expect(cron).toMatch(/\/api\/cron\/crm-reply-poll/);
+    // Scoped to THIS cron's own entry. It used to assert that the string
+    // "*/15 * * * *" appeared nowhere in vercel.json at all, which was a
+    // fine proxy while nothing else needed a sub-hourly schedule and became
+    // wrong the moment something did (the risk alert digest, 0143). The
+    // claim being made is about the CRM poll's cadence, so it is now made
+    // about the CRM poll's cadence.
+    const config = JSON.parse(read('vercel.json'));
+    const poll = config.crons.find(
+      (c: { path: string }) => c.path === '/api/cron/crm-reply-poll',
+    );
+    expect(poll).toBeDefined();
     // Since 0072 the primary channel is Pub/Sub push; the cron is a
     // once-a-day safety-net sweep + watch renewal, no longer */15.
-    expect(cron).not.toMatch(/\*\/15 \* \* \* \*/);
+    expect(poll.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
+    expect(poll.schedule).not.toMatch(/\*\//);
   });
 });
 

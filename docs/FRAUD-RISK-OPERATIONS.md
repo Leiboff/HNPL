@@ -49,6 +49,8 @@ receiving every new customer on the platform this week.
 | Kill switches | `risk_kill_switches`, `/admin/risk` | Four platform-wide stops, effective on the next request, no deploy. |
 | Circuit breakers | `practice_risk_posture`, `trip_practice_circuit_breaker` | Per-practice exposure, payout, new-customer and first-payment-rate holds. |
 | Monitor | `/api/cron/risk-monitor`, daily 01:00 UTC | Evaluates the breakers and enforces retention. |
+| Notifier | `/api/cron/risk-alerts`, every 15 min | Emails the digest to the admin address, exactly once per finding. |
+| Dashboard | `/admin` attention list | Held reviews, held practices, engaged switches and budget pressure, above every other item. |
 
 ### The dimensions, and why each one is there
 
@@ -278,6 +280,40 @@ Nothing pages on a busy practice or a busy network, deliberately. An alert that
 pages on a Monday-morning dental practice is muted within a week — and the
 duplicate-identity page is muted along with it.
 
+### The digest
+
+`/api/cron/risk-alerts` runs every 15 minutes and emails **one** message
+covering everything nobody has been told about yet: newly held reviews, the
+decisions behind them, engaged kill switches and any budget at or above 80%.
+
+| Property | Behaviour | Why |
+| --- | --- | --- |
+| Recipient | `RISK_ALERT_EMAIL` → `ADMIN_NOTIFICATION_EMAIL` → **`admin@betternow.co.za`** | Falls back to a real address rather than skipping the send. A missed practice signup is a delayed approval; a missed duplicate-identity page is a loss. |
+| Cadence | every 15 min | Nothing waits on it — every decision it reports was already enforced. Sending from the decision path would put an 8-second mail timeout in front of a customer's payment, and would send one email per finding (four hundred, for a ring working a list). |
+| Exactly once | `claim_risk_notifications` (0143) stamps and returns in one statement | Two overlapping runs cannot both send. Waking somebody twice at 03:00 is how a channel gets muted, and a muted channel looks like coverage while providing none. |
+| Quiet when quiet | no email when there is nothing to report | An "all clear" every 15 minutes earns a mail rule on day two, which then swallows the real alerts. |
+| `[URGENT]` prefix | engaged kill switch, exhausted budget, page-severity finding, or the controls unable to decide | Restraint is the design. A subject that shouts on a busy dental practice trains the reader to stop looking. |
+| Contains no tokens | rule names, counts and thresholds only | An email lands in a mailbox and a mail provider's logs, neither of which has the 90-day retention that makes the real store defensible. |
+
+A send that fails outright releases its claim, so the batch returns to the
+next digest instead of being lost. A crash *between* the claim and the send
+loses one digest — the safer of the two orderings, and recoverable, because
+the rows stay in `risk_events` / `risk_reviews` and on `/admin/risk`.
+
+### On the dashboard
+
+`/admin` shows risk items at the **top** of its attention list, above pending
+practices and overdue collections:
+
+- engaged kill switches (customers are being refused right now);
+- exhausted daily budgets, then budgets above 80%;
+- subjects held for review;
+- practices held by the circuit breaker.
+
+An operator reading "3 practices awaiting approval" above "new credit is
+switched off" has been told the wrong thing first, which is why the ordering
+is fixed rather than by severity tone.
+
 ### The log lines to collect
 
 All JSON, one per line, on the shape `lib/security/rateLimit.ts` established.
@@ -288,6 +324,9 @@ All JSON, one per line, on the shape `lib/security/rateLimit.ts` established.
 | `risk_practice_breaker` | the nightly monitor | any occurrence |
 | `risk_kill_switch` | `/admin/risk` | any occurrence |
 | `risk_monitor_held_practices` | the nightly monitor | any occurrence |
+| `risk_digest_send_failed` | the notifier | any occurrence — the controls are working, the queue is filling, and nobody is being told |
+| `risk_digest_sent` | the notifier | `severity: "urgent"` |
+| `affordability_unavailable` | the credit-check step | expected until the real check is live; unexpected after |
 | `rate_limit_decision` | the existing limiter | unchanged |
 
 No line contains a correlation token. A log carrying tokens would re-create the
@@ -306,6 +345,8 @@ that make the real one defensible.
 | `RISK_PROXY_CIDRS` | Optional | As above. |
 | `RISK_DAILY_BUDGET_*` | Optional | See the budget table. |
 | `RISK_PRACTICE_*` | Optional | See the breaker table. |
+| `RISK_ALERT_EMAIL` | Optional | Defaults to `ADMIN_NOTIFICATION_EMAIL`, then to `admin@betternow.co.za`. |
+| `RESEND_API_KEY`, `RESEND_FROM` | Required for the digest | Already required by the other notification paths. Without them the digest logs `risk_digest_send_failed` and the queue is dashboard-only. |
 | `CRON_SECRET` | Required | Already required by the other scheduled jobs. |
 
 **With no key material at all the controls fail closed** — the surface is
@@ -355,12 +396,18 @@ good as these.**
    a stale table is worse than no ASN, because the rule fires on the wrong
    subject. Until a feed is wired, the subnet and device rules carry the
    weight.
-2. **Alert routing.** The log lines above have to reach a pager and a ticket
-   queue. Nothing in this repository sends them anywhere.
-3. **A staffed review queue.** `review` is only defensible as a decision if
-   somebody works `/admin/risk`. Target a first response inside one business
-   day; a queue that is never emptied becomes a `deny` with extra latency, and
-   at that point the POPIA argument in this document stops being true.
+2. **A pager, if you want one.** Findings now reach `admin@betternow.co.za`
+   by email within 15 minutes and appear on `/admin` immediately — that is
+   implemented. What is still outside the repository is anything that wakes
+   somebody at 03:00: the digest marks urgent items `[URGENT]` in the
+   subject, but turning that into a phone call is a mail-rule or
+   pager-integration decision, not a code one.
+3. **Somebody who reads the email.** `review` is only defensible as a
+   decision if a person actually works `/admin/risk`. Target a first response
+   inside one business day; a queue that is never emptied becomes a `deny`
+   with extra latency, and at that point the POPIA argument in this document
+   stops being true. The notification removes the excuse of not knowing — it
+   cannot supply the person.
 4. **Threshold tuning against real volume.** Every number in
    `lib/risk/policy.ts` carries its reasoning, and every one is a launch-scale
    estimate. Review after two weeks of live traffic and then monthly.
@@ -373,10 +420,14 @@ good as these.**
    costs a human's time and not a customer's application.
 5. **A fraud/risk policy document.** Who may clear a review, what evidence is
    required to reject, when a kill switch may be engaged and who is told.
-6. **The affordability policy itself.** `stubAffordabilityPolicy` still grants
-   an unconditional R5 000, and the audit is right that this is the reason the
-   chain is worth running at all. These controls bound how many times that stub
-   can be exploited; they do not make the stub correct.
+6. **The credit check itself.** The R5,000 stub is **removed** — it granted
+   an unconditional limit to every applicant, which is what made this loss
+   chain worth running. `lib/underwriting/affordabilityPolicy.ts` is the seam
+   the real check lands in; until it is configured it returns `unavailable`,
+   no applicant receives a limit, and every plan acceptance is refused with
+   assessment-pending copy. That is deliberate: a formula invented here would
+   be an unsigned-off NCA affordability assessment, which is worse than a
+   stub that announced itself.
 
 ---
 

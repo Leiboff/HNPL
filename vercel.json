@@ -24,6 +24,10 @@
     {
       "path": "/api/cron/risk-monitor",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/risk-alerts",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

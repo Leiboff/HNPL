@@ -8,7 +8,7 @@ import { isAllowedSalaryDay } from '@/lib/salaryDates';
 import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
-import { stubAffordabilityPolicy } from '@/lib/underwriting/stubAffordabilityPolicy';
+import { assessAffordability } from '@/lib/underwriting/affordabilityPolicy';
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
 import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
@@ -163,10 +163,13 @@ export async function setPhoneForOnboarding(phoneRaw: string): Promise<ActionRes
 // duplicate-account check, and encryption that used to live here moved
 // to the webhook handler (same rules, same functions, different trigger).
 //
-// Credit-check seam: if ENABLE_CREDIT_CHECK is OFF, this action ALSO
-// auto-passes the credit check (writes credit_check_status='passed'). If
-// ON, credit_check_status stays NULL and the state model routes the user
-// to the credit-check step next.
+// Credit-check seam: if ENABLE_CREDIT_CHECK is OFF, the credit-check step
+// does not exist, so this action marks it not-applicable
+// (credit_check_status='passed') to let the state model reach a done state.
+// That grants NO limit — it never did, and since the R5,000 stub was
+// removed neither does the flag-on path until the real check is
+// configured. If ON, credit_check_status stays NULL and the state model
+// routes the user to the credit-check step next.
 
 export type SaveSalaryDetailsInput = {
   salaryDay:    number;
@@ -192,10 +195,11 @@ export async function saveSalaryDetails(input: SaveSalaryDetailsInput): Promise<
     salary_amount: input.salaryAmount,
   };
 
-  // Credit-check seam. Flag-off auto-passes so the state model can
-  // reach a done state without rendering a dead screen. Flag-on
-  // leaves credit_check_status NULL → state routes to /onboarding/credit-check
-  // next, where the (future) integration will run.
+  // Credit-check seam. Flag-off marks the step not-applicable so the state
+  // model can reach a done state without rendering a dead screen; it grants
+  // no limit, and never did. Flag-on leaves credit_check_status NULL →
+  // state routes to /onboarding/credit-check next, where the real
+  // integration will run.
   if (!flags.creditCheck) {
     patch.credit_check_status       = 'passed';
     patch.credit_check_completed_at = new Date().toISOString();
@@ -647,22 +651,35 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
 
 // ─── runCreditCheck (affordability step) ───────────────────────────────
 //
-// Integration seam. The pass/fail decision AND the granted limit come
-// from ONE isolated policy module — lib/underwriting/stubAffordabilityPolicy
-// — which currently STUBS an unconditional R5,000 grant with no bureau
-// call and no affordability computation (see that module's banner). A real
-// underwriting integration replaces that module; this action needs no
-// change because it already persists whatever the policy returns.
+// The one call site that writes profiles.approved_credit_limit, and it
+// writes whatever lib/underwriting/affordabilityPolicy returns and nothing
+// else. No amount is hardcoded here, and none is computed here.
 //
-// On approval we persist BOTH:
-//   • approved_credit_limit  (rands = limitCents/100) — the granted test
-//     balance the dashboard reads. Written via service-role so the 0065
-//     column-lock permits it. The amount is NEVER hardcoded here — it is
-//     read from the policy's limitCents.
-//   • credit_check_status='passed' — satisfies the onboarding step.
-// A non-approval (the stub never returns one today, but the real policy
-// will) records 'failed' and does not advance — proving the decision is
-// genuinely load-bearing and swappable.
+// The R5,000 stub this used to call is GONE. It granted a fixed limit to
+// every applicant with no bureau call and no assessment, which is what made
+// the fraud chain in audit S-07 worth running: every synthetic identity that
+// reached this step was handed real spendable credit for free. The real
+// credit check will determine the amount; until it is configured the policy
+// returns `unavailable` and nobody receives a limit.
+//
+// Three outcomes, and keeping them distinct is the point:
+//
+//   approved     → persist the limit (rands = limitCents/100) and
+//                  credit_check_status='passed'. Written via service-role so
+//                  the 0065 column-lock permits it.
+//   declined     → credit_check_status='failed'. A decision on the
+//                  applicant's file.
+//   unavailable  → credit_check_status='pending'. NOT a refusal: a provider
+//                  outage, or the policy not being configured yet, must
+//                  never be recorded against someone's name.
+//
+// 'pending' satisfies the onboarding step (see stepIsSatisfied) because the
+// step means "we have taken your application", not "you have been
+// approved". The two are different facts and conflating them would either
+// strand every applicant on a spinner or write 'passed' when nothing
+// passed. What a pending applicant cannot do is accept a plan —
+// claim_credit_for_plan refuses with no_limit, whose copy says an
+// assessment is pending.
 
 export async function runCreditCheck(): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
@@ -670,11 +687,11 @@ export async function runCreditCheck(): Promise<ActionResult> {
 
   // ── Rate limit (audit A-11's second half) ────────────────────────
   //
-  // Today this calls stubAffordabilityPolicy and costs nothing, which is
-  // exactly why the limit goes in NOW: the stub is a placeholder for a
-  // credit-bureau call that bills per enquiry, and the surface that spends
-  // real money at a vendor should not acquire its first limiter on the same
-  // day it acquires the cost.
+  // The policy behind this call is not live yet and so costs nothing today,
+  // which is exactly why the limit is here NOW: it is the seam a
+  // credit-bureau call that bills per enquiry lands in, and the surface that
+  // spends real money at a vendor should not acquire its first limiter on
+  // the same day it acquires the cost.
   //
   // A patient needs one check. The retries a real person makes are for a
   // failed lookup, not for a second opinion — and a second opinion is what
@@ -693,10 +710,10 @@ export async function runCreditCheck(): Promise<ActionResult> {
   // ── Aggregate risk + the daily bureau budget (audit S-07) ────────────
   //
   // Same argument as the KYC surface, and the same placement: after the
-  // per-account bucket, before the decision. The stub costs nothing today,
-  // which is precisely why the ceiling goes in now — the surface that will
-  // bill per enquiry should not acquire its first aggregate control on the
-  // day it acquires the cost.
+  // per-account bucket, before the decision. It costs nothing today, which
+  // is precisely why the ceiling goes in now — the surface that will bill
+  // per enquiry should not acquire its first aggregate control on the day it
+  // acquires the cost.
   //
   // Note this sits BEFORE the feature-flag check below, for the reason the
   // rate limit does: a flag flip must not uncover an unmeasured path.
@@ -714,10 +731,15 @@ export async function runCreditCheck(): Promise<ActionResult> {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  const decision = stubAffordabilityPolicy();
+  const decision = assessAffordability({
+    accountId:         loaded.userId,
+    salaryAmountRands: loaded.profile.salary_amount,
+    salaryDay:         loaded.profile.salary_day,
+    identityVerified:  !!loaded.profile.sa_id_number && !!loaded.profile.liveness_verified_at,
+  });
   const now = new Date().toISOString();
 
-  if (!decision.approved) {
+  if (decision.outcome === 'declined') {
     await svc()
       .from('profiles')
       .update({ credit_check_status: 'failed', credit_check_completed_at: now })
@@ -725,10 +747,41 @@ export async function runCreditCheck(): Promise<ActionResult> {
     return { error: 'We could not approve an amount right now.' };
   }
 
+  if (decision.outcome === 'unavailable') {
+    // No decision was reached. Recorded as 'pending' and NOT as 'failed':
+    // a provider outage, or a policy that is not live yet, is not a
+    // refusal and must not sit on someone's file as one.
+    //
+    // No limit is written, so the approved-balance card renders nothing and
+    // any plan acceptance is refused with the assessment-pending copy. The
+    // applicant is never shown credit they do not have.
+    console.warn(JSON.stringify({
+      event: 'affordability_unavailable',
+      schema_version: 1,
+      occurred_at: now,
+      reason: decision.reason,
+    }));
+
+    const { error: pendingErr } = await svc()
+      .from('profiles')
+      .update({ credit_check_status: 'pending', credit_check_completed_at: now })
+      .eq('id', loaded.userId);
+    if (pendingErr) return { error: pendingErr.message };
+
+    const pendingProfile: ProfileForOnboarding = {
+      ...loaded.profile,
+      credit_check_status: 'pending',
+    };
+    // Onboarding still completes — see the header. The applicant has a
+    // usable account and a pending assessment, which is the honest state.
+    const pendingFinalize = await maybeFinalize(loaded.userId, loaded.user, pendingProfile);
+    return { error: null, nextPath: pendingFinalize.nextPath };
+  }
+
   const { error } = await svc()
     .from('profiles')
     .update({
-      // Granted test balance — amount comes from the policy, not a literal.
+      // The amount comes from the policy, never from a literal here.
       approved_credit_limit:     decision.limitCents / 100,
       credit_check_status:       'passed',
       credit_check_completed_at: now,

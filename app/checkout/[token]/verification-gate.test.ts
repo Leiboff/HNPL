@@ -107,7 +107,21 @@ describe('the gate asks the same question as the other three doors', () => {
     // SA ID typed into a form is not identity, and neither column is
     // patient-writable (see the allow-list test below).
     expect(STATE).toMatch(/case 'identity':[\s\S]{0,600}profile\.sa_id_number && !!profile\.liveness_verified_at/);
-    expect(STATE).toMatch(/case 'credit-check':[\s\S]{0,120}credit_check_status === 'passed'/);
+
+    // The credit-check step accepts 'passed' OR 'pending' since the R5,000
+    // stub was removed. 'passed' means a limit was granted; 'pending' means
+    // the assessment was taken and no decision came back, because the real
+    // credit check is not configured yet. Both satisfy the STEP — it means
+    // "we have taken your application", not "you have been approved" — and
+    // neither grants credit: the claim refuses without an approved limit
+    // whatever this step says.
+    //
+    // 'failed' must NOT satisfy it. That is a real decision on the
+    // applicant's file, and it is not the same as no decision.
+    const creditCase = STATE.slice(STATE.indexOf("case 'credit-check':"));
+    expect(creditCase).toMatch(/credit_check_status === 'passed'/);
+    expect(creditCase).toMatch(/credit_check_status === 'pending'/);
+    expect(creditCase).not.toMatch(/credit_check_status === 'failed'/);
   });
 
   it('a brand-new account is never treated as verified', () => {

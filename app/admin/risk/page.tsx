@@ -3,6 +3,9 @@ import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import { formatDateTime, timeAgo } from '../_lib/format';
 import { RiskReviewRow, KillSwitchRow } from './RiskControls';
+import { budgetPressure } from '@/lib/risk/notify';
+import { RISK_BUDGETS, type RiskBudget } from '@/lib/risk/vocabulary';
+import { dailyBudgetLimit } from '@/lib/risk/policy';
 
 // ─── /admin/risk — the review queue and the kill switches ──────────────────
 //
@@ -69,7 +72,9 @@ export default async function AdminRiskPage() {
   // policies are is_platform_admin(), and letting RLS do the gating means
   // this page cannot become the one that leaks the queue to a demoted
   // account. Same rule the audit log page follows.
-  const [{ data: reviewRows }, { data: switchRows }] = await Promise.all([
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [{ data: reviewRows }, { data: switchRows }, { data: budgetRows }] = await Promise.all([
     supabase
       .from('risk_reviews')
       .select('id, event, state, account_id, practice_id, score, hit_count, opened_at, last_hit_at, reasons')
@@ -84,11 +89,42 @@ export default async function AdminRiskPage() {
       .from('risk_kill_switches')
       .select('name, engaged, reason, changed_at')
       .order('name'),
+    supabase
+      .from('risk_budget_usage')
+      .select('budget, consumed')
+      .eq('usage_day', today),
   ]);
 
   const reviews  = (reviewRows ?? []) as ReviewRow[];
   const switches = (switchRows ?? []) as SwitchRow[];
   const engaged  = switches.filter((s) => s.engaged);
+
+  // Every budget, not only the pressured ones. On the dashboard the quiet
+  // ones are noise; here they are the answer to "is the platform being
+  // throttled?", and an operator who cannot see a budget at 12% has to
+  // guess whether it exists at all.
+  const consumedByBudget = new Map<string, number>(
+    ((budgetRows ?? []) as Array<{ budget: string; consumed: number | string }>)
+      .map((r) => [r.budget, Number(r.consumed)]),
+  );
+  const pressured = new Set(
+    budgetPressure((budgetRows ?? []) as Array<{ budget: string; consumed: number | string }>)
+      .map((b) => b.budget),
+  );
+  const budgets = RISK_BUDGETS.map((budget: RiskBudget) => {
+    const limit = dailyBudgetLimit(budget);
+    const consumed = consumedByBudget.get(budget) ?? 0;
+    return {
+      budget,
+      consumed,
+      limit,
+      fraction: limit > 0 ? consumed / limit : 0,
+      pressured: pressured.has(budget),
+      // The two rand-denominated ceilings read as money; the rest are
+      // counts of vendor calls.
+      money: budget === 'payout' || budget === 'approved_credit',
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -127,6 +163,46 @@ export default async function AdminRiskPage() {
               reason={s.reason}
               changedAt={formatDateTime(s.changed_at)}
             />
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+          Today&apos;s budgets
+        </h2>
+        <p className="text-sm text-gray-600">
+          Platform-wide daily ceilings, reset at midnight UTC. An exhausted budget
+          refuses every further request against it — that is the intended
+          behaviour, and it is also how a quiet incident becomes a visible one.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {budgets.map((b) => (
+            <div
+              key={b.budget}
+              className={`rounded-lg border p-3 ${
+                b.fraction >= 1
+                  ? 'border-red-300 bg-red-50'
+                  : b.pressured
+                    ? 'border-amber-300 bg-amber-50'
+                    : 'border-gray-200 bg-white'
+              }`}
+            >
+              <p className="text-sm font-semibold text-gray-900">
+                {b.budget.replace(/_/g, ' ')}
+              </p>
+              <p className="mt-1 text-sm text-gray-700 tabular-nums">
+                {b.money
+                  ? `R${b.consumed.toLocaleString('en-ZA', { maximumFractionDigits: 0 })} of R${b.limit.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}`
+                  : `${b.consumed} of ${b.limit}`}
+                <span className="ml-1 text-gray-500">({Math.round(b.fraction * 100)}%)</span>
+              </p>
+              {b.fraction >= 1 && (
+                <p className="mt-1 text-xs font-medium text-red-800">
+                  Exhausted — requests are being refused.
+                </p>
+              )}
+            </div>
           ))}
         </div>
       </section>

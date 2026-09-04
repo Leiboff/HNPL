@@ -5,7 +5,8 @@
  * -> Personal details.
  *
  * Deliberately permissive: no floor/ceiling tied to any affordability rule
- * (there isn't one wired up yet — see lib/underwriting/stubAffordabilityPolicy.ts).
+ * (there isn't one wired up yet — see lib/underwriting/affordabilityPolicy.ts,
+ * which is the seam the real credit check lands in).
  * Just "a positive, finite, sane rand amount" — the same posture the SA ID
  * and salary-day validators take, keeping policy decisions out of the input
  * boundary.
