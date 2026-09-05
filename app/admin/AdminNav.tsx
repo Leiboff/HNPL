@@ -5,8 +5,10 @@ import { usePathname } from 'next/navigation';
 import { getAdminNavLinks, isAdminNavActive, adminLinkCount, type AdminCounts } from './adminNavLinks';
 
 // Mirrors the patient portal's PatientNav: desktop-only vertical sidebar
-// (md+). On mobile AdminMobileMenu — the hamburger in the top bar —
+// (md+). On mobile AdminPortalMenu — the hamburger in the top bar —
 // renders the SAME links from ./adminNavLinks, so the two cannot diverge.
+// (That same menu is what an admin keeps inside the /crm shell, which has
+// no admin sidebar of its own — see app/crm/layout.tsx.)
 //
 // Badge counts are server-fetched once at the layout level and passed
 // down so every page under /admin shares the same numbers without

@@ -26,7 +26,10 @@ const ORDERS_PAGE     = read('app/patient/orders/page.tsx');
 const WEBHOOK         = read('app/api/payments/peach/webhook/route.ts');
 const CRON            = read('app/api/cron/collect-instalments/route.ts');
 const ADMIN_DASH      = read('app/admin/page.tsx');
-const ADMIN_LAYOUT    = read('app/admin/layout.tsx');
+// The nav's badge queries left app/admin/layout.tsx when the /crm shell
+// started rendering the same admin menu for admins — one helper feeds both
+// shells now, so this is where the kind=instalment filter has to hold.
+const ADMIN_NAV_COUNTS = read('app/admin/adminNavCounts.ts');
 const ADMIN_CUSTOMERS = read('app/admin/customers/page.tsx');
 const ADMIN_COLL      = read('app/admin/collections/page.tsx');
 
@@ -98,8 +101,8 @@ describe('Admin SUMMARY aggregations — filter kind, detail views left alone', 
     expect(ADMIN_DASH).toMatch(/\.eq\('kind',\s*'instalment'\)\s*\n\s*\.in\('status',\s*\['failed',\s*'retried',\s*'defaulted',\s*'written_off'\]\)/);
   });
 
-  it("admin sidebar overdue-badge count filters kind=instalment", () => {
-    expect(ADMIN_LAYOUT).toMatch(/\.eq\('kind',\s*'instalment'\)[\s\S]{0,80}\.eq\('status',\s*'scheduled'\)\.lt\('due_date'/);
+  it("admin nav overdue-badge count filters kind=instalment", () => {
+    expect(ADMIN_NAV_COUNTS).toMatch(/\.eq\('kind',\s*'instalment'\)[\s\S]{0,80}\.eq\('status',\s*'scheduled'\)\.lt\('due_date'/);
   });
 
   it("admin customers aggregation (per-customer outstanding / reliability) filters kind=instalment", () => {

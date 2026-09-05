@@ -51,7 +51,7 @@ const BRAND       = read('app/brand/actions.ts');
 const AUDIT_PAGE  = read('app/admin/audit/page.tsx');
 const NOTES       = read('app/admin/_components/AdminNotes.tsx');
 // The nav link list moved out of AdminNav.tsx when the phone nav became a
-// hamburger: both surfaces (the desktop sidebar and AdminMobileMenu) now
+// hamburger: both surfaces (the desktop sidebar and AdminPortalMenu) now
 // render this one source, so this is where "is it in the nav" is answered —
 // and answering it here covers BOTH widths rather than only desktop.
 const NAV         = read('app/admin/adminNavLinks.ts');
