@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
+import { MAX_BILL_AMOUNT, MIN_BILL_AMOUNT } from '@/lib/config/billAmountLimits';
 import { updateMaxBillAmount, type BillLimitState } from './actions';
 
 const INITIAL_STATE: BillLimitState = { error: null, success: null };
@@ -20,8 +21,8 @@ export default function BillLimitForm({ currentAmount }: { currentAmount: number
             id="maxBillAmount"
             name="maxBillAmount"
             type="number"
-            min="0.01"
-            max="30000"
+            min={MIN_BILL_AMOUNT}
+            max={MAX_BILL_AMOUNT}
             step="0.01"
             required
             defaultValue={currentAmount}
@@ -29,7 +30,8 @@ export default function BillLimitForm({ currentAmount }: { currentAmount: number
           />
         </div>
         <p className="mt-2 text-sm text-gray-500">
-          Applies immediately to new dashboard, till, and direct API bills. The database ceiling is R30,000.
+          Applies immediately to new dashboard, till, and direct API bills. Enter an amount from{' '}
+          R{MIN_BILL_AMOUNT.toLocaleString('en-ZA')} to R{MAX_BILL_AMOUNT.toLocaleString('en-ZA')}.
         </p>
       </div>
       {state.error && <p role="alert" className="text-sm text-red-700">{state.error}</p>}

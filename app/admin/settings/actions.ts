@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { requireAAL2 } from '@/lib/auth/aal';
-import { MAX_BILL_AMOUNT } from '@/lib/config/billAmountLimits';
+import { MAX_BILL_AMOUNT, MIN_BILL_AMOUNT } from '@/lib/config/billAmountLimits';
 
 export type BillLimitState = { error: string | null; success: string | null };
 
@@ -24,10 +24,10 @@ export async function updateMaxBillAmount(
   if (!aal.ok) return { error: aal.error, success: null };
 
   const amount = Number(formData.get('maxBillAmount'));
-  if (!Number.isFinite(amount) || amount < 0.01 || amount > MAX_BILL_AMOUNT
+  if (!Number.isFinite(amount) || amount < MIN_BILL_AMOUNT || amount > MAX_BILL_AMOUNT
       || amount !== Math.round(amount * 100) / 100) {
     return {
-      error: `Enter an amount between R0.01 and R${MAX_BILL_AMOUNT.toLocaleString('en-ZA')}.`,
+      error: `Enter an amount between R${MIN_BILL_AMOUNT.toLocaleString('en-ZA')} and R${MAX_BILL_AMOUNT.toLocaleString('en-ZA')}.`,
       success: null,
     };
   }

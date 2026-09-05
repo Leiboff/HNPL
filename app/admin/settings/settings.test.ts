@@ -15,9 +15,12 @@ describe('admin-configurable maximum bill amount', () => {
     expect(PAGE).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY/);
   });
 
-  it('limits the dashboard input to the R30,000 database ceiling', () => {
-    expect(FORM).toMatch(/max="30000"/);
+  it('limits the dashboard input to the shared floor and R30,000 database ceiling', () => {
+    expect(FORM).toMatch(/min=\{MIN_BILL_AMOUNT\}/);
+    expect(FORM).toMatch(/max=\{MAX_BILL_AMOUNT\}/);
     expect(FORM).toMatch(/step="0\.01"/);
+    expect(ACTION).toMatch(/amount < MIN_BILL_AMOUNT/);
+    expect(ACTION).toMatch(/amount > MAX_BILL_AMOUNT/);
   });
 
   it('re-authorizes, requires fresh critical AAL2, and calls the narrow RPC', () => {
