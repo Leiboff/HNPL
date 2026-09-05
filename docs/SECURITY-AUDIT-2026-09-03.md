@@ -246,6 +246,11 @@ rows are never passed to `sendNotification`.
 
 ### S-04 — Signature merge fields are substituted after HTML sanitisation
 
+> **Status: Fixed in the subsequent remediation.** Raw overrides are now
+> merged first and the completed HTML is then parsed through the allow-list
+> sanitizer at both preview and outbound-email sinks. Adversarial URL-context
+> merge values are covered by regression tests.
+
 **Severity: Low (currently self-XSS / outbound-content hardening)**  
 **Location:** `lib/gmail/signature.ts` and its call sites in
 `app/crm/settings/signatureActions.ts` and `app/crm/leads/[id]/composeEmail.ts`.
@@ -271,6 +276,11 @@ encoded schemes, quotes, entity boundaries and nested tags; assert the final emi
 HTML has no unsafe `href`.
 
 ### S-05 — Bill-amount sanity bounds are not enforced by PostgreSQL
+
+> **Status: Fixed in the subsequent remediation.** Migration 0144 adds and
+> validates a positive R30,000 absolute ceiling plus a lower, admin-configurable
+> live maximum. Real-PostgreSQL tests cover authenticated direct writes, both
+> boundaries, NaN, setting changes, audit evidence, and malformed history.
 
 **Severity: Low**  
 **Location:** `lib/config/billAmountLimits.ts`, `app/practice/bills/new/actions.ts`,

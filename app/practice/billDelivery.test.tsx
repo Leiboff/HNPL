@@ -36,7 +36,7 @@ function dashboard() {
   // mock.calls[0][0] fails to typecheck even though it exists at runtime.
   const createBill = vi.fn(async (_data: Record<string, unknown>) => ({ error: null } as CreateBillResult));
   render(
-    <BillForm feePercent={5} providers={PROVIDERS} practiceId="practice-1" createBill={createBill as never} />,
+    <BillForm feePercent={5} providers={PROVIDERS} practiceId="practice-1" maximumBillAmount={30000} createBill={createBill as never} />,
   );
   return createBill;
 }
@@ -48,6 +48,7 @@ function till() {
   render(
     <CounterSessionForm
       providers={PROVIDERS}
+      maximumBillAmount={30000}
       issueCounterSession={issue as never}
       expireCounterSession={vi.fn(async () => ({ error: null }))}
       getCounterSessionStage={vi.fn(async () => ({ error: null, stage: 'created' as const }))}

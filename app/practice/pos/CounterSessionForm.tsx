@@ -5,7 +5,6 @@ import QRCode from 'qrcode';
 import {
   isAllowedBillAmount,
   MIN_BILL_AMOUNT,
-  MAX_BILL_AMOUNT,
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
 import type { IssueCounterSessionResult, CounterSessionStage, ProviderOption } from './actions';
@@ -67,6 +66,7 @@ function isTerminalStage(stage: CounterSessionStage | null): boolean {
 
 type Props = {
   providers: ProviderOption[];
+  maximumBillAmount: number;
   // deviceSecret is injected by TillShell's withDeviceRecovery wrapper —
   // this component stays unaware of the device-auth mechanism entirely,
   // same as it was unaware of user-session auth before this feature.
@@ -87,6 +87,7 @@ type Issued = { token: string; expiresAt: string; billAmount: number };
 
 export default function CounterSessionForm({
   providers,
+  maximumBillAmount,
   issueCounterSession, expireCounterSession, getCounterSessionStage, acknowledgeCounterSession,
 }: Props) {
   const [billAmount, setBillAmount] = useState('');
@@ -114,7 +115,7 @@ export default function CounterSessionForm({
   const expiredFiredRef = useRef(false);
 
   const parsedAmount = parseFloat(billAmount);
-  const amountValid = billAmount !== '' && isAllowedBillAmount(parsedAmount);
+  const amountValid = billAmount !== '' && isAllowedBillAmount(parsedAmount, maximumBillAmount);
 
   function resetForSession() {
     // Never leave the SA ID sitting in state on a shared device —
@@ -131,7 +132,7 @@ export default function CounterSessionForm({
     setError(null);
 
     if (!amountValid) {
-      setError(`Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`);
+      setError(`Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(maximumBillAmount)}.`);
       return;
     }
     if (!providerId) {

@@ -6,6 +6,7 @@ import { createBill } from './actions';
 import BillForm from './BillForm';
 import PracticeShell from '@/app/practice/PracticeShell';
 import { resolvePracticeShellAuthority } from '@/app/practice/practiceShellAuthority';
+import { configuredMaxBillAmount } from '@/lib/config/billAmountPolicy';
 import {
   PROVIDER_MEMBER_SELECT,
   providerMemberName,
@@ -130,6 +131,7 @@ export default async function NewBillPage({
     gate,
     { data: memberRowsForProviders },
     { isBrandAdmin, canManageTill, brandPracticeCount },
+    maximumBillAmount,
   ] = await Promise.all([
     checkTradingGate(svc, practiceId),
     // Fetch active providers for this practice. No user_id filter: a roster-only
@@ -142,6 +144,7 @@ export default async function NewBillPage({
       .eq('active', true)
       .eq('role', 'provider'),
     resolvePracticeShellAuthority(supabase, user.id, practiceId, picked.can_manage_practice),
+    configuredMaxBillAmount(),
   ]);
 
   if (!gate.ok) {
@@ -178,6 +181,7 @@ export default async function NewBillPage({
           feePercent={Number(practice.fee_percent)}
           providers={providers}
           practiceId={practiceId}
+          maximumBillAmount={maximumBillAmount}
           createBill={createBill}
         />
       </main>

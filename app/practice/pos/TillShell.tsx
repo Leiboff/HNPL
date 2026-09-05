@@ -8,7 +8,6 @@ import CounterSessionForm from './CounterSessionForm';
 import TodayActivityStrip from './TodayActivityStrip';
 import type {
   DeviceStatus,
-  ProviderOption,
   IssueCounterSessionResult,
   CounterSessionStage,
   TodaysCounterSessionsResult,
@@ -176,7 +175,7 @@ export default function TillShell({
 
   // status.state === 'unlocked' — the only branch that ever sees
   // practice-scoped data, sourced entirely from THIS response.
-  const { practiceName, providers } = status as { practiceName: string; providers: ProviderOption[] };
+  const { practiceName, providers, maximumBillAmount } = status;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -201,6 +200,7 @@ export default function TillShell({
 
         <CounterSessionForm
           providers={providers}
+          maximumBillAmount={maximumBillAmount}
           issueCounterSession={withDeviceRecovery(
             (secret, data: Omit<Parameters<Props['issueCounterSession']>[0], 'deviceSecret'>) =>
               issueCounterSession({ ...data, deviceSecret: secret }),
