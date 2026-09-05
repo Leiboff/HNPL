@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { logoutAndRedirect } from '@/lib/auth/logout';
 import { getAdminNavLinks, isAdminNavActive, adminLinkCount, type AdminCounts } from './adminNavLinks';
 
@@ -24,22 +24,48 @@ import { getAdminNavLinks, isAdminNavActive, adminLinkCount, type AdminCounts } 
 // outside click, and on Escape, with Sign out at the foot (the header's
 // Log out button is desktop-only, so this is the phone's way out).
 
+// ─── Why the panel is remounted per URL ────────────────────────────────
+//
+// The panel's openness must not survive a navigation, and the layout
+// keeps this component mounted across every /admin route change — so
+// something has to discard it. Keying the panel on the current URL is
+// what does: React throws the old instance away the moment the URL
+// changes, taking `open` with it.
+//
+// Two cheaper-looking versions are both wrong, and a review caught the
+// second one here:
+//
+//   • `useEffect(() => setOpen(false), [pathname])` sets state inside an
+//     effect to describe something already knowable during render. It
+//     costs a cascading re-render, and it is what the react-hooks
+//     compiler rule flags (this repo has 20 of those already).
+//   • Deriving `open` from a stored "which URL was this opened on" token
+//     closes the panel on the way OUT, but the token OUTLIVES the trip:
+//     open the menu on /admin/payouts, go to /admin/customers, come
+//     back, and the token matches again — the menu reopens by itself
+//     over a page the operator did not open it on.
+//
+// The key covers the query string too, not just the pathname: on
+// /admin/practices?status=pending a Back that only swaps ?status is a
+// real navigation to a re-rendered page, and usePathname alone cannot
+// see it. (The old bottom bar had no state to get this wrong; this is
+// the cost of a menu, and it is paid here rather than in each consumer.)
 export default function AdminMobileMenu({ counts }: { counts: AdminCounts }) {
   const pathname = usePathname();
-  const menuRef  = useRef<HTMLDivElement>(null);
+  const query    = useSearchParams().toString();
 
-  // Openness is stored as "which route was this opened on", and `open` is
-  // DERIVED from it. That gets close-on-navigation for free: the layout
-  // (and so this component) stays mounted across an /admin route change,
-  // and the moment `pathname` moves the stored route no longer matches,
-  // so the panel is closed on the next render. The obvious alternative —
-  // a `useEffect(() => setOpen(false), [pathname])` — sets state inside
-  // an effect to describe something already knowable during render, which
-  // costs a cascading re-render and is what the react-hooks compiler rule
-  // flags. Nothing to synchronise, so no effect.
-  const [openedOn, setOpenedOn] = useState<string | null>(null);
-  const open = openedOn === pathname;
-  const setOpen = (next: boolean) => setOpenedOn(next ? pathname : null);
+  return (
+    <AdminMobileMenuPanel
+      key={query ? `${pathname}?${query}` : pathname}
+      counts={counts}
+      pathname={pathname}
+    />
+  );
+}
+
+function AdminMobileMenuPanel({ counts, pathname }: { counts: AdminCounts; pathname: string }) {
+  const [open, setOpen] = useState(false);
+  const menuRef         = useRef<HTMLDivElement>(null);
 
   const links       = getAdminNavLinks();
   const totalBadges = links.reduce((n, link) => n + adminLinkCount(link, counts), 0);
@@ -48,10 +74,10 @@ export default function AdminMobileMenu({ counts }: { counts: AdminCounts }) {
   useEffect(() => {
     if (!open) return;
     function onPointer(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpenedOn(null);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpenedOn(null);
+      if (e.key === 'Escape') setOpen(false);
     }
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);
@@ -65,7 +91,7 @@ export default function AdminMobileMenu({ counts }: { counts: AdminCounts }) {
     <div className="md:hidden" ref={menuRef}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen((o) => !o)}
         aria-label={open ? 'Close menu' : 'Open menu'}
         aria-expanded={open}
         aria-controls="admin-mobile-menu"

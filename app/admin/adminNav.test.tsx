@@ -23,11 +23,16 @@ import { isAdminNavActive } from './adminNavLinks';
 // code: re-adding a five-entry hand-written array to the mobile surface
 // fails the parity test with the four missing destinations named.
 
-vi.mock('next/navigation', () => ({ usePathname: () => mockPathname() }));
+vi.mock('next/navigation', () => ({
+  usePathname:     () => mockPathname(),
+  useSearchParams: () => new URLSearchParams(mockQuery()),
+}));
 vi.mock('@/lib/auth/logout', () => ({ logoutAndRedirect: vi.fn() }));
 
 let pathname = '/admin';
+let query    = '';
 const mockPathname = () => pathname;
+const mockQuery    = () => query;
 
 const COUNTS = { pendingPractices: 3, overdueCollections: 7, pendingPayouts: 0 };
 const ZERO   = { pendingPractices: 0, overdueCollections: 0, pendingPayouts: 0 };
@@ -36,7 +41,7 @@ function openMenu() {
   fireEvent.click(screen.getByRole('button', { name: /open menu/i }));
 }
 
-beforeEach(() => { pathname = '/admin'; });
+beforeEach(() => { pathname = '/admin'; query = ''; });
 
 describe('AdminMobileMenu — the hamburger', () => {
   it('renders nothing but the button until it is opened', () => {
@@ -72,15 +77,46 @@ describe('AdminMobileMenu — the hamburger', () => {
   });
 
   it('closes itself when the route changes under it (e.g. the back button)', () => {
-    // The panel is derived from "which route was this opened on", so a
-    // navigation this menu did not initiate still dismisses it. Pins the
-    // behaviour the removed useEffect(setOpen(false), [pathname]) had.
+    // A navigation this menu did not initiate still dismisses it — the
+    // panel is keyed on the URL, so React discards the open instance.
     const { rerender } = render(<AdminMobileMenu counts={ZERO} />);
     openMenu();
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeTruthy();
 
     pathname = '/admin/payouts';
     rerender(<AdminMobileMenu counts={ZERO} />);
+    expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
+    expect(screen.getByRole('button', { name: /open menu/i })).toBeTruthy();
+  });
+
+  it('closes on a query-only navigation, which usePathname cannot see', () => {
+    // /admin/practices?status=pending → ?status=active is a real
+    // navigation to a re-rendered page, and the pathname does not move.
+    // Keying on the pathname alone would leave the panel hanging over it.
+    pathname = '/admin/practices';
+    query    = 'status=pending';
+    const { rerender } = render(<AdminMobileMenu counts={ZERO} />);
+    openMenu();
+
+    query = 'status=active';
+    rerender(<AdminMobileMenu counts={ZERO} />);
+    expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
+  });
+
+  it('does not reopen itself when you navigate away and come back', () => {
+    // The state must be DISCARDED on the way out, not merely out-matched
+    // by the current route: the shared /admin layout keeps this component
+    // mounted, so a token comparison would match again on return and pop
+    // the menu open over a page nobody opened it on. Caught in review.
+    pathname = '/admin/payouts';
+    const { rerender } = render(<AdminMobileMenu counts={ZERO} />);
+    openMenu();
+
+    pathname = '/admin/customers';
+    rerender(<AdminMobileMenu counts={ZERO} />);
+    pathname = '/admin/payouts';
+    rerender(<AdminMobileMenu counts={ZERO} />);
+
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
     expect(screen.getByRole('button', { name: /open menu/i })).toBeTruthy();
   });
