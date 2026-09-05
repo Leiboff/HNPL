@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsx scripts/clean-next-types.mts && tsc --noEmit",
     "test": "vitest run",
+    "test:fraud": "vitest run supabase/migrations/0142_fraud_risk_controls.rpc.test.ts lib/risk/*.test.ts app/risk-wiring.test.ts lib/payments/runPayoutBatches.pglite.test.ts --no-file-parallelism",
     "test:watch": "vitest",
     "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts",
     "test:crm-conversion": "tsx --env-file=.env.local scripts/test-crm-conversion.ts",

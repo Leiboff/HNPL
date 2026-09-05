@@ -48,7 +48,7 @@ receiving every new customer on the platform this week.
 | Budgets | `risk_budget_usage` | Daily platform ceilings on KYC, SMS, bureau, payment, payout and new credit. |
 | Kill switches | `risk_kill_switches`, `/admin/risk` | Four platform-wide stops, effective on the next request, no deploy. |
 | Circuit breakers | `practice_risk_posture`, `trip_practice_circuit_breaker` | Per-practice exposure, payout, new-customer and first-payment-rate holds. |
-| Monitor | `/api/cron/risk-monitor`, daily 01:00 UTC | Evaluates the breakers and enforces retention. |
+| Monitor | `/api/cron/risk-monitor`, daily 23:30 UTC | Evaluates the breakers and enforces retention; Wednesday's pass precedes Thursday batching by 30 minutes. |
 | Notifier | `/api/cron/risk-alerts`, every 15 min | Emails the digest to the admin address, exactly once per finding. |
 | Dashboard | `/admin` attention list | Held reviews, held practices, engaged switches and budget pressure, above every other item. |
 
@@ -237,7 +237,9 @@ allowance using requests the platform itself rejected.
 ### Per-practice circuit breakers
 
 Evaluated nightly by `/api/cron/risk-monitor` for every practice that traded
-inside the window.
+inside the window. The payout batcher also re-evaluates every candidate
+practice synchronously and refuses to batch it when posture is unavailable or
+breached, so best-effort cron delivery is not itself a money boundary.
 
 | Metric | Env var | Default |
 | --- | --- | --- |
@@ -381,6 +383,17 @@ dimension. Both are covered in the suites:
 - `lib/risk/evaluate.test.ts` — provider outages, timeouts, missing keys.
 - `app/risk-wiring.test.ts` — every step of the loss chain is still gated, and
   the decision is taken before the irreversible step.
+
+Run the repository-controlled adversarial gate with `pnpm test:fraud`. In
+addition to unit and wiring coverage, it drives complete ring scenarios
+against the real migration and production policy: rotation of cheap identity
+attributes, clean-browser/residential-IP rotation that converges on a shared
+card, and full signal rotation that can only be bounded by the global credit
+budget. The database test uses PGlite, whose single connection cannot prove
+cross-session blocking; the suite separately pins the sorted advisory locks
+and atomic budget statement. A production-equivalent multi-session exercise
+remains a deployment release check, not something this repository should run
+against live customer data.
 
 ---
 

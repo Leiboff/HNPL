@@ -41,6 +41,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { stripComments } from '@/lib/testing/stripComments';
+import { budgetsForRpc, rulesForRpc, RISK_POLICY } from '@/lib/risk/policy';
+import type { RiskEvent } from '@/lib/risk/vocabulary';
 
 const MIG_RAW = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0142_fraud_risk_controls.sql'),
@@ -138,6 +140,23 @@ async function evaluate(input: {
     ],
   );
   return rows[0].d;
+}
+
+/** Exercise the database with the production policy instead of test-only
+ * thresholds. This is the seam used by the full attack-chain simulations. */
+function evaluateWithPolicy(input: {
+  event: RiskEvent;
+  accountId?: string | null;
+  practiceId?: string | null;
+  signals?: Record<string, string>;
+  amount?: number;
+}): Promise<Decision> {
+  return evaluate({
+    ...input,
+    rules: rulesForRpc(input.event),
+    budgets: budgetsForRpc(input.event, input.amount ?? 0),
+    switches: [...RISK_POLICY[input.event].switches],
+  });
 }
 
 /** The device rule from the real signup policy: 3 accounts per week. */
@@ -342,6 +361,128 @@ describe('distributed IPs', () => {
       rules: CLASS_RULE,
     });
     expect(home.decision).toBe('allow');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// Full-chain simulations — individually valid requests, one organized actor
+// ══════════════════════════════════════════════════════════════════════════
+
+describe('full-chain fraud-ring simulations against the production policy', () => {
+  it('stops a ring that rotates account, identity, phone and IP but reuses one device', async () => {
+    const completed: number[] = [];
+
+    for (let i = 1; i <= 8; i += 1) {
+      const accountId = uuid(i);
+      const signup = await evaluateWithPolicy({
+        event: 'signup',
+        accountId,
+        signals: {
+          device: 'ring-browser',
+          ip: `rotating-ip-${i}`,
+          subnet: `rotating-subnet-${i}`,
+          email: `synthetic-${i}@mail-${i}.example`,
+          email_domain: `mail-${i}.example`,
+        },
+      });
+
+      if (signup.decision !== 'allow') {
+        expect(i).toBe(4);
+        expect(signup.decision).toBe('review');
+        expect(signup.reasons).toEqual(expect.arrayContaining([
+          expect.objectContaining({ rule: 'device', metric: 'accounts', observed: 4, threshold: 3 }),
+        ]));
+        break;
+      }
+
+      expect((await evaluateWithPolicy({
+        event: 'phone_otp', accountId,
+        signals: { device: 'ring-browser', phone: `2782000000${i}` },
+      })).decision).toBe('allow');
+      expect((await evaluateWithPolicy({
+        event: 'kyc_session', accountId,
+        signals: { device: 'ring-browser', identity: `identity-${i}`, kyc_session: `face-${i}` },
+      })).decision).toBe('allow');
+      completed.push(i);
+    }
+
+    expect(completed).toEqual([1, 2, 3]);
+    const { rows } = await db.query<{ budget: string; consumed: string }>(
+      `select budget, consumed::text from risk_budget_usage order by budget`,
+    );
+    expect(rows.map((row) => ({ ...row, consumed: Number(row.consumed) }))).toEqual([
+      { budget: 'kyc', consumed: 3 },
+      { budget: 'sms', consumed: 3 },
+    ]);
+  });
+
+  it('catches clean-browser and distributed-IP identities when they converge on one card', async () => {
+    const decisions: Decision[] = [];
+    for (let i = 1; i <= 4; i += 1) {
+      decisions.push(await evaluateWithPolicy({
+        event: 'plan_acceptance',
+        accountId: uuid(i),
+        practiceId: PRACTICE,
+        amount: 1_000,
+        signals: {
+          identity: `identity-${i}`,
+          device: `clean-browser-${i}`,
+          ip: `residential-ip-${i}`,
+          subnet: `residential-subnet-${i}`,
+          card: 'shared-ring-card',
+          practice: PRACTICE,
+          customer_merchant: `customer-${i}:${PRACTICE}`,
+        },
+      }));
+    }
+
+    expect(decisions.map((d) => d.decision)).toEqual(['allow', 'allow', 'review', 'review']);
+    expect(decisions[2].reasons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'card', metric: 'accounts', observed: 3, threshold: 2 }),
+    ]));
+    const { rows } = await db.query<{ consumed: string }>(
+      `select consumed::text from risk_budget_usage where budget = 'approved_credit'`,
+    );
+    // Held requests do not consume credit capacity or manufacture exposure.
+    expect(Number(rows[0].consumed)).toBe(2_000);
+  });
+
+  it('bounds loss with the global credit budget when the ring rotates every correlation signal', async () => {
+    const budgets = [{ budget: 'approved_credit', units: 4_000, limit: 10_000 }];
+    const decisions: Decision[] = [];
+
+    for (let i = 1; i <= 6; i += 1) {
+      decisions.push(await evaluate({
+        event: 'plan_acceptance',
+        accountId: uuid(i),
+        practiceId: PRACTICE,
+        amount: 4_000,
+        budgets,
+        signals: {
+          identity: `identity-${i}`,
+          device: `device-${i}`,
+          ip: `ip-${i}`,
+          subnet: `subnet-${i}`,
+          card: `card-${i}`,
+          bank_account: `bank-${i}`,
+          practice: `practice-token-${i}`,
+          customer_merchant: `edge-${i}`,
+        },
+      }));
+    }
+
+    expect(decisions.map((d) => d.decision)).toEqual([
+      'allow', 'allow', 'deny', 'deny', 'deny', 'deny',
+    ]);
+    for (const denied of decisions.slice(2)) {
+      expect(denied.reasons).toEqual(expect.arrayContaining([
+        expect.objectContaining({ rule: 'budget', budget: 'approved_credit', threshold: 10_000 }),
+      ]));
+    }
+    const { rows } = await db.query<{ consumed: string }>(
+      `select consumed::text from risk_budget_usage where budget = 'approved_credit'`,
+    );
+    expect(Number(rows[0].consumed)).toBe(8_000);
   });
 });
 
