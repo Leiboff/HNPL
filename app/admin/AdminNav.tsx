@@ -2,54 +2,25 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { getAdminNavLinks, isAdminNavActive, adminLinkCount, type AdminCounts } from './adminNavLinks';
 
 // Mirrors the patient portal's PatientNav: desktop-only vertical sidebar
-// (md+). On mobile the AdminBottomNav handles navigation.
+// (md+). On mobile AdminMobileMenu — the hamburger in the top bar —
+// renders the SAME links from ./adminNavLinks, so the two cannot diverge.
 //
 // Badge counts are server-fetched once at the layout level and passed
 // down so every page under /admin shares the same numbers without
 // re-querying.
 
-type Counts = {
-  pendingPractices:    number;
-  overdueCollections:  number;
-  pendingPayouts:      number;
-};
-
-const NAV_LINKS = [
-  { href: '/admin',                            label: 'Dashboard'                                                            },
-  { href: '/admin/practices?status=pending',   label: 'Practices',   countKey: 'pendingPractices'    as const                },
-  { href: '/admin/customers',                  label: 'Customers'                                                            },
-  { href: '/admin/collections?chip=overdue',   label: 'Collections', countKey: 'overdueCollections'  as const                },
-  { href: '/admin/payouts',                    label: 'Payouts',     countKey: 'pendingPayouts'      as const                },
-  { href: '/crm',                              label: 'CRM'                                                                  },
-  { href: '/admin/sales-team',                 label: 'Sales team'                                                           },
-  // The privileged-action log. Desktop only, deliberately — the mobile bar
-  // is for the queues an operator works from a phone, and reading an audit
-  // trail is a desk activity. See app/admin/audit/page.tsx.
-  { href: '/admin/audit',                      label: 'Audit log'                                                            },
-  // The fraud review queue and the platform kill switches (audit S-07).
-  // Desktop only for the same reason as the audit log: deciding whether a
-  // held customer is a ring or a household is a desk activity, and the one
-  // control here that must be reachable in a hurry — a kill switch — is
-  // reachable by URL from anywhere.
-  { href: '/admin/risk',                       label: 'Risk'                                                                 },
-];
-
-export default function AdminNav({ counts }: { counts: Counts }) {
+export default function AdminNav({ counts }: { counts: AdminCounts }) {
   const pathname = usePathname();
-
-  function isActive(href: string) {
-    const path = href.split('?')[0];
-    if (path === '/admin') return pathname === '/admin';
-    return pathname.startsWith(path);
-  }
+  const links    = getAdminNavLinks();
 
   return (
     <nav
       className={[
         'bg-white shrink-0',
-        // Mobile: hidden — AdminBottomNav covers it.
+        // Mobile: hidden — the header's hamburger menu covers it.
         'hidden',
         // Desktop: vertical sidebar matching patient portal width / styling.
         'md:flex md:flex-col md:w-56 md:border-r md:border-gray-200',
@@ -57,13 +28,13 @@ export default function AdminNav({ counts }: { counts: Counts }) {
       ].join(' ')}
     >
       <div className="flex flex-col p-3 space-y-0.5">
-        {NAV_LINKS.map(({ href, label, countKey }) => {
-          const active = isActive(href);
-          const count  = countKey ? counts[countKey] : 0;
+        {links.map((link) => {
+          const active = isAdminNavActive(link.href, pathname);
+          const count  = adminLinkCount(link, counts);
           return (
             <Link
-              key={href}
-              href={href}
+              key={link.href}
+              href={link.href}
               className={[
                 'flex items-center justify-between gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors',
                 active
@@ -71,7 +42,7 @@ export default function AdminNav({ counts }: { counts: Counts }) {
                   : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900',
               ].join(' ')}
             >
-              <span>{label}</span>
+              <span>{link.label}</span>
               {count > 0 && (
                 <span
                   className={[
