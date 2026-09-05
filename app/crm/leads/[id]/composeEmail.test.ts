@@ -418,6 +418,19 @@ describe('sendComposedEmail — multi-account, attribution, signature', () => {
     expect(args.bodyHtml).not.toContain('alert(1)');
     expect(String(args.bodyHtml).toLowerCase()).not.toContain('javascript:');
   });
+
+  it('sanitises again after signature merge fields complete an unsafe URL', async () => {
+    state.signatureRow = {
+      display_name: 'Sam', title: '', phone: '', email: 'javascript:alert(1)',
+      html_override: '<a href="{{email}}">Email Sam</a>', text_fallback: null,
+    };
+    const { sendComposedEmail } = await fresh();
+    await sendComposedEmail({ leadId: 'lead-1', subject: 'Hi', body: 'Hello' });
+
+    const html = String(state.sendCallArgs[0].bodyHtml);
+    expect(html).toContain('Email Sam');
+    expect(html).not.toMatch(/href\s*=|javascript:/i);
+  });
 });
 
 describe('listMyGmailAccounts — Send-as source', () => {

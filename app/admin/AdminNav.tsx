@@ -34,6 +34,7 @@ const NAV_LINKS = [
   // control here that must be reachable in a hurry — a kill switch — is
   // reachable by URL from anywhere.
   { href: '/admin/risk',                       label: 'Risk'                                                                 },
+  { href: '/admin/settings',                   label: 'Settings'                                                             },
 ];
 
 export default function AdminNav({ counts }: { counts: Counts }) {

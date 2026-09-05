@@ -238,6 +238,15 @@ describe('signature — sanitiser + brand template', () => {
     expect(SRC).toMatch(/\\s\*phone\\s\*/);
     expect(SRC).toMatch(/\\s\*email\\s\*/);
   });
+
+  it('uses the merge-then-sanitise boundary at preview and send sinks', () => {
+    const settings = read('app/crm/settings/signatureActions.ts');
+    const compose = read('app/crm/leads/[id]/composeEmail.ts');
+    expect(settings).toMatch(/renderSignatureOverride\(override, vars\)/);
+    expect(compose).toMatch(/renderSignatureOverride\(row\.html_override, vars\)/);
+    expect(settings).not.toMatch(/applySignatureMergeFields\(sanitizeSignatureHtml/);
+    expect(compose).not.toMatch(/applySignatureMergeFields\(sanitizeSignatureHtml/);
+  });
 });
 
 // ── Compose action — accountId, sent_from attribution, signature ──

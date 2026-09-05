@@ -9,7 +9,6 @@ import BillQrPanel from './BillQrPanel';
 import {
   isAllowedBillAmount,
   MIN_BILL_AMOUNT,
-  MAX_BILL_AMOUNT,
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
 import type { CreateBillResult, CreateBillSummary, ProviderOption } from './page';
@@ -28,6 +27,7 @@ type Props = {
    * + app/practice/bills/new/actions.ts for the resolution chain.
    */
   practiceId: string;
+  maximumBillAmount: number;
   createBill: (data: {
     patientEmail?:     string;
     saIdNumber:        string;
@@ -207,7 +207,9 @@ function SuccessPanel({
   );
 }
 
-export default function BillForm({ feePercent, providers, practiceId, createBill }: Props) {
+export default function BillForm({
+  feePercent, providers, practiceId, maximumBillAmount, createBill,
+}: Props) {
   const [patientEmail,     setPatientEmail]     = useState('');
   // QR is the default on BOTH surfaces. Email stays because bills get
   // issued when the patient isn't standing there, and because some
@@ -234,11 +236,11 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
   const [providerError,    setProviderError]    = useState<string | null>(null);
 
   const billAmount = parseFloat(billAmountStr);
-  const validAmount = isAllowedBillAmount(billAmount);
+  const validAmount = isAllowedBillAmount(billAmount, maximumBillAmount);
   const preview = validAmount ? calculateFee(billAmount, feePercent) : null;
 
   const AMOUNT_RANGE_MESSAGE =
-    `Enter an amount between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`;
+    `Enter an amount between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(maximumBillAmount)}.`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -513,7 +515,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
               type="number"
               required
               min={MIN_BILL_AMOUNT}
-              max={MAX_BILL_AMOUNT}
+              max={maximumBillAmount}
               step="0.01"
               value={billAmountStr}
               onChange={e => { setBillAmountStr(e.target.value); setAmountError(null); }}
@@ -529,7 +531,7 @@ export default function BillForm({ feePercent, providers, practiceId, createBill
             </p>
           ) : (
             <p id="billAmount-hint" className="mt-1 text-xs text-gray-400">
-              Between {formatRandLimit(MIN_BILL_AMOUNT)} and {formatRandLimit(MAX_BILL_AMOUNT)}
+              Between {formatRandLimit(MIN_BILL_AMOUNT)} and {formatRandLimit(maximumBillAmount)}
             </p>
           )}
         </div>

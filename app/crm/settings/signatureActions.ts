@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import {
-  applySignatureMergeFields,
   renderBrandSignatureHtml,
   renderBrandSignatureText,
   sanitizeSignatureHtml,
+  renderSignatureOverride,
   type SignatureData,
 } from '@/lib/gmail/signature';
 
@@ -122,7 +122,7 @@ export async function previewMySignature(
 
   const override = (input.htmlOverride ?? '').trim();
   if (override) {
-    const html = applySignatureMergeFields(sanitizeSignatureHtml(override), vars);
+    const html = renderSignatureOverride(override, vars);
     const text = (input.textFallback ?? '').trim() || renderBrandSignatureText(vars);
     return { html, text };
   }

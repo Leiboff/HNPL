@@ -615,6 +615,7 @@ describe('checkout completion classifies V2 status correctly (FIX 1: no false de
 
 describe('bill-amount floor is configurable + allows sandbox test totals (R276 / R184)', () => {
   const LIMITS      = read('lib/config/billAmountLimits.ts');
+  const POLICY      = read('lib/config/billAmountPolicy.ts');
   const BILL_ACTION = read('app/practice/bills/new/actions.ts');
   const BILL_FORM   = read('app/practice/bills/new/BillForm.tsx');
 
@@ -622,9 +623,12 @@ describe('bill-amount floor is configurable + allows sandbox test totals (R276 /
     expect(LIMITS).toMatch(/export const MIN_BILL_AMOUNT/);
     expect(LIMITS).toMatch(/export const MAX_BILL_AMOUNT/);
     expect(LIMITS).toMatch(/export function isAllowedBillAmount/);
-    // Env-configurable (NEXT_PUBLIC_ so client + server read the same).
+    // The floor is public because client + server read the same value; the
+    // live maximum is database-backed and read only by server entry points.
     expect(LIMITS).toMatch(/NEXT_PUBLIC_MIN_BILL_AMOUNT/);
-    expect(LIMITS).toMatch(/NEXT_PUBLIC_MAX_BILL_AMOUNT/);
+    expect(LIMITS).not.toMatch(/NEXT_PUBLIC_MAX_BILL_AMOUNT/);
+    expect(POLICY).toMatch(/platform_settings/);
+    expect(POLICY).toMatch(/max_bill_amount/);
   });
 
   it('default floor is R1 (allows R184/R276; the old R500 floor is gone)', () => {
@@ -636,9 +640,10 @@ describe('bill-amount floor is configurable + allows sandbox test totals (R276 /
     expect(BILL_FORM).not.toMatch(/billAmount >= 500/);
   });
 
-  it('server + client both validate via the shared isAllowedBillAmount', () => {
-    expect(BILL_ACTION).toMatch(/isAllowedBillAmount\(billAmount\)/);
-    expect(BILL_FORM).toMatch(/isAllowedBillAmount\(billAmount\)/);
+  it('server + client both validate via the shared helper and live maximum', () => {
+    expect(BILL_ACTION).toMatch(/configuredMaxBillAmount\(\)/);
+    expect(BILL_ACTION).toMatch(/isAllowedBillAmount\(billAmount, maximumBillAmount\)/);
+    expect(BILL_FORM).toMatch(/isAllowedBillAmount\(billAmount, maximumBillAmount\)/);
   });
 });
 

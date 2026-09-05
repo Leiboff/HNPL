@@ -8,8 +8,8 @@
 //      merged into the brand HTML template below.
 //
 //   2. Raw HTML override — power users can paste HTML. It's
-//      sanitised at write-time (scripts/event-handlers stripped)
-//      and stored verbatim thereafter.
+//      sanitised at write-time (scripts/event-handlers stripped), then
+//      sanitised again after merge-field substitution at every output sink.
 //
 // Plain-text fallback is either supplied or derived by stripping the
 // HTML — used for the text/plain MIME part.
@@ -126,9 +126,10 @@ export function sanitizeSignatureHtml(input: string): string {
 // ── Merge fields on a signature body ─────────────────────────────
 
 /**
- * Apply signature-scoped merge fields against a template body/
- * override. Substitution is HTML-escaped for structured fields; on
- * the raw-HTML path the writer sanitised the payload already.
+ * Apply signature-scoped merge fields against a template body/override.
+ * Substitution HTML-escapes structured fields, but this function alone is
+ * NOT an output boundary: a safely escaped value can still complete an
+ * unsafe URL when the placeholder is inside an href/src attribute.
  */
 export function applySignatureMergeFields(
   template: string,
@@ -139,6 +140,20 @@ export function applySignatureMergeFields(
     .replace(/\{\{\s*title\s*\}\}/g,        escapeHtml(vars.title))
     .replace(/\{\{\s*phone\s*\}\}/g,        escapeHtml(vars.phone))
     .replace(/\{\{\s*email\s*\}\}/g,        escapeHtml(vars.email));
+}
+
+/**
+ * The only safe output boundary for a raw signature override.
+ *
+ * Merge first, then parse and sanitise the completed document. Write-time
+ * sanitisation remains useful defence in depth, but only this ordering lets
+ * the URL allow-list inspect the actual value the browser/email client sees.
+ */
+export function renderSignatureOverride(
+  template: string,
+  vars: SignatureData,
+): string {
+  return sanitizeSignatureHtml(applySignatureMergeFields(template, vars));
 }
 
 // ── Attach a signature to a composed email ───────────────────────
