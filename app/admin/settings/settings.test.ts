@@ -6,7 +6,11 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8'
 const ACTION = read('app/admin/settings/actions.ts');
 const FORM = read('app/admin/settings/BillLimitForm.tsx');
 const PAGE = read('app/admin/settings/page.tsx');
-const NAV = read('app/admin/AdminNav.tsx');
+// The nav's link list moved out of AdminNav.tsx when the phone nav became
+// a hamburger — the desktop sidebar and the mobile menu both render this
+// one source now, so "visible in the admin navigation" is answered here,
+// and answering it here means BOTH widths rather than only desktop.
+const NAV = read('app/admin/adminNavLinks.ts');
 
 describe('admin-configurable maximum bill amount', () => {
   it('is visible in the admin navigation and loaded through session RLS', () => {

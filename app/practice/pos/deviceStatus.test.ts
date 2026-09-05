@@ -44,6 +44,19 @@ function makeClient() {
       const b: Record<string, unknown> = {};
       b.select = () => b;
       b.eq = (c: string, v: unknown) => { filters.push([c, v]); return b; };
+      // #92 put a configuredMaxBillAmount() read on the checkDeviceStatus
+      // path (lib/config/billAmountPolicy.ts), and it terminates in
+      // .single() — which this builder did not have, so the call threw
+      // and took the unlocked-state test down with it. Modelled the same
+      // way maybeSingle is. With no platform_settings rows seeded the
+      // read comes back null and the helper falls back to
+      // MAX_BILL_AMOUNT, which is its documented behaviour, so this
+      // stubs the CALL without pinning a value these tests say nothing
+      // about — they are here for the pre-unlock data-leak property.
+      b.single = async () => ({
+        data: (state[table] ?? []).find((r) => matches(r, filters)) ?? null,
+        error: null,
+      });
       b.maybeSingle = async () => ({
         data: (state[table] ?? []).find((r) => matches(r, filters)) ?? null,
         error: null,

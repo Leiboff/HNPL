@@ -3,15 +3,19 @@ import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import AdminNav from './AdminNav';
-import AdminBottomNav from './AdminBottomNav';
+import AdminMobileMenu from './AdminMobileMenu';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
 import { getRequestUser } from '@/lib/auth/requestUser';
 
-// Persistent shell for every /admin/* route — mirrors the patient
-// portal: sticky top bar with brand + logout, desktop left sidebar,
-// mobile bottom nav. Badge counts (pending practices, overdue
-// collections, pending payouts) are fetched once here and threaded into
-// both nav variants.
+// Persistent shell for every /admin/* route: sticky top bar with brand +
+// logout, desktop left sidebar, and — on a phone — a hamburger menu in
+// that top bar. Badge counts (pending practices, overdue collections,
+// pending payouts) are fetched once here and threaded into both nav
+// variants, which render the same link list from ./adminNavLinks.
+//
+// The phone nav used to be a five-slot floating bottom bar, which could
+// not fit the portal's ten destinations; the hamburger has no such
+// ceiling, so mobile now reaches everything desktop does.
 //
 // Layout-level admin authorization runs first; individual /admin/* pages
 // still keep their own auth checks as belt-and-braces (consistent with
@@ -65,6 +69,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* ── Sticky top bar ─────────────────────────────────────────── */}
+      {/* `sticky` positions this bar, which also makes it the containing
+          block for the mobile menu's absolutely-positioned dropdown — so
+          the panel spans the full width of the bar rather than hanging off
+          the hamburger button. Do not swap it for `static`. */}
       <header className="sticky top-0 z-20 shrink-0 bg-white border-b border-gray-200">
         <div className="flex items-center justify-between px-4 sm:px-6 py-3.5">
           <Link href="/admin" className="flex items-center gap-2">
@@ -79,22 +87,25 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               Admin
             </span>
           </Link>
-          <LogoutButton />
+          {/* Desktop logs out from here; on a phone "Sign out" is the last
+              entry inside the hamburger menu. */}
+          <div className="hidden md:block">
+            <LogoutButton />
+          </div>
+          <AdminMobileMenu counts={counts} />
         </div>
       </header>
 
       {/* ── Body: sidebar + page content ──────────────────────────── */}
       <div className="flex flex-row flex-1">
         <AdminNav counts={counts} />
-        {/* pb-28 on mobile reserves space for the floating bottom-nav.
-            min-w-0 prevents children from forcing horizontal overflow. */}
-        <main className="flex-1 min-w-0 pb-28 md:pb-0">
+        {/* min-w-0 prevents children from forcing horizontal overflow. The
+            old pb-28 is gone with the floating bottom bar it reserved space
+            for — nothing overlaps the bottom of the page now. */}
+        <main className="flex-1 min-w-0">
           {children}
         </main>
       </div>
-
-      {/* ── Mobile bottom nav ─────────────────────────────────────── */}
-      <AdminBottomNav counts={counts} />
 
       {/* Inactivity auto-logout — admin tuning: warn at 10 min idle,
           log out 10 min later (20 min total). */}

@@ -2,19 +2,24 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// ─── CRM nav wiring — admins reach the CRM from AdminNav ─────────────
+// ─── CRM nav wiring — admins reach the CRM from the admin nav ────────
 //
 // The CRM has its own /crm shell + nav for sales users. Admin users see
-// the CRM link inside AdminNav so they can walk into the same surface
-// without switching sessions. Sales users NEVER see AdminNav (the
+// the CRM link in the admin nav so they can walk into the same surface
+// without switching sessions. Sales users NEVER see the admin nav (the
 // admin layout gate rejects role='sales'); they land on /crm directly
 // via the login → dashboard router or the /crm URL.
+//
+// The link list used to live inside AdminNav.tsx and is read from
+// app/admin/adminNavLinks.ts now — the shared source the desktop sidebar
+// and the mobile hamburger BOTH render, so this checks the admin's way
+// into the CRM at every width rather than only on desktop.
 
 const ROOT = resolve(process.cwd());
 function read(p: string): string { return readFileSync(resolve(ROOT, p), 'utf8'); }
 
-describe('AdminNav wiring for CRM + sales team', () => {
-  const SRC = read('app/admin/AdminNav.tsx');
+describe('admin nav wiring for CRM + sales team', () => {
+  const SRC = read('app/admin/adminNavLinks.ts');
 
   it('has a /crm link', () => {
     expect(SRC).toMatch(/href:\s*['"]\/crm['"]/);
