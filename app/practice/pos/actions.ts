@@ -5,9 +5,9 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
 import {
   isAllowedBillAmount,
   MIN_BILL_AMOUNT,
-  MAX_BILL_AMOUNT,
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
+import { configuredMaxBillAmount } from '@/lib/config/billAmountPolicy';
 import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { normalizePhoneZA } from '@/lib/validation';
 import { captureBillIdentity } from '@/lib/patients/billIdentityCapture';
@@ -226,7 +226,7 @@ export type DeviceStatus =
   | { state: 'no_device' }
   | { state: 'revoked' }
   | { state: 'locked' }
-  | { state: 'unlocked'; practiceId: string; practiceName: string; providers: ProviderOption[] };
+  | { state: 'unlocked'; practiceId: string; practiceName: string; providers: ProviderOption[]; maximumBillAmount: number };
 
 export async function checkDeviceStatus(deviceSecret: string | null): Promise<DeviceStatus> {
   if (!deviceSecret) return { state: 'no_device' };
@@ -239,7 +239,7 @@ export async function checkDeviceStatus(deviceSecret: string | null): Promise<De
   }
 
   const client = svc();
-  const [{ data: practice }, { data: providerRows }] = await Promise.all([
+  const [{ data: practice }, { data: providerRows }, maximumBillAmount] = await Promise.all([
     client.from('practices').select('name').eq('id', result.practiceId).maybeSingle(),
     client
       .from('practice_members')
@@ -247,6 +247,7 @@ export async function checkDeviceStatus(deviceSecret: string | null): Promise<De
       .eq('practice_id', result.practiceId)
       .eq('active', true)
       .eq('role', 'provider'),
+    configuredMaxBillAmount(),
   ]);
 
   // Membership-keyed since 0094, and roster-only practitioners are included:
@@ -261,6 +262,7 @@ export async function checkDeviceStatus(deviceSecret: string | null): Promise<De
     practiceId:   result.practiceId,
     practiceName: (practice?.name as string | undefined) ?? 'Practice',
     providers,
+    maximumBillAmount,
   };
 }
 
@@ -334,9 +336,10 @@ export async function issueCounterSession(
     return { error: 'Too many bills raised in the last hour. Please wait a few minutes, or contact support if this is wrong.' };
   }
 
-  if (!isAllowedBillAmount(billAmount)) {
+  const maximumBillAmount = await configuredMaxBillAmount();
+  if (!isAllowedBillAmount(billAmount, maximumBillAmount)) {
     return {
-      error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(MAX_BILL_AMOUNT)}.`,
+      error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(maximumBillAmount)}.`,
     };
   }
   if (!providerMemberId) {

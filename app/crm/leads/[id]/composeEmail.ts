@@ -7,11 +7,10 @@ import { getAccessToken, sendGmail, fetchMessageMetadata, fetchThread } from '@/
 import { substituteMergeFields } from '@/lib/gmail/mergeFields';
 import { prefixReSubject, deriveSubjectFromOutboundTitle } from '@/lib/gmail/replySubject';
 import {
-  applySignatureMergeFields,
   composeWithSignature,
   renderBrandSignatureHtml,
   renderBrandSignatureText,
-  sanitizeSignatureHtml,
+  renderSignatureOverride,
   type SignatureData,
 } from '@/lib/gmail/signature';
 
@@ -224,7 +223,7 @@ async function buildSignatureForUser(
   };
   if (row?.html_override) {
     return {
-      html: applySignatureMergeFields(sanitizeSignatureHtml(row.html_override), vars),
+      html: renderSignatureOverride(row.html_override, vars),
       text: (row.text_fallback ?? '').trim() || renderBrandSignatureText(vars),
     };
   }

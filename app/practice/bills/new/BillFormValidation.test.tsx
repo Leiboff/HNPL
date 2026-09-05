@@ -16,7 +16,7 @@ vi.mock('./BillWaitingPanel', () => ({
 
 // ─── Bill form: validation feedback (Part 1) + result-screen exits (Part 3) ──
 //
-// The reported bug: an amount outside R1-R50,000 made "Send bill to patient"
+// The reported bug: an amount outside the configured range made "Send bill to patient"
 // do NOTHING — no message, no field highlight, and (verified in the network
 // log) zero requests. Two causes, both fixed and both pinned here:
 //
@@ -33,13 +33,17 @@ const PROVIDERS: ProviderOption[] = [
   { memberId: 'mem-1', name: 'Ada Mokoena' },
 ];
 
-function setup(createBill?: (data: unknown) => Promise<CreateBillResult>) {
+function setup(
+  createBill?: (data: unknown) => Promise<CreateBillResult>,
+  maximumBillAmount = 30000,
+) {
   const spy = vi.fn(createBill ?? (async () => ({ error: null } as CreateBillResult)));
   render(
     <BillForm
       feePercent={5}
       providers={PROVIDERS}
       practiceId="practice-1"
+      maximumBillAmount={maximumBillAmount}
       createBill={spy as never}
     />,
   );
@@ -79,7 +83,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
   });
 
   it.each([
-    ['above the maximum',   '50001'],
+    ['above the maximum',   '30001'],
     ['far above the maximum', '999999'],
     ['below the minimum',   '0.5'],
     ['exactly zero',        '0'],
@@ -93,7 +97,7 @@ describe('bill amount validation is visible, never a silent no-op', () => {
     const err = screen.getByTestId('amount-error');
     // formatRandLimit uses en-ZA grouping, which is a space (U+00A0), not
     // a comma — \s matches both, so this doesn't hard-code the locale.
-    expect(err.textContent).toMatch(/between R1 and R50\s?000/i);
+    expect(err.textContent).toMatch(/between R1 and R30\s?000/i);
     expect(f.amount().getAttribute('aria-invalid')).toBe('true');
     expect(f.createBill).not.toHaveBeenCalled();
   });
@@ -106,12 +110,24 @@ describe('bill amount validation is visible, never a silent no-op', () => {
     expect(f.createBill).not.toHaveBeenCalled();
   });
 
+  it('uses an admin-configured maximum below the database ceiling', () => {
+    const f = setup(undefined, 12000);
+    fillIdentity(f);
+    fireEvent.change(f.amount(), { target: { value: '12000.01' } });
+    fireEvent.click(f.submit());
+
+    expect(screen.getByTestId('amount-error').textContent)
+      .toMatch(/between R1 and R12\s?000/i);
+    expect(f.amount().max).toBe('12000');
+    expect(f.createBill).not.toHaveBeenCalled();
+  });
+
   it('the amount field itself gets a visual error state, not just gray helper text', () => {
     const f = setup();
     fillIdentity(f);
     // Before submitting: the neutral hint, no error styling.
     expect(f.amount().className).toMatch(/border-gray-300/);
-    expect(screen.getByText(/Between R1 and R50\s?000/i)).toBeTruthy();
+    expect(screen.getByText(/Between R1 and R30\s?000/i)).toBeTruthy();
 
     fireEvent.change(f.amount(), { target: { value: '60000' } });
     fireEvent.click(f.submit());
@@ -208,7 +224,7 @@ const BASE_SUMMARY: CreateBillSummary = {
 function renderResult(summary: CreateBillSummary) {
   const createBill = vi.fn(async () => ({ error: null, summary } as CreateBillResult));
   render(
-    <BillForm feePercent={5} providers={PROVIDERS} practiceId="practice-1" createBill={createBill as never} />,
+    <BillForm feePercent={5} providers={PROVIDERS} practiceId="practice-1" maximumBillAmount={30000} createBill={createBill as never} />,
   );
   fireEvent.change(screen.getByTestId('bill-said-input'), { target: { value: VALID_SA_ID } });
   fireEvent.click(screen.getByTestId('delivery-email'));

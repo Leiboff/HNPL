@@ -10,8 +10,9 @@ import { isAdminNavActive } from './adminNavLinks';
 // hand-written link array. Two things were wrong with that, and both are
 // what this file guards:
 //
-//   • REACH. Four of the portal's nine destinations — CRM, Sales team,
-//     Audit log, Risk — had no link at all on a phone. The kill switches
+//   • REACH. Four of the portal's destinations — CRM, Sales team, Audit
+//     log, Risk — had no link at all on a phone, and Settings (#92,
+//     merged in from master) would have been a fifth. The kill switches
 //     behind /admin/risk were reachable only by typing the URL.
 //   • DIVERGENCE. Two independently-maintained arrays, the exact shape of
 //     the bug that produced ../practice/practiceManagerLinks.ts. Both
@@ -130,7 +131,7 @@ describe('AdminMobileMenu — the hamburger', () => {
   it('reaches the destinations the old bottom bar could not fit', () => {
     render(<AdminMobileMenu counts={ZERO} />);
     openMenu();
-    for (const label of ['CRM', 'Sales team', 'Audit log', 'Risk']) {
+    for (const label of ['CRM', 'Sales team', 'Audit log', 'Risk', 'Settings']) {
       expect(screen.getByRole('link', { name: label })).toBeTruthy();
     }
   });
@@ -166,7 +167,7 @@ describe('desktop / mobile parity', () => {
       .map((a) => [a.getAttribute('href'), a.textContent]);
 
     expect(mobileLinks).toEqual(desktopLinks);
-    expect(desktopLinks.length).toBe(9);
+    expect(desktopLinks.length).toBe(10);
   });
 });
 

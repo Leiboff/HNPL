@@ -10,6 +10,7 @@ import {
   MAX_BILL_AMOUNT,
   formatRandLimit,
 } from '@/lib/config/billAmountLimits';
+import { configuredMaxBillAmount } from '@/lib/config/billAmountPolicy';
 import { checkTradingGate } from '@/lib/practice/tradingGate';
 import { sendPatientInvitationEmail } from '@/lib/email/templates/patientInvitation';
 import { sendExistingPatientBillEmail } from '@/lib/email/templates/existingPatientBill';
@@ -180,6 +181,13 @@ export async function createBill(data: CreateBillInput): Promise<CreateBillResul
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Session expired. Please log in again.' };
+
+  const maximumBillAmount = await configuredMaxBillAmount();
+  if (!isAllowedBillAmount(billAmount, maximumBillAmount)) {
+    return {
+      error: `Bill amount must be between ${formatRandLimit(MIN_BILL_AMOUNT)} and ${formatRandLimit(maximumBillAmount)}.`,
+    };
+  }
 
   // ── Practice scope resolution — group→practice acting context ────
   //

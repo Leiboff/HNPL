@@ -38,6 +38,7 @@ const ADMIN_PAGES = [
   // credit issuance platform-wide, so a demoted account reaching this page
   // would be worse than reaching the audit log.
   'app/admin/risk/page.tsx',
+  'app/admin/settings/page.tsx',
 ];
 
 describe('admin routes — server-side admin auth pattern', () => {
@@ -71,6 +72,7 @@ describe('admin server actions — server-side admin auth pattern', () => {
     'app/admin/payouts/actions.ts',
     'app/admin/practices/actions.ts',
     'app/admin/risk/actions.ts',
+    'app/admin/settings/actions.ts',
   ];
 
   it.each(ADMIN_ACTIONS)('%s enforces profile.role check before mutating', (path) => {

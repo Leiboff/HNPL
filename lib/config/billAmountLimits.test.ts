@@ -24,7 +24,7 @@ describe('splitInstalments hits R92 for the documented sandbox totals', () => {
 });
 
 describe('isAllowedBillAmount — default floor R1', () => {
-  // Default env (no override) → MIN 1, MAX 50000.
+  // Default env (no override) → MIN 1, MAX 30000.
   it('accepts the sandbox totals R184 and R276', async () => {
     const { isAllowedBillAmount } = await import('./billAmountLimits');
     expect(isAllowedBillAmount(184)).toBe(true);
@@ -43,9 +43,9 @@ describe('isAllowedBillAmount — default floor R1', () => {
     expect(isAllowedBillAmount(NaN)).toBe(false);
   });
 
-  it('rejects above the R50 000 ceiling', async () => {
+  it('rejects above the R30 000 ceiling', async () => {
     const { isAllowedBillAmount } = await import('./billAmountLimits');
-    expect(isAllowedBillAmount(50_001)).toBe(false);
+    expect(isAllowedBillAmount(30_001)).toBe(false);
   });
 });
 

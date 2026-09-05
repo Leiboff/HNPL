@@ -8,7 +8,9 @@
 // Configurable via env (NEXT_PUBLIC_ so the client bundle can read the
 // same value the server enforces):
 //   NEXT_PUBLIC_MIN_BILL_AMOUNT  — floor in Rands. Default 1.
-//   NEXT_PUBLIC_MAX_BILL_AMOUNT  — ceiling in Rands. Default 50000.
+//   The maximum is loaded from platform_settings by server entry points and
+//   passed to their client forms. R30,000 is the non-configurable absolute
+//   database ceiling, not an environment setting.
 //
 // Why the default floor is R1, not the old R500:
 //   Peach's SANDBOX approves specific test amounts — R92.00 per
@@ -41,7 +43,7 @@ function readAmountEnv(name: string, fallback: number): number {
 }
 
 export const MIN_BILL_AMOUNT = readAmountEnv('NEXT_PUBLIC_MIN_BILL_AMOUNT', 1);
-export const MAX_BILL_AMOUNT = readAmountEnv('NEXT_PUBLIC_MAX_BILL_AMOUNT', 50000);
+export const MAX_BILL_AMOUNT = 30000;
 
 /** Rands, formatted with a thousands separator for user-facing copy. */
 export function formatRandLimit(n: number): string {
@@ -49,6 +51,6 @@ export function formatRandLimit(n: number): string {
 }
 
 /** Shared validity predicate — server + client call the same function. */
-export function isAllowedBillAmount(amount: number): boolean {
-  return Number.isFinite(amount) && amount >= MIN_BILL_AMOUNT && amount <= MAX_BILL_AMOUNT;
+export function isAllowedBillAmount(amount: number, maximum = MAX_BILL_AMOUNT): boolean {
+  return Number.isFinite(amount) && amount >= MIN_BILL_AMOUNT && amount <= maximum;
 }

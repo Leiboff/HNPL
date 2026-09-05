@@ -14,7 +14,7 @@ import { getRequestUser } from '@/lib/auth/requestUser';
 // variants, which render the same link list from ./adminNavLinks.
 //
 // The phone nav used to be a five-slot floating bottom bar, which could
-// not fit the portal's nine destinations; the hamburger has no such
+// not fit the portal's ten destinations; the hamburger has no such
 // ceiling, so mobile now reaches everything desktop does.
 //
 // Layout-level admin authorization runs first; individual /admin/* pages

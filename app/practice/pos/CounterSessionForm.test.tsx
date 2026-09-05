@@ -40,6 +40,7 @@ function renderForm(overrides: {
   render(
     <CounterSessionForm
       providers={PROVIDERS}
+      maximumBillAmount={30000}
       issueCounterSession={issueCounterSession}
       expireCounterSession={expireCounterSession}
       getCounterSessionStage={getCounterSessionStage}

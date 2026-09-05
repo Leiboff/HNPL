@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   sanitizeSignatureHtml,
   applySignatureMergeFields,
+  renderSignatureOverride,
   renderBrandSignatureHtml,
   renderBrandSignatureText,
   composeWithSignature,
@@ -96,6 +97,45 @@ describe('applySignatureMergeFields', () => {
     expect(out).toContain('a@b.co');
     // Raw brackets from the template have been consumed.
     expect(out).not.toContain('{{display_name}}');
+  });
+});
+
+describe('renderSignatureOverride — final sanitization after merge', () => {
+  const base = { displayName: '', title: '', phone: '', email: '' };
+
+  it.each([
+    'javascript:alert(1)',
+    'JaVaScRiPt:alert(1)',
+    'java\nscript:alert(1)',
+    '%6a%61%76%61%73%63%72%69%70%74:alert(1)',
+    'vbscript:msgbox(1)',
+    'data:text/html,<script>alert(1)</script>',
+  ])('removes an href completed by the unsafe merge value %s', (email) => {
+    const out = renderSignatureOverride(
+      '<div><a href="{{email}}">Email me</a></div>',
+      { ...base, email },
+    );
+    expect(out).toContain('Email me');
+    expect(out).not.toMatch(/href\s*=/i);
+    expect(out).not.toMatch(/javascript:|vbscript:|data:text\/html/i);
+  });
+
+  it('keeps escaping as the first layer and sanitizes the completed document', () => {
+    const out = renderSignatureOverride(
+      '<a href="https://example.com/?name={{display_name}}">{{display_name}}</a>',
+      { ...base, displayName: '\"><img src=x onerror=alert(1)>' },
+    );
+    expect(out).not.toContain('<img');
+    expect(out).not.toContain('"><img');
+    expect(out).toContain('&lt;img');
+  });
+
+  it('preserves an allowed completed URL', () => {
+    const out = renderSignatureOverride(
+      '<a href="mailto:{{email}}">{{email}}</a>',
+      { ...base, email: 'hello@betternow.co.za' },
+    );
+    expect(out).toContain('href="mailto:hello@betternow.co.za"');
   });
 });
 

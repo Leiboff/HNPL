@@ -55,6 +55,12 @@ const LINKS: readonly AdminLink[] = [
   { href: '/admin/audit',                    label: 'Audit log'                                          },
   // The fraud review queue and the platform kill switches (audit S-07).
   { href: '/admin/risk',                     label: 'Risk'                                               },
+  // The platform's own knobs — the configurable bill maximum and what
+  // else lands beside it (#92). Arrived on master while the two nav
+  // arrays were being collapsed into this one; adding it HERE is the
+  // whole point, since a link added to the desktop array alone is the
+  // bug this file exists to prevent, and the phone gets it for free.
+  { href: '/admin/settings',                 label: 'Settings'                                           },
 ] as const;
 
 /** A fresh array per call, so no caller can mutate the shared list. */
