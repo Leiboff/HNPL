@@ -4,7 +4,7 @@ import SubScreenHeader from '@/app/patient/account/SubScreenHeader';
 import { createClient } from '@/lib/supabase/server';
 import { getRequestUser } from '@/lib/auth/requestUser';
 import { ensureMyReferralCode } from './actions';
-import ReferTabs from './ReferTabs';
+import ReferChoice from './ReferChoice';
 import ReferralList, { type ReferralRow } from './ReferralList';
 
 // ─── Refer — the patient's own referral screen ───────────────────────────
@@ -13,12 +13,12 @@ import ReferralList, { type ReferralRow } from './ReferralList';
 // and the record of what I have referred already.
 //
 // The two sides of that choice are not symmetrical, and the screen does not
-// pretend they are. Referring a FRIEND is a share — a code, a link, the
-// system share sheet, WhatsApp, email — with the email-invitation form as one
-// channel among them. Referring a PRACTICE is a lead form and nothing else,
-// because a practice cannot sign itself up: what that produces is a
-// crm_leads row with source='referral' for a rep to work. ReferTabs owns that
-// asymmetry; this page just supplies the code.
+// pretend they are. Referring a FRIEND is a share and only a share — a code,
+// a link, the system share sheet, WhatsApp, email. Referring a DOCTOR is a
+// lead form and only a lead form, because a practice cannot sign itself up:
+// what that produces is a crm_leads row with source='referral' for a rep to
+// work. ReferChoice owns that asymmetry, behind two buttons rather than a tab
+// strip; this page just supplies the code.
 //
 // ─── THE CODE IS MINTED ON RENDER ────────────────────────────────────────
 //
@@ -70,7 +70,7 @@ export default async function ReferPage() {
     <PatientScreen header={<SubScreenHeader title="Refer someone" />} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
         <p className="text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
-          Know someone who could use betternow, or a practice that should offer it?
+          Know someone who could use betternow, or a doctor who should offer it?
           Send them your link, or tell us about them and we&rsquo;ll take it from there.
         </p>
 
@@ -87,16 +87,17 @@ export default async function ReferPage() {
               Your referral link isn&rsquo;t ready
             </p>
             <p className="mt-1.5 text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
-              {codeResult.error} You can still invite someone using the form below.
+              {codeResult.error} Referring a doctor still works — that side doesn&rsquo;t
+              need your link.
             </p>
           </section>
         )}
 
-        {/* The share card lives inside the tabs, not here: it belongs to the
-            friend side only. A practice is not referred by a link — see
-            ReferTabs, and the referrals_link_is_patient_only constraint in
+        {/* The share card lives behind the friend button, not here: it belongs
+            to that side only. A doctor is never referred by a link — see
+            ReferChoice, and the referrals_link_is_patient_only constraint in
             migration 0145 that says the same thing in the database. */}
-        <ReferTabs code={'code' in codeResult ? codeResult.code : null} />
+        <ReferChoice code={'code' in codeResult ? codeResult.code : null} />
 
         <ReferralList rows={rows} />
       </div>

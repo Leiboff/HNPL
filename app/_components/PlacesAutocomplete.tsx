@@ -53,6 +53,26 @@ type Props = {
    * address + parsed components for the signup / admin re-pick).
    */
   onSelect: (place: PlaceDetails) => void;
+  /**
+   * Fires on every keystroke in the visible field, with the text now in
+   * it. Optional, and the reason it exists is a bug it prevents rather
+   * than a feature it adds:
+   *
+   * this component owns the visible query, and the parent owns the PICK.
+   * Those go out of step the moment somebody picks a place and then edits
+   * or clears the field — onSelect does not fire again, so the parent is
+   * still holding the previous selection while the input shows something
+   * else, and a submit at that moment saves an address the person has
+   * visibly rejected.
+   *
+   * A parent that stores a selection should therefore clear it here and
+   * wait for the next onSelect. Parents that only read onSelect (the
+   * suburb search, which acts on the pick immediately) can ignore it.
+   *
+   * NOT fired by the component's own setQuery after a pick — that is the
+   * selection being reflected, not the person editing it.
+   */
+  onQueryChange?: (query: string) => void;
   /** Optional className override on the wrapping div. */
   className?: string;
 };
@@ -74,6 +94,7 @@ export default function PlacesAutocomplete({
   disabled = false,
   variant,
   onSelect,
+  onQueryChange,
   className,
 }: Props) {
   const [query,      setQuery]      = useState(initialValue);
@@ -117,6 +138,7 @@ export default function PlacesAutocomplete({
   function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     const v = e.target.value;
     setQuery(v);
+    onQueryChange?.(v);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (!v.trim()) {
       setSuggestions([]);

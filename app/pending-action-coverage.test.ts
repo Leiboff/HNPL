@@ -74,9 +74,9 @@ const CONVERTED = [
   // than a mirrored useTransition for the same reason ContactForm gives:
   // nothing revalidates into it — success swaps the form for a confirmation
   // held in local state. The synchronous ref is the double-submit guard,
-  // which matters because a second tap sends a second email to a stranger or
-  // a second lead into a rep's queue.
-  'app/patient/refer/ReferForm.tsx',
+  // which matters because a second tap puts a second lead into a rep's queue
+  // for the same rooms.
+  'app/patient/refer/ReferDoctorForm.tsx',
 ] as const;
 
 /**

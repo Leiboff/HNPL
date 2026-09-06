@@ -1,20 +1,23 @@
 # Referrals
 
-> Built 2026-09-06. **The infrastructure exists. The incentive programme does
-> not.** This document is the map of what is here, what deliberately is not,
-> and the five decisions somebody has to make before a reward can be paid.
+> Built 2026-09-06. Split into two buttons 2026-09-06. **The infrastructure
+> exists. The incentive programme does not.** This document is the map of what
+> is here, what deliberately is not, and the five decisions somebody has to
+> make before a reward can be paid.
 
 ---
 
 ## 1. What a patient can do today
 
-Two things, from **Account → Refer a friend** (`/patient/refer`):
+Two things, from **Account → Refer someone** (`/patient/refer`). The screen
+opens on a choice — two buttons, not a tab strip — because the two sides share
+an impulse and nothing else:
 
-| | Refer a friend | Refer a practice |
+| | Refer a friend | Refer a doctor |
 |---|---|---|
-| Who it is | A person who could use betternow | Rooms that should offer it |
-| Shareable? | **Yes** — share sheet, WhatsApp, email, copy link | **No** — it is a lead form |
-| How it lands | They open the link and sign themselves up, or we email an invitation | A `crm_leads` row, `source='referral'`, worked by a rep |
+| Who it is | A person who could use betternow | A doctor whose rooms should offer it |
+| Shareable? | **Yes, and that is all it is** — share sheet, WhatsApp, email, copy link | **No** — it is a lead form |
+| How it lands | They open the link and sign themselves up | A `crm_leads` row, `source='referral'`, worked by a rep |
 | Attributed when | They create an account carrying the code | Never automatically — a rep works the lead |
 | Converts when | *(not yet wired — see §6)* | *(not yet wired — see §6)* |
 
@@ -22,18 +25,61 @@ Every patient gets a code — eight characters, minted on first view of the
 screen — and a link, `https://…/?ref=CODE`.
 
 **The asymmetry is the point.** A friend signs themselves up, so a link is the
-whole mechanism and the screen offers every way to send one: the system share
-sheet (`navigator.share`) where the browser has one, and named WhatsApp and
-email links where it does not — desktop Firefox, desktop Chrome without OS
+whole mechanism and the friend side offers every way to send one: the system
+share sheet (`navigator.share`) where the browser has one, and named WhatsApp
+and email links where it does not — desktop Firefox, desktop Chrome without OS
 integration, and most embedded webviews have no sheet, and a Share button that
-silently does nothing is worse than no button. The email-invitation form is
-one channel among those, not the only door.
+silently does nothing is worse than no button.
 
-A practice cannot sign itself up. There is no signup a code could be carried
-into, and a link handed to a receptionist leads nowhere, so that side renders
-no share affordance at all — it is a lead form and nothing else. Migration
-0145 says the same thing one layer down: `referrals_link_is_patient_only`
-refuses a practice referral with `channel='link'`.
+There is **no form on the friend side and no server action behind it**. A
+friend referral is written by the claim path when the friend actually arrives
+(§3), never speculatively when a link is sent. An earlier version emailed an
+invitation from a form; that form and the `referAFriend` action behind it were
+removed together, because a `'use server'` export is an HTTP endpoint whether
+or not anything renders it, and one that puts mail into an uninvolved person's
+inbox has no business outliving the UI that justified it. Invitations already
+in the database are unaffected — `claim.ts` still matches an arriving account
+onto one, and `prune_referral_invites()` still expires and scrubs them.
+
+A doctor cannot be referred by a link. There is no signup a code could be
+carried into, and a link handed to a receptionist leads nowhere, so that side
+renders no share affordance at all — it is a lead form and nothing else.
+Migration 0145 says the same thing one layer down:
+`referrals_link_is_patient_only` refuses a practice referral with
+`channel='link'`.
+
+**Doctor, not practice — and why the row still says `practice`.** What a
+patient knows is their doctor. They may not know whether the rooms trade as
+"Rosebank Dental" or as "Dr A Naidoo Inc", and asking for a practice name they
+have never read was the most refusable field on the old form. So the form asks
+for the doctor and treats the practice name as the optional extra it is.
+`referrals.kind` stays `'practice'`, because the kind records what a referral
+*converts into* — a merchant on this platform, with a `converted_practice_id`
+beside it — not the label on the form.
+
+Four fields are compulsory, refused in the form **and** again in
+`referADoctor` (a Server Action is an HTTP endpoint; the form is a screen the
+caller owns):
+
+| Field | Why | Where it goes |
+|---|---|---|
+| Doctor's name | A lead nobody can be asked for is not workable | `contact_first_name` / `contact_last_name` via `splitFullName`, and `invitee_name` on the referral |
+| Specialty | The shared register (`lib/specialties.ts`) through `SpecialtyOptions` — the same dropdown as CRM new-lead, practice signup and the public lead form | `crm_leads.specialty` |
+| Phone | The rep's actual next action. This replaced an email-**or**-phone rule that produced leads with an address nobody answers. Landlines allowed — a switchboard is usually right | `crm_leads.phone`, normalised to E.164 |
+| Address | What makes a lead findable, dedupable and mappable. Picked from Google Places through the shared `PlacesAutocomplete`, never typed free-hand | `street_address` / `suburb` / `city` / `province` / `latitude` / `longitude` / `formatted_address` |
+
+Address is the one field a browser cannot validate: `PlacesAutocomplete` only
+reports a place once it has been *chosen*, so typed-but-unpicked text never
+reaches the form's state at all. Hence the explicit hint under the field, the
+guard in `onSubmit`, and the server-side refusal. Coordinates are re-checked
+against `lib/maps/saBounds.ts` — a real pick always lands inside the box, so a
+pair that does not either came from somewhere other than the dropdown or names
+a practice we cannot onboard.
+
+Practice name, email and a note are optional. Where no practice name is given,
+the doctor's name stands in: `crm_leads.practice_name` and 0145's
+`referrals_practice_named` are both NOT NULL, and the doctor's name is what
+the rep asks for on the phone — never a name we invented.
 
 SMS is deliberately not a named channel: the URI takes a different separator
 on iOS (`sms:&body=`) and Android (`sms:?body=`), so one href is wrong on one
@@ -53,9 +99,11 @@ lib/referrals/
 
 proxy.ts                              captures ?ref= into a cookie; spends it
                                       on the first authenticated request.
-app/patient/refer/                    the screen and its three server actions.
+app/patient/refer/                    the screen and its two server actions.
+  ReferChoice.tsx                     the two buttons, and what hangs off each.
+  ReferralShareCard.tsx               the friend side: code, link, channels.
+  ReferDoctorForm.tsx                 the doctor side: the lead form.
 app/api/cron/referral-maintenance/    daily expiry + POPIA scrub.
-lib/email/templates/referralInvite.ts the one email a stranger receives.
 supabase/migrations/0145_…            referral_codes, referrals, the guard
                                       trigger, prune_referral_invites().
 ```
@@ -99,9 +147,9 @@ is in it*, and a referral row decides who gets credited for a customer.
 
 ## 5. Personal information
 
-A referral invitation holds a name and an email address for somebody who is
-not a customer and never asked to hear from us. That is lawful as a referral
-and stops being lawful once the invitation is dead.
+A referral holds a name, an address and a phone number for somebody who is not
+a customer and never asked to hear from us. That is lawful as a referral and
+stops being lawful once the referral is dead.
 
 `prune_referral_invites()` (0145), run daily by
 `/api/cron/referral-maintenance`:
@@ -111,8 +159,9 @@ and stops being lawful once the invitation is dead.
   dead for 90 days — keeping the referral row, which is the referrer's record
   that they made a referral, and losing the part with a person attached.
 
-The email itself names the referrer's first name only, promises nothing, and
-carries a route to have the address removed.
+Nothing on this surface emails the person being referred. The friend side
+hands the patient a link to send themselves, and the doctor side says plainly
+on screen that the referral goes to our team rather than to the practice.
 
 ## 6. What the incentive programme has to decide
 
@@ -125,7 +174,7 @@ Five decisions, none of which this work makes:
 
 1. **What qualifies.** A friend signing up? Their first plan going active?
    Their first instalment clearing? The third? Each moves the fraud surface
-   and the cost. For a practice: a signed agreement, or approved and trading?
+   and the cost. For a doctor: a signed agreement, or approved and trading?
 2. **What is paid, and to whom.** A credit against the referrer's next
    instalment is the cheapest to build (the credit machinery exists —
    `claim_credit_for_plan`, 0130) and the most awkward for a referrer with no
@@ -155,8 +204,8 @@ Five decisions, none of which this work makes:
 
 ### What is NOT in place
 
-- Nothing sets `status='converted'`. A patient referral does not currently
-  advance when the referred customer's first plan activates, and a practice
+- Nothing sets `status='converted'`. A friend referral does not currently
+  advance when the referred customer's first plan activates, and a doctor
   referral does not advance when the practice is approved. Both are a hook in
   an existing path (`activateFirstInstalment`, `approvePractice`) and both
   were left out because "converted" is only meaningful once §6.1 is answered.
