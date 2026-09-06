@@ -457,6 +457,28 @@ COMMENT ON FUNCTION prune_referral_invites(INT) IS
 -- new name. The list has to be restated in full because the function IS the
 -- list; lib/security/rateLimit.buckets.test.ts reads whichever migration
 -- declares it LAST and pins that against RateLimitBucket in TypeScript.
+--
+-- ── THIS DECLARATION IS ALSO WHERE `reverse_geocode` NOW COMES FROM ───────
+--
+-- It used to have a migration of its own, 0138_reverse_geocode_rate_limit,
+-- and that file never ran. Production had already recorded version 0138 —
+-- under a different name, `identity_signals`, applied out-of-band — and
+-- `supabase db push` matches on the VERSION and ignores the name, so the CLI
+-- counted 0138 as applied and skipped the file forever. Nothing reported it
+-- as pending, because as far as the CLI was concerned it was not.
+--
+-- The symptom was silent by design: `consume_rate_limit` answers an unknown
+-- bucket with a WARNING and `true` (0134, so that a typo cannot take a
+-- surface down), so the billable reverse-geocoding route simply ran with no
+-- limit. 0138 has been retired rather than renumbered — every free version
+-- is now after this one, so a renumbered copy would become the function's
+-- LAST declaration and would have to be kept in step with this list forever
+-- to achieve nothing. This migration is on a version production has not
+-- claimed, so unlike 0138 it actually applies, and it carries the bucket.
+--
+-- lib/security/migrationHistory.ts holds that arrangement in place, and
+-- makes the next version collision a build failure. See also
+-- docs/MIGRATION-HISTORY.md.
 
 CREATE OR REPLACE FUNCTION rate_limit_known_bucket(p_bucket TEXT)
 RETURNS BOOLEAN
@@ -477,6 +499,7 @@ AS $$
     'self_settle',
     'counter_session',
     'credit_check',
+    -- Carried here from the retired 0138; see the note above.
     'reverse_geocode',
     -- Added by 0145: a patient inviting a friend or nominating a practice.
     'referral_invite'
