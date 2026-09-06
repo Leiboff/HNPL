@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { stripComments } from '@/lib/testing/stripComments';
 import {
   affordabilityPolicyConfigured,
   assessAffordability,
@@ -31,6 +32,12 @@ const ROOT = resolve(process.cwd());
 const read = (p: string) => readFileSync(resolve(ROOT, p), 'utf8').replace(/\r\n/g, '\n');
 
 const ACTIONS  = read('lib/onboarding/actions.ts');
+// Comments stripped, for ABSENCE assertions only. actions.ts documents the
+// bureau consent decision by naming the predicate it deliberately does NOT
+// use, so a raw-text `not.toMatch(/hasAcceptedTerms/)` fails on the prose
+// explaining why it is absent. preserveUrls because the file carries URLs in
+// string literals.
+const ACTIONS_CODE = stripComments(ACTIONS, { preserveUrls: true });
 const POLICY   = read('lib/underwriting/affordabilityPolicy.ts');
 const HOME     = read('app/patient/page.tsx');
 const BAL_CARD = read('app/patient/ApprovedBalanceCard.tsx');
@@ -69,31 +76,38 @@ describe('the affordability seam grants nothing until it is configured', () => {
     expect(affordabilityPolicyConfigured()).toBe(false);
   });
 
-  it('returns unavailable — not approved, and not declined either', () => {
+  it('returns unavailable — not approved, and not declined either', async () => {
     // 'unavailable' rather than 'declined' is load-bearing: a policy that is
     // not live yet, or a provider that could not be reached, must never sit
     // on an applicant's file as a refusal.
-    const decision = assessAffordability({
+    //
+    // Called with NO deps, which is what "not wired up" means since the
+    // bureau integration landed: with no dependencies there is no enquiry to
+    // make and no call is attempted. This is the state production is in while
+    // ENABLE_CREDIT_CHECK is off.
+    const decision = await assessAffordability({
       accountId: 'acct-1',
       salaryAmountRands: 45_000,
       salaryDay: 25,
       identityVerified: true,
+      saIdNumber: null,
     });
     expect(decision.outcome).toBe('unavailable');
     expect(decision).not.toHaveProperty('limitCents');
   });
 
-  it('returns the same answer however generous the inputs', () => {
+  it('returns the same answer however generous the inputs', async () => {
     // The adversarial version of the previous test. A seam that started
     // approving high earners would be an invented NCA affordability
     // assessment with no sign-off behind it — worse than the stub, because
     // the stub at least announced itself.
     for (const salary of [0, 1_000, 250_000, 10_000_000]) {
-      const decision = assessAffordability({
+      const decision = await assessAffordability({
         accountId: 'acct-1',
         salaryAmountRands: salary,
         salaryDay: 25,
         identityVerified: true,
+        saIdNumber: null,
       });
       expect(decision.outcome, `salary ${salary}`).toBe('unavailable');
     }
@@ -106,18 +120,65 @@ describe('the affordability seam grants nothing until it is configured', () => {
     expect(POLICY).not.toMatch(/limitCents\s*[:=]\s*[^;]*salary/i);
   });
 
-  it('makes no network or provider calls', () => {
+  it('opens no sockets and constructs no clients of its own', () => {
+    // This assertion used to mean "the seam contacts no provider", which was
+    // true of a stub and is no longer true of anything: the bureau enquiry is
+    // real. What it means now is narrower and still worth pinning — the
+    // POLICY delegates, and the caller owns the I/O.
+    //
+    // Everything network-shaped lives behind lib/experian/, which takes its
+    // dependencies as arguments. A fetch or a service-role client appearing
+    // in this file would mean the policy had started owning transport, and
+    // the deps argument — the thing that makes "unwired means unavailable"
+    // enforceable rather than aspirational — would have quietly stopped
+    // being the switch.
     expect(POLICY).not.toMatch(/\bfetch\s*\(/);
-    expect(POLICY).not.toMatch(/https?:\/\//);
     expect(POLICY).not.toMatch(/\b(axios|XMLHttpRequest)\b/);
+    expect(POLICY).not.toMatch(/createClient/);
+    expect(POLICY).not.toMatch(/process\.env/);
+  });
+
+  it('cannot approve without dependencies, whatever the applicant looks like', async () => {
+    // The switch itself. No deps → no enquiry → unavailable, on every input
+    // shape including a fully verified identity with an ID on file.
+    for (const identityVerified of [true, false]) {
+      const decision = await assessAffordability({
+        accountId: 'acct-1',
+        salaryAmountRands: 45_000,
+        salaryDay: 25,
+        identityVerified,
+        saIdNumber: '9202204720082',
+      });
+      expect(decision.outcome, `identityVerified=${identityVerified}`).toBe('unavailable');
+    }
   });
 });
 
 describe('runCreditCheck persists the policy answer and nothing of its own', () => {
   it('reads the seam, never a literal', () => {
     expect(ACTIONS).toMatch(/from '@\/lib\/underwriting\/affordabilityPolicy'/);
-    expect(ACTIONS).toMatch(/const decision = assessAffordability\(/);
+    // `await` since the seam performs a bureau enquiry. Still exactly one
+    // call site, still writing whatever comes back and nothing of its own.
+    expect(ACTIONS).toMatch(/const decision = await assessAffordability\(/);
     expect(ACTIONS).toMatch(/approved_credit_limit:\s*decision\.limitCents\s*\/\s*100/);
+  });
+
+  it('gates the bureau enquiry on the recorded acceptance, not the shared predicate', () => {
+    // The gap this closed: runCreditCheck is a server action any patient can
+    // invoke directly, and it is the surface that spends money against a real
+    // person's credit file. It read no terms columns at all — the credit-check
+    // PAGE called requireTermsAccepted, the ACTION did not.
+    //
+    // hasBureauConsent, not hasAcceptedTerms: the shared predicate grandfathers
+    // a NULL terms_accepted_at for accounts that finished onboarding before
+    // acceptance was recorded, and that is not evidence of consent to a bureau
+    // enquiry. Pinned so a future "consolidation" onto the shared one is a
+    // failing test rather than a silent widening.
+    expect(ACTIONS).toMatch(/from '@\/lib\/legal\/bureauConsent'/);
+    expect(ACTIONS).toMatch(/hasBureauConsent\(loaded\.consent\)/);
+    expect(ACTIONS_CODE).not.toMatch(/hasAcceptedTerms/);
+    // The columns the predicate needs, on the profile read that already runs.
+    expect(ACTIONS).toMatch(/terms_accepted_at, terms_version/);
   });
 
   it('keeps the three outcomes distinct', () => {

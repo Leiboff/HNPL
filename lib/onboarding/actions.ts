@@ -9,11 +9,15 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { assessAffordability } from '@/lib/underwriting/affordabilityPolicy';
+import type { AssessmentDeps } from '@/lib/experian/assessAtSignup';
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
-import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
+import { hasBureauConsent, type BureauConsentRow } from '@/lib/legal/bureauConsent';
+import { enquiryStoreDeps } from '@/lib/experian/enquiryStore';
+import { experianConfig, experianConfigured } from '@/lib/experian/config';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -52,7 +56,17 @@ const PROFILE_SELECT =
   // plaintext SA ID, and the index is what the duplicate-identity rule
   // compares. Everything here is re-tokenised under the risk key before it
   // reaches the correlation store (lib/risk/tokens.ts).
-  'sa_id_lookup_hash, phone, email';
+  'sa_id_lookup_hash, phone, email, ' +
+  // The recorded terms acceptance, for the credit-bureau consent gate.
+  //
+  // These columns were NOT read here before, and their absence was a real
+  // gap rather than an oversight nobody had reached yet: runCreditCheck is a
+  // server action any patient can invoke directly, and it is the surface that
+  // makes a billable enquiry against a real person's credit file. The
+  // credit-check PAGE calls requireTermsAccepted; the ACTION did not check at
+  // all. Reading them here costs nothing — same row, same round trip — and
+  // lib/legal/bureauConsent.ts turns them into the gate.
+  'terms_accepted_at, terms_version';
 
 async function loadUserAndProfile() {
   const supabase = await createClient();
@@ -96,6 +110,13 @@ async function loadUserAndProfile() {
       email:         profile.email             as string | null,
       kycSessionRef: profile.didit_session_id  as string | null,
     },
+    // Also kept OUT of `profile` above, for the same reason riskFacts is: the
+    // onboarding state model deliberately does not model terms acceptance
+    // (see ProfileForOnboarding), and it must not start.
+    consent: {
+      terms_accepted_at: profile.terms_accepted_at as string | null,
+      terms_version:     profile.terms_version     as string | null,
+    } satisfies BureauConsentRow,
   };
 }
 
@@ -731,12 +752,60 @@ export async function runCreditCheck(): Promise<ActionResult> {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  const decision = assessAffordability({
+  // ── The bureau dependencies ───────────────────────────────────────────
+  //
+  // Built here rather than inside the policy because this function already
+  // owns the service-role client and has already read the profile row that
+  // answers the consent question. Passing a closure over that row means the
+  // POPIA §71 consent gate costs NO additional round trip — the same argument
+  // lib/legal/termsGate.ts makes for taking a row instead of reading one.
+  //
+  // The consent predicate is lib/legal/bureauConsent.ts, NOT the shared
+  // hasAcceptedTerms: the shared one grandfathers a NULL terms_accepted_at
+  // for accounts that finished onboarding before acceptance was recorded, and
+  // "this account finished onboarding" is not evidence of consent to a credit
+  // enquiry. See that file for why the divergence is deliberate.
+  //
+  // With no deps the policy returns `unavailable` and NO CALL IS MADE. That
+  // is the state production is in today.
+  let bureauDeps: AssessmentDeps | undefined;
+  let saIdNumber: string | null = null;
+
+  if (experianConfigured()) {
+    try {
+      // The verified ID from the column the Didit webhook wrote. Decrypted
+      // here and passed straight through — never persisted in plaintext,
+      // never logged, and never re-asked of the patient.
+      saIdNumber = loaded.profile.sa_id_number ? decryptId(loaded.profile.sa_id_number) : null;
+      bureauDeps = {
+        config: experianConfig(),
+        ...enquiryStoreDeps(svc(), async () => hasBureauConsent(loaded.consent)),
+      };
+    } catch (err) {
+      // Our configuration is broken, which is not a decision about the
+      // applicant. Leaving deps undefined routes to `unavailable` →
+      // 'pending', never to a decline.
+      //
+      // The message is safe to log: it comes from requireEnv (a variable
+      // NAME) or decryptId (a format complaint), never from a value and never
+      // from the SOAP body, which does not exist yet at this point and never
+      // leaves lib/experian/client.ts when it does.
+      console.error('[onboarding] ALERT bureau config unusable — affordability will report unavailable', {
+        userId: loaded.userId,
+        detail: err instanceof Error ? err.message : 'unknown',
+      });
+      bureauDeps = undefined;
+      saIdNumber = null;
+    }
+  }
+
+  const decision = await assessAffordability({
     accountId:         loaded.userId,
     salaryAmountRands: loaded.profile.salary_amount,
     salaryDay:         loaded.profile.salary_day,
     identityVerified:  !!loaded.profile.sa_id_number && !!loaded.profile.liveness_verified_at,
-  });
+    saIdNumber,
+  }, bureauDeps);
   const now = new Date().toISOString();
 
   if (decision.outcome === 'declined') {
