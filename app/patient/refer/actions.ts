@@ -6,19 +6,27 @@ import { getRequestUser } from '@/lib/auth/requestUser';
 import { isValidEmail } from '@/lib/validation/email';
 import { normalizePhoneZA } from '@/lib/validation';
 import { neutraliseFormula } from '@/lib/crm/csv';
+import { splitFullName } from '@/lib/crm/nameSplit';
+import { isKnownSpecialty } from '@/lib/specialties';
+import { isWithinSouthAfrica } from '@/lib/maps/saBounds';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { generateReferralCode } from '@/lib/referrals/code';
-import { referralLink } from '@/lib/referrals/link';
 import { REFERRAL_INVITE_TTL_DAYS } from '@/lib/referrals/vocabulary';
-import { sendReferralInviteEmail } from '@/lib/email/templates/referralInvite';
 
-// ─── The three writes a patient can make to the referral system ───────────
+// ─── The two writes a patient can make to the referral system ─────────────
 //
 //   ensureMyReferralCode  mint this patient's code, once
-//   referAFriend          invite a person, by email
-//   referAPractice        nominate a practice, into the CRM pipeline
+//   referADoctor          nominate a doctor, into the CRM pipeline
 //
-// ALL of them run on the service-role client. `referrals` and
+// There is no third one, and its absence is the point of the current screen:
+// referring a FRIEND is the shareable link and nothing else. The code is what
+// ties an arriving signup back to the referrer, and app/patient/refer hands
+// that code to the share sheet, WhatsApp, email and the clipboard. No server
+// action is involved, so a friend referral is written by the CLAIM path
+// (lib/referrals/claim.ts) when the friend actually arrives, never by this
+// screen speculatively.
+//
+// BOTH of them run on the service-role client. `referrals` and
 // `referral_codes` carry SELECT policies and no write policies at all
 // (migration 0145), so there is no session-client path to any of this — by
 // construction rather than by convention.
@@ -35,6 +43,16 @@ import { sendReferralInviteEmail } from '@/lib/email/templates/referralInvite';
 // referral row decides who gets credited for a customer. Nothing a caller
 // sends is allowed to reach `referrer_id`, `status`, `referred_profile_id` or
 // `qualified_at`; those are set here, from the session and from constants.
+//
+// ─── THE ACTION THAT USED TO BE HERE ─────────────────────────────────────
+//
+// `referAFriend` emailed an invitation from a form on the friend side. It was
+// removed with that form, not kept "just in case": a 'use server' export is an
+// HTTP endpoint whether or not anything renders it, and an endpoint that puts
+// mail into an uninvolved person's inbox has no business outliving the UI that
+// justified it. Invitations already in the database are unaffected —
+// lib/referrals/claim.ts still matches an arriving account onto one, and
+// prune_referral_invites() still expires and scrubs them.
 //
 // ─── NO INCENTIVE ────────────────────────────────────────────────────────
 //
@@ -65,7 +83,12 @@ export type ReferralActionResult =
   | { ok: true; message: string }
   | { ok: false; error: string; field?: string };
 
-type Caller = { id: string; firstName: string; email: string };
+/**
+ * Just the id. The caller's name and address were `referAFriend`'s — it
+ * addressed the invitation with one and refused the other as self-dealing —
+ * and reading columns nothing uses invites the next person to use them.
+ */
+type Caller = { id: string };
 
 /**
  * The caller, re-verified server-side.
@@ -80,16 +103,12 @@ async function requirePatient(service: ServiceClient): Promise<Caller | null> {
 
   const { data: profile } = await service
     .from('profiles')
-    .select('id, role, first_name, email')
+    .select('id, role')
     .eq('id', user.id)
     .maybeSingle();
 
   if (!profile || profile.role !== 'patient') return null;
-  return {
-    id:        profile.id as string,
-    firstName: (profile.first_name as string | null) ?? '',
-    email:     (profile.email as string | null) ?? user.email ?? '',
-  };
+  return { id: profile.id as string };
 }
 
 /**
@@ -153,7 +172,7 @@ async function readLiveCode(service: ServiceClient, ownerId: string): Promise<st
   return (data?.code as string | undefined) ?? null;
 }
 
-/** Both actions spend the same budget. See RATE_LIMITS.referral_invite. */
+/** See RATE_LIMITS.referral_invite. */
 async function withinInviteBudget(accountId: string): Promise<boolean> {
   return consumeAll('referral_invite', [
     [await clientIp(), RATE_LIMITS.referral_invite.ip],
@@ -161,113 +180,53 @@ async function withinInviteBudget(accountId: string): Promise<boolean> {
   ]);
 }
 
-export type ReferFriendInput = {
-  name:  string;
-  email: string;
+/**
+ * The address, exactly as Google Places handed it to the browser.
+ *
+ * Every field here is the OUTPUT of a place the person picked from the
+ * dropdown — ReferDoctorForm never lets typed-but-unpicked text reach it, for
+ * the same reason app/crm/leads/new does not. That makes the shape trusted in
+ * the sense that it is well-formed, and untrusted in the sense that a Server
+ * Action is an HTTP endpoint and this arrives over the wire, so the action
+ * below re-checks the one thing it can check on its own: that the coordinates
+ * are inside South Africa.
+ */
+export type ReferDoctorAddress = {
+  formattedAddress: string;
+  streetAddress:    string | null;
+  suburb:           string | null;
+  city:             string | null;
+  province:         string | null;
+  latitude:         number | null;
+  longitude:        number | null;
 };
 
-/**
- * Invite a friend by email.
- *
- * The row is written BEFORE the send and stays written if the send fails. A
- * referral we recorded and failed to deliver is recoverable — the customer
- * can share their link instead — and one we refused to record because Resend
- * was down is not.
- */
-export async function referAFriend(input: ReferFriendInput): Promise<ReferralActionResult> {
-  const service = svc();
-  const caller  = await requirePatient(service);
-  if (!caller) return { ok: false, error: 'Not available for this account.' };
-
-  const name  = neutraliseFormula((input.name ?? '').trim().slice(0, MAX.name));
-  const email = (input.email ?? '').trim().toLowerCase().slice(0, MAX.email);
-
-  if (!isValidEmail(email)) {
-    return { ok: false, error: 'Enter a valid email address.', field: 'email' };
-  }
-  // Refused here as well as by the referrals_not_self CHECK, because the
-  // constraint only sees the ATTRIBUTION and this sees the invitation. Someone
-  // emailing themselves an invite is not fraud, it is a person testing their
-  // own link, and the honest answer is to say so rather than to send it.
-  if (email === caller.email.trim().toLowerCase()) {
-    return { ok: false, error: 'That is your own email address.', field: 'email' };
-  }
-
-  if (!await withinInviteBudget(caller.id)) {
-    return {
-      ok: false,
-      error: 'You have sent a lot of invitations today. Please try again tomorrow.',
-    };
-  }
-
-  const codeResult = await ensureMyReferralCode();
-  if ('error' in codeResult) return { ok: false, error: codeResult.error };
-
-  const expiresAt = new Date(Date.now() + REFERRAL_INVITE_TTL_DAYS * 86_400_000).toISOString();
-
-  const { data: codeRow } = await service
-    .from('referral_codes')
-    .select('id')
-    .eq('code', codeResult.code)
-    .maybeSingle();
-
-  const { error } = await service.from('referrals').insert({
-    referrer_id:   caller.id,
-    code_id:       codeRow?.id ?? null,
-    kind:          'patient',
-    channel:       'invite',
-    status:        'pending',
-    invitee_name:  name || null,
-    invitee_email: email,
-    expires_at:    expiresAt,
-  });
-
-  if (error) {
-    // The open-invite index. Not an error the customer caused, and telling
-    // them they already invited this person is the useful answer — it also
-    // confirms nothing they did not already know, since they typed it.
-    if (error.code === '23505') {
-      return { ok: false, error: 'You have already invited this person.', field: 'email' };
-    }
-    console.error('[referrals] could not record a friend referral', { error: error.message });
-    return { ok: false, error: 'We could not send that invitation. Please try again.' };
-  }
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? '';
-  const sent = await sendReferralInviteEmail({
-    to:                email,
-    referrerFirstName: caller.firstName,
-    inviteeFirstName:  name.split(/\s+/)[0] || null,
-    link:              referralLink(codeResult.code, appUrl),
-  });
-
-  revalidatePath('/patient/refer');
-
-  if (!sent.ok) {
-    // Honest, and specific about what IS true: the referral is recorded, so
-    // the link still works if they share it themselves.
-    console.error('[referrals] invitation email failed', { error: sent.error });
-    return {
-      ok: true,
-      message: 'We saved the invitation but could not send the email. '
-        + 'Share your link with them directly and it will still count.',
-    };
-  }
-
-  return { ok: true, message: `Invitation sent to ${email}.` };
-}
-
-export type ReferPracticeInput = {
-  practiceName: string;
-  contactName:  string;
-  email:        string;
+export type ReferDoctorInput = {
+  /** Compulsory. */
+  doctorName:   string;
+  /** Compulsory, and from the shared register — see the validation below. */
+  specialty:    string;
+  /** Compulsory. Landlines allowed: a practice switchboard is the right number. */
   phone:        string;
-  suburb:       string;
+  /** Compulsory. Picked from Google Places, never typed free-hand. */
+  address:      ReferDoctorAddress;
+  practiceName: string;
+  email:        string;
   note:         string;
 };
 
+const EMPTY_ADDRESS: ReferDoctorAddress = {
+  formattedAddress: '', streetAddress: null, suburb: null, city: null,
+  province: null, latitude: null, longitude: null,
+};
+
+/** A number that arrived over the wire, or null. Refuses NaN and Infinity. */
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /**
- * Nominate a practice.
+ * Nominate a doctor.
  *
  * This is NOT a self-serve signup — a practice is onboarded by a rep, through
  * the pipeline that already exists. So the action does two writes:
@@ -285,8 +244,43 @@ export type ReferPracticeInput = {
  * is already in the pipeline is a CRM question with its own answer (the
  * dedupe view), and telling a patient "we already know them" would leak who
  * the sales team is talking to.
+ *
+ * ─── DOCTOR, NOT PRACTICE, AND WHY THE ROW STILL SAYS 'practice' ─────────
+ *
+ * What a patient knows is their doctor. They may not know whether the rooms
+ * trade as "Rosebank Dental" or as "Dr A Naidoo Inc", and asking them to
+ * supply a practice name they have never read was the single most refusable
+ * field on the old form. So the screen asks for the DOCTOR — name, specialty,
+ * number, address — and treats the practice name as the optional extra it
+ * really is.
+ *
+ * `referrals.kind` stays 'practice' regardless, and that is deliberate rather
+ * than laziness. The kind records what the referral CONVERTS INTO: a merchant
+ * on this platform, approved to trade, with a `converted_practice_id` beside
+ * it. A doctor is who you ask for; a practice is what signs up. Renaming the
+ * enum would mean a migration, a rewrite of the constraint set in 0145, and a
+ * backfill — all to make the database agree with a form label rather than
+ * with the object it points at.
+ *
+ * ─── THE FOUR COMPULSORY FIELDS ──────────────────────────────────────────
+ *
+ * Name, specialty, phone and address. Each is refused server-side as well as
+ * in the form, because the form is a screen the caller owns:
+ *
+ *   name       a lead nobody can be asked for is not workable.
+ *   specialty  constrained to lib/specialties.ts rather than accepted as free
+ *              text. `crm_leads.specialty` IS free text (bulk imports keep
+ *              unrecognised labels verbatim), but the only writer here is a
+ *              dropdown, so anything off-register arrived from a crafted
+ *              payload and would land in a rep's filters as a value nothing
+ *              else in the CRM can match.
+ *   phone      the rep's actual next action. This replaces the old
+ *              email-or-phone rule: "or" produced leads with an address
+ *              nobody answers.
+ *   address    what makes a lead findable, dedupable and mappable — the same
+ *              three compulsory fields the CRM's own new-lead form demands.
  */
-export async function referAPractice(input: ReferPracticeInput): Promise<ReferralActionResult> {
+export async function referADoctor(input: ReferDoctorInput): Promise<ReferralActionResult> {
   const service = svc();
   const caller  = await requirePatient(service);
   if (!caller) return { ok: false, error: 'Not available for this account.' };
@@ -294,33 +288,65 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
   // neutraliseFormula on every free-text field: these rows are exported to CSV
   // from the CRM, and a leading '=' in a practice name is a formula in
   // somebody's spreadsheet. Same treatment the public lead form applies.
+  const doctorName   = neutraliseFormula((input.doctorName   ?? '').trim().slice(0, MAX.name));
   const practiceName = neutraliseFormula((input.practiceName ?? '').trim().slice(0, MAX.practice));
-  const contactName  = neutraliseFormula((input.contactName  ?? '').trim().slice(0, MAX.name));
-  const suburb       = neutraliseFormula((input.suburb       ?? '').trim().slice(0, MAX.name));
   const note         = neutraliseFormula((input.note         ?? '').trim().slice(0, MAX.note));
-  const email        = (input.email ?? '').trim().toLowerCase().slice(0, MAX.email);
-  const phoneRaw     = (input.phone ?? '').trim().slice(0, MAX.phone);
+  const specialty    = (input.specialty ?? '').trim().slice(0, MAX.name);
+  const email        = (input.email     ?? '').trim().toLowerCase().slice(0, MAX.email);
+  const phoneRaw     = (input.phone     ?? '').trim().slice(0, MAX.phone);
 
-  if (!practiceName) {
-    return { ok: false, error: 'Tell us the name of the practice.', field: 'practiceName' };
+  const rawAddress = input.address ?? EMPTY_ADDRESS;
+  const address = {
+    formattedAddress: neutraliseFormula((rawAddress.formattedAddress ?? '').trim().slice(0, MAX.practice)),
+    streetAddress:    neutraliseFormula((rawAddress.streetAddress    ?? '').trim().slice(0, MAX.practice)),
+    suburb:           neutraliseFormula((rawAddress.suburb           ?? '').trim().slice(0, MAX.name)),
+    city:             neutraliseFormula((rawAddress.city             ?? '').trim().slice(0, MAX.name)),
+    province:         neutraliseFormula((rawAddress.province         ?? '').trim().slice(0, MAX.name)),
+    latitude:         finiteOrNull(rawAddress.latitude),
+    longitude:        finiteOrNull(rawAddress.longitude),
+  };
+
+  if (!doctorName) {
+    return { ok: false, error: "Tell us the doctor's name.", field: 'doctorName' };
   }
-  if (!email && !phoneRaw) {
-    return {
-      ok: false,
-      error: 'Add an email address or a phone number so we can reach them.',
-      field: 'email',
-    };
+  // Off-register is refused rather than kept verbatim: see the note above.
+  if (!isKnownSpecialty(specialty)) {
+    return { ok: false, error: 'Choose a specialty from the list.', field: 'specialty' };
   }
-  if (email && !isValidEmail(email)) {
-    return { ok: false, error: 'Enter a valid email address.', field: 'email' };
+  if (!phoneRaw) {
+    return { ok: false, error: 'Add a phone number so we can reach them.', field: 'phone' };
   }
   // Landlines allowed — a practice switchboard is exactly the right number.
-  if (phoneRaw && !normalizePhoneZA(phoneRaw, { allowLandline: true })) {
+  const phone = normalizePhoneZA(phoneRaw, { allowLandline: true });
+  if (!phone) {
     return {
       ok: false,
       error: 'That does not look like a South African phone number.',
       field: 'phone',
     };
+  }
+  if (!address.formattedAddress) {
+    return {
+      ok: false,
+      error: 'Pick their address from the suggestions.',
+      field: 'address',
+    };
+  }
+  // A picked place always carries coordinates, so a pair that is present and
+  // outside the country came from somewhere other than the dropdown — or from
+  // a doctor we cannot onboard. Either way, pinning a lead on the wrong
+  // continent is the failure lib/maps/saBounds.ts exists to prevent.
+  if (address.latitude !== null && address.longitude !== null
+      && !isWithinSouthAfrica(address.latitude, address.longitude)) {
+    return {
+      ok: false,
+      error: 'We can only take referrals for practices in South Africa.',
+      field: 'address',
+    };
+  }
+  // Optional, but a malformed one is worth saying rather than storing.
+  if (email && !isValidEmail(email)) {
+    return { ok: false, error: 'Enter a valid email address.', field: 'email' };
   }
 
   if (!await withinInviteBudget(caller.id)) {
@@ -330,16 +356,21 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
     };
   }
 
-  const phone = phoneRaw
-    ? normalizePhoneZA(phoneRaw, { allowLandline: true }) ?? phoneRaw
-    : null;
+  // crm_leads requires a first AND a last name (0069). splitFullName strips a
+  // leading title and, for a single remaining token, puts it in BOTH columns —
+  // right for the bulk imports it was written for, and here it would render
+  // "Naidoo Naidoo" on the lead. So a one-word name is carried by the surname
+  // alone, which contactDisplayName then renders as itself.
+  const split      = splitFullName(doctorName);
+  const sameToken  = split.firstName === split.lastName;
+  const firstName  = sameToken ? '' : split.firstName;
+  const lastName   = split.lastName;
 
-  // crm_leads requires a first and last name. A patient may only know "Dr
-  // Naidoo", or nothing at all, so this fills what it can and uses the same
-  // em-dash placeholder the public lead form uses rather than inventing one.
-  const parts     = contactName ? contactName.split(/\s+/) : [];
-  const firstName = parts[0] ?? practiceName;
-  const lastName  = parts.slice(1).join(' ') || '—';
+  // crm_leads.practice_name and the referrals_practice_named CHECK in 0145 are
+  // both NOT NULL, and the patient may genuinely not know what the rooms are
+  // called. The doctor's name is the honest stand-in: it is what the rep will
+  // ask for on the phone, and it is never a name we invented.
+  const leadPracticeName = practiceName || doctorName;
 
   // Referral leads use the same configured owner as the public inbound form.
   // Sales RLS only exposes owned leads, so leaving this assignment implicit
@@ -360,12 +391,19 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
   const { data: lead, error: leadError } = await service
     .from('crm_leads')
     .insert({
-      practice_name:      practiceName,
+      practice_name:      leadPracticeName,
       contact_first_name: firstName,
       contact_last_name:  lastName,
+      specialty,
       email:              email || null,
       phone,
-      suburb:             suburb || null,
+      street_address:     address.streetAddress || null,
+      suburb:             address.suburb        || null,
+      city:               address.city          || null,
+      province:           address.province      || null,
+      latitude:           address.latitude,
+      longitude:          address.longitude,
+      formatted_address:  address.formattedAddress,
       source:             'referral',
       stage:              'new',
       owner_user_id:      ownerUserId,
@@ -403,8 +441,8 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
     kind:          'practice',
     channel:       'invite',
     status:        'pending',
-    practice_name: practiceName,
-    invitee_name:  contactName || null,
+    practice_name: leadPracticeName,
+    invitee_name:  doctorName,
     invitee_email: email || null,
     invitee_phone: phone,
     note:          note || null,
@@ -421,7 +459,7 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
     });
     return {
       ok: true,
-      message: `Thanks — we have passed ${practiceName} on to our team.`,
+      message: `Thanks — we have passed ${doctorName} on to our team.`,
     };
   }
 
@@ -430,6 +468,6 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
 
   return {
     ok: true,
-    message: `Thanks — we will get in touch with ${practiceName}.`,
+    message: `Thanks — we will get in touch with ${doctorName}.`,
   };
 }

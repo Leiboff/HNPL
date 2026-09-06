@@ -119,11 +119,15 @@ export const REFERRAL_EMAIL_SUBJECT = 'betternow — pay medical bills in instal
 /**
  * A pre-filled mail draft with no recipient — the person picks that.
  *
- * Note this is NOT the same thing as `referAFriend`. That action sends an
- * email FROM us, records the referral before anybody clicks, and can match
- * the invitee to their signup by address. This just opens the customer's own
- * mail client with words in it; the referral is attributed by the code in the
- * link, like any other share.
+ * This is the customer's OWN mail client with words in it, sent from their
+ * address, to a recipient they choose. Nothing is sent from us and nothing is
+ * recorded when they tap it: the referral is attributed by the code in the
+ * link when the friend arrives, like any other share.
+ *
+ * The screen once also had an action that emailed an invitation FROM us and
+ * recorded the referral before anybody clicked. It was removed with the form
+ * behind it (docs/REFERRALS.md §1); this is now the only email path on the
+ * friend side, and it is the customer's own.
  */
 export function emailShareUrl(message: string): string {
   const subject = encodeURIComponent(REFERRAL_EMAIL_SUBJECT);

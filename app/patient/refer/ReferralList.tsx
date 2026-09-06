@@ -51,7 +51,14 @@ const CHIP: Record<ReferralStatus, string> = {
  * line or, worse, the string "null".
  */
 function title(row: ReferralRow): string {
-  if (row.kind === 'practice') return row.practice_name ?? 'A practice';
+  // kind='practice' is the doctor side. The kind records what the referral
+  // CONVERTS INTO — a practice trading on this platform — while the screen
+  // asks for the doctor, so the name comes first and the practice name is the
+  // fallback for a row whose invitee details have been scrubbed (and for rows
+  // made before the form asked for a doctor at all).
+  if (row.kind === 'practice') {
+    return row.invitee_name || row.practice_name || 'A doctor';
+  }
   return row.invitee_name || row.invitee_email || 'Someone you invited';
 }
 
@@ -95,7 +102,7 @@ export default function ReferralList({ rows }: { rows: ReferralRow[] }) {
                   {title(row)}
                 </p>
                 <p className="text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>
-                  {row.kind === 'practice' ? 'Practice' : 'Friend'}
+                  {row.kind === 'practice' ? 'Doctor' : 'Friend'}
                 </p>
               </div>
               <StatusChip

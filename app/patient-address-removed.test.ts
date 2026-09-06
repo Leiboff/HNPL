@@ -51,12 +51,14 @@ const CONTACT_FORM      = read('app/contact/ContactForm.tsx');
 const CONTACT_ACTION    = read('app/contact/contactAction.ts');
 // The referral surface (0145). Added here for the reason the paragraph above
 // gives about /contact — "widen the list rather than assume a surface is safe
-// because it is new". This one collects details about a PRACTICE and about a
+// because it is new". This one collects details about a DOCTOR and about a
 // person who is not even a customer, so it is exactly the shape that would
-// grow an address field without anybody objecting. It is allowed a suburb
-// (practices carry one; patients do not), which is why the DROPPED list's
-// exclusion of the bare suburb/city/province names matters here too.
-const REFER_FORM        = read('app/patient/refer/ReferForm.tsx');
+// grow an address field without anybody objecting. It now collects a full
+// PRACTICE address through Google Places, which is precisely why it stays on
+// this list: suburb/city/province are allowed here (practices carry them;
+// patients do not), and the DROPPED list's exclusion of those bare names is
+// what makes that distinction hold.
+const REFER_FORM        = read('app/patient/refer/ReferDoctorForm.tsx');
 const REFER_ACTIONS     = read('app/patient/refer/actions.ts');
 
 const DROPPED = [
@@ -139,25 +141,48 @@ describe('AccountSettings — the "Contact & billing address" section is gone', 
   });
 });
 
-describe('Referral surface — collects no address, for a patient or for anyone else', () => {
-  it('the form has no address input', () => {
+describe('Referral surface — collects a PRACTICE address, never a patient one', () => {
+  // 0145 shipped this surface with no address at all, and the invariant here
+  // was simply "no address anywhere". The refer-a-doctor split changed that
+  // deliberately: a lead a rep cannot find is not workable, so the form now
+  // asks for the PRACTICE'S address — the same picker, the same parsed
+  // components and the same crm_leads columns the CRM's own new-lead form
+  // uses.
+  //
+  // What must stay true is narrower, and is the thing this file exists for:
+  // the six columns migration 0059 dropped off `profiles` are the PATIENT'S
+  // address, and no surface may grow one back. A practice address is not a
+  // patient address; it lands on crm_leads, never on profiles and never on
+  // the referral row.
+
+  it('the form takes an address only from the shared Places picker', () => {
+    // Not a free-text field, and not one the patient could mistake for their
+    // own: PlacesAutocomplete reports a place only once it has been chosen.
+    expect(REFER_FORM).toMatch(/PlacesAutocomplete/);
     for (const col of DROPPED) {
       expect(REFER_FORM).not.toMatch(new RegExp(`\\b${col}\\b`));
     }
-    expect(REFER_FORM).not.toMatch(/street|postal code|post code/i);
+    expect(REFER_FORM).not.toMatch(/postal ?code/i);
   });
 
-  it('the actions write no address column', () => {
+  it('the actions write no patient-address column, and never write to profiles at all', () => {
     for (const col of DROPPED) {
       expect(REFER_ACTIONS).not.toMatch(new RegExp(`\\b${col}\\b`));
     }
+    // profiles is read (the caller's role and name) and never written. An
+    // .update() or .insert() against it here would be the shape that put a
+    // patient address back on the widest table in the schema.
+    expect(REFER_ACTIONS).not.toMatch(/from\('profiles'\)[\s\S]{0,80}\.(update|insert|upsert)\(/);
   });
 
-  it('and the referrals table itself has no address column', () => {
+  it('and the referrals table itself still has no address column', () => {
+    // The address belongs to the LEAD, which is the object a rep works. The
+    // referral row points at that lead and holds none of it.
     const migration = read('supabase/migrations/0145_referrals_foundation.sql');
     for (const col of DROPPED) {
       expect(migration).not.toMatch(new RegExp(`\\b${col}\\b`));
     }
+    expect(migration).not.toMatch(/\bstreet_address\b|\bformatted_address\b/);
   });
 });
 
