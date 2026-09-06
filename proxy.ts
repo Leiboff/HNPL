@@ -276,22 +276,60 @@ export async function proxy(request: NextRequest) {
         .maybeSingle();
       if (claimantError) throw claimantError;
 
-      if (claimant?.role !== 'patient') {
+      if (!claimant) {
+        // NO PROFILE ROW YET — not "not a patient".
+        //
+        // This is the one case claimReferral explicitly reports as
+        // `transient` rather than terminal (see the `findAccount` branch in
+        // lib/referrals/claim.ts): the on_auth_user_created trigger has not
+        // run, or the OAuth callback is still provisioning the row
+        // defensively. Folding it into the role refusal below made that
+        // recovery unreachable — the cookie was deleted here, before
+        // claimReferral ever saw the request — and a referral lost this way
+        // is lost for good, because the `?ref=` is no longer in the URL.
+        //
+        // So: leave the cookie. The next authenticated request finds the row.
+        console.warn('[referrals] claim deferred — no profile row yet', {
+          profileId: user.id,
+        });
+      } else if (claimant.role !== 'patient') {
         // Patient referral attribution is not meaningful for any other
         // profile type. Spend the cookie without consuming the database's
         // write-once attribution slot.
+        console.info('[referrals] claim refused — claimant is not a patient', {
+          profileId: user.id, role: claimant.role,
+        });
         response.cookies.delete(REFERRAL_COOKIE);
       } else {
         const claim = await claimReferral(supabaseReferralStore(svc), {
           profileId:   user.id,
           cookieValue: referralCookie,
         });
+        // The outcome was previously discarded, which made a referral that
+        // did not land completely undiagnosable: five different refusals all
+        // present to an operator as "nothing happened", and the cookie is
+        // gone by the time anybody asks why. One line per claim is cheap —
+        // this block runs at most once per account, because every outcome
+        // except `transient` is terminal.
+        if (claim.outcome === 'attributed') {
+          console.info('[referrals] attributed', {
+            profileId: user.id, referralId: claim.referralId,
+          });
+        } else {
+          console.warn('[referrals] not attributed', {
+            profileId: user.id, outcome: claim.outcome, code: referralCookie,
+          });
+        }
         if (claim.terminal) response.cookies.delete(REFERRAL_COOKIE);
       }
-    } catch {
+    } catch (err) {
       // Belt to claimReferral's own braces: it already converts a failure into
       // a non-terminal outcome, so reaching here means something outside it
-      // threw. Leave the cookie; the next request tries again.
+      // threw — the role read above, or a missing service-role key. Leave the
+      // cookie; the next request tries again. Logged rather than swallowed,
+      // because a claim that throws on EVERY request retries for thirty days
+      // and reports nothing at all.
+      console.error('[referrals] claim threw outside claimReferral', err);
     }
   }
   // ─────────────────────────────────────────────────────────────────────────

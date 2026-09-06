@@ -210,3 +210,44 @@ Five decisions, none of which this work makes:
   an existing path (`activateFirstInstalment`, `approvePractice`) and both
   were left out because "converted" is only meaningful once §6.1 is answered.
 - No screen, anywhere, says a referrer will get anything.
+
+---
+
+## 7. When a referral did not land
+
+Every refusal in §3 is silent by design at the *customer* layer — there is
+nothing to show a visitor who arrived with a dead code, and nothing to show a
+referrer about a friend who never signed up. That is correct, and it left the
+whole path undiagnosable for an operator: five different refusals all present
+as "nothing happened", and the cookie is deleted by the time anybody asks why.
+
+So `proxy.ts` now logs one line per claim. Check them in order:
+
+| Log line | What it means | What to do |
+|---|---|---|
+| *(nothing at all)* | The cookie never reached an authenticated request | The code was never captured — see the two capture rules below |
+| `claim deferred — no profile row yet` | The account exists, its `profiles` row does not | Nothing; the next request retries. Repeating forever means the `on_auth_user_created` trigger is broken |
+| `claim refused — claimant is not a patient` | A staff/practice/admin account tapped the link | Working as intended |
+| `not attributed … outcome: self_referral` | Somebody opened their own link while signed in | Working as intended, and it is the commonest way a **test** of your own link appears to fail |
+| `not attributed … outcome: account_too_old` | An existing customer tapped a friend's link | Working as intended: only accounts younger than `REFERRAL_INVITE_TTL_DAYS` are attributable |
+| `not attributed … outcome: already_attributed` | Write-once: this account was already referred | Working as intended |
+| `not attributed … outcome: unknown_code` | No live `referral_codes` row matches | The code was revoked, or **migration 0145 is not applied to this environment** |
+| `claim threw outside claimReferral` | The role read or the service-role client failed | A real fault. `SUPABASE_SERVICE_ROLE_KEY`, or the database |
+
+Two capture rules account for most of the "nothing at all" cases, and both are
+deliberate (see the header of the referral block in `proxy.ts`):
+
+- the code is only read on a **document navigation**, never on a fetch or an
+  image request — otherwise any page on the internet could write this cookie
+  with a code of its choosing;
+- the **first code wins** — a cookie already holding one is not overwritten,
+  which is the same rule the write-once index enforces one layer down.
+
+**The environment check comes first, though.** Migrations in this repo are
+applied to production deliberately, not by CI (see `docs/SECURITY-AUDIT-R3.md`
+for the precedent). If `referral_codes` does not exist on the environment
+being tested, `ensureMyReferralCode` fails and `/patient/refer` renders its
+`referral-code-unavailable` notice — the friend side has no card behind its
+button at all. That is what "the referral link does not work" looks like for
+*every* account, not just one. `/api/cron/rls-drift` compares the repo's
+migrations against the live catalog and is the fastest way to confirm it.

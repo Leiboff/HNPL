@@ -80,8 +80,35 @@ describe('the proxy uses these constants rather than its own literals', () => {
   });
 
   it('only claims attribution for a patient profile', () => {
-    expect(PROXY).toMatch(/claimant\?\.role !== 'patient'/);
-    expect(PROXY.indexOf("claimant?.role !== 'patient'"))
+    expect(PROXY).toMatch(/claimant\.role !== 'patient'/);
+    expect(PROXY.indexOf("claimant.role !== 'patient'"))
       .toBeLessThan(PROXY.indexOf('await claimReferral'));
+  });
+
+  it('treats a missing profile row as retryable, not as "not a patient"', () => {
+    // The narrow window where the account exists and its profile row does
+    // not — the on_auth_user_created trigger, or the OAuth callback's
+    // defensive provisioning. claimReferral reports exactly this case as
+    // `transient` (its findAccount branch), and a role gate written as
+    // `claimant?.role !== 'patient'` made that unreachable by deleting the
+    // cookie before claimReferral ever ran. A referral lost that way is lost
+    // for good: the `?ref=` is long gone from the URL.
+    //
+    // So the null check has to be its OWN branch, ahead of the role gate,
+    // and must not delete the cookie.
+    const missingBranch = PROXY.indexOf('if (!claimant)');
+    expect(missingBranch).toBeGreaterThan(-1);
+    expect(missingBranch).toBeLessThan(PROXY.indexOf("claimant.role !== 'patient'"));
+
+    const branchBody = PROXY.slice(missingBranch, PROXY.indexOf('} else if (claimant.role'));
+    expect(branchBody).not.toContain('cookies.delete');
+  });
+
+  it('reports the outcome of every claim', () => {
+    // Five refusals that all present to an operator as "nothing happened",
+    // and the cookie is gone by the time anybody asks why. Without a line
+    // per claim there is nothing anywhere to say which refusal fired.
+    expect(PROXY).toMatch(/claim\.outcome === 'attributed'/);
+    expect(PROXY).toMatch(/outcome:\s*claim\.outcome/);
   });
 });
