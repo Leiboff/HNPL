@@ -294,8 +294,18 @@ export function hasBeforeInsertTrigger(schema: EffectiveSchema, table: string): 
 
 export type FunctionGrant = { fn: string; roles: string[]; migration: string };
 
+// The name capture excludes `;` and `'` so a match cannot run past the end of
+// its own statement. It used to be `[\s\S]*?`, which could not terminate on a
+// grant written inside a DO block's quoted EXECUTE — `… TO service_role';` ends
+// in a quote, not the `;` the pattern needed — so the lazy capture ran on to the
+// next clean `TO <roles>;` in the file and reported THAT role against THIS
+// function. 0138 tripped it exactly: the service_role grant on line 190 was
+// paired with a `GRANT SELECT … TO authenticated` on a TABLE 218 lines later and
+// reported as `identity_link_counts → authenticated`, a function grant that does
+// not exist in the migration or in production. The same run-on also swallowed
+// every grant in between, so the miss was the more dangerous half.
 const RE_GRANT_EXECUTE =
-  /\bGRANT\s+EXECUTE\s+ON\s+FUNCTION\s+([\s\S]*?)\s+TO\s+([A-Za-z_, \t]+?)\s*(?:;|$)/gi;
+  /\bGRANT\s+EXECUTE\s+ON\s+FUNCTION\s+([^;']*?)\s+TO\s+([A-Za-z_, \t]+?)\s*(?:;|'|$)/gi;
 
 export function browserCallableGrants(
   migrations: Migration[] = readMigrations(),
