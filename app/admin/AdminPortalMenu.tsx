@@ -6,29 +6,66 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { logoutAndRedirect } from '@/lib/auth/logout';
 import { getAdminNavLinks, isAdminNavActive, adminLinkCount, type AdminCounts } from './adminNavLinks';
 
-// ─── The admin portal's phone navigation ───────────────────────────────
+// ─── The admin portal's menu ───────────────────────────────────────────
 //
-// Replaces the old five-slot floating bottom bar (AdminBottomNav). That
-// bar could only ever carry five destinations across a 375px screen, so
-// CRM, Sales team, Audit log and Risk were unreachable from a phone
-// except by typing the URL — including the platform kill switches, which
-// is the one control an operator might genuinely need in a hurry.
+// Renders the SAME list as the desktop sidebar, from the same source
+// (./adminNavLinks), behind a hamburger button. Two shells use it:
 //
-// A hamburger has no such ceiling, so this renders the SAME list as the
-// desktop sidebar, from the same source (./adminNavLinks). Badges come
-// through unchanged, so the counts an operator scans for are still on
-// the closed-menu button as a single dot — see `totalBadges` below.
+//   • /admin, on a phone (the default props). Replaces the old five-slot
+//     floating bottom bar, which could only ever carry five destinations
+//     across a 375px screen — CRM, Sales team, Audit log and Risk were
+//     unreachable from a phone except by typing the URL, including the
+//     platform kill switches, the one control an operator might genuinely
+//     need in a hurry. A hamburger has no such ceiling. On desktop the
+//     sidebar covers the same links, so the button hides at md+.
 //
-// Shape and behaviour deliberately mirror ../practice/PracticeHeader's
-// menu: dropdown under the sticky top bar, closes on route change, on
-// outside click, and on Escape, with Sign out at the foot (the header's
-// Log out button is desktop-only, so this is the phone's way out).
+//   • /crm, AT EVERY WIDTH, for admins (className="", align="right").
+//     The CRM is its own shell with its own nav, so walking into it from
+//     the admin nav's CRM link used to strand an admin there: no sidebar,
+//     no hamburger, no link back to /admin at any width. Rendering this
+//     menu in the CRM header keeps the whole portal one tap away, and
+//     because both shells render getAdminNavLinks(), the way back cannot
+//     drift from the way in. See app/crm/layout.tsx.
+//
+// Behaviour mirrors ../practice/PracticeHeader's menu: dropdown under the
+// sticky top bar, closes on route change, on outside click, and on Escape.
+//
+// Badges come through unchanged, so the counts an operator scans for are
+// still on the closed button as a single dot — see `totalBadges` below.
+
+export type AdminPortalMenuProps = {
+  counts: AdminCounts;
+  /**
+   * Widths the button shows at. Defaults to the /admin shape — hidden at
+   * md+, where the sidebar renders the same links. A shell with no admin
+   * sidebar of its own (the CRM) passes "" so admins keep it everywhere.
+   */
+  className?: string;
+  /**
+   * Where the open panel hangs. 'full' spans the sticky header, which is
+   * the right shape for a phone; 'right' is a narrow dropdown under the
+   * button, which is what a desktop-width header wants.
+   */
+  align?: 'full' | 'right';
+  /**
+   * Sign out at the foot of the panel. /admin's header hides its Log out
+   * button on a phone, so the menu is the way out there; a shell that
+   * shows Log out at every width (the CRM) passes false.
+   */
+  showSignOut?: boolean;
+  /**
+   * Names the menu when it is not the shell's own nav — "Open Admin
+   * portal" beside the CRM's nav, rather than an unqualified "Open menu".
+   * Also captions the open panel.
+   */
+  heading?: string;
+};
 
 // ─── Why the panel is remounted per URL ────────────────────────────────
 //
 // The panel's openness must not survive a navigation, and the layout
-// keeps this component mounted across every /admin route change — so
-// something has to discard it. Keying the panel on the current URL is
+// keeps this component mounted across every route change within a shell —
+// so something has to discard it. Keying the panel on the current URL is
 // what does: React throws the old instance away the moment the URL
 // changes, taking `open` with it.
 //
@@ -50,20 +87,32 @@ import { getAdminNavLinks, isAdminNavActive, adminLinkCount, type AdminCounts } 
 // real navigation to a re-rendered page, and usePathname alone cannot
 // see it. (The old bottom bar had no state to get this wrong; this is
 // the cost of a menu, and it is paid here rather than in each consumer.)
-export default function AdminMobileMenu({ counts }: { counts: AdminCounts }) {
+export default function AdminPortalMenu({
+  counts,
+  className   = 'md:hidden',
+  align       = 'full',
+  showSignOut = true,
+  heading,
+}: AdminPortalMenuProps) {
   const pathname = usePathname();
   const query    = useSearchParams().toString();
 
   return (
-    <AdminMobileMenuPanel
+    <AdminPortalMenuPanel
       key={query ? `${pathname}?${query}` : pathname}
       counts={counts}
       pathname={pathname}
+      className={className}
+      align={align}
+      showSignOut={showSignOut}
+      heading={heading}
     />
   );
 }
 
-function AdminMobileMenuPanel({ counts, pathname }: { counts: AdminCounts; pathname: string }) {
+function AdminPortalMenuPanel({
+  counts, pathname, className, align, showSignOut, heading,
+}: Required<Omit<AdminPortalMenuProps, 'heading'>> & { pathname: string; heading?: string }) {
   const [open, setOpen] = useState(false);
   const menuRef         = useRef<HTMLDivElement>(null);
 
@@ -88,14 +137,15 @@ function AdminMobileMenuPanel({ counts, pathname }: { counts: AdminCounts; pathn
   }, [open]);
 
   return (
-    <div className="md:hidden" ref={menuRef}>
+    <div className={className} ref={menuRef}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={open ? 'Close menu' : 'Open menu'}
+        aria-label={open ? `Close ${heading ?? 'menu'}` : `Open ${heading ?? 'menu'}`}
         aria-expanded={open}
-        aria-controls="admin-mobile-menu"
+        aria-controls="admin-portal-menu"
         className="relative rounded-lg p-2 text-gray-500 hover:bg-gray-100 transition-colors"
+        data-testid="admin-portal-menu-button"
       >
         {open ? (
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden>
@@ -116,13 +166,25 @@ function AdminMobileMenuPanel({ counts, pathname }: { counts: AdminCounts; pathn
         )}
       </button>
 
-      {/* Dropdown. Anchored to the sticky header, scrollable so the full
-          list stays usable on a short screen in landscape. */}
+      {/* Dropdown. Anchored to the sticky header — which is the containing
+          block, since it is positioned — and scrollable so the full list
+          stays usable on a short screen in landscape. */}
       {open && (
         <div
-          id="admin-mobile-menu"
-          className="absolute left-0 right-0 top-full border-t border-gray-100 bg-white shadow-lg px-3 pb-3 pt-2 space-y-0.5 max-h-[calc(100vh-8rem)] overflow-y-auto"
+          id="admin-portal-menu"
+          className={[
+            'absolute top-full bg-white shadow-lg px-3 pb-3 pt-2 space-y-0.5',
+            'max-h-[calc(100vh-8rem)] overflow-y-auto',
+            align === 'right'
+              ? 'right-2 w-64 rounded-b-xl border border-t-0 border-gray-200'
+              : 'left-0 right-0 border-t border-gray-100',
+          ].join(' ')}
         >
+          {heading && (
+            <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+              {heading}
+            </p>
+          )}
           {links.map((link) => {
             const active = isAdminNavActive(link.href, pathname);
             const count  = adminLinkCount(link, counts);
@@ -147,15 +209,17 @@ function AdminMobileMenuPanel({ counts, pathname }: { counts: AdminCounts; pathn
               </Link>
             );
           })}
-          <div className="pt-1 border-t border-gray-100 mt-1">
-            <button
-              type="button"
-              onClick={() => logoutAndRedirect()}
-              className="flex w-full px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
+          {showSignOut && (
+            <div className="pt-1 border-t border-gray-100 mt-1">
+              <button
+                type="button"
+                onClick={() => logoutAndRedirect()}
+                className="flex w-full px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

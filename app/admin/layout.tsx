@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { requireConfirmedUser } from '@/lib/auth/requireConfirmedUser';
 import LogoutButton from '@/app/dashboard/LogoutButton';
 import AdminNav from './AdminNav';
-import AdminMobileMenu from './AdminMobileMenu';
+import { getAdminNavCounts } from './adminNavCounts';
+import AdminPortalMenu from './AdminPortalMenu';
 import InactivityGuard from '@/lib/auth/InactivityGuard';
 import { getRequestUser } from '@/lib/auth/requestUser';
 
@@ -42,29 +43,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     else                                                                          redirect('/login');
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-
-  const [
-    { count: pendingPractices },
-    { count: overdueCollections },
-    { count: pendingPayouts },
-  ] = await Promise.all([
-    supabase.from('practices').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-    // Overdue = scheduled past due_date (cron hasn't picked up yet).
-    // kind='instalment' so a settlement row (post-0058) never inflates
-    // the sidebar badge — settlement rows are administrative artifacts,
-    // not instalments needing collection.
-    supabase.from('payments').select('*', { count: 'exact', head: true })
-      .eq('kind', 'instalment')
-      .eq('status', 'scheduled').lt('due_date', todayStr),
-    supabase.from('payouts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-  ]);
-
-  const counts = {
-    pendingPractices:    pendingPractices    ?? 0,
-    overdueCollections:  overdueCollections  ?? 0,
-    pendingPayouts:      pendingPayouts      ?? 0,
-  };
+  // Badge counts for both nav surfaces. Shared with the CRM shell, which
+  // renders the same menu for admins — see ./adminNavCounts.
+  const counts = await getAdminNavCounts(supabase);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -92,7 +73,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <div className="hidden md:block">
             <LogoutButton />
           </div>
-          <AdminMobileMenu counts={counts} />
+          {/* Phone-only here: at md+ the sidebar below carries the same
+              links. In the CRM shell, which has no admin sidebar, the same
+              menu renders at every width. */}
+          <AdminPortalMenu counts={counts} />
         </div>
       </header>
 

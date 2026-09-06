@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import AdminNav from './AdminNav';
-import AdminMobileMenu from './AdminMobileMenu';
+import AdminPortalMenu from './AdminPortalMenu';
 import { isAdminNavActive } from './adminNavLinks';
 
 // ─── Admin nav: the hamburger, and its parity with the sidebar ─────────
@@ -44,15 +44,15 @@ function openMenu() {
 
 beforeEach(() => { pathname = '/admin'; query = ''; });
 
-describe('AdminMobileMenu — the hamburger', () => {
+describe('AdminPortalMenu — the hamburger', () => {
   it('renders nothing but the button until it is opened', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByRole('button', { name: /open menu/i })).toBeTruthy();
   });
 
   it('opens on tap and closes again on a second tap', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /close menu/i }));
@@ -60,14 +60,14 @@ describe('AdminMobileMenu — the hamburger', () => {
   });
 
   it('closes when a link is tapped, so the destination is not covered', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     fireEvent.click(screen.getByRole('link', { name: 'Customers' }));
     expect(screen.queryByRole('link', { name: 'Customers' })).toBeNull();
   });
 
   it('closes on Escape and on an outside click', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
@@ -80,12 +80,12 @@ describe('AdminMobileMenu — the hamburger', () => {
   it('closes itself when the route changes under it (e.g. the back button)', () => {
     // A navigation this menu did not initiate still dismisses it — the
     // panel is keyed on the URL, so React discards the open instance.
-    const { rerender } = render(<AdminMobileMenu counts={ZERO} />);
+    const { rerender } = render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeTruthy();
 
     pathname = '/admin/payouts';
-    rerender(<AdminMobileMenu counts={ZERO} />);
+    rerender(<AdminPortalMenu counts={ZERO} />);
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
     expect(screen.getByRole('button', { name: /open menu/i })).toBeTruthy();
   });
@@ -96,11 +96,11 @@ describe('AdminMobileMenu — the hamburger', () => {
     // Keying on the pathname alone would leave the panel hanging over it.
     pathname = '/admin/practices';
     query    = 'status=pending';
-    const { rerender } = render(<AdminMobileMenu counts={ZERO} />);
+    const { rerender } = render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
 
     query = 'status=active';
-    rerender(<AdminMobileMenu counts={ZERO} />);
+    rerender(<AdminPortalMenu counts={ZERO} />);
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
   });
 
@@ -110,26 +110,26 @@ describe('AdminMobileMenu — the hamburger', () => {
     // mounted, so a token comparison would match again on return and pop
     // the menu open over a page nobody opened it on. Caught in review.
     pathname = '/admin/payouts';
-    const { rerender } = render(<AdminMobileMenu counts={ZERO} />);
+    const { rerender } = render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
 
     pathname = '/admin/customers';
-    rerender(<AdminMobileMenu counts={ZERO} />);
+    rerender(<AdminPortalMenu counts={ZERO} />);
     pathname = '/admin/payouts';
-    rerender(<AdminMobileMenu counts={ZERO} />);
+    rerender(<AdminPortalMenu counts={ZERO} />);
 
     expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull();
     expect(screen.getByRole('button', { name: /open menu/i })).toBeTruthy();
   });
 
   it('carries Sign out — the header Log out button is desktop-only', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
   });
 
   it('reaches the destinations the old bottom bar could not fit', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     for (const label of ['CRM', 'Sales team', 'Audit log', 'Risk', 'Settings']) {
       expect(screen.getByRole('link', { name: label })).toBeTruthy();
@@ -137,7 +137,7 @@ describe('AdminMobileMenu — the hamburger', () => {
   });
 
   it('shows each queue count inside, and one dot on the closed button', () => {
-    render(<AdminMobileMenu counts={COUNTS} />);
+    render(<AdminPortalMenu counts={COUNTS} />);
     // Closed: a single "something needs you" dot, labelled with the total.
     expect(screen.getByLabelText('10 items need attention')).toBeTruthy();
 
@@ -148,8 +148,16 @@ describe('AdminMobileMenu — the hamburger', () => {
     expect(screen.getByRole('link', { name: 'Payouts' }).textContent).toBe('Payouts');
   });
 
+  it('hides at md+ inside /admin, where the sidebar carries the same links', () => {
+    // Only true of THIS shell: the /crm header mounts the same component
+    // with className="" because it has no admin sidebar at any width.
+    // See app/crm/crm-admin-menu.test.tsx.
+    const { container } = render(<AdminPortalMenu counts={ZERO} />);
+    expect(container.firstElementChild!.className).toContain('md:hidden');
+  });
+
   it('has no dot when every queue is clear', () => {
-    render(<AdminMobileMenu counts={ZERO} />);
+    render(<AdminPortalMenu counts={ZERO} />);
     expect(screen.queryByLabelText(/items need attention/)).toBeNull();
   });
 });
@@ -161,7 +169,7 @@ describe('desktop / mobile parity', () => {
       .map((a) => [a.getAttribute('href'), a.textContent]);
     desktop.unmount();
 
-    const mobile = render(<AdminMobileMenu counts={COUNTS} />);
+    const mobile = render(<AdminPortalMenu counts={COUNTS} />);
     openMenu();
     const mobileLinks = Array.from(mobile.container.querySelectorAll('a'))
       .map((a) => [a.getAttribute('href'), a.textContent]);
@@ -184,7 +192,7 @@ describe('isAdminNavActive', () => {
 
   it('lights the tab for the current route in both surfaces', () => {
     pathname = '/admin/risk';
-    const { container } = render(<AdminMobileMenu counts={ZERO} />);
+    const { container } = render(<AdminPortalMenu counts={ZERO} />);
     openMenu();
     const risk = screen.getByRole('link', { name: 'Risk' });
     expect(risk.className).toContain('bg-[#13294B]/10');
