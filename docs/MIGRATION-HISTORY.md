@@ -69,19 +69,28 @@ shape as 0097 on `sa_id_lookup_hash`. This is precisely the failure mode
 `0136_reconcile_rls_drift_with_production.sql` was written about — "THE
 REPOSITORY IS THE INSECURE VERSION".
 
-Closing it needs production access:
+Closing it needs production access. `scripts/dump-drifted-migrations.sql`
+collects everything required in one pass — paste it into the Supabase SQL
+Editor and click Run, or:
 
-```sql
--- What the rows say they are
-select version, name, statements is not null as has_sql
-  from supabase_migrations.schema_migrations
- where version in ('0138', '0139', '0140');
+```bash
+psql "<connection string>" -f scripts/dump-drifted-migrations.sql
 ```
 
-`schema_migrations.statements` holds the applied SQL for migrations the CLI
-ran; for changes applied through the MCP or the dashboard it may be null, in
-which case the DDL has to come off the live catalog instead — `pg_indexes`,
-`pg_constraint` and `\d+` on the affected tables. Either way, transcribe into
+It is read-only; every statement in it is a SELECT against the catalogs.
+
+It returns eight sections. The first is the three recorded rows including
+`schema_migrations.statements`, which holds the applied SQL **if the CLI was
+what applied it** — for anything done through the MCP, the dashboard or psql
+that column is usually null. Sections 3 to 8 are the fallback for exactly
+that case: they sweep the live catalog for the objects themselves — anything
+named like `identity_signals` with its columns, constraints, indexes,
+policies and triggers, then every unique index and every constraint anywhere
+in `public` that mentions a phone column, then all of `profiles`' indexes
+unfiltered. `pg_get_constraintdef` and `indexdef` both emit re-runnable SQL,
+so most of it pastes almost verbatim.
+
+Transcribe the result into
 `supabase/migrations/0138_identity_signals.sql`,
 `0139_unique_verified_phone.sql` and `0140_verified_phone_unique_index.sql`
 written **idempotently** (`IF NOT EXISTS` / `DROP … IF EXISTS` first), so they
