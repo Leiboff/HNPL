@@ -37,7 +37,8 @@ export type RateLimitBucket =
   | 'self_settle'
   | 'counter_session'
   | 'credit_check'
-  | 'reverse_geocode';
+  | 'reverse_geocode'
+  | 'referral_invite';
 
 export type RateLimitRule = { max: number; windowSecs: number };
 export type RateLimitOutcome = 'allowed' | 'limited' | 'unavailable' | 'missing_subject';
@@ -125,6 +126,23 @@ export const RATE_LIMITS: Record<RateLimitBucket, { ip: RateLimitRule; account?:
 
   // Billable server-side Google Geocoding API calls.
   reverse_geocode:     { ip: { max: 60, windowSecs: 300 }, account: { max: 30, windowSecs: 300 } },
+
+  // ─── Referrals (0145) ────────────────────────────────────────────────
+  //
+  // A patient inviting a friend puts an email into a STRANGER'S inbox from
+  // our verified sending domain, at the request of somebody whose only
+  // qualification is having an account. That is a mail-bombing primitive
+  // aimed at our own deliverability, and it is the reason this bucket is
+  // the tightest per-account limit in the table.
+  //
+  // Nominating a practice spends the same budget. It sends no mail, but it
+  // creates a crm_leads row a rep has to work, and a queue nobody trusts is
+  // as costly to sales as spam is to the mail domain.
+  //
+  // Sized against the legitimate profile: a real person invites a handful of
+  // friends in one sitting and then stops. Ten a day covers an enthusiastic
+  // customer; nothing covers a script, which is the point.
+  referral_invite:     { ip: { max: 30, windowSecs: 86400 }, account: { max: 10, windowSecs: 86400 } },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

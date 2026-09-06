@@ -49,6 +49,15 @@ const ADMIN_CUSTOMER    = read('app/admin/customers/[patientId]/page.tsx');
 // it is new.
 const CONTACT_FORM      = read('app/contact/ContactForm.tsx');
 const CONTACT_ACTION    = read('app/contact/contactAction.ts');
+// The referral surface (0145). Added here for the reason the paragraph above
+// gives about /contact — "widen the list rather than assume a surface is safe
+// because it is new". This one collects details about a PRACTICE and about a
+// person who is not even a customer, so it is exactly the shape that would
+// grow an address field without anybody objecting. It is allowed a suburb
+// (practices carry one; patients do not), which is why the DROPPED list's
+// exclusion of the bare suburb/city/province names matters here too.
+const REFER_FORM        = read('app/patient/refer/ReferForm.tsx');
+const REFER_ACTIONS     = read('app/patient/refer/actions.ts');
 
 const DROPPED = [
   'address_line1',
@@ -127,6 +136,28 @@ describe('AccountSettings — the "Contact & billing address" section is gone', 
     // Phone is inline within Personal details (PhoneField). The
     // standalone accordion header is gone.
     expect(ACCOUNT_SETTINGS).not.toMatch(/title="Phone number"/);
+  });
+});
+
+describe('Referral surface — collects no address, for a patient or for anyone else', () => {
+  it('the form has no address input', () => {
+    for (const col of DROPPED) {
+      expect(REFER_FORM).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
+    expect(REFER_FORM).not.toMatch(/street|postal code|post code/i);
+  });
+
+  it('the actions write no address column', () => {
+    for (const col of DROPPED) {
+      expect(REFER_ACTIONS).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
+  });
+
+  it('and the referrals table itself has no address column', () => {
+    const migration = read('supabase/migrations/0145_referrals_foundation.sql');
+    for (const col of DROPPED) {
+      expect(migration).not.toMatch(new RegExp(`\\b${col}\\b`));
+    }
   });
 });
 

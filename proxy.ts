@@ -12,6 +12,10 @@ import {
   TERMS_CONSENT_COOKIE,
 } from '@/lib/legal/consentToken';
 import { createCsp } from '@/lib/security/csp';
+import { readReferralParam } from '@/lib/referrals/link';
+import { REFERRAL_COOKIE, referralCookieOptions } from '@/lib/referrals/attribution';
+import { claimReferral } from '@/lib/referrals/claim';
+import { supabaseReferralStore } from '@/lib/referrals/store';
 
 // ─── Where the legal acceptance token is minted (audit A-14) ───────────────
 //
@@ -208,6 +212,86 @@ export async function proxy(request: NextRequest) {
         // Transient DB/network error — leave the cookie so the claim retries
         // on the next request.
       }
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Referral capture ─────────────────────────────────────────────────────
+  //
+  // A referred visitor arrives at `/?ref=A2C4K9PT` from a WhatsApp message,
+  // reads the landing page, and signs up — maybe now, maybe in a fortnight,
+  // across an email OTP and four onboarding steps. The code is in the URL at
+  // the first of those and nowhere near any of the others, so it moves into a
+  // cookie here. Same mechanism, same posture and the same place as the
+  // invitation claim above; see lib/referrals/attribution.ts for each flag.
+  //
+  // Only on a document navigation: a `?ref=` on a fetch or an image request
+  // is not somebody arriving, and setting a cookie from one would let any
+  // page on the internet write this cookie with a chosen code by embedding
+  // `<img src="https://app…/?ref=THEIRCODE">`.
+  //
+  // FIRST CODE WINS. The cookie is not overwritten while one is present,
+  // which is the same rule the write-once attribution index enforces in the
+  // database (0145) — a second link cannot take the first referrer's credit,
+  // and the two layers agree rather than one quietly undoing the other.
+  const referralParam = isDocumentNavigation
+    ? readReferralParam(request.nextUrl.searchParams)
+    : null;
+  const heldReferral = request.cookies.get(REFERRAL_COOKIE)?.value ?? null;
+  if (referralParam && !heldReferral) {
+    response.cookies.set(
+      REFERRAL_COOKIE,
+      referralParam,
+      referralCookieOptions(process.env.NODE_ENV === 'production'),
+    );
+  }
+
+  // ── Referral claim ───────────────────────────────────────────────────────
+  //
+  // Spent on the first authenticated request that sees the cookie. `user`
+  // comes from updateSession above rather than a second auth.getUser() — that
+  // call is a network round trip against the auth server, and the invitation
+  // block's own client predates the value being returned.
+  //
+  // Every refusal is terminal and drops the cookie; only a database or
+  // network failure is retried, which is why claimReferral reports
+  // `terminal` separately from the outcome. See lib/referrals/claim.ts for
+  // the five refusals and why each one is a refusal.
+  //
+  // A code captured on THIS request is claimable on it: an already-signed-in
+  // patient who taps a friend's link should not need a second navigation for
+  // it to count. The `delete` below then simply undoes the `set` above.
+  const referralCookie = heldReferral ?? referralParam;
+  if (referralCookie && user) {
+    try {
+      const svc = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { cookies: { getAll() { return []; }, setAll() {} } },
+      );
+      const { data: claimant, error: claimantError } = await svc
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (claimantError) throw claimantError;
+
+      if (claimant?.role !== 'patient') {
+        // Patient referral attribution is not meaningful for any other
+        // profile type. Spend the cookie without consuming the database's
+        // write-once attribution slot.
+        response.cookies.delete(REFERRAL_COOKIE);
+      } else {
+        const claim = await claimReferral(supabaseReferralStore(svc), {
+          profileId:   user.id,
+          cookieValue: referralCookie,
+        });
+        if (claim.terminal) response.cookies.delete(REFERRAL_COOKIE);
+      }
+    } catch {
+      // Belt to claimReferral's own braces: it already converts a failure into
+      // a non-terminal outcome, so reaching here means something outside it
+      // threw. Leave the cookie; the next request tries again.
     }
   }
   // ─────────────────────────────────────────────────────────────────────────

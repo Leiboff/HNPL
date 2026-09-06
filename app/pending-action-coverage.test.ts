@@ -70,6 +70,13 @@ const CONVERTED = [
   // state, so there is no transition to track. run()'s synchronous ref is
   // also the double-submit guard for a public endpoint that sends mail.
   'app/contact/ContactForm.tsx',
+  // Referrals (0145). Built with the hook from the start, and run() rather
+  // than a mirrored useTransition for the same reason ContactForm gives:
+  // nothing revalidates into it — success swaps the form for a confirmation
+  // held in local state. The synchronous ref is the double-submit guard,
+  // which matters because a second tap sends a second email to a stranger or
+  // a second lead into a rep's queue.
+  'app/patient/refer/ReferForm.tsx',
 ] as const;
 
 /**
