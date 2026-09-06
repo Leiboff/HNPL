@@ -130,6 +130,10 @@ function otpErrorCopy(code: string): string {
     case 'expired':             return 'That code expired. Tap Resend to get a fresh one.';
     case 'too_many_attempts':   return 'Too many wrong codes. Tap Resend to start over.';
     case 'not_found':           return 'We couldn’t find your verification — tap Resend.';
+    // 0139/0140: this number is verified on somebody else's account. Like
+    // risk_refused and unlike the caps, retrying cannot clear it, so the copy
+    // offers the two things that can: a different number, or a human.
+    case 'phone_taken':         return 'This number is already verified on another account. Use a different number, or contact support if it should be yours.';
     case 'sms_failed':          return 'We couldn’t send the SMS just now. Tap Resend to retry.';
     case 'sms_not_configured':  return 'SMS isn’t set up in this environment.';
     // The aggregate fraud controls refused the send. Deliberately not a

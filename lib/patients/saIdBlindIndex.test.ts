@@ -233,11 +233,19 @@ describe('the two scripts', () => {
 
 describe('Phase 2: uniqueness lives in exactly one migration, with the right predicate', () => {
   it('0097 is the ONLY migration that makes the hash unique', () => {
+    // Both halves read the COMMENT-STRIPPED source. The column name used to
+    // be matched against the raw file, which meant any migration that merely
+    // discussed the constraint in its header — and happened to contain the
+    // letters "unique" anywhere in its own DDL, an identifier like
+    // `enforce_unique_verified_phone` being quite enough — was reported as a
+    // second source of uniqueness. That is a false positive, and a
+    // false-positive invariant is one somebody eventually edits the expected
+    // value of rather than investigates.
     const named = readdirSync(MIG_DIR)
       .filter((f) => f.endsWith('.sql'))
       .filter((f) => {
-        const s = readFileSync(resolve(MIG_DIR, f), 'utf8');
-        return /sa_id_lookup_hash/.test(s) && /UNIQUE/i.test(ddl(s));
+        const d = ddl(readFileSync(resolve(MIG_DIR, f), 'utf8'));
+        return /sa_id_lookup_hash/.test(d) && /\bUNIQUE\b/i.test(d);
       });
     expect(named).toEqual([UNIQ_NAME]);
   });
