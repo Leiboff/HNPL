@@ -4,15 +4,21 @@ import SubScreenHeader from '@/app/patient/account/SubScreenHeader';
 import { createClient } from '@/lib/supabase/server';
 import { getRequestUser } from '@/lib/auth/requestUser';
 import { ensureMyReferralCode } from './actions';
-import ReferralShareCard from './ReferralShareCard';
-import ReferForm from './ReferForm';
+import ReferTabs from './ReferTabs';
 import ReferralList, { type ReferralRow } from './ReferralList';
 
 // ─── Refer — the patient's own referral screen ───────────────────────────
 //
-// Three objects, in the order they matter to somebody who opened this screen:
-// the code they came for, the form for the two things they can refer, and the
-// record of what they have referred already.
+// One choice and three objects: what am I referring, the affordances for it,
+// and the record of what I have referred already.
+//
+// The two sides of that choice are not symmetrical, and the screen does not
+// pretend they are. Referring a FRIEND is a share — a code, a link, the
+// system share sheet, WhatsApp, email — with the email-invitation form as one
+// channel among them. Referring a PRACTICE is a lead form and nothing else,
+// because a practice cannot sign itself up: what that produces is a
+// crm_leads row with source='referral' for a rep to work. ReferTabs owns that
+// asymmetry; this page just supplies the code.
 //
 // ─── THE CODE IS MINTED ON RENDER ────────────────────────────────────────
 //
@@ -68,12 +74,10 @@ export default async function ReferPage() {
           Send them your link, or tell us about them and we&rsquo;ll take it from there.
         </p>
 
-        {'code' in codeResult ? (
-          <ReferralShareCard code={codeResult.code} />
-        ) : (
-          // The code could not be minted. Saying so plainly beats an empty
-          // card: the forms below still work, because they mint the code
-          // themselves when they need one.
+        {'error' in codeResult && (
+          // The code could not be minted. Saying so plainly beats a card that
+          // is silently missing: the forms still work, because they mint the
+          // code themselves when they need one.
           <section
             className="rounded-card bg-white p-[18px]"
             style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
@@ -88,7 +92,12 @@ export default async function ReferPage() {
           </section>
         )}
 
-        <ReferForm />
+        {/* The share card lives inside the tabs, not here: it belongs to the
+            friend side only. A practice is not referred by a link — see
+            ReferTabs, and the referrals_link_is_patient_only constraint in
+            migration 0145 that says the same thing in the database. */}
+        <ReferTabs code={'code' in codeResult ? codeResult.code : null} />
+
         <ReferralList rows={rows} />
       </div>
     </PatientScreen>

@@ -13,12 +13,32 @@ Two things, from **Account → Refer a friend** (`/patient/refer`):
 | | Refer a friend | Refer a practice |
 |---|---|---|
 | Who it is | A person who could use betternow | Rooms that should offer it |
-| How it lands | An email invitation, or the patient's own link | A `crm_leads` row, `source='referral'` |
+| Shareable? | **Yes** — share sheet, WhatsApp, email, copy link | **No** — it is a lead form |
+| How it lands | They open the link and sign themselves up, or we email an invitation | A `crm_leads` row, `source='referral'`, worked by a rep |
 | Attributed when | They create an account carrying the code | Never automatically — a rep works the lead |
 | Converts when | *(not yet wired — see §6)* | *(not yet wired — see §6)* |
 
-Every patient also gets a code — eight characters, minted on first view of the
+Every patient gets a code — eight characters, minted on first view of the
 screen — and a link, `https://…/?ref=CODE`.
+
+**The asymmetry is the point.** A friend signs themselves up, so a link is the
+whole mechanism and the screen offers every way to send one: the system share
+sheet (`navigator.share`) where the browser has one, and named WhatsApp and
+email links where it does not — desktop Firefox, desktop Chrome without OS
+integration, and most embedded webviews have no sheet, and a Share button that
+silently does nothing is worse than no button. The email-invitation form is
+one channel among those, not the only door.
+
+A practice cannot sign itself up. There is no signup a code could be carried
+into, and a link handed to a receptionist leads nowhere, so that side renders
+no share affordance at all — it is a lead form and nothing else. Migration
+0145 says the same thing one layer down: `referrals_link_is_patient_only`
+refuses a practice referral with `channel='link'`.
+
+SMS is deliberately not a named channel: the URI takes a different separator
+on iOS (`sms:&body=`) and Android (`sms:?body=`), so one href is wrong on one
+of them — and both platforms have the share sheet, which offers Messages
+properly.
 
 ## 2. The pieces
 

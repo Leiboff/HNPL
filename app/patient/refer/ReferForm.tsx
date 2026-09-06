@@ -3,13 +3,30 @@
 import { useRef, useState } from 'react';
 import { usePendingAction } from '@/components/loading/usePendingAction';
 import { referAFriend, referAPractice, type ReferralActionResult } from './actions';
+import type { ReferMode } from './ReferTabs';
 
 // ─── One form, two referrals ─────────────────────────────────────────────
 //
-// A friend and a practice are different objects with different fields, and
-// they are the same ACT — "someone I know should be on this". Two separate
-// cards stacked down the screen would ask a patient to read both before
-// deciding which one they are doing; a segmented control asks once.
+// Which one is showing is decided by ReferTabs, which owns the toggle and
+// remounts this component on a switch (`key={mode}`), so there is no reset
+// logic here and no state that can survive a change of mind.
+//
+// ─── THE PRACTICE SIDE IS A LEAD FORM ────────────────────────────────────
+//
+// Worth saying plainly, because the two halves look alike and are not:
+//
+//   friend    → an email invitation, one row in `referrals`, and a code the
+//               invitee carries into their own signup.
+//   practice  → a row in `crm_leads` with source='referral', which a rep
+//               works through the pipeline that already exists, plus the
+//               `referrals` row that points at it. Nothing is emailed to the
+//               practice by this form, and there is no link to share with
+//               them: a practice does not self-serve.
+//
+// That is why the fields differ so much. The friend side collects the one
+// thing needed to send an invitation; the practice side collects what a
+// person on the phone will need — who to ask for, where they are, and why
+// the patient thought of them.
 //
 // ─── PENDING STATE ───────────────────────────────────────────────────────
 //
@@ -28,28 +45,15 @@ import { referAFriend, referAPractice, type ReferralActionResult } from './actio
 // copy and log the original server-side, which is the standing rule in this
 // repo after a raw Resend error string once landed on a practice screen.
 
-type Mode = 'friend' | 'practice';
-
 const COULD_NOT_CONFIRM =
   "We couldn't confirm that went through. Please check your referrals below before trying again.";
 
-export default function ReferForm() {
+export default function ReferForm({ mode }: { mode: ReferMode }) {
   const pending = usePendingAction();
-  const [mode, setMode]       = useState<Mode>('friend');
-  const [done, setDone]       = useState<string | null>(null);
-  const [error, setError]     = useState<string | null>(null);
-  const [field, setField]     = useState<string | null>(null);
+  const [done, setDone]   = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [field, setField] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-
-  function switchMode(next: Mode) {
-    if (next === mode) return;
-    setMode(next);
-    // A half-typed friend invitation is not a half-typed practice referral.
-    setError(null);
-    setField(null);
-    setDone(null);
-    formRef.current?.reset();
-  }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -115,31 +119,14 @@ export default function ReferForm() {
       className="rounded-card bg-white p-[18px]"
       style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
     >
-      <div
-        role="tablist"
-        aria-label="What are you referring?"
-        className="flex gap-1 rounded-tile p-1"
-        style={{ background: 'rgba(19,41,75,.05)' }}
+      <p
+        className="text-[11px] font-semibold uppercase"
+        style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.45)' }}
       >
-        {(['friend', 'practice'] as const).map((value) => (
-          <button
-            key={value}
-            role="tab"
-            type="button"
-            aria-selected={mode === value}
-            onClick={() => switchMode(value)}
-            data-testid={`refer-mode-${value}`}
-            className="flex-1 rounded-tile py-[9px] text-[13.5px] font-semibold"
-            style={mode === value
-              ? { background: '#fff', color: 'var(--portal-ink)', boxShadow: '0 1px 3px rgba(15,31,58,.10)' }
-              : { color: 'var(--portal-muted)' }}
-          >
-            {value === 'friend' ? 'A friend' : 'A practice'}
-          </button>
-        ))}
-      </div>
+        {mode === 'friend' ? 'Invite them by email' : 'Tell us about the practice'}
+      </p>
 
-      <form ref={formRef} onSubmit={onSubmit} className="mt-[16px]" data-testid="refer-form" noValidate>
+      <form ref={formRef} onSubmit={onSubmit} className="mt-[14px]" data-testid="refer-form" noValidate>
         {mode === 'friend' ? (
           <div className="flex flex-col gap-[14px]">
             <Field label="Their name" hint="Optional">
@@ -199,8 +186,9 @@ export default function ReferForm() {
               <textarea name="note" rows={3} className={INPUT} style={INPUT_STYLE} data-testid="refer-practice-note" />
             </Field>
             <p className="text-[12.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
-              One of our team will get in touch with them. We won&rsquo;t mention your name
-              unless you ask us to in the note.
+              This goes to our team as a new lead, not to the practice. One of us will get
+              in touch with them — we won&rsquo;t mention your name unless you ask us to in
+              the note.
             </p>
           </div>
         )}

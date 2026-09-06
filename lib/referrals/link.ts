@@ -77,3 +77,55 @@ export function referralShareMessage(link: string): string {
   return 'I use betternow to split my medical bills into interest-free '
     + `instalments. Have a look: ${link}`;
 }
+
+// ─── Named channels, for browsers with no share sheet ────────────────────
+//
+// `navigator.share` opens the operating system's own sheet and is the right
+// answer wherever it exists — it offers every app the person actually has,
+// including the ones we would never think to list. It does not exist on
+// desktop Firefox, on desktop Chrome without the OS integration, or in any
+// embedded webview that has not opted in, which is a large share of the
+// people who will open this screen on a laptop.
+//
+// So the named channels below are not a nicety, they are the whole feature on
+// those browsers. They are plain links rather than script: a link is not
+// blocked by a popup blocker, works with a long-press or middle-click, and
+// carries no CSP question (`form-action 'self'` governs form submissions, not
+// navigations).
+//
+// WhatsApp and email are the two named, in that order, because this is South
+// Africa: WhatsApp is the default way people send anything to anyone here,
+// and email is the fallback that exists on every device. SMS is deliberately
+// NOT a fourth button — the URI scheme takes a different separator on iOS
+// (`sms:&body=`) and Android (`sms:?body=`), so a single href is wrong on one
+// of the two platforms, and both of those platforms have the share sheet
+// anyway, which offers Messages properly.
+
+/**
+ * WhatsApp's own "share to a chat you pick" entry point.
+ *
+ * `wa.me` with no number is the documented form for that — it opens the
+ * contact picker rather than a conversation, which is what a share is. On a
+ * phone the link hands off to the installed app; on a laptop it lands on
+ * WhatsApp Web.
+ */
+export function whatsappShareUrl(message: string): string {
+  return `https://wa.me/?text=${encodeURIComponent(message)}`;
+}
+
+/** The subject line on the email channel. Not a promise, like the message. */
+export const REFERRAL_EMAIL_SUBJECT = 'betternow — pay medical bills in instalments';
+
+/**
+ * A pre-filled mail draft with no recipient — the person picks that.
+ *
+ * Note this is NOT the same thing as `referAFriend`. That action sends an
+ * email FROM us, records the referral before anybody clicks, and can match
+ * the invitee to their signup by address. This just opens the customer's own
+ * mail client with words in it; the referral is attributed by the code in the
+ * link, like any other share.
+ */
+export function emailShareUrl(message: string): string {
+  const subject = encodeURIComponent(REFERRAL_EMAIL_SUBJECT);
+  return `mailto:?subject=${subject}&body=${encodeURIComponent(message)}`;
+}

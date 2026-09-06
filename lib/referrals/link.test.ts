@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   REFERRAL_QUERY_PARAM,
+  REFERRAL_EMAIL_SUBJECT,
   referralLink,
   readReferralParam,
   referralShareMessage,
+  whatsappShareUrl,
+  emailShareUrl,
 } from './link';
 
 describe('referralLink', () => {
@@ -77,5 +80,55 @@ describe('referralShareMessage', () => {
     const message = referralShareMessage('https://example.test/?ref=A2C4K9PT')
       .replace(/interest-free/gi, '');
     expect(message).not.toMatch(/reward|bonus|R\d|discount|cashback|credit|free|earn/i);
+  });
+});
+
+
+describe('the named share channels', () => {
+  // These carry the whole feature on a browser with no share sheet — desktop
+  // Firefox, desktop Chrome without OS integration, most embedded webviews.
+  const LINK = 'https://app.betternow.co.za/?ref=A2C4K9PT';
+  const MESSAGE = referralShareMessage(LINK);
+
+  it('WhatsApp opens the contact picker rather than a conversation', () => {
+    // wa.me with NO number is the documented form for "share to a chat you
+    // pick". A number in the path would open a conversation with whoever we
+    // put there, which is not a share.
+    const url = whatsappShareUrl(MESSAGE);
+    expect(url.startsWith('https://wa.me/?text=')).toBe(true);
+    expect(url).not.toMatch(/wa\.me\/\d/);
+  });
+
+  it('email opens a draft with no recipient — the person picks that', () => {
+    const url = emailShareUrl(MESSAGE);
+    expect(url.startsWith('mailto:?')).toBe(true);
+    expect(url).toContain(`subject=${encodeURIComponent(REFERRAL_EMAIL_SUBJECT)}`);
+  });
+
+  it('both encode the message rather than splicing it in raw', () => {
+    // The message contains a URL with its own ? and =. Unencoded, everything
+    // after the first & would be read as another mailto header — which is the
+    // classic mailto header-injection shape, and is also just broken.
+    const hostile = referralShareMessage('https://app.test/?ref=A2C4K9PT&x=1')
+      + '\n\nBcc: someone@example.test';
+    for (const url of [whatsappShareUrl(hostile), emailShareUrl(hostile)]) {
+      expect(url).not.toContain('\n');
+      expect(url).not.toContain('Bcc:');
+      expect(url).toContain(encodeURIComponent('Bcc: someone@example.test'));
+    }
+  });
+
+  it('every channel sends the SAME message', () => {
+    // One pitch, reviewable once. A per-channel string is how a promise nobody
+    // approved ends up in one of them.
+    for (const url of [whatsappShareUrl(MESSAGE), emailShareUrl(MESSAGE)]) {
+      expect(decodeURIComponent(url)).toContain(MESSAGE);
+    }
+  });
+
+  it('and none of them promises a reward either', () => {
+    const decoded = decodeURIComponent(`${whatsappShareUrl(MESSAGE)} ${emailShareUrl(MESSAGE)}`)
+      .replace(/interest-free/gi, '');
+    expect(decoded).not.toMatch(/reward|bonus|R\d|discount|cashback|credit|free|earn/i);
   });
 });
