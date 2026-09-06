@@ -78,4 +78,10 @@ describe('the proxy uses these constants rather than its own literals', () => {
     // outcome precisely so this branch can exist.
     expect(PROXY).toMatch(/if \(claim\.terminal\) response\.cookies\.delete/);
   });
+
+  it('only claims attribution for a patient profile', () => {
+    expect(PROXY).toMatch(/claimant\?\.role !== 'patient'/);
+    expect(PROXY.indexOf("claimant?.role !== 'patient'"))
+      .toBeLessThan(PROXY.indexOf('await claimReferral'));
+  });
 });

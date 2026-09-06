@@ -73,6 +73,7 @@ function table(name: string) {
 
   const selectApi = {
     eq(col: string, value: unknown) { filters.push([col, value]); return selectApi; },
+    ilike(col: string, value: string) { filters.push([col, value]); return selectApi; },
     is(col: string, value: unknown) { filters.push([col, value]); return selectApi; },
     order() { return selectApi; },
     limit() { return selectApi; },
@@ -153,6 +154,7 @@ beforeEach(() => {
   budgetAvailable = true;
   authUser.value = null;
   process.env.NEXT_PUBLIC_APP_URL = 'https://app.betternow.test';
+  delete process.env.CRM_INBOUND_OWNER_EMAIL;
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -342,6 +344,7 @@ describe('referAPractice', () => {
       suburb:             'Rosebank',
       source:             'referral',
       stage:              'new',
+      owner_user_id:      null,
     });
 
     expect(db.referrals).toHaveLength(1);
@@ -353,6 +356,20 @@ describe('referAPractice', () => {
       practice_name: 'Rosebank Dental',
       crm_lead_id:   db.crm_leads[0].id,
     });
+    expect(new Date(String(db.referrals[0].expires_at)).getTime())
+      .toBeGreaterThan(Date.now());
+  });
+
+  it('assigns the configured inbound owner so sales RLS exposes the lead', async () => {
+    signInAsPatient();
+    db.profiles.push({
+      id: 'sales-uuid', role: 'sales', email: 'rep@example.com', first_name: 'Rep',
+    });
+    process.env.CRM_INBOUND_OWNER_EMAIL = ' REP@example.com ';
+
+    await referAPractice(INPUT);
+
+    expect(db.crm_leads[0].owner_user_id).toBe('sales-uuid');
   });
 
   it('puts the patient’s own words on the lead, labelled as a patient referral', async () => {

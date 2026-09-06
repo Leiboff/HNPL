@@ -269,11 +269,25 @@ export async function proxy(request: NextRequest) {
         process.env.SUPABASE_SERVICE_ROLE_KEY!,
         { cookies: { getAll() { return []; }, setAll() {} } },
       );
-      const claim = await claimReferral(supabaseReferralStore(svc), {
-        profileId:   user.id,
-        cookieValue: referralCookie,
-      });
-      if (claim.terminal) response.cookies.delete(REFERRAL_COOKIE);
+      const { data: claimant, error: claimantError } = await svc
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (claimantError) throw claimantError;
+
+      if (claimant?.role !== 'patient') {
+        // Patient referral attribution is not meaningful for any other
+        // profile type. Spend the cookie without consuming the database's
+        // write-once attribution slot.
+        response.cookies.delete(REFERRAL_COOKIE);
+      } else {
+        const claim = await claimReferral(supabaseReferralStore(svc), {
+          profileId:   user.id,
+          cookieValue: referralCookie,
+        });
+        if (claim.terminal) response.cookies.delete(REFERRAL_COOKIE);
+      }
     } catch {
       // Belt to claimReferral's own braces: it already converts a failure into
       // a non-terminal outcome, so reaching here means something outside it

@@ -341,6 +341,22 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
   const firstName = parts[0] ?? practiceName;
   const lastName  = parts.slice(1).join(' ') || '—';
 
+  // Referral leads use the same configured owner as the public inbound form.
+  // Sales RLS only exposes owned leads, so leaving this assignment implicit
+  // would create work that ordinary reps cannot see.
+  let ownerUserId: string | null = null;
+  const ownerEmailEnv = process.env.CRM_INBOUND_OWNER_EMAIL;
+  if (ownerEmailEnv) {
+    const { data: ownerProfile } = await service
+      .from('profiles')
+      .select('id, role')
+      .ilike('email', ownerEmailEnv.trim().toLowerCase())
+      .maybeSingle();
+    if (ownerProfile && (ownerProfile.role === 'sales' || ownerProfile.role === 'admin')) {
+      ownerUserId = ownerProfile.id as string;
+    }
+  }
+
   const { data: lead, error: leadError } = await service
     .from('crm_leads')
     .insert({
@@ -352,6 +368,7 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
       suburb:             suburb || null,
       source:             'referral',
       stage:              'new',
+      owner_user_id:      ownerUserId,
     })
     .select('id')
     .single();
@@ -378,6 +395,7 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
     ? (await service.from('referral_codes').select('id').eq('code', codeResult.code).maybeSingle())
         .data?.id ?? null
     : null;
+  const expiresAt = new Date(Date.now() + REFERRAL_INVITE_TTL_DAYS * 86_400_000).toISOString();
 
   const { error: referralError } = await service.from('referrals').insert({
     referrer_id:   caller.id,
@@ -391,6 +409,7 @@ export async function referAPractice(input: ReferPracticeInput): Promise<Referra
     invitee_phone: phone,
     note:          note || null,
     crm_lead_id:   lead.id,
+    expires_at:    expiresAt,
   });
 
   if (referralError) {
