@@ -40,12 +40,37 @@ const placesOnSelect: {
   }) => void) | null;
 } = { current: null };
 
-vi.mock('@/app/_components/PlacesAutocomplete', () => ({
-  default: (props: { onSelect: (p: never) => void; inputId?: string }) => {
-    placesOnSelect.current = props.onSelect as never;
-    return <input data-testid="places-input" id={props.inputId} />;
-  },
-}));
+vi.mock('@/app/_components/PlacesAutocomplete', async () => {
+  const { useState } = await import('react');
+  // Named and capitalised so the rules-of-hooks lint sees a component: it
+  // holds state, because the real one does.
+  function PlacesStub(props: {
+    onSelect: (p: never) => void;
+    onQueryChange?: (q: string) => void;
+    inputId?: string;
+  }) {
+    // The stub owns the visible text, exactly as the real component does,
+    // and reflects a pick back into it (the real one calls setQuery with the
+    // formatted address). Both halves matter: without the reflection,
+    // "clear the field after picking" is a no-op change event in happy-dom
+    // and the staleness these tests exist for cannot be reproduced.
+    const [text, setText] = useState('');
+    placesOnSelect.current = (place) => {
+      setText(place.formattedAddress);
+      props.onSelect(place as never);
+    };
+    return (
+      <input
+        data-testid="places-input"
+        id={props.inputId}
+        value={text}
+        onChange={(e) => { setText(e.target.value); props.onQueryChange?.(e.target.value); }}
+      />
+    );
+  }
+
+  return { default: PlacesStub };
+});
 
 import ReferChoice from './ReferChoice';
 import { referADoctor } from './actions';
@@ -334,6 +359,46 @@ describe('the four compulsory fields are refused before anything is sent', () =>
     pickAddress();
     expect(screen.getByTestId('refer-doctor-address-state').textContent)
       .toContain(PICKED.formattedAddress);
+  });
+
+  it('editing the field after a pick throws the pick away', () => {
+    // The picker owns the visible text; the form owns the pick, and onSelect
+    // does NOT fire again on an edit. Without onQueryChange the form would
+    // still be holding the old selection while the input showed something
+    // else, and this submit would send a rep to the address the patient had
+    // just visibly rejected.
+    render(<ReferChoice code={CODE} />);
+    fillDoctorForm();
+    expect(screen.getByTestId('refer-doctor-address-state').textContent)
+      .toContain(PICKED.formattedAddress);
+
+    fireEvent.change(screen.getByTestId('places-input'), { target: { value: '9 Somewhere Else' } });
+
+    expect(screen.getByTestId('refer-doctor-address-state').textContent)
+      .toMatch(/pick a suggestion/i);
+    fireEvent.submit(screen.getByTestId('refer-form'));
+    expect(referADoctor).not.toHaveBeenCalled();
+  });
+
+  it('clearing the field after a pick throws the pick away too', () => {
+    render(<ReferChoice code={CODE} />);
+    fillDoctorForm();
+    fireEvent.change(screen.getByTestId('places-input'), { target: { value: '' } });
+
+    fireEvent.submit(screen.getByTestId('refer-form'));
+    expect(referADoctor).not.toHaveBeenCalled();
+  });
+
+  it('a fresh pick after an edit is the one that is sent', async () => {
+    render(<ReferChoice code={CODE} />);
+    fillDoctorForm();
+    fireEvent.change(screen.getByTestId('places-input'), { target: { value: '9 Somewhere' } });
+    pickAddress();
+
+    fireEvent.submit(screen.getByTestId('refer-form'));
+    await waitFor(() => expect(referADoctor).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(referADoctor).mock.calls[0][0].address.formattedAddress)
+      .toBe(PICKED.formattedAddress);
   });
 });
 

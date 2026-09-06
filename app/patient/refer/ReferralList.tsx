@@ -51,13 +51,23 @@ const CHIP: Record<ReferralStatus, string> = {
  * line or, worse, the string "null".
  */
 function title(row: ReferralRow): string {
-  // kind='practice' is the doctor side. The kind records what the referral
-  // CONVERTS INTO — a practice trading on this platform — while the screen
-  // asks for the doctor, so the name comes first and the practice name is the
-  // fallback for a row whose invitee details have been scrubbed (and for rows
-  // made before the form asked for a doctor at all).
+  // kind='practice' is the doctor side, and `practice_name` is the one column
+  // on it that means the same thing in every era of this screen — it is the
+  // entity that was referred.
+  //
+  // `invitee_name` is NOT, which is why it is not preferred here even though
+  // the form now puts the doctor's name in it. On a row written before the
+  // refer-a-doctor split, that column held the optional "Who to ask for"
+  // contact — a practice manager, a receptionist — beside a `practice_name`
+  // that held the rooms. Titling those rows by the contact would rename
+  // somebody's referral of "Rosebank Dental" to "Sarah at reception", and the
+  // schema carries no discriminator that could tell the two eras apart.
+  //
+  // Nothing is lost on a new row: where the patient gave no practice name,
+  // referADoctor stores the doctor's name in `practice_name` precisely
+  // because it is the name of the thing being referred.
   if (row.kind === 'practice') {
-    return row.invitee_name || row.practice_name || 'A doctor';
+    return row.practice_name || row.invitee_name || 'A doctor';
   }
   return row.invitee_name || row.invitee_email || 'Someone you invited';
 }

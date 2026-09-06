@@ -50,6 +50,15 @@ import { referADoctor, type ReferDoctorAddress, type ReferralActionResult } from
 // explicit hint under the field, a guard in onSubmit, and referADoctor
 // refusing it again server-side.
 //
+// The other half of that split ownership is onQueryChange, and it is the
+// half that is easy to miss. The picker owns the visible text; this
+// component owns the pick. Edit the field after choosing a place and
+// onSelect does NOT fire again — so without clearing here, the form would
+// still be holding the previous selection while the input shows something
+// else, and a submit at that moment would send a rep to the address the
+// patient had just visibly rejected. A pick stops being an answer the
+// moment the text it described is edited.
+//
 // ─── PENDING STATE ───────────────────────────────────────────────────────
 //
 // usePendingAction with pending.run(), not useTransition — the same choice
@@ -229,6 +238,13 @@ export default function ReferDoctorForm() {
             variant="address"
             inputId="refer-doctor-address"
             placeholder="Start typing — we’ll suggest matches"
+            onQueryChange={() => {
+              // Cheap because it no-ops once cleared: this fires on every
+              // keystroke, and most of them happen with nothing picked.
+              setF(prev => (prev.address.formattedAddress
+                ? { ...prev, address: BLANK_ADDRESS }
+                : prev));
+            }}
             onSelect={(place) => {
               const parsed = parseAddressComponents(place.addressComponents);
               upd('address', {
