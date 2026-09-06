@@ -128,6 +128,73 @@ describe('Signup server actions — reuse the OTP machinery, never trust client 
     expect(SIGNUP_ACTS).toMatch(/\.update\(\{\s*phone_verified_at:/);
   });
 
+  // ─── The profile stamp can be REFUSED, and used not to be checked ──────
+  //
+  // 0139's trigger and 0140's unique index raise 23505 when a second patient
+  // verifies a number somebody else already verified. That lands on the
+  // profile write, after verify_phone_otp_for_user has already committed
+  // phone_verifications.verified_at — so a discarded error returned ok on an
+  // account whose phone_verified_at was never set, and onboarding then
+  // blocked on it forever. These pin the three parts of the fix.
+
+  it('checks the profile-stamp error instead of discarding it', () => {
+    // The regression shape was a bare `await svc.from('profiles').update(...)`
+    // whose error was never destructured.
+    const stamp = SIGNUP_ACTS.match(
+      /const \{ error \} = await svc\s*\n\s*\.from\('profiles'\)\s*\n\s*\.update\(\{ phone_verified_at:/,
+    );
+    expect(stamp, 'the profile stamp must capture its error').not.toBeNull();
+    expect(SIGNUP_ACTS).not.toMatch(/^\s*await svc\.from\('profiles'\)\.update\(\{ phone_verified_at/m);
+  });
+
+  it('maps SQLSTATE 23505 to phone_taken rather than ok', () => {
+    // Written as an early `!== '23505'` bail so the 23505 path can fall
+    // through to the undo below; either direction is fine, the point is that
+    // the code is branched on at all rather than the error being dropped.
+    expect(SIGNUP_ACTS).toMatch(/error\.code (===|!==) '23505'/);
+    expect(SIGNUP_ACTS).toMatch(/return 'phone_taken'/);
+    expect(SIGNUP_ACTS).toMatch(/\| 'phone_taken'/);
+  });
+
+  it('undoes the verification when the stamp is refused, so the gate still shows why', () => {
+    // page.tsx redirects past the gate on the phone_verifications row alone —
+    // it may not read profiles.phone_verified_at (H3). So a committed
+    // verification whose stamp was refused would bounce the customer into an
+    // onboarding step that blocks with nothing on screen explaining it.
+    expect(SIGNUP_ACTS).toMatch(
+      /\.from\('phone_verifications'\)\s*\n\s*\.update\(\{ verified_at: null \}\)/,
+    );
+    // Only on 23505 — an unknown failure may be transient and the
+    // verification genuinely stands.
+    const stamp = SIGNUP_ACTS.match(/const stampPhoneVerified[\s\S]*?\n  \};/);
+    expect(stamp).not.toBeNull();
+    const undoAt = stamp![0].indexOf("verified_at: null");
+    const unknownAt = stamp![0].indexOf("return 'unknown'");
+    expect(unknownAt).toBeGreaterThan(0);
+    expect(undoAt).toBeGreaterThan(unknownAt);
+  });
+
+  it('does not report success from the short-circuit while the profile is unstamped', () => {
+    // The short-circuit used to `return { ok: true }` unconditionally, which
+    // made the duplicate-number case unrecoverable: every retry re-took this
+    // branch and reported success again.
+    const branch = SIGNUP_ACTS.match(
+      /if \(priorVerification\?\.verified_at\) \{[\s\S]*?\n  \}/,
+    );
+    expect(branch, 'verify must guard the short-circuit with a block').not.toBeNull();
+    expect(branch![0]).toMatch(/stampPhoneVerified/);
+    // And it re-stamps rather than reading profiles.phone_verified_at to
+    // decide, which H3 (app/security-priority-1.test.ts) forbids this file.
+    expect(branch![0]).not.toMatch(/profile\.phone_verified_at/);
+  });
+
+  it('gives phone_taken its own customer-facing copy', () => {
+    // Without a case the customer gets the generic "tap Resend" default,
+    // which is the one instruction that cannot possibly work here.
+    expect(SHARED_STEP).toMatch(/case 'phone_taken':/);
+    expect(SHARED_STEP).toMatch(/already verified on another account/);
+  });
+
   it('short-circuits via phone_verifications row (idempotent on refresh, post-H3 hardening)', () => {
     // Defence in depth (audit H3, 2026-06-22): both signup server
     // actions read the already-verified state from phone_verifications

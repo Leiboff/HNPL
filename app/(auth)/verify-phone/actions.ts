@@ -167,8 +167,31 @@ export type PhoneOtpVerifyResultForUser =
         | 'expired'
         | 'too_many_attempts'
         | 'not_found'
+        // 0139's trigger and 0140's partial unique index refuse a number a
+        // DIFFERENT patient has already verified. Distinct from the codes
+        // above because none of them are the customer's fault or fixable by
+        // retrying — the only way forward is a different number or a human.
+        | 'phone_taken'
         | 'unknown';
     };
+
+// ─── Stamping the profile, and the constraint that can refuse it ─────────
+//
+// 0139's trigger and 0140's partial unique index both refuse a number another
+// patient has already verified, and that refusal lands on the profile write —
+// not on the RPC, which has committed phone_verifications.verified_at before
+// this runs. That ordering is what made discarding the error so expensive:
+//
+//   the action returned ok, /verify-phone believed the committed verification
+//   row, and onboarding then blocked forever on a profiles.phone_verified_at
+//   nothing had set — while the already-verified short-circuit returned ok on
+//   every retry, so the customer could not even reach the error by trying
+//   again.
+//
+// Both the trigger and the index raise SQLSTATE 23505, which is the property
+// that lets one check cover either. Written as a closure rather than a
+// top-level helper so it inherits the service client's inferred row types
+// instead of having to restate them.
 
 export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneOtpVerifyResultForUser> {
   const supabase = await createClient();
@@ -194,6 +217,45 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
   const normalizedPhone = normalizePhoneZA(profile.phone);
   if (!normalizedPhone) return { ok: false, code: 'invalid_phone' };
 
+  const stampPhoneVerified = async (
+    verifiedAt: string,
+  ): Promise<'ok' | 'phone_taken' | 'unknown'> => {
+    const { error } = await svc
+      .from('profiles')
+      .update({ phone_verified_at: verifiedAt })
+      .eq('id', user.id);
+    if (!error) return 'ok';
+    if (error.code !== '23505') {
+      console.error('[verify-phone] profile stamp failed', error.message);
+      return 'unknown';
+    }
+
+    // ── Undo the verification, or the customer is stuck silently ────────
+    //
+    // The OTP was right, so verify_phone_otp_for_user committed
+    // phone_verifications.verified_at — and page.tsx redirects past this gate
+    // on that row alone (it may not read profiles.phone_verified_at; that is
+    // H3). Leaving the row set would mean the customer sees this error once
+    // and is then bounced straight into an onboarding step that blocks on the
+    // stamp nothing was allowed to write, with nothing on screen explaining
+    // why. Clearing it puts the account back where it actually is — not
+    // verified on this number — so the gate keeps showing the reason, and a
+    // different number still works.
+    //
+    // Only for 23505. An 'unknown' failure may be transient and the
+    // verification genuinely stands, so that path leaves the row alone.
+    const { error: undoErr } = await svc
+      .from('phone_verifications')
+      .update({ verified_at: null })
+      .eq('user_id', user.id)
+      .eq('phone_e164', normalizedPhone);
+    if (undoErr) {
+      console.error('[verify-phone] could not undo verification', undoErr.message);
+    }
+    console.warn('[verify-phone] number already verified on another account', user.id);
+    return 'phone_taken';
+  };
+
   // Already-verified short-circuit reads phone_verifications (source
   // of truth), not profiles.phone_verified_at. See requestPhoneOtpForUser
   // above for the rationale.
@@ -204,7 +266,20 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
     .eq('phone_e164', normalizedPhone)
     .not('verified_at', 'is', null)
     .maybeSingle();
-  if (priorVerification?.verified_at) return { ok: true };
+  if (priorVerification?.verified_at) {
+    // Verified already — but the stamp is a SEPARATE write that may have been
+    // REFUSED last time, and returning ok without re-checking is what made the
+    // duplicate-number case unrecoverable: every retry took this branch and
+    // reported success again while phone_verified_at stayed NULL.
+    //
+    // So re-run the stamp rather than reading phone_verified_at to decide
+    // whether it is needed. Reading it would answer the question H3 forbids
+    // this file from asking of profiles, and the write is a no-op anyway when
+    // the value is unchanged — 0139's trigger returns early on an UPDATE that
+    // moves neither phone, phone_verified_at nor role.
+    const stamped = await stampPhoneVerified(priorVerification.verified_at);
+    return stamped === 'ok' ? { ok: true } : { ok: false, code: stamped };
+  }
 
   let codeHash: string;
   try {
@@ -241,13 +316,10 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
     .eq('phone_e164', normalizedPhone)
     .maybeSingle();
 
-  if (!vrow?.verified_at) {
-    // Defensive — shouldn't happen, the RPC just set it. Fall back
-    // to now() rather than fail the action.
-    await svc.from('profiles').update({ phone_verified_at: new Date().toISOString() }).eq('id', user.id);
-  } else {
-    await svc.from('profiles').update({ phone_verified_at: vrow.verified_at }).eq('id', user.id);
-  }
+  // Defensive fallback to now() when the row is somehow missing — the RPC
+  // just set it — rather than failing an action whose OTP is already spent.
+  const stamped = await stampPhoneVerified(vrow?.verified_at ?? new Date().toISOString());
+  if (stamped !== 'ok') return { ok: false, code: stamped };
 
   return { ok: true };
 }
