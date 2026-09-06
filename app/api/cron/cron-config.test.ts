@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ROOT = resolve(process.cwd());
@@ -63,6 +63,25 @@ describe('vercel.json — cron entries', () => {
     expect(poll).toBeDefined();
     expect(poll.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
     expect(poll.schedule).not.toBe('*/15 * * * *');
+  });
+
+  it('has referral maintenance daily, and every declared cron has a route', () => {
+    // The retention half of prune_referral_invites() (0145) cannot be derived
+    // — an address we no longer have a reason to hold is not made lawful by a
+    // view that declines to show it. So this job existing is the obligation
+    // being discharged, and a schedule quietly removed is the obligation
+    // quietly lapsing.
+    const referrals = config.crons.find(
+      (c: { path: string }) => c.path === '/api/cron/referral-maintenance');
+    expect(referrals).toBeDefined();
+    expect(referrals.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
+
+    // And the general form of the mistake: a cron pointing at a path that
+    // does not exist runs daily, 404s daily, and reports nothing daily.
+    for (const { path } of config.crons as Array<{ path: string }>) {
+      const route = resolve(ROOT, 'app', `${path.replace(/^\//, '')}/route.ts`);
+      expect(existsSync(route), `${path} has no route.ts`).toBe(true);
+    }
   });
 });
 

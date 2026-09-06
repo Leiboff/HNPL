@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { stripComments } from '@/lib/testing/stripComments';
@@ -33,6 +33,34 @@ const MIG_0134 = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0134_rate_limit_hardening.sql'), 'utf8',
 ).replace(/\r\n/g, '\n');
 
+// ─── The bucket list moves, so this finds it rather than naming it ────────
+//
+// 0134 introduced `rate_limit_known_bucket`, and any later migration adding a
+// surface has to CREATE OR REPLACE it with the whole list restated — that is
+// what "the function IS the list" costs. This test used to read 0134 by name,
+// which meant the day a migration added a bucket, the reverse check silently
+// went on pinning a list the database no longer had.
+//
+// So: every migration that declares the function, in version order, and the
+// LAST one wins. All of them are applied below, in the same order Postgres
+// would see them, so the database under test carries the current definition
+// and not a superseded one.
+const MIGRATIONS_DIR = resolve(process.cwd(), 'supabase/migrations');
+
+const BUCKET_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()
+  .map((file) => ({
+    file,
+    sql: readFileSync(resolve(MIGRATIONS_DIR, file), 'utf8').replace(/\r\n/g, '\n'),
+  }))
+  .filter(({ sql }) =>
+    /CREATE OR REPLACE FUNCTION rate_limit_known_bucket/
+      .test(stripComments(sql, { sql: true })));
+
+/** The migration whose declaration the database actually ends up with. */
+const CURRENT_BUCKET_MIGRATION = BUCKET_MIGRATIONS[BUCKET_MIGRATIONS.length - 1];
+
 let db: PGlite;
 
 const call = async (bucket: string, subject: string | null, max: number, win: number) => {
@@ -61,6 +89,13 @@ beforeAll(async () => {
   `);
   await db.exec(MIG_0124);
   await db.exec(MIG_0134);
+  // Every later redeclaration, in order. 0134 is in the list too and
+  // re-running it is a no-op — CREATE OR REPLACE, and the grants were
+  // stripped of nothing this harness needs.
+  for (const { file, sql } of BUCKET_MIGRATIONS) {
+    if (file.startsWith('0134_')) continue;
+    await db.exec(sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION rate_limit_known_bucket')));
+  }
 }, 60_000);
 
 afterAll(async () => { await db?.close(); });
@@ -75,7 +110,10 @@ describe('the bucket list in SQL matches the one in TypeScript', () => {
       const r = await db.query<{ known: boolean }>(
         'select rate_limit_known_bucket($1) as known', [bucket],
       );
-      expect(r.rows[0].known, `bucket '${bucket}' is missing from 0134's list`).toBe(true);
+      expect(
+        r.rows[0].known,
+        `bucket '${bucket}' is missing from ${CURRENT_BUCKET_MIGRATION.file}'s list`,
+      ).toBe(true);
     }
   });
 
@@ -83,8 +121,14 @@ describe('the bucket list in SQL matches the one in TypeScript', () => {
     // The other direction: a bucket left in SQL after its call site was
     // deleted is a limit nothing spends, which reads as coverage that is not
     // there.
-    const sql = stripComments(MIG_0134);
-    const body = sql.slice(sql.indexOf('SELECT p_bucket IN ('), sql.indexOf('$$;'));
+    const sql = stripComments(CURRENT_BUCKET_MIGRATION.sql, { sql: true });
+    // Bounded from the list's own opening paren to the NEXT `$$;`, not to the
+    // first one in the file. A migration that also defines other functions —
+    // 0145 defines two before it redeclares this one — has earlier `$$;`
+    // terminators, and an unanchored search produced an empty body and a
+    // vacuous pass in every direction but one.
+    const start = sql.indexOf('SELECT p_bucket IN (');
+    const body  = sql.slice(start, sql.indexOf('$$;', start));
     const declared = [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(declared.length).toBeGreaterThan(0);
     for (const bucket of declared) {

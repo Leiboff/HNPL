@@ -79,7 +79,7 @@ const ChevronRight = (
 /** One row's leading glyph — small, single-colour outline, same treatment
  *  as components/ProfileFieldRow's icons, kept local because these name
  *  NAVIGATION destinations rather than profile FIELDS. */
-type RowIconName = 'person' | 'card' | 'sliders' | 'key' | 'lock' | 'phone' | 'document' | 'shield';
+type RowIconName = 'person' | 'card' | 'sliders' | 'key' | 'lock' | 'phone' | 'document' | 'shield' | 'share';
 
 const ROW_ICON_PATHS: Record<RowIconName, React.ReactNode> = {
   person: (
@@ -127,6 +127,16 @@ const ROW_ICON_PATHS: Record<RowIconName, React.ReactNode> = {
     <>
       <path d="M12 3.2 19 6v5.5c0 4.6-3 7.9-7 9.3-4-1.4-7-4.7-7-9.3V6Z" />
       <path d="M8.7 12.2 11 14.5l4.3-4.3" />
+    </>
+  ),
+  // Two nodes joined to a third — passing something on. Not an envelope: an
+  // invitation here can be a shared link as easily as an email.
+  share: (
+    <>
+      <circle cx="17.5" cy="6" r="2.6" />
+      <circle cx="17.5" cy="18" r="2.6" />
+      <circle cx="6.5" cy="12" r="2.6" />
+      <path d="m9 10.7 6.1-3.4M9 13.3l6.1 3.4" />
     </>
   ),
 };
@@ -196,6 +206,11 @@ export default function AccountSettings() {
         <Row href="/patient/account/personal"      title="Personal details" icon="person" />
         <Row href="/patient/account/pay"            title="Payment cards"    icon="card" />
         <Row href="/patient/account/notifications"  title="Preferences"      icon="sliders" />
+        {/* Referrals join General rather than getting a card of their own:
+            this is one row, and a fourth GroupCard holding a single row reads
+            as a section somebody forgot to finish. Last in the group because
+            it is the only row here that is not a setting on this account. */}
+        <Row href="/patient/refer"                  title="Refer a friend"   icon="share" />
       </GroupCard>
 
       <GroupCard title="Security">

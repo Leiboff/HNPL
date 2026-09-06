@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import AccountSettings from './AccountSettings';
 
-// ─── AccountSettings — ONE pattern, three grouped cards, eight rows ──────
+// ─── AccountSettings — ONE pattern, three grouped cards, nine rows ──────
 //
 // Replaces the accordion-era test suite. Direct product decision
 // (2026-08-20): tapping a settings row now opens a full screen with the
@@ -28,10 +28,15 @@ import AccountSettings from './AccountSettings';
 // only now they sit inside a shared card per group instead of each
 // carrying its own border/shadow.
 
+// 2026-09-06: "Refer a friend" joined General (migration 0145). It is in
+// General rather than in a card of its own because a fourth GroupCard holding
+// one row reads as a section somebody forgot to finish, and it is LAST in the
+// group because it is the only row here that is not a setting on this account.
 const ROWS = [
   ['Personal details',      '/patient/account/personal'],
   ['Payment cards',         '/patient/account/pay'],
   ['Preferences',           '/patient/account/notifications'],
+  ['Refer a friend',        '/patient/refer'],
   ['Passkeys',              '/patient/account/passkeys'],
   ['Password & recovery',   '/patient/account/password'],
   ['Contact us',            '/patient/account/contact'],
@@ -42,7 +47,7 @@ const ROWS = [
 const GROUPS = ['General', 'Security', 'Support'] as const;
 
 describe('every row is a plain link to its own screen', () => {
-  it('renders exactly eight rows, each a link to its expected route', () => {
+  it('renders exactly nine rows, each a link to its expected route', () => {
     render(<AccountSettings />);
     for (const [title, href] of ROWS) {
       const link = screen.getByText(title).closest('a');
