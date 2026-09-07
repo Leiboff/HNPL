@@ -55,7 +55,7 @@ describe('activateFirstInstalment', () => {
 });
 
 describe('activate_first_instalment migration contract', () => {
-  const sql = readFileSync('supabase/migrations/0148_atomic_first_instalment_activation.sql', 'utf8');
+  const sql = readFileSync('supabase/migrations/0151_atomic_first_instalment_activation.sql', 'utf8');
 
   it('locks the plan and payment and writes collection, activation and payout in one function', () => {
     expect(sql).toMatch(/FROM plans WHERE id = p_plan_id FOR UPDATE/);

@@ -61,7 +61,17 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION activate_first_instalment(UUID, UUID, TIMESTAMPTZ) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION activate_first_instalment(UUID, UUID, TIMESTAMPTZ) TO service_role;
+-- Guarded the way 0142 and 0143 guard theirs: service_role exists in a real
+-- Supabase project and does not exist in the PGlite instances the suite
+-- replays migrations into. Without this the file cannot be executed by a
+-- test, and the test below drives this function against real SQL.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT EXECUTE ON FUNCTION activate_first_instalment(UUID, UUID, TIMESTAMPTZ) TO service_role;
+  END IF;
+END;
+$$;
 
 COMMENT ON FUNCTION activate_first_instalment(UUID, UUID, TIMESTAMPTZ) IS
   'Atomic, idempotent first-payment activation: collects instalment one, activates '
