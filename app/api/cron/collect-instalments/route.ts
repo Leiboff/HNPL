@@ -147,8 +147,10 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   //       running concurrent batches against overlapping ids is safe.
   let charged           = 0;
   let claimLost         = 0;
+  let notDispatched     = 0;
   let transportErrors   = 0;
   const transportErrorIds: string[] = [];
+  const notDispatchedIds: string[] = [];
 
   for (const row of due) {
     const outcome = await attemptChargeInstalment(svc, row.id, { today: todayStr });
@@ -156,6 +158,18 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       charged++;
     } else if (outcome.kind === 'claim_lost') {
       claimLost++;
+    } else if (outcome.kind === 'not_dispatched') {
+      // Counted apart from claim_lost, which it used to be folded into.
+      // A claim lost to a concurrent worker is ordinary; a claim handed
+      // back because the dispatch marker would not commit is a WRITE
+      // failing on the payments table, and a run full of them is an
+      // outage in the making rather than a busy night. The row is back
+      // at its previous status, so tomorrow's run picks it up.
+      notDispatched++;
+      notDispatchedIds.push(row.id);
+      console.error('[cron/collect-instalments] dispatch not committed — nothing sent, claim released', {
+        paymentId: row.id,
+      });
     } else {
       transportErrors++;
       transportErrorIds.push(row.id);
@@ -270,6 +284,8 @@ async function handle(req: NextRequest): Promise<NextResponse> {
     eligible_count:        due.length,
     charged_count:         charged,
     claim_lost_count:      claimLost,
+    not_dispatched_count:  notDispatched,
+    not_dispatched_ids:    notDispatchedIds,
     transport_errors:      transportErrors,
     transport_error_ids:   transportErrorIds,
     grace_elapsed_count:   (graceElapsedRows ?? []).length,

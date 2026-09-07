@@ -149,17 +149,40 @@ describe('activation closes the token, on every path', () => {
   });
 
   it('runs on EVERY invocation, not only the one that creates the payout', () => {
-    // The close must sit before the payout existence fast-path, which
-    // returns early when a payout already exists. Placed after it, only
-    // the first caller to reach the payout block would ever close the
-    // token — so a failed close (non-fatal, logs only) would never be
-    // retried by a later call, and the window would stay open with an
-    // ALERT line as its only trace.
-    const closeIdx    = ACTIVATE.indexOf('await closeCheckoutTokensForPlan');
-    const fastPathIdx = ACTIVATE.indexOf('existingPayouts');
+    // WHAT THIS GUARDS, AND WHY IT NOW READS THE SQL
+    //
+    // A failed close is non-fatal and only logs, so it is a LATER call that
+    // has to retry it. The close therefore must not sit behind an early
+    // return that a repeat caller takes — when it did, only the first caller
+    // to reach the payout block ever closed the token and the window stayed
+    // open with an ALERT line as its only trace.
+    //
+    // The old shape of that hazard was the payout existence fast-path, which
+    // returned early once a payout existed; the assertion was that the close
+    // came first in the file. Ordering no longer answers the question,
+    // because the payout branch is inside activate_first_instalment (0151)
+    // and the only early returns left in the TypeScript are the RPC's own
+    // failure paths. So the question becomes what a repeat call gets BACK
+    // from the RPC, and that is what is pinned here.
+    const closeIdx = ACTIVATE.indexOf('await closeCheckoutTokensForPlan');
     expect(closeIdx).toBeGreaterThan(-1);
-    expect(fastPathIdx).toBeGreaterThan(-1);
-    expect(closeIdx).toBeLessThan(fastPathIdx);
+
+    // Nothing between a successful RPC and the close: no re-read of the
+    // payout, no branch, no early return.
+    const okIdx = ACTIVATE.indexOf('if (!outcome?.ok)');
+    expect(okIdx).toBeGreaterThan(-1);
+    expect(okIdx).toBeLessThan(closeIdx);
+    const between = ACTIVATE.slice(ACTIVATE.indexOf('}', okIdx), closeIdx);
+    expect(between).not.toMatch(/\breturn\b/);
+
+    // …and a second, third or fourth call still gets ok back, so it still
+    // reaches the close. Every state a first call leaves behind is in the
+    // acceptance lists, and the duplicate payout is absorbed rather than
+    // raised as an error.
+    const activateSql = rawRead('supabase/migrations/0151_atomic_first_instalment_activation.sql');
+    expect(activateSql).toMatch(/v_plan\.status NOT IN \('pending_first_payment', 'active'\)/);
+    expect(activateSql).toMatch(/v_payment\.status NOT IN \('processing', 'collected'\)/);
+    expect(activateSql).toMatch(/ON CONFLICT \(plan_id\) DO NOTHING/);
   });
 
   it('cannot throw out into the ledger writes around it', () => {

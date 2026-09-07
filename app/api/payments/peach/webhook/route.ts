@@ -115,14 +115,13 @@ async function safePush(
 // "what arrived" were compared, so both numbers could be wrong
 // independently and the ledger would still balance on paper.
 //
-// TOLERANCE
+// EXACTNESS
 //
-// Exact, in integer cents, with ONE allowance: a capture LARGER than
-// expected is accepted and logged rather than refused. Over-collection is
-// not a fraud shape — nobody attacks themselves by paying more — and
-// refusing it would strand real money that has already left a real card
-// with no path back through this route. Under-collection by even one cent
-// is refused: that is the direction the money goes missing in.
+// Exact, in integer cents. Missing currency, missing amount, under-collection,
+// over-collection and sub-cent values are all reconciliation exceptions. An
+// overcharge is not permission to advance the ledger: the customer was charged
+// incorrectly and the excess must be reconciled or refunded before local state
+// claims the expected contract was fulfilled.
 //
 // EXPECTED AMOUNT
 //
@@ -131,43 +130,34 @@ async function safePush(
 // the comparison is against the figure we actually asked the processor
 // for, not against a re-derivation that could drift from it.
 //
-// A payload with NO amount field is accepted with a warning rather than
-// refused. Peach's own event shapes vary by product and this route already
-// tolerates that (see parseFormEventBody); turning a missing optional
-// field into a refusal would mean declining to reconcile real settled
-// money, which is worse than the check being best-effort on that path.
-
 type AmountVerdict =
-  | { ok: true;  note?: string }
+  | { ok: true }
   | { ok: false; reason: string };
 
 function verifySettledAmount(
   payload:      WebhookPaymentPayload,
   expectedCents: number,
 ): AmountVerdict {
-  const currency = payload.currency;
-  if (currency && currency.toUpperCase() !== 'ZAR') {
-    return { ok: false, reason: `currency ${currency} is not ZAR` };
+  const currency = payload.currency?.trim().toUpperCase();
+  if (!currency) {
+    return { ok: false, reason: 'delivery carried no currency field' };
+  }
+  if (currency !== 'ZAR') {
+    return { ok: false, reason: `currency ${payload.currency} is not ZAR` };
   }
 
   if (payload.amount === undefined || payload.amount === null || payload.amount === '') {
-    return { ok: true, note: 'delivery carried no amount field — not verified' };
+    return { ok: false, reason: 'delivery carried no amount field' };
   }
 
-  const settled = Number(payload.amount);
-  if (!Number.isFinite(settled)) {
+  const amountText = String(payload.amount).trim();
+  if (!/^\d+(?:\.\d{1,2})?$/.test(amountText)) {
     return { ok: false, reason: `unparseable amount ${JSON.stringify(payload.amount)}` };
   }
 
-  const settledCents = Math.round(settled * 100);
-  if (settledCents < expectedCents) {
-    return {
-      ok: false,
-      reason: `settled ${settledCents}c is short of the expected ${expectedCents}c`,
-    };
-  }
-  if (settledCents > expectedCents) {
-    return { ok: true, note: `settled ${settledCents}c exceeds the expected ${expectedCents}c — accepted` };
+  const settledCents = Math.round(Number(amountText) * 100);
+  if (settledCents !== expectedCents) {
+    return { ok: false, reason: `settled ${settledCents}c does not equal expected ${expectedCents}c` };
   }
   return { ok: true };
 }
@@ -242,8 +232,8 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
   // ── What actually settled has to match what we charged ──
   //
   // Ahead of every state flip below, including instalment 1's activation
-  // and its payout. See verifySettledAmount above for the tolerance and
-  // why an over-capture is allowed through.
+  // and its payout. See verifySettledAmount above: missing, short and excess
+  // captures all stop here for reconciliation.
   const expectedCents = chargeAmountCents(
     Number(payment.amount),
     (payment.dunning_fees_cents ?? 0) as number,
@@ -261,17 +251,13 @@ async function handlePaymentSuccess(payload: WebhookPaymentPayload): Promise<voi
     });
     return;
   }
-  if (verdict.note) {
-    console.warn('[peach-webhook] payment.success: amount check', { reference, note: verdict.note });
-  }
 
   // ── Instalment 1 — first-payment activation ──
   if (payment.instalment_number === 1) {
-    if (plan.status === 'active') {
-      console.log('[peach-webhook] payment.success: plan already active (duplicate)', plan.id);
-      return;
-    }
-    if (plan.status !== 'pending_first_payment') {
+    // Re-enter activation for an already-active plan: the transactional RPC
+    // treats this as an idempotent repair and creates a missing payout left by
+    // the legacy multi-write path.
+    if (plan.status !== 'pending_first_payment' && plan.status !== 'active') {
       console.warn('[peach-webhook] payment.success: unexpected plan status for instalment 1', plan.status);
       return;
     }
@@ -551,9 +537,10 @@ async function handlePaymentFailure(payload: WebhookPaymentPayload): Promise<voi
     //
     // Deliberately after the plan write and deliberately non-fatal: the plan
     // status is the authoritative record and must not be held hostage to a
-    // second table, and this route answers 200 to everything rather than let
-    // Peach's retry ladder amplify a bug into a state-flip storm. Passes the
-    // handler's OWN service-role client rather than building a second one.
+    // second table. A returned error is logged here; an unexpected throw is
+    // allowed to reach the route-level catch, which returns 500 so Peach can
+    // retry the unrecorded delivery. Passes the handler's OWN service-role
+    // client rather than building a second one.
     const sessionClose = await failCheckoutSessionsForPlan(plan.id, supabase);
     if (sessionClose.error) {
       console.error('[peach-webhook] ALERT payment.failure: checkout_sessions propagation failed', {
@@ -668,23 +655,37 @@ async function handleCardRegistrationSuccess(supabase: ReturnType<typeof svc>, p
     return;
   }
 
-  try {
-    await saveCardForPatientPeach(
-      patientId,
-      {
-        registrationId: payload.registrationId,
-        // paymentBrand is top-level (sibling of `card`); fall back to
-        // nested only for older/test shapes.
-        brand:          payload.paymentBrand ?? payload.card.paymentBrand ?? null,
-        last4:          payload.card.last4Digits  ?? null,
-        expiryMonth:    payload.card.expiryMonth  ? Number(payload.card.expiryMonth) : null,
-        expiryYear:     payload.card.expiryYear   ? Number(payload.card.expiryYear)  : null,
-        holder:         payload.card.holder       ?? null,
-      },
-      supabase,
-    );
-  } catch (err) {
-    console.error('[peach-webhook] card_registration: card save failed', err instanceof Error ? err.message : err);
+  // Unlike the card-save side effect of a successful first payment, saving
+  // the card IS the entire purpose of a standalone registration event. Let a
+  // failure reach POST's retryable 500 rather than acknowledging an event
+  // that left no usable payment method behind.
+  //
+  // WHY THE RESULT IS INSPECTED AND NOT JUST AWAITED
+  //
+  // saveCardForPatient RESOLVES with { kind: 'error' } for the failure that
+  // actually happens — an ordinary Supabase write error. It only rejects for
+  // the unexpected. So `await` alone reaches the route's catch for the rare
+  // case and sails past the common one, acknowledging the event with a 200
+  // and no card saved: the precise outcome the paragraph above says must not
+  // happen. Throwing here is what makes that paragraph true.
+  const saved = await saveCardForPatientPeach(
+    patientId,
+    {
+      registrationId: payload.registrationId,
+      // paymentBrand is top-level (sibling of `card`); fall back to
+      // nested only for older/test shapes.
+      brand:          payload.paymentBrand ?? payload.card.paymentBrand ?? null,
+      last4:          payload.card.last4Digits  ?? null,
+      expiryMonth:    payload.card.expiryMonth  ? Number(payload.card.expiryMonth) : null,
+      expiryYear:     payload.card.expiryYear   ? Number(payload.card.expiryYear)  : null,
+      holder:         payload.card.holder       ?? null,
+    },
+    supabase,
+  );
+  if (saved.kind === 'error') {
+    // The message is the database's own, and carries no card data: the
+    // helper builds it from the write error, never from the payload.
+    throw new Error(`card_registration: card save failed — ${saved.message}`);
   }
 }
 
@@ -719,9 +720,6 @@ async function handleSettlementChargeSuccess(
       note:         'settlement NOT applied — the instalments it covers stay as they were',
     });
     return;
-  }
-  if (verdict.note) {
-    console.warn('[peach-webhook] settlement payment.success: amount check', { reference, note: verdict.note });
   }
 
   const now = new Date().toISOString();
@@ -898,9 +896,9 @@ async function handleRegistrationEvent(payload: WebhookPaymentPayload, action: s
 //     - Parsed via URLSearchParams with dotted-name unflattening.
 //     - Dispatched into existing handlers; every state flip is
 //       precondition-guarded so double-delivery is a no-op.
-//     - Handler errors are caught + logged with an alertable prefix
-//       and still return 200 (avoids Peach's retry ladder amplifying
-//       a bug into a state-flip storm).
+//     - Handler errors are caught + logged with an alertable prefix and
+//       return 500. The delivery is deliberately not recorded, so Peach can
+//       retry it against the handlers' idempotent state preconditions.
 //
 //   Malformed body (neither valid JSON nor parseable form) → 400.
 
@@ -1191,10 +1189,11 @@ export async function POST(request: NextRequest) {
       console.log('[peach-webhook] unhandled event type — acknowledging without action', { type, action });
     }
   } catch (err) {
-    // Alertable prefix — silent drops are invisible today, so we
-    // stamp a clearly-greppable marker on the log line. Still 200
-    // to avoid Peach's retry ladder amplifying a bug into a state-
-    // flip storm.
+    // Alertable prefix — silent drops are invisible today, so stamp a
+    // clearly-greppable marker. A handler failure is NOT successful receipt:
+    // returning 200 here tells Peach to stop retrying and can permanently lose
+    // a payment event. The handlers are precondition-guarded, and the delivery
+    // ledger is written only after this block, so a 500 safely requests retry.
     console.error('[peach-webhook] ALERT handler-threw', {
       type,
       action,
@@ -1202,10 +1201,11 @@ export async function POST(request: NextRequest) {
       error:     err instanceof Error ? err.message : String(err),
       stack:     err instanceof Error ? err.stack   : undefined,
     });
-    // Deliberately NOT recorded. A delivery that threw did not complete,
-    // and Peach's retry is the mechanism that finishes it — marking it
-    // delivered here would reproduce F-13 exactly.
-    return NextResponse.json({ received: true }, { status: 200 });
+    // Deliberately NOT recorded. A delivery that threw did not complete;
+    // Peach's retry is the mechanism that finishes it. Marking it delivered
+    // here would reproduce F-13, while acknowledging it with 200 would prevent
+    // the retry entirely.
+    return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 });
   }
 
   await recordDelivery(ledger, webhookId!, {
@@ -1218,4 +1218,4 @@ export async function POST(request: NextRequest) {
 
 // Not used from the route directly, but exported so we can verify
 // the provider is wired in tests without instantiating the full route.
-export const __internals = { getPaymentProvider };
+export const __internals = { getPaymentProvider, verifySettledAmount };

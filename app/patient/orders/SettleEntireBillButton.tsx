@@ -76,6 +76,14 @@ export default function SettleEntireBillButton({
           case 'race_lost':
             setResultMsg('Some instalments are being collected right now. Please try again in a moment.');
             return;
+          case 'not_started':
+            // The mirror image of transport_error below, and the reason the
+            // two must not share a status: here the charge was refused
+            // BEFORE dispatch, every claimed instalment has been put back,
+            // and the bill is untouched. Retrying is safe and is the only
+            // way this gets paid, so `done` stays false.
+            setResultMsg('We couldn\'t start that payment, and nothing was charged. Please try again.');
+            return;
           case 'transport_error':
             // NOT "try again" (audit A-13). A transport error means the
             // response never arrived, not that the charge did not happen —

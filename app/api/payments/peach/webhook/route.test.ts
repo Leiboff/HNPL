@@ -10,8 +10,9 @@ import { signWebhookForTesting } from '@/lib/payments/peach/webhook';
 //     signature state or PEACH_CHECKOUT_SECRET_TOKEN.
 //   • Event (form-urlencoded): HMAC verified against
 //       `${timestamp}.${webhookId}.${url}.${payload}`.
-//     Bad / missing signature → 401. Good signature → parsed and
-//     dispatched, always 200.
+//     Bad / missing signature → 401. Good signature → parsed and dispatched;
+//     successful handling returns 200, while a handler exception returns 500
+//     so Peach retries the unrecorded delivery.
 //
 // The DB layer is fully mocked — this suite is about the route's
 // signature / parsing / control-flow, not the state-flip handlers
@@ -90,17 +91,51 @@ vi.mock('@/lib/payments/peach/saveCardForPatient', () => ({
 }));
 
 // Import AFTER mocks are wired.
-import { POST } from './route';
+import { POST, __internals } from './route';
 import { saveCardForPatient } from '@/lib/payments/peach/saveCardForPatient';
 
 const SECRET = 'test-secret-token-hex-does-not-need-to-be-real';
 const WEBHOOK_URL = 'https://app.test/api/payments/peach/webhook';
 
+describe('strict settled-amount verification', () => {
+  const verify = __internals.verifySettledAmount;
+
+  it('accepts only an exact ZAR amount in integer cents', () => {
+    expect(verify({ amount: '250.75', currency: 'ZAR' }, 25_075)).toEqual({ ok: true });
+    expect(verify({ amount: '250.74', currency: 'ZAR' }, 25_075)).toEqual({
+      ok: false, reason: 'settled 25074c does not equal expected 25075c',
+    });
+    expect(verify({ amount: '250.76', currency: 'ZAR' }, 25_075)).toEqual({
+      ok: false, reason: 'settled 25076c does not equal expected 25075c',
+    });
+  });
+
+  it('refuses missing amount or currency instead of treating verification as best-effort', () => {
+    expect(verify({ currency: 'ZAR' }, 25_075)).toEqual({
+      ok: false, reason: 'delivery carried no amount field',
+    });
+    expect(verify({ amount: '250.75' }, 25_075)).toEqual({
+      ok: false, reason: 'delivery carried no currency field',
+    });
+  });
+
+  it.each(['250.751', '-250.75', '2.5075e2', 'NaN', ''])('refuses a non-canonical amount: %s', (amount) => {
+    expect(verify({ amount, currency: 'ZAR' }, 25_075).ok).toBe(false);
+  });
+
+  it('refuses a non-ZAR settlement', () => {
+    expect(verify({ amount: '250.75', currency: 'USD' }, 25_075)).toEqual({
+      ok: false, reason: 'currency USD is not ZAR',
+    });
+  });
+});
+
 beforeEach(() => {
   dbState.writes.length   = 0;
   dbState.payments.length = 0;
   dbState.plans.length    = 0;
-  vi.mocked(saveCardForPatient).mockClear();
+  vi.mocked(saveCardForPatient).mockReset();
+  vi.mocked(saveCardForPatient).mockResolvedValue({ kind: 'inserted', cardId: 'card-x' });
   process.env.NEXT_PUBLIC_SUPABASE_URL   = 'https://test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY  = 'service-role-test';
   process.env.PEACH_CHECKOUT_SECRET_TOKEN = SECRET;
@@ -291,6 +326,70 @@ describe('POST /api/payments/peach/webhook — signed event delivery', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.received).toBe(true);
+  });
+
+  it('returns 500 and leaves a failed handler delivery unrecorded so Peach retries it', async () => {
+    vi.mocked(saveCardForPatient).mockRejectedValueOnce(new Error('card persistence failed'));
+    const signed = signWebhookForTesting({
+      body: EVENT_BODY_SUCCESS,
+      secret: SECRET,
+      url: WEBHOOK_URL,
+      webhookId: 'wh-handler-failure',
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(makeFormRequest(EVENT_BODY_SUCCESS, {
+      'x-webhook-signature-algorithm': signed.algorithm,
+      'x-webhook-timestamp':           signed.timestamp,
+      'x-webhook-id':                  signed.webhookId,
+      'x-webhook-signature':           signed.signature,
+    }));
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'Webhook processing failed' });
+    expect(dbState.writes).not.toContainEqual(expect.objectContaining({
+      table: 'peach_webhook_events',
+    }));
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[peach-webhook] ALERT handler-threw',
+      expect.objectContaining({ reference: 'bnrreg0000000001' }),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('returns 500 when the card save RESOLVES with kind: error, not just when it rejects', async () => {
+    // The test above mocks a REJECTED promise, which is the failure
+    // saveCardForPatient almost never produces. Its contract for the failure
+    // that actually happens — an ordinary Supabase write error — is to
+    // RESOLVE with { kind: 'error' } (saveCardForPatient.ts returns that at
+    // three separate write sites). A handler that merely awaited the call
+    // would sail straight past this and acknowledge the event with a 200,
+    // leaving a registration webhook that Peach will never retry and no
+    // usable payment method behind.
+    vi.mocked(saveCardForPatient).mockResolvedValueOnce({
+      kind: 'error', message: 'insert into cards violates row-level security',
+    });
+    const signed = signWebhookForTesting({
+      body: EVENT_BODY_SUCCESS,
+      secret: SECRET,
+      url: WEBHOOK_URL,
+      webhookId: 'wh-card-save-resolved-error',
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(makeFormRequest(EVENT_BODY_SUCCESS, {
+      'x-webhook-signature-algorithm': signed.algorithm,
+      'x-webhook-timestamp':           signed.timestamp,
+      'x-webhook-id':                  signed.webhookId,
+      'x-webhook-signature':           signed.signature,
+    }));
+
+    expect(res.status).toBe(500);
+    // Unrecorded, so the retry is not deduplicated away as already-seen.
+    expect(dbState.writes).not.toContainEqual(expect.objectContaining({
+      table: 'peach_webhook_events',
+    }));
+    errorSpy.mockRestore();
   });
 
   it('P2: card-reg backstop resolves the patient from BRACKETED-FLAT customParameters and saves the card', async () => {

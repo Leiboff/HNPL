@@ -41,6 +41,21 @@ import { activateFirstInstalment } from './activateFirstInstalment';
 // a mock asserting on an insert payload cannot see. A mock would confirm what
 // the code MEANT to write; only the engine shows what the row IS.
 
+// ─── The writer moved into SQL, and so did this test's subject ──────────
+//
+// The payouts INSERT used to be a PostgREST upsert in TypeScript. It is now
+// one statement inside activate_first_instalment (0151), which is where the
+// atomicity argument in that migration's header needs it to be.
+//
+// That makes this file MORE of what its header already claimed to be, not
+// less: the guarantee was always about the row the engine actually stores,
+// and the writer under test is now the very SQL production runs, replayed
+// from the migration file rather than described by a mock.
+const MIG_0151 = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/0151_atomic_first_instalment_activation.sql'),
+  'utf8',
+).replace(/\r\n/g, '\n');
+
 // payouts as it really stands: 0001 + 0021's snapshot columns + 0087's UNIQUE.
 const SCHEMA = `
   create table practices (
@@ -71,6 +86,8 @@ const SCHEMA = `
   create table payments (
     id uuid primary key default gen_random_uuid(),
     plan_id      uuid references plans(id),
+    -- 0151 identifies instalment one by number, the way 0130 writes it.
+    instalment_number int,
     status       text,
     collected_at timestamptz
   );
@@ -114,15 +131,28 @@ const q = <T = Record<string, unknown>>(sql: string, params: unknown[] = []) =>
 
 // ─── A PostgREST-shaped client over real SQL ─────────────────────────────
 //
-// Covers exactly the surface activateFirstInstalment uses: update+eq+neq,
-// select+eq+limit, single, and upsert with onConflict+ignoreDuplicates. An
-// unmodelled method THROWS rather than silently returning empty, so a future
-// change to the writer cannot make this test vacuous.
+// Covers exactly the surface activateFirstInstalment uses: rpc, and
+// update+eq+neq / select+eq+limit / single / upsert for what is left of the
+// PostgREST work. An unmodelled method THROWS rather than silently returning
+// empty, so a future change to the writer cannot make this test vacuous —
+// which is exactly how the move into SQL announced itself, as `supabase.rpc
+// is not a function` rather than as a quietly passing test.
 
 type Filter = { col: string; op: 'eq' | 'neq'; val: unknown };
 
 function makeSqlClient() {
   return {
+    // Named-argument notation on purpose: PostgREST calls a function by
+    // parameter NAME, so a rename in the migration must break this the same
+    // way it would break production, rather than silently sliding the
+    // arguments along by position.
+    async rpc(fn: string, args: Record<string, unknown>) {
+      const keys = Object.keys(args);
+      const named = keys.map((k, i) => `${k} => $${i + 1}`).join(', ');
+      const { rows } = await q<{ result: unknown }>(
+        `select ${fn}(${named}) as result`, keys.map((k) => args[k]));
+      return { data: rows[0]?.result ?? null, error: null };
+    },
     from(table: string) {
       const filters: Filter[] = [];
       let mode: 'select' | 'update' | 'upsert' = 'select';
@@ -213,8 +243,11 @@ async function seedPendingPlan(opts: { providerMemberId?: string | null; total?:
     `insert into plans (practice_id, provider_member_id, status, total_amount)
      values ($1, $2, 'pending_first_payment', $3) returning id`,
     [practiceId, opts.providerMemberId ?? null, opts.total ?? 3000]);
+  // 'processing' with instalment_number 1 is exactly what claim_credit_for_plan
+  // (0130) writes for the first instalment, and it is the state 0151 accepts.
   const payment = await q<{ id: string }>(
-    `insert into payments (plan_id, status) values ($1, 'pending') returning id`,
+    `insert into payments (plan_id, instalment_number, status)
+     values ($1, 1, 'processing') returning id`,
     [plan.rows[0].id]);
   return { planId: plan.rows[0].id, paymentId: payment.rows[0].id };
 }
@@ -228,6 +261,7 @@ const activate = (planId: string, paymentId: string, providerMemberId: string | 
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
+  await db.exec(MIG_0151);
 });
 
 beforeEach(async () => {
@@ -336,21 +370,41 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     // Nor the membership-side columns it used to read to populate them.
     expect(code).not.toMatch(/personal_bank_name|personal_account_number|personal_branch_code/);
 
-    // This used to be a blanket ban on the string `practice_members`, on the
-    // grounds that the writer must not read the membership row "to decide a
-    // destination at all". Since 0094 it DOES read that row — to resolve the
-    // treating practitioner's user_id for attribution, because plans now point
-    // at a membership and payouts.provider_id still points at a profile.
-    //
-    // The ban is therefore narrowed to what it was actually protecting, which
-    // makes it sharper rather than looser: the destination must be the hard
-    // literal 'practice', and the membership read must not pull any column
-    // that could reintroduce a destination decision.
-    expect(code).toMatch(/payout_destination:\s*'practice'/);
-    expect(code).not.toMatch(/payout_destination'|payout_destination"/);   // never SELECTed
-    const memberSelects = code.match(/from\('practice_members'\)[\s\S]{0,120}?\.select\('([^']*)'\)/g) ?? [];
-    expect(memberSelects).toHaveLength(1);
-    expect(memberSelects[0]).toMatch(/\.select\('user_id'\)/);
+    // The TypeScript no longer writes payouts at all — it calls the RPC — so
+    // the belt-and-braces pins for the destination and the membership read
+    // follow the writer into the migration, below. What stays pinned HERE is
+    // that the TypeScript did not keep a second, parallel writer.
+    expect(code).not.toMatch(/from\('payouts'\)/);
+    expect(code).not.toMatch(/payout_destination/);
+  });
+
+  it('the SQL writer names the destination as a literal, with no branch', () => {
+    // This assertion used to read `payout_destination: 'practice'` out of the
+    // TypeScript. Moving it rather than deleting it is the whole point: the
+    // regression it guards is someone reinstating a provider destination, and
+    // that regression is now available in SQL instead. Deleting the pin
+    // because the code it named moved would retire the guard exactly when the
+    // ground it guards changed hands.
+    const sql = stripComments(MIG_0151, { sql: true });
+
+    // One INSERT into payouts, and the destination in it is the hard literal.
+    expect((sql.match(/INSERT INTO payouts/gi) ?? [])).toHaveLength(1);
+    expect(sql).toMatch(/payout_destination[\s\S]{0,400}?'practice'/);
+    expect(sql).not.toMatch(/'provider'/);
+
+    // Not one of the five snapshot columns is named, nor the membership-side
+    // banking that used to fill them.
+    for (const col of SNAPSHOT_COLS) {
+      expect(sql, `0151 must not write ${col}`).not.toMatch(col);
+    }
+    expect(sql).not.toMatch(/personal_bank_name|personal_account_number|personal_branch_code/);
+
+    // The membership is read for exactly one column — the treating
+    // practitioner's user_id, for attribution — and nothing that could
+    // reintroduce a destination decision travels with it.
+    const memberReads = sql.match(/SELECT\s+([\s\S]*?)\s+INTO[\s\S]{0,40}?FROM practice_members/gi) ?? [];
+    expect(memberReads).toHaveLength(1);
+    expect(memberReads[0]).toMatch(/SELECT user_id INTO v_provider/);
   });
 
   it('the payout row it builds has exactly the expected keys — no silent additions', async () => {

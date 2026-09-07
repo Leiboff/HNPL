@@ -59,6 +59,20 @@ type SvcClient = any;
 export type AttemptOutcome =
   | { kind: 'charged';         paymentId: string; reference: string; attemptNumber: number; amountChargedCents: number; providerPaymentId?: string; resultCode?: string }
   | { kind: 'claim_lost';      paymentId: string; reason: 'already_claimed' | 'not_eligible' | 'plan_not_active' | 'no_registration_id' | 'no_email' }
+  // NOTHING WAS SENT, AND THAT IS DIFFERENT FROM BOTH OF THE OTHERS.
+  //
+  // 'dispatch_not_committed' used to be a claim_lost reason, which reads to
+  // every consumer as "an attempt is already in flight" — the patient is
+  // told a payment is under way and told not to retry. On this branch the
+  // dispatch marker would not commit, so the code REFUSED to call Peach:
+  // nothing is in flight, nothing was charged, and the claim has been handed
+  // back. It is the one outcome here that is safely retryable, and folding
+  // it into claim_lost was the only thing stopping us saying so.
+  //
+  // Distinct from transport_error for the mirror-image reason: there the
+  // request went out and the answer did not come back, so a retry can pay
+  // twice. Here the request never went out.
+  | { kind: 'not_dispatched';  paymentId: string; reason: 'dispatch_not_committed' }
   | { kind: 'transport_error'; paymentId: string; error: string; reference: string };
 
 /**
@@ -137,7 +151,9 @@ export async function attemptChargeInstalment(
 
   // From here on, if anything goes wrong we may need to REVERT the claim.
   type ClaimLostReason = Extract<AttemptOutcome, { kind: 'claim_lost' }>['reason'];
-  async function revert(reason: ClaimLostReason): Promise<AttemptOutcome> {
+
+  /** Hand the claim back. Guarded, so a claim someone else now holds is untouched. */
+  async function releaseClaim(): Promise<void> {
     await svc
       .from('payments')
       .update({
@@ -147,8 +163,19 @@ export async function attemptChargeInstalment(
       })
       .eq('id', paymentId)
       .eq('status', 'processing')
+      .eq('peach_payment_id', reference)
       .select('id');
+  }
+
+  async function revert(reason: ClaimLostReason): Promise<AttemptOutcome> {
+    await releaseClaim();
     return { kind: 'claim_lost', paymentId, reason };
+  }
+
+  /** The same release, reported as what it is: no request was ever sent. */
+  async function revertUndispatched(): Promise<AttemptOutcome> {
+    await releaseClaim();
+    return { kind: 'not_dispatched', paymentId, reason: 'dispatch_not_committed' };
   }
 
   // ── 3. Plan lookup — Peach registration id is now the reusable token.
@@ -233,18 +260,25 @@ export async function attemptChargeInstalment(
   // collect — charging the customer twice. See
   // lib/payments/sweepStuckProcessing.ts.
   //
-  // Deliberately not awaited-and-checked: a failed stamp must not stop the
-  // charge, and its only consequence is that the sweep treats this row
-  // conservatively (as never-sent) if the process then dies. That is the
-  // wrong side to fail on, so it is logged loudly.
-  const { error: stampErr } = await svc
+  // This write is the durable dispatch barrier. The sweep interprets a NULL
+  // provider_attempted_at as proof that no request left this application, so
+  // we MUST NOT call Peach unless the marker was committed on the exact claim
+  // and reference we are about to send. Otherwise a later sweep could release
+  // a charge that Peach accepted and a retry would use a fresh reference.
+  const { data: stamped, error: stampErr } = await svc
     .from('payments')
     .update({ provider_attempted_at: new Date().toISOString() })
-    .eq('id', paymentId);
-  if (stampErr) {
-    console.error('[charge-instalment] ALERT could not stamp provider_attempted_at', {
-      paymentId, reference, error: stampErr.message,
+    .eq('id', paymentId)
+    .eq('status', 'processing')
+    .eq('peach_payment_id', reference)
+    .select('id');
+  if (stampErr || !stamped || stamped.length !== 1) {
+    console.error('[charge-instalment] provider dispatch not committed — refusing to call Peach', {
+      paymentId,
+      reference,
+      error: stampErr?.message ?? 'claimed row no longer matched',
     });
+    return revertUndispatched();
   }
 
   const provider = getPaymentProvider();

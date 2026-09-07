@@ -24,6 +24,8 @@ const RUNNER     = read('lib/payments/runPayoutBatches.ts');
 const ACTIONS    = read('app/admin/payouts/actions.ts');
 const PAGE       = read('app/admin/payouts/page.tsx');
 const ACTIVATE   = read('lib/payments/activateFirstInstalment.ts');
+// The payouts INSERT moved out of ACTIVATE and into this migration (0151).
+const ACTIVATE_SQL = read('supabase/migrations/0151_atomic_first_instalment_activation.sql');
 const MEMBERS_VW = read('app/practice/members/MembersView.tsx');
 const MEMBERS_AC = read('app/practice/members/actions.ts');
 const ADD_FORM   = read('app/practice/members/AddMemberForm.tsx');
@@ -259,9 +261,20 @@ describe('settlement is batch-first', () => {
 
 describe('provider payout destination — removed from every write site', () => {
   it('activateFirstInstalment always writes practice, with no branch', () => {
+    // The write is now one statement inside activate_first_instalment (0151),
+    // so the assertion reads the SQL. It is the same claim about the same
+    // single writer, aimed at where that writer moved — the destination is a
+    // hard literal and there is no branch that could pick another.
+    const sql = stripComments(ACTIVATE_SQL, { sql: true });
+    expect(sql).toMatch(/payout_destination[\s\S]{0,400}?'practice'/);
+    expect(sql).not.toMatch(/'provider'/);
+    expect(sql).not.toMatch(/snapshot_/);
+    expect(sql).not.toMatch(/personal_/);
+
+    // And the TypeScript did not keep a writer of its own beside it.
     const code = codeOf(ACTIVATE);
-    expect(code).toMatch(/payout_destination:\s*'practice'/);
-    expect(code).not.toMatch(/'provider'/);
+    expect(code).not.toMatch(/from\('payouts'\)/);
+    expect(code).not.toMatch(/payout_destination/);
     expect(code).not.toMatch(/snapshot_/);
     expect(code).not.toMatch(/personal_/);
   });
