@@ -32,9 +32,10 @@ type Row = Record<string, unknown>;
 
 const dbState: {
   profiles:        Row[];
-  webhookEventIds: Set<string>;
+  webhookEvents:   Map<string, Row>;
   profileUpdates:  Row[];
-} = { profiles: [], webhookEventIds: new Set(), profileUpdates: [] };
+  profileUpdateFailures: number;
+} = { profiles: [], webhookEvents: new Map(), profileUpdates: [], profileUpdateFailures: 0 };
 
 function selectChain(rows: Row[]) {
   const filters: Array<(row: Row) => boolean> = [];
@@ -49,23 +50,30 @@ function selectChain(rows: Row[]) {
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
+    rpc: async (fn: string, args: { p_event_id: string; p_payload: Row }) => {
+      if (fn !== 'claim_didit_webhook_event') throw new Error(`unexpected rpc: ${fn}`);
+      const existing = dbState.webhookEvents.get(args.p_event_id);
+      if (!existing) {
+        dbState.webhookEvents.set(args.p_event_id, {
+          event_id: args.p_event_id, payload: args.p_payload, processing_status: 'processing', attempt_count: 1,
+        });
+        return { data: 'claimed', error: null };
+      }
+      if (existing.processing_status === 'processed') return { data: 'processed', error: null };
+      if (existing.processing_status === 'processing') return { data: 'active', error: null };
+      Object.assign(existing, {
+        payload: args.p_payload, processing_status: 'processing',
+        attempt_count: (existing.attempt_count as number) + 1, last_error: null,
+      });
+      return { data: 'claimed', error: null };
+    },
     from(table: string) {
       if (table === 'didit_webhook_events') {
         return {
-          insert: async (row: { event_id: string }) => {
-            if (dbState.webhookEventIds.has(row.event_id)) {
-              return { error: { code: '23505', message: 'duplicate key' } };
-            }
-            dbState.webhookEventIds.add(row.event_id);
-            return { error: null };
-          },
-          // releaseEventClaim (audit F-13) drops the claim on the one path
-          // that answers 500 asking to be retried. Modelled here rather
-          // than stubbed to a no-op so the "does the retry actually get
-          // through" assertions below are testing the real mechanism.
-          delete: () => ({
+          update: (row: Row) => ({
             eq: async (col: string, val: unknown) => {
-              if (col === 'event_id') dbState.webhookEventIds.delete(val as string);
+              const event = dbState.webhookEvents.get(val as string);
+              if (col === 'event_id' && event) Object.assign(event, row);
               return { error: null };
             },
           }),
@@ -75,6 +83,10 @@ vi.mock('@supabase/supabase-js', () => ({
         return {
           update: (row: Row) => ({
             eq: (col: string, val: unknown) => {
+              if (dbState.profileUpdateFailures > 0) {
+                dbState.profileUpdateFailures -= 1;
+                return Promise.resolve({ data: null, error: { message: 'simulated profile write failure' } });
+              }
               const idx = dbState.profiles.findIndex((p) => p[col] === val);
               if (idx >= 0) dbState.profiles[idx] = { ...dbState.profiles[idx], ...row };
               dbState.profileUpdates.push({ ...row, __eq: { [col]: val } });
@@ -164,8 +176,9 @@ beforeEach(() => {
   delete process.env.DHA_FACE_MATCH_APPROVE_MIN;
   delete process.env.DHA_FACE_MATCH_REVIEW_MIN;
   dbState.profiles = [{ id: USER_ID, role: 'patient', email: 'a@test.com', identity_verification_path: 'ocr' }];
-  dbState.webhookEventIds = new Set();
+  dbState.webhookEvents = new Map();
   dbState.profileUpdates.length = 0;
+  dbState.profileUpdateFailures = 0;
 
   findPatientBySaId.mockReset();
   // Default: faithfully replicates the real function's query semantics
@@ -216,6 +229,63 @@ describe('14. idempotency — replayed event_id is a no-op', () => {
     const body2 = await res2.json();
     expect(body2.duplicate).toBe(true);
     expect(dbState.profileUpdates).toHaveLength(0);
+  });
+
+  it('does not process a duplicate delivery while the first attempt owns the lease', async () => {
+    dbState.webhookEvents.set('evt-1', {
+      event_id: 'evt-1', payload: ocrEvent(), processing_status: 'processing', attempt_count: 1,
+    });
+
+    const res = await POST(buildRequest(ocrEvent()));
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ received: true, processing: true });
+    expect(dbState.profileUpdates).toHaveLength(0);
+  });
+});
+
+describe('durable inbox failure recovery', () => {
+  it('retries a failed final profile update and only then makes the event terminal', async () => {
+    dbState.profileUpdateFailures = 1;
+    const first = await POST(buildRequest(ocrEvent()));
+    expect(first.status).toBe(500);
+    expect(dbState.webhookEvents.get('evt-1')).toMatchObject({ processing_status: 'failed', attempt_count: 1 });
+
+    const retry = await POST(buildRequest(ocrEvent()));
+    expect(retry.status).toBe(200);
+    expect(dbState.profiles[0].identity_verification_status).toBe('approved');
+    expect(dbState.webhookEvents.get('evt-1')).toMatchObject({ processing_status: 'processed', attempt_count: 2 });
+  });
+
+  it('keeps a decryption failure as an actionable failed inbox record', async () => {
+    dbState.profiles[0] = {
+      ...dbState.profiles[0], identity_verification_path: 'dha',
+      pending_sa_id_number: encryptId(VALID_SA_IDS[0]), pending_sa_id_lookup_hash: hashIdForLookup(VALID_SA_IDS[0]),
+    };
+    const originalKey = process.env.SA_ID_ENCRYPTION_KEY;
+    process.env.SA_ID_ENCRYPTION_KEY = 'invalid-key';
+    try {
+      const res = await POST(buildRequest(dhaEvent()));
+      expect(res.status).toBe(500);
+      expect(dbState.webhookEvents.get('evt-1')).toMatchObject({
+        processing_status: 'failed',
+        last_error: expect.stringMatching(/key|decrypt/i),
+        payload: expect.objectContaining({ status: 'Approved' }),
+      });
+    } finally {
+      process.env.SA_ID_ENCRYPTION_KEY = originalKey;
+    }
+  });
+
+  it('does not permanently consume an event when an unknown exception escapes processing', async () => {
+    findPatientBySaId.mockRejectedValueOnce('non-error failure');
+    const first = await POST(buildRequest(ocrEvent()));
+    expect(first.status).toBe(500);
+    expect(dbState.webhookEvents.get('evt-1')?.processing_status).toBe('failed');
+
+    const retry = await POST(buildRequest(ocrEvent()));
+    expect(retry.status).toBe(200);
+    expect(dbState.profiles[0].identity_verification_status).toBe('approved');
   });
 });
 
@@ -517,7 +587,7 @@ describe('transient vs deterministic duplicate-check failure (Change 4)', () => 
     expect(dbState.profiles[0].identity_verification_status).not.toBe('declined');
   });
 
-  // ─── The retry has to be able to DO something (audit F-13) ──────────
+  // ─── The retry has to be able to DO something (audit F-13/P2-01) ────
   //
   // The 500 above is only worth returning if the delivery it asks Didit to
   // resend can still be processed. It could not: alreadyProcessed() claims
@@ -527,16 +597,19 @@ describe('transient vs deterministic duplicate-check failure (Change 4)', () => 
   // applicant's session reads Approved, their profile never gets
   // sa_id_number, and nothing anywhere is logged as an error.
   //
-  // This is the assertion that would have caught it. It replays the SAME
-  // event after a transient failure and requires the second attempt to
-  // actually persist.
-  it('releases the idempotency claim so the retry it asked for can succeed', async () => {
+  // This replays the SAME event after a transient failure and requires the
+  // durable inbox to reclaim the failed row and actually persist it.
+  it('keeps the failed inbox event retryable so the next attempt can succeed', async () => {
     findPatientBySaId.mockRejectedValueOnce(new Error('simulated DB connection failure'));
     const first = await POST(buildRequest(ocrEvent()));
     expect(first.status).toBe(500);
 
-    // The claim must be gone, or the retry below is a no-op.
-    expect(dbState.webhookEventIds.size).toBe(0);
+    // The failed claim must be reclaimable, or the retry below is a no-op.
+    expect(dbState.webhookEvents.get('evt-1')).toMatchObject({
+      processing_status: 'failed',
+      attempt_count: 1,
+      payload: expect.objectContaining({ event_id: 'evt-1' }),
+    });
 
     // Didit resends the identical delivery. This time the lookup works.
     findPatientBySaId.mockResolvedValueOnce(null);
@@ -544,12 +617,12 @@ describe('transient vs deterministic duplicate-check failure (Change 4)', () => 
     expect(retry.status).toBe(200);
     expect(await retry.json()).not.toMatchObject({ duplicate: true });
     expect(dbState.profiles[0].identity_verification_status).toBe('approved');
+    expect(dbState.webhookEvents.get('evt-1')).toMatchObject({ processing_status: 'processed', attempt_count: 2 });
   });
 
   it('still treats a genuine duplicate delivery as a duplicate', async () => {
-    // The release is scoped to the retry path and must not have turned the
-    // ledger off: an ordinary redelivery of an event that COMPLETED is
-    // still short-circuited.
+    // Reclaiming failed rows must not turn dedupe off: an ordinary
+    // redelivery of an event that COMPLETED is still short-circuited.
     findPatientBySaId.mockResolvedValueOnce(null);
     const first = await POST(buildRequest(ocrEvent()));
     expect(first.status).toBe(200);
