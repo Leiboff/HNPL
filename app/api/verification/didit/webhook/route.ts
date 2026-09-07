@@ -9,6 +9,7 @@ import { validateSaId, saIdAge } from '@/lib/validation';
 import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import type { DiditWebhookEvent } from '@/lib/didit/types';
+import { resolveFaceMatchThresholds } from '@/lib/didit/faceMatchPolicy';
 
 // ─── Didit webhook receiver — onboarding identity verification ─────────
 //
@@ -305,10 +306,23 @@ async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event
 
 async function handleApprovedDha(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<void> {
   const score = faceMatchScore(event);
-  const approveMin = Number(process.env.DHA_FACE_MATCH_APPROVE_MIN ?? 70);
-  const reviewMin  = Number(process.env.DHA_FACE_MATCH_REVIEW_MIN  ?? 45);
-
   const scoreFields = { dha_face_match_score: score, ...envelopeFields(event) };
+
+  // Configuration is part of the security decision. Number('bad') produces
+  // NaN and every `< NaN` comparison is false, which previously sent even a
+  // very low non-null score into the approval branch. Invalid, out-of-range or
+  // reversed thresholds now fail closed into review.
+  const policy = resolveFaceMatchThresholds();
+  if (!policy.ok) {
+    console.error('[didit-webhook] ALERT invalid DHA face-match threshold configuration — refusing approval', {
+      userId,
+      sessionId: event.session_id,
+      reason: policy.reason,
+    });
+    await markStatus(supabase, userId, 'in_review', 'dha_unrecognised_outcome', scoreFields);
+    return;
+  }
+  const { approveMin, reviewMin } = policy.thresholds;
 
   if (score === null) {
     console.warn('[didit-webhook] DHA path: Approved session carried no face_matches[0].score', { userId, sessionId: event.session_id });

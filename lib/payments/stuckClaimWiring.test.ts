@@ -58,13 +58,18 @@ describe('the stamp is written before the call, never after', () => {
     expect(stamp).toBeLessThan(charge);
   });
 
-  it('a failed stamp does not stop the charge', () => {
-    // It fails to the conservative side on its own (the sweep then treats
-    // the row as never-sent, which is the wrong side) — so it is logged
-    // loudly rather than thrown, because refusing to collect money over a
-    // bookkeeping write is worse than either.
-    expect(CHARGE).toMatch(/\[charge-instalment\] ALERT could not stamp provider_attempted_at/);
-    expect(CHARGE).not.toMatch(/if \(stampErr\) return/);
+  it('a failed stamp stops the charge and safely releases the unsent claim', () => {
+    const refusal = at(CHARGE, "return revert('dispatch_not_committed')");
+    const charge  = at(CHARGE, 'await provider.chargeSavedCard({');
+    expect(refusal).toBeLessThan(charge);
+    expect(CHARGE).toMatch(/stampErr \|\| !stamped \|\| stamped\.length !== 1/);
+  });
+
+  it('settle-entire also refuses unless dispatch metadata committed', () => {
+    const refusal = at(SETTLE, "provider_dispatch_not_committed");
+    const charge  = at(SETTLE, 'await provider.chargeSavedCard({');
+    expect(refusal).toBeLessThan(charge);
+    expect(SETTLE).toMatch(/dispatchErr \|\| !dispatchCommitted \|\| dispatchCommitted\.length !== 1/);
   });
 
   it('the database maintains the other two facts itself', () => {

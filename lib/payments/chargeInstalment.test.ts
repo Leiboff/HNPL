@@ -31,6 +31,7 @@ type PaymentRow = {
   peach_payment_id?:           string | null;
   dunning_fees_cents?:         number;
   last_dunning_attempt_date?:  string | null;
+  provider_attempted_at?:      string | null;
 };
 type PlanRow = {
   id:                             string;
@@ -46,6 +47,7 @@ type StubState = {
   plans:     PlanRow[];
   profiles:  ProfileRow[];
   today?:    string;
+  dispatchStampError?: boolean;
 };
 
 function makeStub(state: StubState) {
@@ -90,6 +92,9 @@ function makeStub(state: StubState) {
             return builder;
           },
           async select(_cols?: string) {
+            if (table === 'payments' && 'provider_attempted_at' in patch && state.dispatchStampError) {
+              return { data: null, error: { message: 'dispatch stamp failed' } };
+            }
             const rows = (state as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
             const matching = rows.filter((r) => {
               for (const [c, v] of eqs)  if (r[c] !== v) return false;
@@ -431,6 +436,30 @@ describe('attemptChargeInstalment — Peach transport error', () => {
     expect(state.payments[0].status).toBe('processing');
     expect(state.payments[0].retry_count).toBe(1);
     expect(state.payments[0].peach_payment_id).toBeTruthy();
+  });
+});
+
+describe('attemptChargeInstalment — dispatch provenance barrier', () => {
+  it('does not call Peach and restores the claim when the attempt stamp fails', async () => {
+    const state: StubState = {
+      payments: [{
+        id: 'p1', status: 'scheduled', retry_count: 0, amount: 100,
+        plan_id: 'plan-1', patient_id: 'u1', due_date: '2026-06-14',
+      }],
+      plans:    [{ id: 'plan-1', peach_registration_id: 'REG', patient_id: 'u1', status: 'active' }],
+      profiles: [{ id: 'u1', email: 'u@example.com' }],
+      dispatchStampError: true,
+    };
+    const svc = makeStub(state);
+    stubSuccess();
+
+    const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
+
+    expect(result).toEqual({ kind: 'claim_lost', paymentId: 'p1', reason: 'dispatch_not_committed' });
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
+    expect(state.payments[0].status).toBe('scheduled');
+    expect(state.payments[0].retry_count).toBe(0);
+    expect(state.payments[0].peach_payment_id).toBeNull();
   });
 });
 

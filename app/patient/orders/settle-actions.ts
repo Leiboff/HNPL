@@ -314,20 +314,6 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   //       column ('settlement'); the purpose char in the ref is
   //       secondary evidence.
   const reference = settleRef(settlementId);
-  await svc.from('payments').update({ peach_payment_id: reference }).eq('id', settlementId);
-
-  await svc.from('plan_events').insert({
-    plan_id:    planId,
-    patient_id: user.id,
-    event_type: 'instalment_self_settled',
-    payload: {
-      settlement_id:        settlementId,
-      reference,
-      amount_cents:         amountCents,
-      covered_count:        coveredCount,
-      via_settle_entire:    true,
-    },
-  });
 
   // Standing instruction: INSTALLMENT + initialTransactionId when
   // present, UNSCHEDULED fallback otherwise. Same posture as
@@ -348,10 +334,48 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   // stamp written after the response would make every in-flight settlement
   // look never-sent, and the sweep would release a whole plan's instalments
   // while Peach was collecting them.
-  await svc
+  // Commit the reference and the may-have-been-sent marker together. The
+  // stuck-processing sweep treats a NULL marker as proof that it may safely
+  // release the claim, so calling Peach after this write failed would create
+  // a double-charge window. No provider request is made unless exactly this
+  // processing settlement row accepted the dispatch metadata.
+  const { data: dispatchCommitted, error: dispatchErr } = await svc
     .from('payments')
-    .update({ provider_attempted_at: new Date().toISOString() })
-    .eq('id', settlementId);
+    .update({
+      peach_payment_id:     reference,
+      provider_attempted_at: new Date().toISOString(),
+    })
+    .eq('id', settlementId)
+    .eq('status', 'processing')
+    .select('id');
+
+  if (dispatchErr || !dispatchCommitted || dispatchCommitted.length !== 1) {
+    console.error('[settle-entire-bill] provider dispatch not committed — refusing to call Peach', {
+      settlementId,
+      planId,
+      reference,
+      error: dispatchErr?.message ?? 'settlement row no longer matched',
+    });
+    await failSettlementRow(svc, settlementId, 'provider_dispatch_not_committed');
+    return {
+      ok: false,
+      status: 'transport_error',
+      message: 'The payment could not be started safely. Please try again.',
+    };
+  }
+
+  await svc.from('plan_events').insert({
+    plan_id:    planId,
+    patient_id: user.id,
+    event_type: 'instalment_self_settled',
+    payload: {
+      settlement_id:        settlementId,
+      reference,
+      amount_cents:         amountCents,
+      covered_count:        coveredCount,
+      via_settle_entire:    true,
+    },
+  });
 
   const provider = getPaymentProvider();
   const chargeResult = await provider.chargeSavedCard({

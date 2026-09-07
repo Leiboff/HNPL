@@ -49,6 +49,7 @@ const dbState: {
   profiles: Array<{ id: string; email: string }>;
 } = { plans: [], profiles: [] };
 const writes: { table: string; op: 'insert' | 'update'; row: unknown }[] = [];
+const dispatchWriteError: { value: boolean } = { value: false };
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
@@ -86,7 +87,18 @@ vi.mock('@supabase/supabase-js', () => ({
             eq:  () => chain,
             in:  () => chain,
             neq: () => chain,
-            select: () => record(),
+            select: () => {
+              if (
+                table === 'payments' &&
+                typeof row === 'object' && row !== null &&
+                'provider_attempted_at' in row &&
+                dispatchWriteError.value
+              ) {
+                return Promise.resolve({ data: null, error: { message: 'dispatch write failed' } });
+              }
+              record();
+              return Promise.resolve({ data: [{ id: 'updated-row' }], error: null });
+            },
             then: (resolve: (v: unknown) => unknown) => record().then(resolve),
           };
           return chain;
@@ -114,6 +126,7 @@ beforeEach(() => {
   dbState.plans     = [{ id: 'plan-1', patient_id: 'user-1', peach_registration_id: 'REG_ABC' }];
   dbState.profiles  = [{ id: 'user-1', email: 'u@example.com' }];
   writes.length = 0;
+  dispatchWriteError.value = false;
   rpcResults.current = { ok: false, error: 'unhandled' };
   process.env.NEXT_PUBLIC_SUPABASE_URL  = 'https://test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-test';
@@ -233,5 +246,27 @@ describe('selfSettleEntirePlan — precondition failures after a successful clai
       !(w.row as Record<string, unknown>).peach_payment_id,
     );
     expect(failedAfterCharge).toHaveLength(0);
+  });
+
+  it('dispatch write failure: releases the unsent settlement and never calls Peach', async () => {
+    rpcResults.current = { ok: true, settlement_id: 'set-1', amount_cents: 25_000, covered_count: 1 };
+    dispatchWriteError.value = true;
+    stubProviderSuccess();
+
+    const result = await selfSettleEntirePlan('plan-1');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe('transport_error');
+      if (result.status === 'transport_error') {
+        expect(result.message).toBe('The payment could not be started safely. Please try again.');
+      }
+    }
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
+    expect(writes).toContainEqual({
+      table: 'payments',
+      op: 'update',
+      row: { status: 'failed', failure_reason: 'provider_dispatch_not_committed' },
+    });
   });
 });

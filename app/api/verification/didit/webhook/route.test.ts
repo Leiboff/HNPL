@@ -356,6 +356,31 @@ describe('22. DHA path — face-match score below the approve threshold declines
     expect(res.status).toBe(200);
     expect(dbState.profiles[0].identity_verification_status).toBe('in_review');
   });
+
+  it.each([
+    ['not-a-number', '45'],
+    ['70', 'not-a-number'],
+    ['101', '45'],
+    ['60', '61'],
+  ])('invalid threshold configuration (%s/%s) fails closed into review', async (approve, review) => {
+    process.env.DHA_FACE_MATCH_APPROVE_MIN = approve;
+    process.env.DHA_FACE_MATCH_REVIEW_MIN = review;
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(buildRequest(dhaEvent({
+      decision: { face_matches: [{ status: 'Approved', score: 99 }] },
+    })));
+
+    expect(res.status).toBe(200);
+    expect(dbState.profiles[0].identity_verification_status).toBe('in_review');
+    expect(dbState.profiles[0].identity_verification_reason).toBe('dha_unrecognised_outcome');
+    expect(dbState.profiles[0].sa_id_number).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[didit-webhook] ALERT invalid DHA face-match threshold configuration — refusing approval',
+      expect.objectContaining({ reason: expect.any(String) }),
+    );
+    errorSpy.mockRestore();
+  });
 });
 
 describe('13. concurrent sessions for the same SA ID — one-ID-per-account still enforced across paths', () => {

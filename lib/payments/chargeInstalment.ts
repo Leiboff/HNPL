@@ -58,7 +58,7 @@ type SvcClient = any;
 
 export type AttemptOutcome =
   | { kind: 'charged';         paymentId: string; reference: string; attemptNumber: number; amountChargedCents: number; providerPaymentId?: string; resultCode?: string }
-  | { kind: 'claim_lost';      paymentId: string; reason: 'already_claimed' | 'not_eligible' | 'plan_not_active' | 'no_registration_id' | 'no_email' }
+  | { kind: 'claim_lost';      paymentId: string; reason: 'already_claimed' | 'not_eligible' | 'plan_not_active' | 'no_registration_id' | 'no_email' | 'dispatch_not_committed' }
   | { kind: 'transport_error'; paymentId: string; error: string; reference: string };
 
 /**
@@ -147,6 +147,7 @@ export async function attemptChargeInstalment(
       })
       .eq('id', paymentId)
       .eq('status', 'processing')
+      .eq('peach_payment_id', reference)
       .select('id');
     return { kind: 'claim_lost', paymentId, reason };
   }
@@ -233,18 +234,25 @@ export async function attemptChargeInstalment(
   // collect — charging the customer twice. See
   // lib/payments/sweepStuckProcessing.ts.
   //
-  // Deliberately not awaited-and-checked: a failed stamp must not stop the
-  // charge, and its only consequence is that the sweep treats this row
-  // conservatively (as never-sent) if the process then dies. That is the
-  // wrong side to fail on, so it is logged loudly.
-  const { error: stampErr } = await svc
+  // This write is the durable dispatch barrier. The sweep interprets a NULL
+  // provider_attempted_at as proof that no request left this application, so
+  // we MUST NOT call Peach unless the marker was committed on the exact claim
+  // and reference we are about to send. Otherwise a later sweep could release
+  // a charge that Peach accepted and a retry would use a fresh reference.
+  const { data: stamped, error: stampErr } = await svc
     .from('payments')
     .update({ provider_attempted_at: new Date().toISOString() })
-    .eq('id', paymentId);
-  if (stampErr) {
-    console.error('[charge-instalment] ALERT could not stamp provider_attempted_at', {
-      paymentId, reference, error: stampErr.message,
+    .eq('id', paymentId)
+    .eq('status', 'processing')
+    .eq('peach_payment_id', reference)
+    .select('id');
+  if (stampErr || !stamped || stamped.length !== 1) {
+    console.error('[charge-instalment] provider dispatch not committed — refusing to call Peach', {
+      paymentId,
+      reference,
+      error: stampErr?.message ?? 'claimed row no longer matched',
     });
+    return revert('dispatch_not_committed');
   }
 
   const provider = getPaymentProvider();
