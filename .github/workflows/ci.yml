@@ -38,8 +38,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    # The suite is ~8 minutes; the ceiling is for a hang, not for the work.
-    timeout-minutes: 25
+    # The PGlite suites are CPU-bound and GitHub's shared runners can take
+    # substantially longer than a warm local run. Keep a ceiling for genuine
+    # hangs without cancelling a healthy run while it is still replaying the
+    # migration-heavy tests.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
