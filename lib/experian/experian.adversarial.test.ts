@@ -165,9 +165,12 @@ describe('credentials never reach a log or a thrown value', () => {
   });
 
   it('the decrypted SA ID is passed through and never logged or persisted', () => {
-    // It goes into assessAffordability and nowhere else. A write of the
-    // plaintext would defeat the AES-256-GCM storage it came out of.
-    expect(ACTIONS).toMatch(/saIdNumber = loaded\.profile\.sa_id_number \? decryptId\(loaded\.profile\.sa_id_number\) : null/);
+    // It goes into assessAffordability and nowhere else. Encrypted v1 values
+    // are decrypted for the bureau call; legacy plaintext values remain
+    // readable during migration, but neither form may be written back.
+    expect(ACTIONS).toMatch(
+      /saIdNumber = loaded\.profile\.sa_id_number\s*\?\s*\(loaded\.profile\.sa_id_number\.startsWith\('v1:'\)\s*\?\s*decryptId\(loaded\.profile\.sa_id_number\)\s*:\s*loaded\.profile\.sa_id_number\)\s*:\s*null/,
+    );
     expect(ACTIONS).not.toMatch(/console\.[a-z]+\([^)]*saIdNumber/);
     expect(ACTIONS).not.toMatch(/sa_id_number:\s*saIdNumber/);
   });
