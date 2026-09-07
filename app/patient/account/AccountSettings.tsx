@@ -210,7 +210,7 @@ export default function AccountSettings() {
             this is one row, and a fourth GroupCard holding a single row reads
             as a section somebody forgot to finish. Last in the group because
             it is the only row here that is not a setting on this account. */}
-        <Row href="/patient/refer"                  title="Refer a friend"   icon="share" />
+        <Row href="/patient/refer"                  title="Referrals"        icon="share" />
       </GroupCard>
 
       <GroupCard title="Security">

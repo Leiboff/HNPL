@@ -34,6 +34,27 @@ const STORE = src('lib/experian/enquiryStore.ts');
 const ACTIONS = src('lib/onboarding/actions.ts');
 const POLICY = src('lib/underwriting/affordabilityPolicy.ts');
 
+// Slices one function's body out of a source file, brace-balanced. Carried
+// over from the standalone Experian source-check test that landed on master
+// separately (#101) so that its assertions stay scoped to runCreditCheck
+// rather than to the whole of lib/onboarding/actions.ts — a file-wide grep
+// would answer a question about the affordability boundary with a match from
+// some unrelated action.
+function functionBody(source: string, declaration: string): string {
+  const start = source.indexOf(declaration);
+  if (start === -1) throw new Error(`Could not find ${declaration}`);
+
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  for (let cursor = open; cursor < source.length; cursor += 1) {
+    if (source[cursor] === '{') depth += 1;
+    if (source[cursor] === '}') depth -= 1;
+    if (depth === 0) return source.slice(open + 1, cursor);
+  }
+
+  throw new Error(`Could not find the end of ${declaration}`);
+}
+
 const asOk = (json: string): ExperianOutcome => ({
   kind: 'ok', latencyMs: 1, raw: json, ...parseReturnData(json),
 });
@@ -173,6 +194,34 @@ describe('credentials never reach a log or a thrown value', () => {
     );
     expect(ACTIONS).not.toMatch(/console\.[a-z]+\([^)]*saIdNumber/);
     expect(ACTIONS).not.toMatch(/sa_id_number:\s*saIdNumber/);
+  });
+
+  it('the stored ID reaches the affordability boundary as a presence signal only', () => {
+    // From #101, which pinned this on master while the bureau call did not
+    // exist yet. The boundary itself still does not want the identifier: the
+    // affordability policy is told THAT an ID and a liveness result are on
+    // file, and the ID travels beside it in its own field, for the one caller
+    // (the bureau adapter) that has a use for it.
+    const runCreditCheck = functionBody(ACTIONS, 'export async function runCreditCheck()');
+
+    expect(runCreditCheck).toMatch(
+      /identityVerified:\s*!!loaded\.profile\.sa_id_number\s*&&\s*!!loaded\.profile\.liveness_verified_at/,
+    );
+
+    // #101 also asserted `not.toMatch(/\bdecryptId\s*\(/)` against this body,
+    // over a comment reading "a future bureau integration may deliberately
+    // decrypt at its adapter boundary — until that exists". This is that
+    // integration, so the prohibition is deliberately not carried over; the
+    // decryption it forbade is pinned, in its exact guarded form, by the test
+    // above. What survives is the half that is unconditional: the stored
+    // ciphertext may not be logged from here, and may not be written back.
+    //
+    // Both bounded to a single call, where #101's `[\s\S]*?` was open-ended.
+    // With a bureau catch that now logs BEFORE the identityVerified line, an
+    // unbounded gap matches a console.error and an sa_id_number that have
+    // nothing to do with each other, and the test fails on correct code.
+    expect(runCreditCheck).not.toMatch(/console\.\w+\([^)]*sa_id_number/);
+    expect(runCreditCheck).not.toMatch(/\.update\(\{[^}]*sa_id_number/);
   });
 
   it('the enquiry log stores the ID HASH, never the ID', () => {
