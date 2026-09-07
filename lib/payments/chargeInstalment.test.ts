@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // ─── Tests for the atomic claim + charge helper ─────────────────────
 //
@@ -455,11 +457,41 @@ describe('attemptChargeInstalment — dispatch provenance barrier', () => {
 
     const result = await attemptChargeInstalment(svc, 'p1', { today: '2026-06-15' });
 
-    expect(result).toEqual({ kind: 'claim_lost', paymentId: 'p1', reason: 'dispatch_not_committed' });
+    // NOT claim_lost. Every consumer of that kind reads it as "an attempt is
+    // already in flight" and tells the patient not to retry — and on this
+    // branch the code REFUSED to call Peach, so nothing is in flight and the
+    // claim is back where it started. The distinct kind is what lets the two
+    // settle buttons and the admin retry say so.
+    expect(result).toEqual({ kind: 'not_dispatched', paymentId: 'p1', reason: 'dispatch_not_committed' });
     expect(chargeSavedCardSpy).not.toHaveBeenCalled();
     expect(state.payments[0].status).toBe('scheduled');
     expect(state.payments[0].retry_count).toBe(0);
     expect(state.payments[0].peach_payment_id).toBeNull();
+  });
+
+  it('the retryable outcome is reachable from the patient-facing surfaces', () => {
+    // Source pins rather than a render: the property is that the distinct
+    // kind survives the whole way to the copy, and it is the LAST leg — the
+    // button's switch — that the bug lived in. A kind that stops being
+    // mapped anywhere in this chain silently reverts to the old behaviour,
+    // because both fallbacks below it are terminal, "do not retry" states.
+    const SETTLE = readFileSync(resolve(process.cwd(), 'app/patient/orders/settle-actions.ts'), 'utf8');
+    const PAY_NOW = readFileSync(resolve(process.cwd(), 'app/patient/orders/PayNowButton.tsx'), 'utf8');
+    const SETTLE_ALL = readFileSync(resolve(process.cwd(), 'app/patient/orders/SettleEntireBillButton.tsx'), 'utf8');
+
+    // The action translates the kind rather than dropping it into claim_lost.
+    expect(SETTLE).toMatch(/outcome\.kind === 'not_dispatched'/);
+    expect(SETTLE).toMatch(/status: 'not_started'/);
+
+    // Both buttons answer it, and NEITHER sets done — the button has to stay
+    // live or "please try again" is advice the patient cannot take.
+    for (const [name, src] of [['PayNowButton', PAY_NOW], ['SettleEntireBillButton', SETTLE_ALL]] as const) {
+      const start = src.indexOf("case 'not_started':");
+      expect(start, `${name} must handle not_started`).toBeGreaterThan(-1);
+      const body = src.slice(start, src.indexOf('return;', start));
+      expect(body, `${name} must not close the button`).not.toMatch(/setDone\(true\)/);
+      expect(body, `${name} must say nothing was charged`).toMatch(/nothing was charged/);
+    }
   });
 });
 

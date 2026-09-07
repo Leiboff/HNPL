@@ -47,7 +47,11 @@ const rpcResults: { current: RpcResult } = {
 const dbState: {
   plans:    Array<{ id: string; patient_id: string; peach_registration_id: string | null }>;
   profiles: Array<{ id: string; email: string }>;
-} = { plans: [], profiles: [] };
+  // The settlement row and the instalments it claimed. Needed since the
+  // undispatched failure branches release those rows themselves rather than
+  // leaving them to a webhook that is never coming.
+  payments: Array<Record<string, unknown>>;
+} = { plans: [], profiles: [], payments: [] };
 const writes: { table: string; op: 'insert' | 'update'; row: unknown }[] = [];
 const dispatchWriteError: { value: boolean } = { value: false };
 
@@ -57,16 +61,19 @@ vi.mock('@supabase/supabase-js', () => ({
     from(table: string) {
       function selectChain() {
         const filters: Array<(row: Record<string, unknown>) => boolean> = [];
+        const matching = () => {
+          const rows = (dbState as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
+          return rows.filter((r) => filters.every((f) => f(r)));
+        };
         const builder = {
           eq(col: string, val: unknown) { filters.push((r) => r[col] === val); return builder; },
-          maybeSingle: async () => {
-            const rows = (dbState as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
-            return { data: rows.find((r) => filters.every((f) => f(r))) ?? null, error: null };
-          },
-          single: async () => {
-            const rows = (dbState as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
-            return { data: rows.find((r) => filters.every((f) => f(r))) ?? null, error: null };
-          },
+          maybeSingle: async () => ({ data: matching()[0] ?? null, error: null }),
+          single:      async () => ({ data: matching()[0] ?? null, error: null }),
+          // Thenable, so a select that ends in filters rather than in
+          // .single() resolves to the LIST — which is how the covered-row
+          // read is written, and how PostgREST behaves.
+          then: (resolve: (v: unknown) => unknown) =>
+            Promise.resolve({ data: matching(), error: null }).then(resolve),
         };
         return builder;
       }
@@ -79,12 +86,25 @@ vi.mock('@supabase/supabase-js', () => ({
         // test that constrains the shape of a query instead of its effect.
         update: (row: unknown) => {
           let recorded = false;
+          const eqs: Array<[string, unknown]> = [];
           const record = () => {
-            if (!recorded) { writes.push({ table, op: 'update', row }); recorded = true; }
+            if (!recorded) {
+              writes.push({ table, op: 'update', row });
+              recorded = true;
+              // Apply it, so a test can assert the row's resulting STATE and
+              // not merely that some update was issued. The .eq() filters
+              // are honoured: a guarded write that matches nothing must
+              // leave the row alone here too, which is the whole point of
+              // the guards on the restore.
+              const rows = (dbState as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
+              for (const r of rows) {
+                if (eqs.every(([c, v]) => r[c] === v)) Object.assign(r, row as Record<string, unknown>);
+              }
+            }
             return Promise.resolve({ data: null, error: null });
           };
           const chain: Record<string, unknown> = {
-            eq:  () => chain,
+            eq:  (col: string, val: unknown) => { eqs.push([col, val]); return chain; },
             in:  () => chain,
             neq: () => chain,
             select: () => {
@@ -125,6 +145,7 @@ beforeEach(() => {
   sessionUser.value = { id: 'user-1' };
   dbState.plans     = [{ id: 'plan-1', patient_id: 'user-1', peach_registration_id: 'REG_ABC' }];
   dbState.profiles  = [{ id: 'user-1', email: 'u@example.com' }];
+  dbState.payments  = [];
   writes.length = 0;
   dispatchWriteError.value = false;
   rpcResults.current = { ok: false, error: 'unhandled' };
@@ -256,17 +277,114 @@ describe('selfSettleEntirePlan — precondition failures after a successful clai
     const result = await selfSettleEntirePlan('plan-1');
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.status).toBe('transport_error');
-      if (result.status === 'transport_error') {
-        expect(result.message).toBe('The payment could not be started safely. Please try again.');
-      }
-    }
+    // 'not_started', not 'transport_error'. The latter carries "do NOT pay
+    // again" copy in SettleEntireBillButton, for a charge that went out and
+    // whose answer never came back. This branch refused to call Peach at
+    // all and handed every claimed row back, so the patient must be told to
+    // retry — it is the only way the bill gets paid.
+    if (!result.ok) expect(result.status).toBe('not_started');
     expect(chargeSavedCardSpy).not.toHaveBeenCalled();
     expect(writes).toContainEqual({
       table: 'payments',
       op: 'update',
       row: { status: 'failed', failure_reason: 'provider_dispatch_not_committed' },
     });
+  });
+});
+
+// ─── The rows the claim moved come back, on every unsent branch ─────────
+//
+// claim_plan_for_settlement moves the covered instalments to 'processing'
+// and records their prior statuses on the settlement's snapshot. The
+// charge.failed webhook is what normally puts them back — and on these
+// branches no charge was ever sent, so no webhook will arrive.
+//
+// Left in 'processing' the damage is not cosmetic: the retry the patient is
+// told to make hits an RPC that finds nothing eligible (it claimed the rows
+// already) and returns nothing_to_settle, so the bill cannot be paid, and
+// ordinary collection is blocked too, until the stuck-processing sweep runs.
+describe('selfSettleEntirePlan — an unsent settlement releases what it claimed', () => {
+  const seedClaimed = () => {
+    dbState.payments = [
+      {
+        id: 'set-1', kind: 'settlement', status: 'processing',
+        pre_settlement_snapshot: { 'pay-1': { status: 'scheduled' }, 'pay-2': { status: 'failed' } },
+      },
+      { id: 'pay-1', kind: 'instalment', status: 'processing', settled_by_payment_id: 'set-1' },
+      { id: 'pay-2', kind: 'instalment', status: 'processing', settled_by_payment_id: 'set-1' },
+    ];
+  };
+
+  it('dispatch not committed: each covered row goes back to its SNAPSHOT status', async () => {
+    rpcResults.current = { ok: true, settlement_id: 'set-1', amount_cents: 25_000, covered_count: 2 };
+    dispatchWriteError.value = true;
+    seedClaimed();
+    stubProviderSuccess();
+
+    await selfSettleEntirePlan('plan-1');
+
+    const byId = Object.fromEntries(dbState.payments.map((r) => [r.id, r]));
+    // Not a blanket 'failed' for both: pay-1 was scheduled before the claim
+    // and must not be dropped into the dunning ladder it was never in.
+    expect(byId['pay-1'].status).toBe('scheduled');
+    expect(byId['pay-2'].status).toBe('failed');
+    // And the claim link is cleared, or the next settlement sees rows it
+    // does not hold.
+    expect(byId['pay-1'].settled_by_payment_id).toBeNull();
+    expect(byId['pay-2'].settled_by_payment_id).toBeNull();
+  });
+
+  it('no stored card: same release, on the branch that returns before Peach', async () => {
+    rpcResults.current = { ok: true, settlement_id: 'set-1', amount_cents: 25_000, covered_count: 2 };
+    dbState.plans = [{ id: 'plan-1', patient_id: 'user-1', peach_registration_id: null }];
+    seedClaimed();
+
+    const result = await selfSettleEntirePlan('plan-1');
+
+    expect(result.ok).toBe(false);
+    expect(chargeSavedCardSpy).not.toHaveBeenCalled();
+    expect(dbState.payments.find((r) => r.id === 'pay-1')!.status).toBe('scheduled');
+    expect(dbState.payments.find((r) => r.id === 'pay-2')!.status).toBe('failed');
+  });
+
+  it('a row another settlement has since claimed is left alone', async () => {
+    // Held by the covered-row READ, which selects on settled_by_payment_id:
+    // a row that has moved on to another settlement is never in the list to
+    // release. The same two filters are repeated as guards on the write —
+    // deliberately, since read and write are separate statements and the row
+    // can move between them — but this test does not isolate that second
+    // line: dropping the write guard leaves it green, because the read has
+    // already excluded the row.
+    rpcResults.current = { ok: true, settlement_id: 'set-1', amount_cents: 25_000, covered_count: 2 };
+    dispatchWriteError.value = true;
+    seedClaimed();
+    dbState.payments[2] = {
+      id: 'pay-2', kind: 'instalment', status: 'processing', settled_by_payment_id: 'set-9',
+    };
+    stubProviderSuccess();
+
+    await selfSettleEntirePlan('plan-1');
+
+    const pay2 = dbState.payments.find((r) => r.id === 'pay-2')!;
+    expect(pay2.status).toBe('processing');
+    expect(pay2.settled_by_payment_id).toBe('set-9');
+  });
+
+  it('a snapshot with no entry for a covered row falls back to failed, never scheduled', async () => {
+    // 'scheduled' would put the row in tonight's collection run. A
+    // settlement only ever claims rows that were scheduled, failed or
+    // defaulted, so 'failed' is the safe unknown: it re-enters the dunning
+    // ladder rather than a charge.
+    rpcResults.current = { ok: true, settlement_id: 'set-1', amount_cents: 25_000, covered_count: 1 };
+    dispatchWriteError.value = true;
+    dbState.payments = [
+      { id: 'set-1', kind: 'settlement', status: 'processing', pre_settlement_snapshot: {} },
+      { id: 'pay-1', kind: 'instalment', status: 'processing', settled_by_payment_id: 'set-1' },
+    ];
+    stubProviderSuccess();
+
+    await selfSettleEntirePlan('plan-1');
+
+    expect(dbState.payments.find((r) => r.id === 'pay-1')!.status).toBe('failed');
   });
 });

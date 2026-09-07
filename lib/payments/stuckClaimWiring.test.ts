@@ -59,10 +59,17 @@ describe('the stamp is written before the call, never after', () => {
   });
 
   it('a failed stamp stops the charge and safely releases the unsent claim', () => {
-    const refusal = at(CHARGE, "return revert('dispatch_not_committed')");
+    // The release is reported as `not_dispatched` rather than as a lost
+    // claim — same release, said accurately, so the surfaces can offer a
+    // retry instead of "an attempt is already in progress".
+    const refusal = at(CHARGE, 'return revertUndispatched()');
     const charge  = at(CHARGE, 'await provider.chargeSavedCard({');
     expect(refusal).toBeLessThan(charge);
     expect(CHARGE).toMatch(/stampErr \|\| !stamped \|\| stamped\.length !== 1/);
+    // And it hands the claim back by the same guarded write the lost-claim
+    // path uses, rather than a second implementation of the revert.
+    expect(CHARGE).toMatch(/async function revertUndispatched[\s\S]{0,200}?await releaseClaim\(\)/);
+    expect(CHARGE).toMatch(/async function revert\(reason: ClaimLostReason\)[\s\S]{0,200}?await releaseClaim\(\)/);
   });
 
   it('settle-entire also refuses unless dispatch metadata committed', () => {

@@ -53,6 +53,13 @@ import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 //   • 'claim_lost'     — concurrent cron or another tab already
 //                        claimed. The earlier attempt is in flight;
 //                        the user does not need to retry.
+//   • 'not_started'    — the claim was taken and handed straight back
+//                        because the dispatch marker would not commit.
+//                        NO request reached Peach, so this is the one
+//                        failure here that the patient should retry —
+//                        which is why it is not folded into claim_lost
+//                        ("already in progress") or transport_error
+//                        ("do not pay again").
 //   • 'transport_err'  — Peach network error. Surfaces to the user
 //                        as "try again in a moment" — the underlying
 //                        row is in 'processing' awaiting admin
@@ -66,6 +73,8 @@ export type SelfSettleResult =
   | { ok: false; status: 'not_settleable'; currentStatus: string }
   | { ok: false; status: 'not_found' }
   | { ok: false; status: 'claim_lost'; reason: string }
+  // Nothing was sent to the provider — safe, and correct, to retry.
+  | { ok: false; status: 'not_started' }
   | { ok: false; status: 'transport_error'; message: string };
 
 const SETTLEABLE_STATUSES = new Set(['scheduled', 'failed', 'defaulted']);
@@ -159,6 +168,13 @@ export async function selfSettleInstalment(paymentId: string): Promise<SelfSettl
     return { ok: false, status: 'transport_error', message: outcome.error };
   }
 
+  // Nothing left the application: the charge was refused before dispatch and
+  // the claim handed back. Retryable, and told apart from claim_lost here
+  // rather than in the button, so both settle surfaces get it right.
+  if (outcome.kind === 'not_dispatched') {
+    return { ok: false, status: 'not_started' };
+  }
+
   // claim_lost — concurrent cron / another tab won the race.
   return { ok: false, status: 'claim_lost', reason: outcome.reason };
 }
@@ -203,6 +219,8 @@ export type SettleAllOutcome =
   | { ok: false; status: 'plan_not_found' }
   | { ok: false; status: 'nothing_to_settle' }
   | { ok: false; status: 'race_lost' }
+  // As above: refused before dispatch, so nothing was charged.
+  | { ok: false; status: 'not_started' }
   | { ok: false; status: 'transport_error'; message: string }
   | { ok: false; status: 'declined'; message: string }
   | { ok: false; status: 'no_registration_id' }
@@ -289,12 +307,13 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     .eq('id', planId)
     .maybeSingle();
   if (!plan?.peach_registration_id) {
-    // No stored card — revert the claim by failing the settlement row.
-    // Mirrors the chargeInstalment revert pattern: flip rows back to
-    // their snapshot statuses via the RPC's failure path is the right
-    // home; here we directly fail-out the settlement row, and the
-    // webhook handler's failure path will run the revert.
+    // No stored card — revert the claim by failing the settlement row AND
+    // releasing the rows it claimed. This used to fail only the parent, on
+    // the reasoning that "the webhook handler's failure path will run the
+    // revert" — but no charge was ever sent on this branch, so no webhook is
+    // coming to run it. See restoreCoveredInstalments.
     await failSettlementRow(svc, settlementId, 'no_registration_id');
+    await restoreCoveredInstalments(svc, settlementId);
     return { ok: false, status: 'no_registration_id' };
   }
 
@@ -305,6 +324,7 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
     .single();
   if (!profile?.email) {
     await failSettlementRow(svc, settlementId, 'no_email');
+    await restoreCoveredInstalments(svc, settlementId);
     return { ok: false, status: 'no_email' };
   }
 
@@ -357,11 +377,13 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
       error: dispatchErr?.message ?? 'settlement row no longer matched',
     });
     await failSettlementRow(svc, settlementId, 'provider_dispatch_not_committed');
-    return {
-      ok: false,
-      status: 'transport_error',
-      message: 'The payment could not be started safely. Please try again.',
-    };
+    await restoreCoveredInstalments(svc, settlementId);
+    // NOT transport_error. That status carries "do NOT pay again" copy, for
+    // the case where the request went out and the answer did not come back.
+    // This branch is the opposite: it refused to call Peach at all, and has
+    // just put every claimed row back. Retrying is both safe and the only
+    // way the patient gets to pay.
+    return { ok: false, status: 'not_started' };
   }
 
   await svc.from('plan_events').insert({
@@ -454,10 +476,91 @@ export async function selfSettleEntirePlan(planId: string): Promise<SettleAllOut
   };
 }
 
-// Revert a settlement row that never made it to Peach — flips it
-// to 'failed' so the webhook's charge.failed handler (or an admin
-// sweep) restores the covered instalments to their snapshot statuses.
-// Used when post-claim preconditions miss (no card / no email).
+// Revert a settlement row that never made it to Peach — flips it to
+// 'failed'. Used when post-claim preconditions miss (no card / no email) or
+// when the dispatch marker could not be committed.
+//
+// This used to be the whole revert, on the reasoning quoted at each call
+// site: fail the parent, and the webhook's charge.failed handler (or an
+// admin sweep) restores the covered instalments from the snapshot. That is
+// true of a charge that Peach REJECTED, and false of every caller here —
+// they are the branches that return before any charge is sent, so there is
+// no webhook coming. Restoring the children is therefore a separate,
+// explicit step: restoreCoveredInstalments, below.
+// ─── Put back what the claim moved, when nothing was ever sent ──────────
+//
+// THE DEFECT THIS CLOSES
+//
+// claim_plan_for_settlement moves EVERY covered instalment to 'processing'
+// and records their prior statuses on the settlement row's
+// pre_settlement_snapshot. Ordinarily charge.failed puts them back — see
+// handleSettlementChargeFailed in the Peach webhook route, which is the
+// shape this mirrors.
+//
+// On the branches that call this, Peach was never called at all: no card on
+// file, no email, or a dispatch marker that would not commit. No webhook is
+// coming, so nothing runs that restore. The covered rows sit in 'processing'
+// until the stuck-processing sweep notices them — and in the meantime the
+// retry the patient is invited to make returns `nothing_to_settle` (the RPC
+// finds no eligible rows, because it already claimed them) and ordinary
+// collection on the plan is blocked. The patient sees an error that tells
+// them to try again and a bill that cannot be paid.
+//
+// IDEMPOTENT BY CONSTRUCTION
+//
+// Both guards on the write matter: a row moves only while it is still
+// 'processing' AND still claimed by THIS settlement. So a sweep or a
+// late webhook that got there first matches nothing rather than
+// double-writing, and a row some other settlement has since claimed is
+// left alone.
+//
+// Non-fatal: the caller is already returning a failure to the patient, and
+// a restore that itself fails must not turn that into an unhandled error.
+// The sweep remains the backstop, which is what it is for.
+async function restoreCoveredInstalments(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  svc: any,
+  settlementId: string,
+): Promise<void> {
+  try {
+    const { data: settlement } = await svc
+      .from('payments')
+      .select('pre_settlement_snapshot')
+      .eq('id', settlementId)
+      .maybeSingle();
+
+    const snapshot = (settlement?.pre_settlement_snapshot ?? {}) as Record<string, { status?: string }>;
+
+    const { data: covered } = await svc
+      .from('payments')
+      .select('id')
+      .eq('settled_by_payment_id', settlementId)
+      .eq('status', 'processing')
+      .eq('kind', 'instalment');
+
+    for (const row of ((covered ?? []) as Array<{ id: string }>)) {
+      // 'failed' when the snapshot has no entry, matching the sweep's
+      // reasoning: a settlement only ever claims rows that were scheduled,
+      // failed or defaulted, and 'failed' is the one that puts the row back
+      // into the dunning ladder rather than straight into the next cron
+      // charge. Guessing 'scheduled' would charge a card for it tonight.
+      const prior = snapshot[row.id]?.status ?? 'failed';
+      await svc
+        .from('payments')
+        .update({ status: prior, settled_by_payment_id: null })
+        .eq('id', row.id)
+        .eq('settled_by_payment_id', settlementId)
+        .eq('status', 'processing');
+    }
+  } catch (err) {
+    console.error('[settle-entire-bill] ALERT could not release the rows an unsent settlement claimed', {
+      settlementId,
+      error: err instanceof Error ? err.message : String(err),
+      note: 'the settlement IS failed; the stuck-processing sweep is the backstop',
+    });
+  }
+}
+
 async function failSettlementRow(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   svc: any,

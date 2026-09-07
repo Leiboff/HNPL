@@ -64,7 +64,11 @@ export async function retryCollection(
       ? { kind: 'charged', attempt: result.attemptNumber }
       : result.kind === 'transport_error'
         ? { kind: 'transport_error', error: result.error }
-        : { kind: 'claim_lost', reason: result.reason },
+        // Recorded as itself, not as a lost claim: an investigator reading
+        // this row needs to know whether a charge was sent.
+        : result.kind === 'not_dispatched'
+          ? { kind: 'not_dispatched', reason: result.reason }
+          : { kind: 'claim_lost', reason: result.reason },
   );
 
   revalidatePath('/admin/collections');
@@ -76,6 +80,16 @@ export async function retryCollection(
   if (result.kind === 'transport_error') {
     return {
       error: `Peach transport error: ${result.error}. Row left in 'processing' for manual reconciliation.`,
+    };
+  }
+  if (result.kind === 'not_dispatched') {
+    // Distinct from both neighbours, and the distinction is the whole
+    // message: nothing was sent, the claim is back at its previous status,
+    // and retrying is safe — unlike a transport error, where the charge may
+    // be in flight, or a lost claim, where another worker holds it.
+    return {
+      error: 'Refused before dispatch: the provider marker could not be written, '
+        + 'so no charge was sent and the claim was released. Safe to retry.',
     };
   }
   // claim_lost

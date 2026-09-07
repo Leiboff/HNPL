@@ -70,6 +70,14 @@ export default function PayNowButton({
             setFeedback(`A payment attempt is already in progress. We'll confirm shortly.`);
             setDone(true);
             return;
+          case 'not_started':
+            // The claim was taken and handed straight back without a request
+            // reaching Peach, so nothing was charged and the instalment is
+            // exactly where it was. This is the one failure on this button
+            // that the patient SHOULD retry — note `done` is deliberately
+            // not set, so the button stays live.
+            setFeedback('We couldn\'t start that payment, and nothing was charged. Please try again.');
+            return;
           case 'transport_error':
             // Same reasoning as SettleEntireBillButton (audit A-13): the
             // response did not arrive, which is not the same as the charge
