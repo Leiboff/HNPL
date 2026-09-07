@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, defaultExclude } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
@@ -10,6 +10,14 @@ export default defineConfig({
     // in-file if needed). happy-dom is lighter than jsdom.
     environment: 'happy-dom',
     setupFiles: ['./vitest.setup.ts'],
+    // `docs/` holds the verified Experian reference implementation, committed
+    // verbatim as the record of what was learned against the live service
+    // (see docs/experian/README.md). One of those files is a test suite
+    // written against `node:test`, so vitest's default glob collects it and
+    // it fails on the import. It is an artefact, not part of the program —
+    // the adaptation that actually runs lives in lib/experian/ and is tested
+    // there. tsconfig.json excludes the same directory for the same reason.
+    exclude: [...defaultExclude, 'docs/**'],
     globals: false,
     // Vitest's 10s default is too tight for the pglite (real-Postgres)
     // suites and made a full run flakily red — a DIFFERENT subset of files
