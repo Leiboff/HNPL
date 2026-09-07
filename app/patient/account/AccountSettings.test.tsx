@@ -28,15 +28,19 @@ import AccountSettings from './AccountSettings';
 // only now they sit inside a shared card per group instead of each
 // carrying its own border/shadow.
 
-// 2026-09-06: "Refer a friend" joined General (migration 0145). It is in
+// 2026-09-06: the referral row joined General (migration 0145). It is in
 // General rather than in a card of its own because a fourth GroupCard holding
 // one row reads as a section somebody forgot to finish, and it is LAST in the
 // group because it is the only row here that is not a setting on this account.
+// Titled "Referrals", not "Refer a friend": the screen behind it offers BOTH
+// sides (a friend by link, a doctor by lead form), so naming one of the two
+// described half the destination. The choice between them is ReferChoice's
+// job, and the row is the section, not the choice.
 const ROWS = [
   ['Personal details',      '/patient/account/personal'],
   ['Payment cards',         '/patient/account/pay'],
   ['Preferences',           '/patient/account/notifications'],
-  ['Refer a friend',        '/patient/refer'],
+  ['Referrals',             '/patient/refer'],
   ['Passkeys',              '/patient/account/passkeys'],
   ['Password & recovery',   '/patient/account/password'],
   ['Contact us',            '/patient/account/contact'],

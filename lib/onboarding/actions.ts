@@ -9,11 +9,17 @@ import { isValidSalaryAmount } from '@/lib/salaryAmount';
 import { currentFlags } from '@/lib/featureFlags';
 import { computeOnboarding, type ProfileForOnboarding, type UserForOnboarding } from './state';
 import { assessAffordability } from '@/lib/underwriting/affordabilityPolicy';
+import type { AssessmentDeps } from '@/lib/experian/assessAtSignup';
 import { createDiditSession, createDhaFaceMatchSession, diditAppBaseUrl } from '@/lib/didit/client';
 import { resolveIdentityRouteForProvider } from '@/lib/onboarding/identityProvider';
-import { encryptId, hashIdForLookup } from '@/lib/idEncryption';
+import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
+import { hasBureauConsent, type BureauConsentRow } from '@/lib/legal/bureauConsent';
+import { enquiryStoreDeps, persistSignupGate } from '@/lib/experian/enquiryStore';
+import { experianConfig, experianConfigured } from '@/lib/experian/config';
+import { assessAtSignup } from '@/lib/experian/assessAtSignup';
+import { signupRiskGate } from '@/lib/experian/signupRiskGate';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -52,7 +58,17 @@ const PROFILE_SELECT =
   // plaintext SA ID, and the index is what the duplicate-identity rule
   // compares. Everything here is re-tokenised under the risk key before it
   // reaches the correlation store (lib/risk/tokens.ts).
-  'sa_id_lookup_hash, phone, email';
+  'sa_id_lookup_hash, phone, email, ' +
+  // The recorded terms acceptance, for the credit-bureau consent gate.
+  //
+  // These columns were NOT read here before, and their absence was a real
+  // gap rather than an oversight nobody had reached yet: runCreditCheck is a
+  // server action any patient can invoke directly, and it is the surface that
+  // makes a billable enquiry against a real person's credit file. The
+  // credit-check PAGE calls requireTermsAccepted; the ACTION did not check at
+  // all. Reading them here costs nothing — same row, same round trip — and
+  // lib/legal/bureauConsent.ts turns them into the gate.
+  'terms_accepted_at, terms_version';
 
 async function loadUserAndProfile() {
   const supabase = await createClient();
@@ -96,6 +112,13 @@ async function loadUserAndProfile() {
       email:         profile.email             as string | null,
       kycSessionRef: profile.didit_session_id  as string | null,
     },
+    // Also kept OUT of `profile` above, for the same reason riskFacts is: the
+    // onboarding state model deliberately does not model terms acceptance
+    // (see ProfileForOnboarding), and it must not start.
+    consent: {
+      terms_accepted_at: profile.terms_accepted_at as string | null,
+      terms_version:     profile.terms_version     as string | null,
+    } satisfies BureauConsentRow,
   };
 }
 
@@ -445,6 +468,133 @@ const DECLINE_MESSAGE_BY_REASON: Record<string, string> = {
   dnx_id_blocked:          'We couldn\'t verify your identity. Please contact support.',
 };
 
+// ─── runSignupBureauGate ───────────────────────────────────────────────
+//
+// The bureau enquiry and the band gate, as one step of
+// submitIdentityForVerification. Extracted so the ordering above stays
+// legible and so the failure policy lives in one place.
+//
+// Returns the error to hand back, or null to continue. ONLY a pass
+// continues — no score, no onboarding:
+//
+//   pass         → null. Continue to the identity vendors.
+//   refuse       → the refusal copy. The bureau answered and the answer was
+//                  against them.
+//   unavailable  → the TRY-AGAIN copy. We did not get an answer, so they do
+//                  not proceed either — but this is not a decision about
+//                  them and must never read like one, which is why it is
+//                  different wording and not the same sentence.
+//
+// Never throws. Every failure inside here resolves to `unavailable`,
+// because a bug in the gate must not become a refusal on somebody's file.
+async function runSignupBureauGate(
+  cleanedId: string,
+  loaded: Extract<Awaited<ReturnType<typeof loadUserAndProfile>>, { ok: true }>,
+): Promise<{ error: string | null }> {
+  const REFUSAL = 'We\'re unable to continue with your application at this time. Please contact support.';
+  const UNAVAILABLE = 'Sorry, our service providers are unavailable at the moment. Please try again later.';
+
+  let idHash: string;
+  try {
+    idHash = hashIdForLookup(cleanedId);
+  } catch {
+    // No hash means no per-ID limit and no cache key, so the enquiry cannot
+    // be made safely. Our fault, and not a decision about them.
+    return { error: UNAVAILABLE };
+  }
+
+  // ── The per-ID limit (migration 0149) ────────────────────────────────
+  //
+  // The second key is the ID BLIND INDEX, not the account — the only limit
+  // in the system that bounds how often ONE PERSON'S FILE is enquired
+  // against, whoever is asking. Same use of the second slot as
+  // `resend_confirmation`, which keys on the target address.
+  //
+  // A refusal here STOPS rather than continuing: being over this limit
+  // means either a legitimate applicant who has already had three attempts
+  // today, or somebody working through IDs they do not own. Neither should
+  // be handed a paid DHA lookup and a Didit session as a consolation.
+  if (!await consumeAll('bureau_enquiry', [
+    [await clientIp(), RATE_LIMITS.bureau_enquiry.ip],
+    [idHash,           RATE_LIMITS.bureau_enquiry.account!],
+  ])) {
+    return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
+  }
+
+  // This is the billable bureau surface, so charge the shared bureau budget
+  // before opening an attempt or contacting Experian.
+  const bureauRisk = await evaluateRisk({
+    event: 'credit_check',
+    accountId: loaded.userId,
+    identityHash: idHash,
+    phone: loaded.riskFacts.phone,
+    email: loaded.riskFacts.email,
+  });
+  if (!mayProceed(bureauRisk)) return { error: bureauRisk.refusalMessage! };
+
+  let assessment;
+  try {
+    const deps: AssessmentDeps = {
+      config: experianConfig(),
+      ...enquiryStoreDeps(svc(), async () => hasBureauConsent(loaded.consent)),
+    };
+    assessment = await assessAtSignup(loaded.userId, cleanedId, deps);
+  } catch (err) {
+    // Config fault or an unexpected throw. Ours, not theirs — so they are
+    // told to come back, not that they were refused. ALERT because a
+    // persistent fault here halts every signup and needs a human.
+    console.error('[onboarding] ALERT bureau gate unusable — signup blocked, no risk decision available', {
+      userId: loaded.userId,
+      detail: err instanceof Error ? err.message : 'unknown',
+    });
+    return { error: UNAVAILABLE };
+  }
+
+  const gate = signupRiskGate(assessment);
+
+  if (assessment.attemptId) {
+    try {
+      await persistSignupGate(svc(), assessment.attemptId, gate);
+    } catch (err) {
+      console.error('[onboarding] ALERT signup bureau decision was not persisted', {
+        userId: loaded.userId,
+        detail: err instanceof Error ? err.message : 'unknown',
+      });
+      return { error: UNAVAILABLE };
+    }
+  }
+
+  if (gate.outcome !== 'pass') {
+    // Structured, and deliberately thin: no ID, no hash, no reason
+    // DESCRIPTIONS. The full evidence is the bureau_enquiries row.
+    console.warn(JSON.stringify({
+      event: 'signup_bureau_gate',
+      schema_version: 1,
+      occurred_at: new Date().toISOString(),
+      outcome: gate.outcome,
+      reason: gate.reason,
+      scorecard: gate.scorecard,
+    }));
+  }
+
+  if (gate.outcome === 'pass') return { error: null };
+
+  // Neither remaining outcome proceeds, and they say different things.
+  //
+  // `unavailable` gets the transient copy: we could not reach the bureau, so
+  // there is nothing to tell them about themselves and they should come back.
+  // Saying "contact support" here would be wrong twice over — it implies a
+  // decision was made, and it sends someone to a queue that cannot help.
+  if (gate.outcome === 'unavailable') return { error: UNAVAILABLE };
+
+  // `refuse` gets fixed copy that names no reason. The codes behind it are
+  // NOT adverse-action reasons — MI39 appeared on 46% of a 50-file sample
+  // including minimum-risk files — and adverse-action wording has not had
+  // legal review. What happened is recorded in bureau_enquiries; what the
+  // applicant is told says nothing about why.
+  return { error: REFUSAL };
+}
+
 export type SubmitIdentityInput = {
   saIdNumber: string;
   consent:    boolean;
@@ -508,6 +658,39 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
   // Deciding here means a ring working through a list of leaked SA IDs
   // stops at the first one already on the platform, before the first cent
   // is spent at either vendor.
+  // ── The bureau enquiry, BEFORE either paid identity vendor ───────────
+  //
+  // Placed here on an explicit product decision: decide with the cheapest
+  // decisive check first, so a refusal costs one Experian call instead of a
+  // DHA registry lookup plus a Didit face-match session.
+  //
+  // THE COST OF THAT ORDERING, STATED PLAINLY: the ID at this point is a
+  // CLAIM. Nothing has verified that it belongs to the person typing it —
+  // the comment on the risk check above says so, and it is just as true
+  // here. So an enquiry made on a mistyped or borrowed ID lands on a
+  // stranger's credit file, where repeated enquiries lower their score
+  // ("High Number of Recent Enquiries", reason code 58/59).
+  //
+  // Three controls bound that, and they are why this is defensible rather
+  // than merely cheap:
+  //
+  //   • validateSaId + the 18+ check, already run above, for free.
+  //   • evaluateRisk below, on this same claimed ID hash, which refuses an
+  //     ID already on the platform before either identity vendor is called.
+  //   • the `bureau_enquiry` bucket below, whose SECOND KEY IS THE ID HASH
+  //     rather than the account — the only limit in the system that bounds
+  //     enquiries against one person's file from many callers. See
+  //     migration 0149.
+  //
+  // Skipped entirely when Experian is unconfigured, which is production
+  // today: no call, no limit spent, no behaviour change.
+  if (experianConfigured()) {
+    const gate = await runSignupBureauGate(cleanedId, loaded);
+    if (gate.error) return { error: gate.error };
+  }
+
+  // Only charge the KYC budget once the bureau gate has passed and we are
+  // actually about to enter the paid identity-vendor path.
   const risk = await evaluateRisk({
     event:        'kyc_session',
     accountId:    loaded.userId,
@@ -731,12 +914,64 @@ export async function runCreditCheck(): Promise<ActionResult> {
     return { error: null, nextPath: '/onboarding' };
   }
 
-  const decision = assessAffordability({
+  // ── The bureau dependencies ───────────────────────────────────────────
+  //
+  // Built here rather than inside the policy because this function already
+  // owns the service-role client and has already read the profile row that
+  // answers the consent question. Passing a closure over that row means the
+  // POPIA §71 consent gate costs NO additional round trip — the same argument
+  // lib/legal/termsGate.ts makes for taking a row instead of reading one.
+  //
+  // The consent predicate is lib/legal/bureauConsent.ts, NOT the shared
+  // hasAcceptedTerms: the shared one grandfathers a NULL terms_accepted_at
+  // for accounts that finished onboarding before acceptance was recorded, and
+  // "this account finished onboarding" is not evidence of consent to a credit
+  // enquiry. See that file for why the divergence is deliberate.
+  //
+  // With no deps the policy returns `unavailable` and NO CALL IS MADE. That
+  // is the state production is in today.
+  let bureauDeps: AssessmentDeps | undefined;
+  let saIdNumber: string | null = null;
+
+  if (experianConfigured()) {
+    try {
+      // The verified ID from the column the Didit webhook wrote. Decrypted
+      // here and passed straight through — never persisted in plaintext,
+      // never logged, and never re-asked of the patient.
+      saIdNumber = loaded.profile.sa_id_number
+        ? (loaded.profile.sa_id_number.startsWith('v1:')
+            ? decryptId(loaded.profile.sa_id_number)
+            : loaded.profile.sa_id_number)
+        : null;
+      bureauDeps = {
+        config: experianConfig(),
+        ...enquiryStoreDeps(svc(), async () => hasBureauConsent(loaded.consent)),
+      };
+    } catch (err) {
+      // Our configuration is broken, which is not a decision about the
+      // applicant. Leaving deps undefined routes to `unavailable` →
+      // 'pending', never to a decline.
+      //
+      // The message is safe to log: it comes from requireEnv (a variable
+      // NAME) or decryptId (a format complaint), never from a value and never
+      // from the SOAP body, which does not exist yet at this point and never
+      // leaves lib/experian/client.ts when it does.
+      console.error('[onboarding] ALERT bureau config unusable — affordability will report unavailable', {
+        userId: loaded.userId,
+        detail: err instanceof Error ? err.message : 'unknown',
+      });
+      bureauDeps = undefined;
+      saIdNumber = null;
+    }
+  }
+
+  const decision = await assessAffordability({
     accountId:         loaded.userId,
     salaryAmountRands: loaded.profile.salary_amount,
     salaryDay:         loaded.profile.salary_day,
     identityVerified:  !!loaded.profile.sa_id_number && !!loaded.profile.liveness_verified_at,
-  });
+    saIdNumber,
+  }, bureauDeps);
   const now = new Date().toISOString();
 
   if (decision.outcome === 'declined') {

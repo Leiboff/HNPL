@@ -38,7 +38,8 @@ export type RateLimitBucket =
   | 'counter_session'
   | 'credit_check'
   | 'reverse_geocode'
-  | 'referral_invite';
+  | 'referral_invite'
+  | 'bureau_enquiry';
 
 export type RateLimitRule = { max: number; windowSecs: number };
 export type RateLimitOutcome = 'allowed' | 'limited' | 'unavailable' | 'missing_subject';
@@ -75,6 +76,25 @@ export const RATE_LIMITS: Record<RateLimitBucket, { ip: RateLimitRule; account?:
   // A PAID KYC unit per call. The tightest limit here, deliberately: a
   // patient needs one session, plus a couple of retries for a bad photo.
   identity_session:    { ip: { max: 10, windowSecs: 86400 }, account: { max: 5, windowSecs: 86400 } },
+
+  // A PAID CREDIT-BUREAU ENQUIRY per call, made at the identity step on an
+  // SA ID the applicant has just typed and which nothing has yet verified.
+  //
+  // The `account` slot carries the SA ID BLIND INDEX, not the account id —
+  // the same use of the second key as `resend_confirmation`, which keys on
+  // the target address rather than on the caller.
+  //
+  // That is the whole point of this bucket. Every other limit here bounds
+  // the CALLER; this one bounds how often ONE PERSON'S CREDIT FILE can be
+  // enquired against, by anyone. An enquiry is recorded on the subject's
+  // record and repeated enquiries lower their score, so an unbounded
+  // surface keyed only on the caller lets a rotating set of accounts
+  // degrade a stranger's credit standing.
+  //
+  // Three per day, because the legitimate profile is ONE: a successful pull
+  // is cached for 45 days and never repeats. The allowance exists for the
+  // pull that errored and is retried.
+  bureau_enquiry:      { ip: { max: 10, windowSecs: 86400 }, account: { max: 3, windowSecs: 86400 } },
 
   // Guesses against an 8-digit code in a GLOBAL keyspace. A manager
   // registering a till types it once, maybe twice. Anything past that is
