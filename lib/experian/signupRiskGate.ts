@@ -51,10 +51,11 @@ import { BAND_LABEL, type RiskBand } from './scores';
 //   flag: the bureau replied and what it said is not evidence of average
 //   risk, and on a gate the absence of evidence has to mean no.
 //
-//   NO ANSWER AT ALL  →  `unavailable`, which is NOT a refusal and lets the
-//   applicant continue with no credit. An outage on our side, or Experian's,
-//   must not be recorded against a stranger as a rejection. See
-//   SignupRiskOutcome below — this distinction is the reason the return type
+//   NO ANSWER AT ALL  →  `unavailable`. Also does not proceed — no score,
+//   no onboarding — but it is NOT a refusal and must never be recorded
+//   against the applicant as one. An outage is our problem, not a fact about
+//   them, and the caller says so: "try again later", not a rejection. See
+//   SignupRiskOutcome below — that distinction is the reason the return type
 //   is not a boolean.
 //
 // ─── WHAT THIS DOES NOT DECIDE ────────────────────────────────────────
@@ -101,21 +102,35 @@ export const THIN_FILE_SCORECARD = 'STS';
  *   unavailable  we did not get an answer — an outage, a config fault, a
  *                timeout. NOT a verdict about the applicant.
  *
- * `refuse` and `unavailable` both mean "no credit". They must NOT both mean
- * "no onboarding". An Experian outage that halted every signup would convert
- * our downtime into a stream of rejections for people who might be excellent
- * customers, and there is no version of that which is the safer failure.
+ * NONE OF THEM PROCEEDS EXCEPT `pass`. No score, no onboarding: an applicant
+ * we could not assess does not continue to the identity vendors. Product
+ * decision, taken explicitly — the alternative (letting an unassessed
+ * applicant through to finish onboarding with no credit) was considered and
+ * rejected, because it spends money at DHA and Didit on someone we have no
+ * risk opinion about.
  *
- * So the caller lets `unavailable` CONTINUE, and the applicant finishes
- * onboarding in the state the system already models for exactly this: the
- * assessment was taken, no decision came back, no limit is written, and no
- * plan can be accepted. Failing closed is about the money, not about the door.
+ * `unavailable` nonetheless stays a SEPARATE outcome from `refuse`, and the
+ * distinction is not cosmetic:
+ *
+ *   • It is not a decision about the applicant, so it must never be recorded
+ *     against them as a decline. Nothing here is their fault.
+ *   • The caller answers it with different copy — "try again later", not a
+ *     refusal — because it is a transient state and they should come back.
+ *
+ * So: same door, different sign on it, and only one of the two is a fact
+ * about the person.
  */
 export type SignupRiskOutcome = 'pass' | 'refuse' | 'unavailable';
 
 export type SignupRiskDecision = {
   outcome: SignupRiskOutcome;
-  /** May the applicant continue onboarding? False only for `refuse`. */
+  /**
+   * May the applicant continue to the identity vendors?
+   *
+   * Exactly `outcome === 'pass'`. Kept as its own field because every call
+   * site asks this question and none of them should have to remember which
+   * of the three outcomes is the permissive one.
+   */
   proceed: boolean;
   /** The band this applicant is recorded at. Null unless the outcome is `pass`. */
   effectiveBand: RiskBand | null;
@@ -135,7 +150,7 @@ const refuse = (reason: string, scorecard: string | null = null): SignupRiskDeci
 });
 
 const unavailable = (reason: string): SignupRiskDecision => ({
-  outcome: 'unavailable', proceed: true, effectiveBand: null, scorecard: null,
+  outcome: 'unavailable', proceed: false, effectiveBand: null, scorecard: null,
   thinFileFallback: false, reason,
 });
 

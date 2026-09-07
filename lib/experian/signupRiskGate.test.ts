@@ -181,30 +181,63 @@ describe('an answer with nothing to score refuses', () => {
   });
 });
 
-describe('OUR failure is not THEIR rejection', () => {
-  it('a transport failure lets the applicant continue, with no band', () => {
-    // The distinction the return type exists for. An Experian outage that
-    // halted every signup would turn our downtime into a stream of
-    // rejections for people who might be excellent customers.
+describe('no score, no onboarding — but an outage is not a refusal', () => {
+  it('a transport failure stops the applicant', () => {
+    // Product decision: an applicant we could not assess does not continue
+    // to the identity vendors. Spending at DHA and Didit on someone we have
+    // no risk opinion about is the thing this ordering exists to avoid.
+    const g = signupRiskGate(decide({
+      kind: 'transport_error', reason: 'timeout', httpStatus: null, latencyMs: 1,
+    }));
+    expect(g.proceed).toBe(false);
+    expect(g.effectiveBand).toBeNull();
+  });
+
+  it('but it is reported as UNAVAILABLE, never as a refusal', () => {
+    // The distinction the return type exists for, and it survives the
+    // decision to stop them: the door is shut either way, and only one of
+    // the two is a fact about the person. The caller reads this field to
+    // decide whether to say "try again later" or "contact support", and
+    // collapsing the two would record our outage against their name.
     const g = signupRiskGate(decide({
       kind: 'transport_error', reason: 'timeout', httpStatus: null, latencyMs: 1,
     }));
     expect(g.outcome).toBe('unavailable');
-    expect(g.proceed, 'continues onboarding').toBe(true);
-    expect(g.effectiveBand, 'but earns no band, so no credit follows').toBeNull();
+    expect(g.outcome).not.toBe('refuse');
+    expect(g.reason).toBe('bureau_unavailable');
   });
 
   it.each([
     ['config_error', '-107'],
     ['provider_error', '-999'],
     ['input_error', '-114'],
-  ] as const)('%s is unavailable, not a refusal', (kind, code) => {
+  ] as const)('%s is unavailable, not a refusal, and does not proceed', (kind, code) => {
     const g = signupRiskGate(decide({
       kind, errorCode: code, errorDescription: 'x', latencyMs: 1,
     } as ExperianOutcome));
     expect(g.outcome).toBe('unavailable');
-    expect(g.proceed).toBe(true);
+    expect(g.proceed).toBe(false);
     expect(g.effectiveBand).toBeNull();
+  });
+
+  it('ONLY a pass ever proceeds', () => {
+    // The invariant, stated once. Every construction of a decision that is
+    // not a pass must have proceed false.
+    const notPasses = [
+      decide({ kind: 'transport_error', reason: 'x', httpStatus: null, latencyMs: 1 }),
+      decide({ kind: 'config_error', errorCode: '-107', errorDescription: 'x', latencyMs: 1 }),
+      decide({ kind: 'thin_file', errorCode: '-115', errorDescription: 'x', latencyMs: 1 }),
+      decide(asOk(FIXTURES.real_su_thin_file)),
+      decide(asOk(FIXTURES.mixed_deceased_and_good)),
+      decide(asOk(FIXTURES.no_results)),
+      card('SU', 630),
+      card('STS', 605),
+    ];
+    for (const a of notPasses) {
+      const g = signupRiskGate(a);
+      expect(g.proceed, g.reason).toBe(g.outcome === 'pass');
+      expect(g.proceed, g.reason).toBe(false);
+    }
   });
 
   it('but a -115 thin file IS an answer, and refuses', () => {
@@ -287,6 +320,31 @@ describe('where the gate sits in the identity step', () => {
     expect(ACTIONS).toMatch(/const REFUSAL = 'We\\'re unable to continue with your application at this time\. Please contact support\.'/);
     expect(ACTIONS).not.toMatch(/error:\s*gate\.reason/);
     expect(ACTIONS).not.toMatch(/error:\s*`[^`]*\$\{gate\.reason\}/);
+  });
+
+  it('answers an OUTAGE with different copy — transient, and not "contact support"', () => {
+    // Two sentences, two meanings. Telling someone to contact support when
+    // we simply could not reach the bureau is wrong twice: it implies a
+    // decision was made about them, and it sends them to a queue that
+    // cannot help. Pinned so the two never collapse into one string.
+    expect(ACTIONS).toMatch(/const UNAVAILABLE = 'Sorry, our service providers are unavailable at the moment\. Please try again later\.'/);
+    expect(ACTIONS).toMatch(/if \(gate\.outcome === 'unavailable'\) return \{ error: UNAVAILABLE \}/);
+    // The transient message must not carry the refusal's support pointer.
+    const start = ACTIONS.indexOf('const UNAVAILABLE =');
+    const line = ACTIONS.slice(start, ACTIONS.indexOf('\n', start));
+    expect(line).not.toMatch(/contact support/);
+  });
+
+  it('every non-pass path returns a message — none of them silently continues', () => {
+    // The three early returns inside the gate helper, plus the two at the
+    // end. If any of them ever goes back to `error: null`, an unassessed
+    // applicant walks through to the paid identity vendors.
+    const start = ACTIONS.indexOf('async function runSignupBureauGate');
+    const body = ACTIONS.slice(start, ACTIONS.indexOf('export type SubmitIdentityInput', start));
+    // Exactly one `error: null` in the helper: the pass.
+    const nulls = body.match(/error: null/g) ?? [];
+    expect(nulls.length, 'only the pass may return null').toBe(1);
+    expect(body).toMatch(/if \(gate\.outcome === 'pass'\) return \{ error: null \}/);
   });
 
   it('does not log the ID, the hash, or any reason description', () => {

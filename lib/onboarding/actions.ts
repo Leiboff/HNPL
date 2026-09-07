@@ -474,16 +474,16 @@ const DECLINE_MESSAGE_BY_REASON: Record<string, string> = {
 // submitIdentityForVerification. Extracted so the ordering above stays
 // legible and so the failure policy lives in one place.
 //
-// Returns the error to hand back, or null to continue. THREE outcomes
-// collapse into that one field, and which one collapses to `null` is the
-// whole design:
+// Returns the error to hand back, or null to continue. ONLY a pass
+// continues — no score, no onboarding:
 //
 //   pass         → null. Continue to the identity vendors.
-//   refuse       → fixed copy. The bureau answered and the answer was
+//   refuse       → the refusal copy. The bureau answered and the answer was
 //                  against them.
-//   unavailable  → null. We did not get an answer, and our outage is not
-//                  their rejection. They continue and receive no credit,
-//                  which is the state the system already models.
+//   unavailable  → the TRY-AGAIN copy. We did not get an answer, so they do
+//                  not proceed either — but this is not a decision about
+//                  them and must never read like one, which is why it is
+//                  different wording and not the same sentence.
 //
 // Never throws. Every failure inside here resolves to `unavailable`,
 // because a bug in the gate must not become a refusal on somebody's file.
@@ -492,14 +492,15 @@ async function runSignupBureauGate(
   loaded: Extract<Awaited<ReturnType<typeof loadUserAndProfile>>, { ok: true }>,
 ): Promise<{ error: string | null }> {
   const REFUSAL = 'We\'re unable to continue with your application at this time. Please contact support.';
+  const UNAVAILABLE = 'Sorry, our service providers are unavailable at the moment. Please try again later.';
 
   let idHash: string;
   try {
     idHash = hashIdForLookup(cleanedId);
   } catch {
-    // No hash means no per-ID limit and no cache key. Treat as unavailable
-    // rather than calling unbounded.
-    return { error: null };
+    // No hash means no per-ID limit and no cache key, so the enquiry cannot
+    // be made safely. Our fault, and not a decision about them.
+    return { error: UNAVAILABLE };
   }
 
   // ── The per-ID limit (migration 0149) ────────────────────────────────
@@ -528,12 +529,14 @@ async function runSignupBureauGate(
     };
     assessment = await assessAtSignup(loaded.userId, cleanedId, deps);
   } catch (err) {
-    // Config fault or an unexpected throw. Ours, not theirs.
-    console.error('[onboarding] ALERT bureau gate unusable — continuing without a risk decision', {
+    // Config fault or an unexpected throw. Ours, not theirs — so they are
+    // told to come back, not that they were refused. ALERT because a
+    // persistent fault here halts every signup and needs a human.
+    console.error('[onboarding] ALERT bureau gate unusable — signup blocked, no risk decision available', {
       userId: loaded.userId,
       detail: err instanceof Error ? err.message : 'unknown',
     });
-    return { error: null };
+    return { error: UNAVAILABLE };
   }
 
   const gate = signupRiskGate(assessment);
@@ -551,12 +554,22 @@ async function runSignupBureauGate(
     }));
   }
 
-  // Fixed copy on a refusal. The reason codes behind it are NOT
-  // adverse-action reasons — MI39 appeared on 46% of a 50-file sample
+  if (gate.outcome === 'pass') return { error: null };
+
+  // Neither remaining outcome proceeds, and they say different things.
+  //
+  // `unavailable` gets the transient copy: we could not reach the bureau, so
+  // there is nothing to tell them about themselves and they should come back.
+  // Saying "contact support" here would be wrong twice over — it implies a
+  // decision was made, and it sends someone to a queue that cannot help.
+  if (gate.outcome === 'unavailable') return { error: UNAVAILABLE };
+
+  // `refuse` gets fixed copy that names no reason. The codes behind it are
+  // NOT adverse-action reasons — MI39 appeared on 46% of a 50-file sample
   // including minimum-risk files — and adverse-action wording has not had
-  // legal review. What happened is recorded; what the applicant is told
-  // says nothing about why.
-  return { error: gate.proceed ? null : REFUSAL };
+  // legal review. What happened is recorded in bureau_enquiries; what the
+  // applicant is told says nothing about why.
+  return { error: REFUSAL };
 }
 
 export type SubmitIdentityInput = {
