@@ -58,15 +58,10 @@ import { resolveFaceMatchThresholds } from '@/lib/didit/faceMatchPolicy';
 // Every other status maps to identity_verification_status for UI
 // purposes only; it never blocks or advances onboarding by itself.
 //
-// Always returns 2xx once the signature verifies, even if the handler
-// throws — Didit retries 5xx/timeouts twice, and a real bug should not
-// turn into a retry storm. The two exceptions: a bad/missing signature
-// (401, that delivery was never authenticated) and a TRANSIENT failure
-// in the duplicate-SA-ID lookup itself (500, see
-// TransientDuplicateCheckError below) — a genuine duplicate match is a
-// normal, non-throwing outcome (declined/200); the lookup ITSELF failing
-// (DB/network error) is the only thing that throws, and that is
-// transient by construction, not a decision about the applicant.
+// Authenticated deliveries are first written to a durable inbox. A row is
+// terminal only after every required profile write succeeds. Failures remain
+// retryable (and retain the signed payload for operational replay),
+// while an atomic database claim prevents concurrent processing.
 
 function svc() {
   return createClient(
@@ -83,55 +78,36 @@ const TERMINAL_STATUS: Partial<Record<DiditWebhookEvent['status'], string>> = {
   'Kyc Expired': 'expired',
 };
 
-/**
- * Atomic dedupe: the INSERT's primary-key violation (23505) IS the "have
- * we seen this event_id before" check — no separate SELECT, so two
- * concurrent deliveries of the same retried event can't both pass.
- *
- * ─── The claim is RELEASED when the handler asks for a retry ───────────
- *
- * THE DEFECT (audit 2026-09-01, F-13)
- *
- * The claim is taken BEFORE the handler runs, which is what makes the
- * concurrency property above work. But the handler has one deliberate
- * failure path — TransientDuplicateCheckError — that returns 500 SO THAT
- * DIDIT RETRIES. The retry re-entered here, found the row this same
- * delivery had just written, and returned {duplicate: true} with a 200.
- *
- * So a transient database blip inside findPatientBySaId permanently lost
- * that verification. The applicant's Didit session reads Approved; their
- * profile never gets sa_id_number or liveness_verified_at; they sit at the
- * identity step forever with nothing logged as an error, because from this
- * route's point of view everything worked.
- *
- * releaseEventClaim undoes the claim on exactly that path, so the retry it
- * asked for is actually able to do something. It is NOT called on the
- * generic catch below: an unexpected throw is a bug, that path answers 200
- * and does not want a retry storm, and holding the claim is correct there.
- *
- * (The Peach receiver, added later, records its delivery id on the way OUT
- * for this reason. Both orderings are defensible; what is not defensible is
- * claiming first and never releasing.)
- */
-async function alreadyProcessed(supabase: SupabaseClient, eventId: string): Promise<boolean> {
-  const { error } = await supabase.from('didit_webhook_events').insert({ event_id: eventId });
-  if (!error) return false;
-  if ((error as { code?: string }).code === '23505') return true;
-  console.error('[didit-webhook] idempotency ledger insert failed (non-fatal, may reprocess)', error.message);
-  return false;
+type InboxClaim = 'claimed' | 'active' | 'processed';
+
+async function claimEvent(supabase: SupabaseClient, event: DiditWebhookEvent): Promise<InboxClaim> {
+  const { data, error } = await supabase.rpc('claim_didit_webhook_event', {
+    p_event_id: event.event_id,
+    p_payload: event,
+  });
+  if (error) throw new Error(`could not persist/claim webhook inbox event: ${error.message}`);
+  const claim = data as InboxClaim;
+  if (claim !== 'claimed' && claim !== 'active' && claim !== 'processed') {
+    throw new Error(`unexpected webhook inbox claim result: ${String(claim)}`);
+  }
+  return claim;
 }
 
-async function releaseEventClaim(supabase: SupabaseClient, eventId: string): Promise<void> {
-  const { error } = await supabase.from('didit_webhook_events').delete().eq('event_id', eventId);
-  if (error) {
-    // The retry will now be answered as a duplicate and the verification
-    // will be lost — the exact F-13 outcome. Nothing here can fix it, so
-    // it is logged at ALERT for a human to finish by hand.
-    console.error('[didit-webhook] ALERT could not release the idempotency claim before a retry', {
-      eventId, error: error.message,
-      note: 'the retry will be treated as a duplicate; this verification needs manual completion',
-    });
-  }
+async function finishEvent(
+  supabase: SupabaseClient,
+  eventId: string,
+  status: 'processed' | 'failed',
+  errorMessage: string | null = null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('didit_webhook_events')
+    .update({
+      processing_status: status,
+      processed_at: status === 'processed' ? new Date().toISOString() : null,
+      last_error: errorMessage?.slice(0, 2000) ?? null,
+    })
+    .eq('event_id', eventId);
+  if (error) throw new Error(`could not mark webhook inbox event ${status}: ${error.message}`);
 }
 
 // A short machine-readable code for WHY a session was declined, stored
@@ -148,9 +124,8 @@ const DUPLICATE_ID_MESSAGE =
  * Thrown ONLY when the duplicate-SA-ID lookup itself fails (a DB/network
  * error inside findPatientBySaId) — NEVER for a genuine duplicate match,
  * which is a normal non-throwing return (idOwner.id !== userId) handled
- * as a declined/200 outcome. Caught in POST and mapped to 500 so Didit
- * retries; every other thrown error in this file stays 200 (see the
- * file banner) — this is the one deliberate exception.
+ * as a declined/200 outcome. The subtype is retained for diagnostics;
+ * the durable inbox now makes every thrown processing error retryable.
  */
 class TransientDuplicateCheckError extends Error {}
 
@@ -180,6 +155,7 @@ async function markStatus(
     .eq('id', userId);
   if (error) {
     console.error('[didit-webhook] failed to write identity_verification_status', { userId, status, error: error.message });
+    throw new Error(`failed to write identity_verification_status: ${error.message}`);
   }
 }
 
@@ -246,7 +222,7 @@ async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event
     console.error('[didit-webhook] ALERT encryption failed — approved session not persisted', {
       userId, error: err instanceof Error ? err.message : String(err),
     });
-    return;
+    throw err;
   }
 
   const now = new Date().toISOString();
@@ -265,6 +241,7 @@ async function handleApprovedOcr(supabase: SupabaseClient, userId: string, event
     .eq('id', userId);
   if (error) {
     console.error('[didit-webhook] ALERT failed to persist approved identity verification', { userId, error: error.message });
+    throw new Error(`failed to persist approved identity verification: ${error.message}`);
   }
 }
 
@@ -341,11 +318,12 @@ async function handleApprovedDha(supabase: SupabaseClient, userId: string, event
     return;
   }
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('pending_sa_id_number, pending_sa_id_lookup_hash, dha_first_name, dha_last_name')
     .eq('id', userId)
     .maybeSingle();
+  if (profileError) throw new Error(`failed to load pending DHA identity: ${profileError.message}`);
 
   const pendingEncrypted = profile?.pending_sa_id_number as string | null;
   const pendingHash      = profile?.pending_sa_id_lookup_hash as string | null;
@@ -363,7 +341,7 @@ async function handleApprovedDha(supabase: SupabaseClient, userId: string, event
     console.error('[didit-webhook] ALERT failed to decrypt pending_sa_id_number — approved session not persisted', {
       userId, error: err instanceof Error ? err.message : String(err),
     });
-    return;
+    throw err;
   }
 
   // Same invariant the OCR path enforces (see its comment above) — a
@@ -401,6 +379,7 @@ async function handleApprovedDha(supabase: SupabaseClient, userId: string, event
     .eq('id', userId);
   if (error) {
     console.error('[didit-webhook] ALERT failed to persist approved DHA identity verification', { userId, error: error.message });
+    throw new Error(`failed to persist approved DHA identity verification: ${error.message}`);
   }
 }
 
@@ -409,7 +388,8 @@ async function handleApprovedDha(supabase: SupabaseClient, userId: string, event
 type ResolvedPath = { path: 'ocr' | 'dha' } | { path: 'unresolved'; reason: string };
 
 async function resolveVerificationPath(supabase: SupabaseClient, userId: string, event: DiditWebhookEvent): Promise<ResolvedPath> {
-  const { data } = await supabase.from('profiles').select('identity_verification_path').eq('id', userId).maybeSingle();
+  const { data, error } = await supabase.from('profiles').select('identity_verification_path').eq('id', userId).maybeSingle();
+  if (error) throw new Error(`failed to resolve identity verification path: ${error.message}`);
   const stored = data?.identity_verification_path as 'dha' | 'ocr' | null | undefined;
 
   if (!stored) {
@@ -457,9 +437,25 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = svc();
+  if (!parsed.event_id) {
+    return NextResponse.json({ error: 'Missing event_id' }, { status: 500 });
+  }
 
-  if (parsed.event_id && (await alreadyProcessed(supabase, parsed.event_id))) {
+  let claim: InboxClaim;
+  try {
+    claim = await claimEvent(supabase, parsed);
+  } catch (err) {
+    console.error('[didit-webhook] ALERT could not durably receive event', {
+      eventId: parsed.event_id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json({ error: 'Temporary failure, please retry' }, { status: 500 });
+  }
+  if (claim === 'processed') {
     return NextResponse.json({ received: true, duplicate: true }, { status: 200 });
+  }
+  if (claim === 'active') {
+    return NextResponse.json({ received: true, processing: true }, { status: 202 });
   }
 
   console.log('[didit-webhook] event received', {
@@ -472,19 +468,20 @@ export async function POST(request: NextRequest) {
   // Only session status changes on a session we tied to a user
   // (vendor_data) carry a decision we act on. data.updated / anything
   // else is acknowledged and ignored.
-  if (parsed.webhook_type === 'status.updated' && parsed.vendor_data) {
-    const userId = parsed.vendor_data;
+  try {
+    if (parsed.webhook_type === 'status.updated' && parsed.vendor_data) {
+      const userId = parsed.vendor_data;
 
-    const resolved = await resolveVerificationPath(supabase, userId, parsed);
-    if (resolved.path === 'unresolved') {
-      console.error('[didit-webhook] ALERT could not resolve identity_verification_path — routing to review', {
-        userId, sessionId: parsed.session_id, reason: resolved.reason,
-      });
-      await markStatus(supabase, userId, 'in_review', 'workflow_path_mismatch', envelopeFields(parsed));
-      return NextResponse.json({ received: true }, { status: 200 });
-    }
+      const resolved = await resolveVerificationPath(supabase, userId, parsed);
+      if (resolved.path === 'unresolved') {
+        console.error('[didit-webhook] ALERT could not resolve identity_verification_path — routing to review', {
+          userId, sessionId: parsed.session_id, reason: resolved.reason,
+        });
+        await markStatus(supabase, userId, 'in_review', 'workflow_path_mismatch', envelopeFields(parsed));
+        await finishEvent(supabase, parsed.event_id, 'processed');
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
 
-    try {
       if (parsed.status === 'Approved') {
         if (resolved.path === 'dha') {
           await handleApprovedDha(supabase, userId, parsed);
@@ -502,24 +499,23 @@ export async function POST(request: NextRequest) {
         // Not Started / In Progress / Awaiting User / Resubmitted —
         // nothing to persist; the user is mid-flow.
       }
-    } catch (err) {
-      if (err instanceof TransientDuplicateCheckError) {
-        // The ONE deliberate non-2xx for a handler-thrown error — this
-        // is transient by construction (see the class comment), so
-        // Didit's retry (5xx IS retried) is exactly the right response.
-        //
-        // Release the idempotency claim first, or the retry we are asking
-        // for arrives, sees the row this delivery wrote on its way in, and
-        // is answered as a duplicate — see releaseEventClaim (audit F-13).
-        if (parsed.event_id) await releaseEventClaim(supabase, parsed.event_id);
-        return NextResponse.json({ error: 'Temporary failure, please retry' }, { status: 500 });
-      }
-      console.error('[didit-webhook] ALERT handler threw', {
-        userId, sessionId: parsed.session_id, status: parsed.status,
-        error: err instanceof Error ? err.message : String(err),
+    }
+    await finishEvent(supabase, parsed.event_id, 'processed');
+    return NextResponse.json({ received: true }, { status: 200 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[didit-webhook] ALERT processing failed; durable inbox event remains retryable', {
+      eventId: parsed.event_id, sessionId: parsed.session_id, status: parsed.status, error: message,
+      duplicateCheckFailure: err instanceof TransientDuplicateCheckError,
+    });
+    try {
+      await finishEvent(supabase, parsed.event_id, 'failed', message);
+    } catch (finishError) {
+      console.error('[didit-webhook] ALERT could not record inbox failure', {
+        eventId: parsed.event_id,
+        error: finishError instanceof Error ? finishError.message : String(finishError),
       });
     }
+    return NextResponse.json({ error: 'Temporary failure, please retry' }, { status: 500 });
   }
-
-  return NextResponse.json({ received: true }, { status: 200 });
 }
