@@ -203,6 +203,16 @@ describe('response handling', () => {
     expect(out.kind).toBe('transport_error');
   });
 
+  it('a response body disconnect is returned as a transport error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => { throw new TypeError('terminated'); },
+    } as unknown as Response)));
+    const out = await getScore('9202204720082', CFG);
+    expect(out).toMatchObject({ kind: 'transport_error', httpStatus: 200 });
+  });
+
   it('a completed envelope with empty returnData is a provider error, not an empty pass', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => (
       { ok: true, status: 200, text: async () => soapSuccess('') } as unknown as Response

@@ -33,6 +33,10 @@ const MIG = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0148_bureau_enquiries.sql'),
   'utf8',
 ).replace(/\r\n/g, '\n');
+const LEASE_MIG = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/0150_bureau_enquiry_leases_and_signup_gate.sql'),
+  'utf8',
+).replace(/\r\n/g, '\n');
 
 const ALICE = '0000a1ce-0000-0000-0000-00000000a1ce';
 const BOB   = '0000b0b0-0000-0000-0000-00000000b0b0';
@@ -99,8 +103,7 @@ async function asService<T>(sql: string): Promise<T[]> {
 
 /** Open an attempt row, as the application does before the billable call. */
 const openAttempt = (hash: string, profile: string = ALICE) => asService(`
-  insert into bureau_enquiries (profile_id, id_number_hash, p_version)
-    values ('${profile}', '${hash}', '4.0') returning id;
+  select open_bureau_enquiry_attempt('${profile}', '${hash}', '4.0') as id;
 `);
 
 beforeAll(async () => {
@@ -127,6 +130,7 @@ beforeAll(async () => {
       to anon, authenticated, service_role;
   `);
   await db.exec(MIG);
+  await db.exec(LEASE_MIG);
 }, 60_000);
 
 afterAll(async () => { await db?.close(); });
@@ -220,6 +224,18 @@ describe('the in-flight unique index — the money control', () => {
     // A later enquiry for the same person is allowed again — the index guards
     // CONCURRENCY, not history. The 45-day cache is what stops the re-pull.
     await expect(openAttempt(HASH_A)).resolves.toBeDefined();
+  });
+
+  it('reclaims an expired lease without deleting its audit row', async () => {
+    await asService('delete from bureau_enquiries;');
+    await openAttempt(HASH_A);
+    await asService(`update bureau_enquiries set lease_expires_at = now() - interval '1 second' where id_number_hash = '${HASH_A}';`);
+    await expect(openAttempt(HASH_A)).resolves.toBeDefined();
+    const rows = await asService<{ n: string; abandoned: string }>(`
+      select count(*)::text n, count(abandoned_at)::text abandoned
+      from bureau_enquiries where id_number_hash = '${HASH_A}';
+    `);
+    expect(rows).toEqual([{ n: '2', abandoned: '1' }]);
   });
 
   it('many COMPLETED enquiries for one ID coexist, so history is kept', async () => {

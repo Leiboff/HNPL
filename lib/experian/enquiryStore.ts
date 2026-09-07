@@ -1,6 +1,7 @@
 import type { Assessment, AssessmentDeps } from './assessAtSignup';
 import type { ExperianOutcome, ScoreResult } from './client';
 import type { RiskBand } from './scores';
+import type { SignupRiskDecision } from './signupRiskGate';
 
 // ─── bureau_enquiries, from the application side ──────────────────────
 //
@@ -22,6 +23,7 @@ type Svc = any;
 const UNIQUE_VIOLATION = '23505';
 
 type EnquiryRow = {
+  id: string;
   decision: string | null;
   scorecard: string | null;
   score: number | null;
@@ -30,6 +32,7 @@ type EnquiryRow = {
   reason_codes: string[] | null;
   decision_detail: string | null;
   billed: boolean | null;
+  effective_risk_band: number | null;
 };
 
 /**
@@ -55,6 +58,8 @@ function rowToAssessment(row: EnquiryRow): Assessment {
     detail: row.decision_detail ?? '',
     billed: row.billed ?? false,
     fromCache: true,
+    attemptId: row.id,
+    effectiveBand: (row.effective_risk_band ?? null) as RiskBand | null,
   };
 }
 
@@ -76,7 +81,7 @@ export async function findFreshEnquiry(
 
   const { data, error } = await svc
     .from('bureau_enquiries')
-    .select('decision, scorecard, score, risk_band, risk_exposure_cents, reason_codes, decision_detail, billed')
+    .select('id, decision, scorecard, score, risk_band, effective_risk_band, risk_exposure_cents, reason_codes, decision_detail, billed')
     .eq('id_number_hash', idHash)
     .not('completed_at', 'is', null)
     .in('decision', CACHEABLE_DECISIONS)
@@ -109,15 +114,11 @@ export async function openAttempt(
   svc: Svc,
   row: { profileId: string; idHash: string; pVersion: string },
 ): Promise<string | null> {
-  const { data, error } = await svc
-    .from('bureau_enquiries')
-    .insert({
-      profile_id: row.profileId,
-      id_number_hash: row.idHash,
-      p_version: row.pVersion,
-    })
-    .select('id')
-    .single();
+  const { data, error } = await svc.rpc('open_bureau_enquiry_attempt', {
+    p_profile_id: row.profileId,
+    p_id_number_hash: row.idHash,
+    p_version: row.pVersion,
+  });
 
   if (error) {
     const raw = `${error.code ?? ''} ${error.message ?? ''}`;
@@ -127,7 +128,7 @@ export async function openAttempt(
     throw new Error(`openAttempt: bureau_enquiries insert failed — ${error.message ?? String(error)}`);
   }
 
-  return (data as { id: string }).id;
+  return data as string;
 }
 
 /**
@@ -177,6 +178,21 @@ export async function closeAttempt(
   if (error) {
     throw new Error(`closeAttempt: bureau_enquiries update failed — ${error.message ?? String(error)}`);
   }
+}
+
+/** Persist the product gate separately from the bureau/exposure decision. */
+export async function persistSignupGate(
+  svc: Svc,
+  attemptId: string,
+  gate: SignupRiskDecision,
+): Promise<void> {
+  const { error } = await svc.from('bureau_enquiries').update({
+    signup_gate_outcome: gate.outcome,
+    signup_gate_reason: gate.reason,
+    effective_risk_band: gate.effectiveBand,
+  }).eq('id', attemptId);
+
+  if (error) throw new Error(`persistSignupGate: bureau_enquiries update failed — ${error.message ?? String(error)}`);
 }
 
 /**

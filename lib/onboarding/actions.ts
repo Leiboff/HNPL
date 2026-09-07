@@ -16,7 +16,7 @@ import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { consumeAll, clientIp, RATE_LIMITS } from '@/lib/security/rateLimit';
 import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 import { hasBureauConsent, type BureauConsentRow } from '@/lib/legal/bureauConsent';
-import { enquiryStoreDeps } from '@/lib/experian/enquiryStore';
+import { enquiryStoreDeps, persistSignupGate } from '@/lib/experian/enquiryStore';
 import { experianConfig, experianConfigured } from '@/lib/experian/config';
 import { assessAtSignup } from '@/lib/experian/assessAtSignup';
 import { signupRiskGate } from '@/lib/experian/signupRiskGate';
@@ -521,6 +521,17 @@ async function runSignupBureauGate(
     return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
   }
 
+  // This is the billable bureau surface, so charge the shared bureau budget
+  // before opening an attempt or contacting Experian.
+  const bureauRisk = await evaluateRisk({
+    event: 'credit_check',
+    accountId: loaded.userId,
+    identityHash: idHash,
+    phone: loaded.riskFacts.phone,
+    email: loaded.riskFacts.email,
+  });
+  if (!mayProceed(bureauRisk)) return { error: bureauRisk.refusalMessage! };
+
   let assessment;
   try {
     const deps: AssessmentDeps = {
@@ -540,6 +551,18 @@ async function runSignupBureauGate(
   }
 
   const gate = signupRiskGate(assessment);
+
+  if (assessment.attemptId) {
+    try {
+      await persistSignupGate(svc(), assessment.attemptId, gate);
+    } catch (err) {
+      console.error('[onboarding] ALERT signup bureau decision was not persisted', {
+        userId: loaded.userId,
+        detail: err instanceof Error ? err.message : 'unknown',
+      });
+      return { error: UNAVAILABLE };
+    }
+  }
 
   if (gate.outcome !== 'pass') {
     // Structured, and deliberately thin: no ID, no hash, no reason
@@ -635,15 +658,6 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
   // Deciding here means a ring working through a list of leaked SA IDs
   // stops at the first one already on the platform, before the first cent
   // is spent at either vendor.
-  const risk = await evaluateRisk({
-    event:        'kyc_session',
-    accountId:    loaded.userId,
-    identityHash: hashIdForLookup(cleanedId),
-    phone:        loaded.riskFacts.phone,
-    email:        loaded.riskFacts.email,
-  });
-  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
-
   // ── The bureau enquiry, BEFORE either paid identity vendor ───────────
   //
   // Placed here on an explicit product decision: decide with the cheapest
@@ -661,8 +675,8 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
   // than merely cheap:
   //
   //   • validateSaId + the 18+ check, already run above, for free.
-  //   • evaluateRisk, already run above on this same claimed ID hash, which
-  //     refuses an ID already on the platform.
+  //   • evaluateRisk below, on this same claimed ID hash, which refuses an
+  //     ID already on the platform before either identity vendor is called.
   //   • the `bureau_enquiry` bucket below, whose SECOND KEY IS THE ID HASH
   //     rather than the account — the only limit in the system that bounds
   //     enquiries against one person's file from many callers. See
@@ -674,6 +688,17 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
     const gate = await runSignupBureauGate(cleanedId, loaded);
     if (gate.error) return { error: gate.error };
   }
+
+  // Only charge the KYC budget once the bureau gate has passed and we are
+  // actually about to enter the paid identity-vendor path.
+  const risk = await evaluateRisk({
+    event:        'kyc_session',
+    accountId:    loaded.userId,
+    identityHash: hashIdForLookup(cleanedId),
+    phone:        loaded.riskFacts.phone,
+    email:        loaded.riskFacts.email,
+  });
+  if (!mayProceed(risk)) return { error: risk.refusalMessage! };
 
   const callback = `${diditAppBaseUrl()}/onboarding/identity?didit=callback`;
 
@@ -913,7 +938,11 @@ export async function runCreditCheck(): Promise<ActionResult> {
       // The verified ID from the column the Didit webhook wrote. Decrypted
       // here and passed straight through — never persisted in plaintext,
       // never logged, and never re-asked of the patient.
-      saIdNumber = loaded.profile.sa_id_number ? decryptId(loaded.profile.sa_id_number) : null;
+      saIdNumber = loaded.profile.sa_id_number
+        ? (loaded.profile.sa_id_number.startsWith('v1:')
+            ? decryptId(loaded.profile.sa_id_number)
+            : loaded.profile.sa_id_number)
+        : null;
       bureauDeps = {
         config: experianConfig(),
         ...enquiryStoreDeps(svc(), async () => hasBureauConsent(loaded.consent)),

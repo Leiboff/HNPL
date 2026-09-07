@@ -8,7 +8,7 @@ import { hashIdForLookup } from '@/lib/idEncryption';
  *
  * Adapted from docs/experian/assess-at-signup.ts — the verified reference,
  * which stays unmodified. `decide()` below is byte-identical to it; the
- * orchestration differs in three documented ways (the synchronous concurrency
+ * orchestration differs in three documented ways (the consent-aware concurrency
  * guard, directly-imported validation and hashing rather than injected stubs,
  * and openAttempt returning null instead of throwing on a lost race).
  *
@@ -86,6 +86,10 @@ export interface Assessment {
   detail: string;
   billed: boolean;
   fromCache: boolean;
+  /** Durable enquiry row backing this result (including cache hits). */
+  attemptId?: string;
+  /** Signup policy's capped band; downstream underwriting must prefer it. */
+  effectiveBand?: RiskBand | null;
 }
 
 export interface AssessmentDeps {
@@ -124,15 +128,11 @@ export interface AssessmentDeps {
 // hash. A re-entrant call is COLLAPSED onto the running one and returns its
 // promise, so N callers in the same tick produce exactly one billable call.
 //
-// This is the server-side analogue of the synchronous ref in
-// components/loading/usePendingAction.ts, and it is a ref rather than
-// anything async for exactly the reason documented there: a check that
-// happens after an `await` is not a guard. Between the await and the
-// resumption, every other caller has already passed the same check.
-//
-// Which is why the map is read AND written before this function's first
-// await — see the comment at the top of assessAtSignup. Move either line
-// after an await and N tabs bill N times.
+// The caller-specific consent read must happen first: sharing a promise before
+// that read would let one profile's acceptance authorize another profile.
+// Once each caller resumes, the map check and set have no await between them,
+// so JavaScript's run-to-completion semantics still collapse same-process
+// callers that passed their own consent gates.
 //
 // IT IS NOT SUFFICIENT ON ITS OWN, and this is the important half of the
 // sentence. Serverless gives no guarantee that two concurrent requests reach
@@ -180,18 +180,11 @@ function checkIdLocally(idNumber: string): { valid: boolean; reason?: string } {
   return { valid: true };
 }
 
-export function assessAtSignup(
+export async function assessAtSignup(
   profileId: string,
   idNumber: string,
   deps: AssessmentDeps,
 ): Promise<Assessment> {
-  // ── Everything down to `inFlight.set` is synchronous, on purpose ────────
-  //
-  // No `await` may appear above that line. The hash is a local HMAC over a
-  // value we already hold — no I/O, no cost, and no bearing on lawfulness,
-  // since what consent gates is the CALL and the call is several steps below
-  // this. Computing it first is what lets the guard be entered with no await
-  // in front of it, which is the whole point of the guard.
   let idHash: string;
   try {
     idHash = hashIdForLookup(idNumber.trim());
@@ -199,48 +192,42 @@ export function assessAtSignup(
     // hashIdForLookup throws when SA_ID_LOOKUP_HMAC_KEY is missing or the
     // wrong length. Fail closed: with no hash there is no cache key and no
     // in-flight guard, so a call made anyway could bill without limit.
-    return Promise.resolve(fail(
+    return fail(
       'error',
       `could not derive ID hash: ${err instanceof Error ? err.message : 'unknown'}`,
-    ));
+    );
   }
+
+  // Consent belongs to the profile, not the ID. It must therefore be checked
+  // for every caller before an assessment promise may be shared by ID.
+  let consented: boolean;
+  try {
+    consented = await deps.hasBureauConsent(profileId);
+  } catch (err) {
+    return fail('error', `consent check failed: ${err instanceof Error ? err.message : 'unknown'}`);
+  }
+  if (!consented) return fail('error', 'no recorded bureau consent for this profile');
 
   const running = inFlight.get(idHash);
   if (running) return running;
 
-  const promise = runAssessment(profileId, idNumber, idHash, deps)
+  const promise = runAssessmentAfterConsent(profileId, idNumber, idHash, deps)
     .finally(() => { inFlight.delete(idHash); });
   inFlight.set(idHash, promise);
   return promise;
 }
 
-async function runAssessment(
+async function runAssessmentAfterConsent(
   profileId: string,
   idNumber: string,
   idHash: string,
   deps: AssessmentDeps,
 ): Promise<Assessment> {
-  // 1. Consent. The lawful basis for the enquiry lives in the accepted T&Cs, so this
-  //    reads the ACCEPTANCE ROW, not the signup checkbox. A rendered checkbox is not a
-  //    recorded consent, and this is the last point before money and before a permanent
-  //    entry on a real person's credit file.
-  let consented: boolean;
-  try {
-    consented = await deps.hasBureauConsent(profileId);
-  } catch (err) {
-    // A failed consent read is NOT "no consent" and it is certainly not "consent".
-    // Same posture as findPatientBySaId: an unreadable answer fails closed.
-    return fail('error', `consent check failed: ${err instanceof Error ? err.message : 'unknown'}`);
-  }
-  if (!consented) {
-    return fail('error', 'no recorded bureau consent for this profile');
-  }
-
-  // 2. Local validation before spending money. -114 is billable.
+  // 1. Local validation before spending money. -114 is billable.
   const local = checkIdLocally(idNumber);
   if (!local.valid) return fail('error', `local ID validation failed: ${local.reason ?? 'invalid'}`);
 
-  // 3. Cache. Re-pulling costs money AND damages the consumer's own score.
+  // 2. Cache. Re-pulling costs money AND damages the consumer's own score.
   let cached: Assessment | null;
   try {
     cached = await deps.findFreshEnquiry(idHash, CACHE_TTL_DAYS);
@@ -251,7 +238,7 @@ async function runAssessment(
   }
   if (cached) return { ...cached, fromCache: true };
 
-  // 4. The attempt row, before the call, so a timeout still leaves evidence.
+  // 3. The attempt row, before the call, so a timeout still leaves evidence.
   let attemptId: string | null;
   try {
     attemptId = await deps.openAttempt({ profileId, idHash, pVersion: deps.config.pVersion });
@@ -264,7 +251,7 @@ async function runAssessment(
     return fail('error', 'an enquiry for this ID is already in flight');
   }
 
-  // 5. The billable call. No retries here — see getScore.
+  // 4. The billable call. No retries here — see getScore.
   const outcome = await getScore(idNumber, deps.config);
   const assessment = decide(outcome);
 
@@ -289,7 +276,7 @@ async function runAssessment(
     // credentials anywhere near a log line.
   }
 
-  return assessment;
+  return { ...assessment, attemptId };
 }
 
 export function decide(outcome: ExperianOutcome): Assessment {
@@ -307,7 +294,7 @@ export function decide(outcome: ExperianOutcome): Assessment {
       // Never surfaced to the patient as a decline. Our problem, not theirs.
       return {
         ...base, decision: 'error', reasonCodes: [outcome.errorCode],
-        detail: outcome.errorDescription, billed: outcome.kind === 'provider_error',
+        detail: outcome.errorDescription, billed: true,
       };
 
     case 'input_error':

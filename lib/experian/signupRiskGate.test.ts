@@ -294,7 +294,7 @@ describe('where the gate sits in the identity step', () => {
     expect(gate, 'gate must precede the DHA lookup').toBeLessThan(dha);
   });
 
-  it('runs AFTER the free local checks and the aggregate risk control', () => {
+  it('runs after free local checks, before the paid KYC budget', () => {
     // Order is load-bearing in the other direction too: an invalid or
     // under-18 ID, or an ID already on the platform, is refused for free
     // rather than for the price of a bureau enquiry.
@@ -303,7 +303,7 @@ describe('where the gate sits in the identity step', () => {
     const gate = ACTIONS.indexOf('runSignupBureauGate(cleanedId, loaded)');
     expect(validate).toBeLessThan(gate);
     expect(risk).toBeGreaterThan(-1);
-    expect(risk).toBeLessThan(gate);
+    expect(gate).toBeLessThan(risk);
   });
 
   it('is skipped entirely when Experian is unconfigured', () => {
@@ -314,6 +314,17 @@ describe('where the gate sits in the identity step', () => {
   it('is keyed on the ID hash, not only the account', () => {
     expect(ACTIONS).toMatch(/consumeAll\('bureau_enquiry'/);
     expect(ACTIONS).toMatch(/\[idHash,\s+RATE_LIMITS\.bureau_enquiry\.account!\]/);
+  });
+
+  it('charges the bureau risk budget before the enquiry', () => {
+    const bureauBudget = ACTIONS.indexOf("event: 'credit_check'");
+    const assessment = ACTIONS.indexOf('assessment = await assessAtSignup');
+    expect(bureauBudget).toBeGreaterThan(-1);
+    expect(bureauBudget).toBeLessThan(assessment);
+  });
+
+  it('persists the gate outcome and effective band', () => {
+    expect(ACTIONS).toMatch(/persistSignupGate\(svc\(\), assessment\.attemptId, gate\)/);
   });
 
   it('answers a refusal with fixed copy that names no reason', () => {

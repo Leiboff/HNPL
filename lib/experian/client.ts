@@ -259,8 +259,18 @@ export async function getScore(idNumber: string, cfg: ExperianConfig): Promise<E
     };
   }
 
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    return {
+      kind: 'transport_error',
+      reason: err instanceof Error ? `${err.name}: ${err.message}` : 'response body read failed',
+      httpStatus: res.status,
+      latencyMs: Date.now() - started,
+    };
+  }
   const latencyMs = Date.now() - started;
-  const text = await res.text();
 
   // A SOAP fault arrives as HTTP 500, so check the body shape before trusting the status.
   if (/<(?:\w+:)?Fault[\s>]/.test(text)) {

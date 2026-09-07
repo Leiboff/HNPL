@@ -269,6 +269,7 @@ describe('every documented error code', () => {
     const d = decide({ kind: 'config_error', errorCode: '-107', errorDescription: 'Invalid user details', latencyMs: 1 });
     expect(d.decision).toBe('error');
     expect(d.decision).not.toBe('declined');
+    expect(d.billed).toBe(true);
   });
 });
 
@@ -411,6 +412,18 @@ describe('assessAtSignup — the money controls', () => {
 
     expect(rec.fetchMock).not.toHaveBeenCalled();
     expect(out.decision).toBe('error');
+  });
+
+  it('checks consent per profile before sharing a same-ID in-flight result', async () => {
+    const rec = makeDeps();
+    rec.deps.hasBureauConsent = async (profileId) => profileId === 'p1';
+    const [allowed, refused] = await Promise.all([
+      assessAtSignup('p1', VALID_SA_ID, rec.deps),
+      assessAtSignup('p2', VALID_SA_ID, rec.deps),
+    ]);
+    expect(allowed.detail).not.toMatch(/no recorded bureau consent/);
+    expect(refused.detail).toMatch(/no recorded bureau consent/);
+    expect(rec.fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('an invalid SA ID is refused locally, before anything billable', async () => {
