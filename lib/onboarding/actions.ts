@@ -18,6 +18,8 @@ import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
 import { hasBureauConsent, type BureauConsentRow } from '@/lib/legal/bureauConsent';
 import { enquiryStoreDeps } from '@/lib/experian/enquiryStore';
 import { experianConfig, experianConfigured } from '@/lib/experian/config';
+import { assessAtSignup } from '@/lib/experian/assessAtSignup';
+import { signupRiskGate } from '@/lib/experian/signupRiskGate';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -466,6 +468,97 @@ const DECLINE_MESSAGE_BY_REASON: Record<string, string> = {
   dnx_id_blocked:          'We couldn\'t verify your identity. Please contact support.',
 };
 
+// ─── runSignupBureauGate ───────────────────────────────────────────────
+//
+// The bureau enquiry and the band gate, as one step of
+// submitIdentityForVerification. Extracted so the ordering above stays
+// legible and so the failure policy lives in one place.
+//
+// Returns the error to hand back, or null to continue. THREE outcomes
+// collapse into that one field, and which one collapses to `null` is the
+// whole design:
+//
+//   pass         → null. Continue to the identity vendors.
+//   refuse       → fixed copy. The bureau answered and the answer was
+//                  against them.
+//   unavailable  → null. We did not get an answer, and our outage is not
+//                  their rejection. They continue and receive no credit,
+//                  which is the state the system already models.
+//
+// Never throws. Every failure inside here resolves to `unavailable`,
+// because a bug in the gate must not become a refusal on somebody's file.
+async function runSignupBureauGate(
+  cleanedId: string,
+  loaded: Extract<Awaited<ReturnType<typeof loadUserAndProfile>>, { ok: true }>,
+): Promise<{ error: string | null }> {
+  const REFUSAL = 'We\'re unable to continue with your application at this time. Please contact support.';
+
+  let idHash: string;
+  try {
+    idHash = hashIdForLookup(cleanedId);
+  } catch {
+    // No hash means no per-ID limit and no cache key. Treat as unavailable
+    // rather than calling unbounded.
+    return { error: null };
+  }
+
+  // ── The per-ID limit (migration 0149) ────────────────────────────────
+  //
+  // The second key is the ID BLIND INDEX, not the account — the only limit
+  // in the system that bounds how often ONE PERSON'S FILE is enquired
+  // against, whoever is asking. Same use of the second slot as
+  // `resend_confirmation`, which keys on the target address.
+  //
+  // A refusal here STOPS rather than continuing: being over this limit
+  // means either a legitimate applicant who has already had three attempts
+  // today, or somebody working through IDs they do not own. Neither should
+  // be handed a paid DHA lookup and a Didit session as a consolation.
+  if (!await consumeAll('bureau_enquiry', [
+    [await clientIp(), RATE_LIMITS.bureau_enquiry.ip],
+    [idHash,           RATE_LIMITS.bureau_enquiry.account!],
+  ])) {
+    return { error: 'Too many verification attempts. Please try again tomorrow, or contact support.' };
+  }
+
+  let assessment;
+  try {
+    const deps: AssessmentDeps = {
+      config: experianConfig(),
+      ...enquiryStoreDeps(svc(), async () => hasBureauConsent(loaded.consent)),
+    };
+    assessment = await assessAtSignup(loaded.userId, cleanedId, deps);
+  } catch (err) {
+    // Config fault or an unexpected throw. Ours, not theirs.
+    console.error('[onboarding] ALERT bureau gate unusable — continuing without a risk decision', {
+      userId: loaded.userId,
+      detail: err instanceof Error ? err.message : 'unknown',
+    });
+    return { error: null };
+  }
+
+  const gate = signupRiskGate(assessment);
+
+  if (gate.outcome !== 'pass') {
+    // Structured, and deliberately thin: no ID, no hash, no reason
+    // DESCRIPTIONS. The full evidence is the bureau_enquiries row.
+    console.warn(JSON.stringify({
+      event: 'signup_bureau_gate',
+      schema_version: 1,
+      occurred_at: new Date().toISOString(),
+      outcome: gate.outcome,
+      reason: gate.reason,
+      scorecard: gate.scorecard,
+    }));
+  }
+
+  // Fixed copy on a refusal. The reason codes behind it are NOT
+  // adverse-action reasons — MI39 appeared on 46% of a 50-file sample
+  // including minimum-risk files — and adverse-action wording has not had
+  // legal review. What happened is recorded; what the applicant is told
+  // says nothing about why.
+  return { error: gate.proceed ? null : REFUSAL };
+}
+
 export type SubmitIdentityInput = {
   saIdNumber: string;
   consent:    boolean;
@@ -537,6 +630,37 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
     email:        loaded.riskFacts.email,
   });
   if (!mayProceed(risk)) return { error: risk.refusalMessage! };
+
+  // ── The bureau enquiry, BEFORE either paid identity vendor ───────────
+  //
+  // Placed here on an explicit product decision: decide with the cheapest
+  // decisive check first, so a refusal costs one Experian call instead of a
+  // DHA registry lookup plus a Didit face-match session.
+  //
+  // THE COST OF THAT ORDERING, STATED PLAINLY: the ID at this point is a
+  // CLAIM. Nothing has verified that it belongs to the person typing it —
+  // the comment on the risk check above says so, and it is just as true
+  // here. So an enquiry made on a mistyped or borrowed ID lands on a
+  // stranger's credit file, where repeated enquiries lower their score
+  // ("High Number of Recent Enquiries", reason code 58/59).
+  //
+  // Three controls bound that, and they are why this is defensible rather
+  // than merely cheap:
+  //
+  //   • validateSaId + the 18+ check, already run above, for free.
+  //   • evaluateRisk, already run above on this same claimed ID hash, which
+  //     refuses an ID already on the platform.
+  //   • the `bureau_enquiry` bucket below, whose SECOND KEY IS THE ID HASH
+  //     rather than the account — the only limit in the system that bounds
+  //     enquiries against one person's file from many callers. See
+  //     migration 0149.
+  //
+  // Skipped entirely when Experian is unconfigured, which is production
+  // today: no call, no limit spent, no behaviour change.
+  if (experianConfigured()) {
+    const gate = await runSignupBureauGate(cleanedId, loaded);
+    if (gate.error) return { error: gate.error };
+  }
 
   const callback = `${diditAppBaseUrl()}/onboarding/identity?didit=callback`;
 
