@@ -659,7 +659,16 @@ async function handleCardRegistrationSuccess(supabase: ReturnType<typeof svc>, p
   // the card IS the entire purpose of a standalone registration event. Let a
   // failure reach POST's retryable 500 rather than acknowledging an event
   // that left no usable payment method behind.
-  await saveCardForPatientPeach(
+  //
+  // WHY THE RESULT IS INSPECTED AND NOT JUST AWAITED
+  //
+  // saveCardForPatient RESOLVES with { kind: 'error' } for the failure that
+  // actually happens — an ordinary Supabase write error. It only rejects for
+  // the unexpected. So `await` alone reaches the route's catch for the rare
+  // case and sails past the common one, acknowledging the event with a 200
+  // and no card saved: the precise outcome the paragraph above says must not
+  // happen. Throwing here is what makes that paragraph true.
+  const saved = await saveCardForPatientPeach(
     patientId,
     {
       registrationId: payload.registrationId,
@@ -673,6 +682,11 @@ async function handleCardRegistrationSuccess(supabase: ReturnType<typeof svc>, p
     },
     supabase,
   );
+  if (saved.kind === 'error') {
+    // The message is the database's own, and carries no card data: the
+    // helper builds it from the write error, never from the payload.
+    throw new Error(`card_registration: card save failed — ${saved.message}`);
+  }
 }
 
 // ─── Settlement handlers ───────────────────────────────────────────

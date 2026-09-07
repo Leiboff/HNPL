@@ -357,6 +357,41 @@ describe('POST /api/payments/peach/webhook — signed event delivery', () => {
     errorSpy.mockRestore();
   });
 
+  it('returns 500 when the card save RESOLVES with kind: error, not just when it rejects', async () => {
+    // The test above mocks a REJECTED promise, which is the failure
+    // saveCardForPatient almost never produces. Its contract for the failure
+    // that actually happens — an ordinary Supabase write error — is to
+    // RESOLVE with { kind: 'error' } (saveCardForPatient.ts returns that at
+    // three separate write sites). A handler that merely awaited the call
+    // would sail straight past this and acknowledge the event with a 200,
+    // leaving a registration webhook that Peach will never retry and no
+    // usable payment method behind.
+    vi.mocked(saveCardForPatient).mockResolvedValueOnce({
+      kind: 'error', message: 'insert into cards violates row-level security',
+    });
+    const signed = signWebhookForTesting({
+      body: EVENT_BODY_SUCCESS,
+      secret: SECRET,
+      url: WEBHOOK_URL,
+      webhookId: 'wh-card-save-resolved-error',
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(makeFormRequest(EVENT_BODY_SUCCESS, {
+      'x-webhook-signature-algorithm': signed.algorithm,
+      'x-webhook-timestamp':           signed.timestamp,
+      'x-webhook-id':                  signed.webhookId,
+      'x-webhook-signature':           signed.signature,
+    }));
+
+    expect(res.status).toBe(500);
+    // Unrecorded, so the retry is not deduplicated away as already-seen.
+    expect(dbState.writes).not.toContainEqual(expect.objectContaining({
+      table: 'peach_webhook_events',
+    }));
+    errorSpy.mockRestore();
+  });
+
   it('P2: card-reg backstop resolves the patient from BRACKETED-FLAT customParameters and saves the card', async () => {
     // Peach delivers customParameters[SHOPPER_patientId]=patient-1 as a
     // bracketed-flat key; parseFormEventBody keeps it flat. The handler
