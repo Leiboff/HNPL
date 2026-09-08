@@ -47,7 +47,8 @@ export async function activateFirstInstalment(
   if (error) return { ok: false, step: 'payment', error: error.message };
   const outcome = data as { ok?: boolean; error?: string } | null;
   if (!outcome?.ok) {
-    return { ok: false, step: 'payment', error: outcome?.error ?? 'activation_failed' };
+    const reason = outcome?.error ?? 'activation_failed';
+    return { ok: false, step: reason === 'fee_unavailable' ? 'payout' : 'payment', error: reason };
   }
 
   // Token/session closure is operational state, not part of the money
