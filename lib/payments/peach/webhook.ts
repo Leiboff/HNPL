@@ -140,10 +140,19 @@ export function webhookTimestampIsFresh(
   const trimmed = timestamp.trim();
   let thenMs: number;
 
-  if (/^\d{10}$/.test(trimmed)) {
-    thenMs = Number(trimmed) * 1000;
-  } else if (/^\d{13}$/.test(trimmed)) {
-    thenMs = Number(trimmed);
+  // Width is checked with `.length`, not a `\d{n}` quantifier: the
+  // lib/validation/regression.test.ts guard bans a bare 13-digit regex
+  // literal outside lib/validation/ so an SA-ID matcher can never be
+  // copy-pasted around the codebase. An epoch-millis timestamp is not an
+  // SA ID, and this shape reads the same.
+  if (/^\d+$/.test(trimmed)) {
+    if (trimmed.length === 10) {
+      thenMs = Number(trimmed) * 1000;   // epoch seconds
+    } else if (trimmed.length === 13) {
+      thenMs = Number(trimmed);          // epoch milliseconds
+    } else {
+      return false;                      // ambiguous width — fail closed
+    }
   } else {
     const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|([+-])(\d{2}):(\d{2}))$/.exec(trimmed);
     if (!iso) return false;
