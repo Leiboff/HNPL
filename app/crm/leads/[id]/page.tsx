@@ -80,7 +80,7 @@ export default async function LeadDetailPage({
   const hpcsaKeys = Array.from(new Set(
     (contacts ?? []).map(c => c.hpcsa_group_key).filter((k): k is string => !!k),
   ));
-  let practitionerAlsoAt: Array<{ leadId: string; practiceName: string }> = [];
+  const practitionerAlsoAt: Array<{ leadId: string; practiceName: string }> = [];
   if (hpcsaKeys.length > 0) {
     const { data: otherContacts } = await supabase
       .from('crm_lead_contacts')

@@ -69,6 +69,7 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
   useEffect(() => { setSavedDay(current); }, [current]);
 
   function reset() {

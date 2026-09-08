@@ -90,6 +90,7 @@ export default function ConfirmedView({ destination }: { destination: string }) 
   useEffect(() => {
     const hash = window.location.hash.slice(1);
     const params = new URLSearchParams(hash);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setState(params.get('error') ? 'error' : 'success');
   }, []);
 

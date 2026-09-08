@@ -139,6 +139,7 @@ export default function TodayActivityStrip({ getTodaysCounterSessions }: Props) 
     setActivity(result.activity);
   }, [getTodaysCounterSessions]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
   useEffect(() => { load(); }, [load]);
 
   return (
