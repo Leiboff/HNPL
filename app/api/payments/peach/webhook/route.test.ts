@@ -28,7 +28,9 @@ const dbState: {
   writes:   Write[];
   payments: Array<Record<string, unknown>>;
   plans:    Array<Record<string, unknown>>;
-} = { writes: [], payments: [], plans: [] };
+  replayLedgerError: string | null;
+  replayLedgerReads: number;
+} = { writes: [], payments: [], plans: [], replayLedgerError: null, replayLedgerReads: 0 };
 
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
@@ -41,6 +43,12 @@ vi.mock('@supabase/supabase-js', () => ({
           neq(col: string, val: unknown) { filters.push((r) => r[col] !== val); return builder; },
           is(col: string, val: unknown) { filters.push((r) => r[col] === val); return builder; },
           maybeSingle: async () => {
+            if (table === 'peach_webhook_events') {
+              dbState.replayLedgerReads += 1;
+              if (dbState.replayLedgerError) {
+                return { data: null, error: { message: dbState.replayLedgerError } };
+              }
+            }
             const rows = (dbState as unknown as Record<string, Record<string, unknown>[]>)[table] ?? [];
             return { data: rows.find((r) => filters.every((f) => f(r))) ?? null, error: null };
           },
@@ -134,6 +142,8 @@ beforeEach(() => {
   dbState.writes.length   = 0;
   dbState.payments.length = 0;
   dbState.plans.length    = 0;
+  dbState.replayLedgerError = null;
+  dbState.replayLedgerReads = 0;
   vi.mocked(saveCardForPatient).mockReset();
   vi.mocked(saveCardForPatient).mockResolvedValue({ kind: 'inserted', cardId: 'card-x' });
   process.env.NEXT_PUBLIC_SUPABASE_URL   = 'https://test.supabase.co';
@@ -326,6 +336,54 @@ describe('POST /api/payments/peach/webhook — signed event delivery', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.received).toBe(true);
+  });
+
+  it('returns retryable 503 without processing when the replay ledger cannot be read', async () => {
+    dbState.replayLedgerError = 'database temporarily unavailable';
+    const signed = signWebhookForTesting({
+      body: EVENT_BODY_SUCCESS,
+      secret: SECRET,
+      url: WEBHOOK_URL,
+      webhookId: 'wh-ledger-outage',
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(makeFormRequest(EVENT_BODY_SUCCESS, {
+      'x-webhook-signature-algorithm': signed.algorithm,
+      'x-webhook-timestamp':           signed.timestamp,
+      'x-webhook-id':                  signed.webhookId,
+      'x-webhook-signature':           signed.signature,
+    }));
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Replay protection unavailable' });
+    expect(saveCardForPatient).not.toHaveBeenCalled();
+    expect(dbState.writes).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
+  it('rejects a stale malformed timestamp before consulting an unavailable ledger', async () => {
+    dbState.replayLedgerError = 'database temporarily unavailable';
+    const signed = signWebhookForTesting({
+      body: EVENT_BODY_SUCCESS,
+      secret: SECRET,
+      url: WEBHOOK_URL,
+      webhookId: 'wh-malformed-timestamp',
+      timestamp: 'September 1, 2026 12:00:00',
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(makeFormRequest(EVENT_BODY_SUCCESS, {
+      'x-webhook-signature-algorithm': signed.algorithm,
+      'x-webhook-timestamp':           signed.timestamp,
+      'x-webhook-id':                  signed.webhookId,
+      'x-webhook-signature':           signed.signature,
+    }));
+
+    expect(res.status).toBe(401);
+    expect(dbState.replayLedgerReads).toBe(0);
+    expect(saveCardForPatient).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('returns 500 and leaves a failed handler delivery unrecorded so Peach retries it', async () => {

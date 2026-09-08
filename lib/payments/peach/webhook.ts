@@ -126,16 +126,10 @@ export const MAX_WEBHOOK_SKEW_SECONDS = 300;
 /**
  * Parse Peach's x-webhook-timestamp and decide whether it is fresh.
  *
- * The docs show an ISO-8601 timestamp; other Peach surfaces use epoch
- * seconds. Both are accepted rather than guessed at, because getting this
- * wrong in the strict direction rejects every genuine delivery — a far
- * louder failure than the one it would be protecting against, and one that
- * would land in production rather than in review.
- *
- * An UNPARSEABLE timestamp is treated as fresh, not as stale. The value is
- * inside the signed message, so it cannot be forged without the secret;
- * refusing a shape we merely failed to anticipate would turn a format
- * change at Peach into a total payment-reconciliation outage.
+ * Accept only Peach's documented ISO-8601 form or an integer Unix epoch in
+ * exactly 10-digit seconds / 13-digit milliseconds form. Being covered by
+ * the signature proves authenticity, not freshness: accepting an unknown
+ * shape would make a captured request valid forever.
  */
 export function webhookTimestampIsFresh(
   timestamp: string | null,
@@ -146,15 +140,45 @@ export function webhookTimestampIsFresh(
   const trimmed = timestamp.trim();
   let thenMs: number;
 
-  if (/^\d{1,13}$/.test(trimmed)) {
-    // Epoch. Ten digits or fewer is seconds; longer is milliseconds.
-    const n = Number(trimmed);
-    thenMs = trimmed.length <= 10 ? n * 1000 : n;
+  // Width is checked with `.length`, not a `\d{n}` quantifier: the
+  // lib/validation/regression.test.ts guard bans a bare 13-digit regex
+  // literal outside lib/validation/ so an SA-ID matcher can never be
+  // copy-pasted around the codebase. An epoch-millis timestamp is not an
+  // SA ID, and this shape reads the same.
+  if (/^\d+$/.test(trimmed)) {
+    if (trimmed.length === 10) {
+      thenMs = Number(trimmed) * 1000;   // epoch seconds
+    } else if (trimmed.length === 13) {
+      thenMs = Number(trimmed);          // epoch milliseconds
+    } else {
+      return false;                      // ambiguous width — fail closed
+    }
   } else {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|([+-])(\d{2}):(\d{2}))$/.exec(trimmed);
+    if (!iso) return false;
+
+    const [, yearText, monthText, dayText, hourText, minuteText, secondText, , , offsetHourText, offsetMinuteText] = iso;
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+    const second = Number(secondText);
+    const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+    const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+    const daysInMonth = month >= 1 && month <= 12
+      ? new Date(Date.UTC(year, month, 0)).getUTCDate()
+      : 0;
+
+    if (
+      year === 0 || day < 1 || day > daysInMonth || hour > 23 ||
+      minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59
+    ) return false;
+
     thenMs = Date.parse(trimmed);
   }
 
-  if (!Number.isFinite(thenMs)) return true; // unrecognised shape — see above
+  if (!Number.isFinite(thenMs)) return false;
   return Math.abs(nowMs - thenMs) <= MAX_WEBHOOK_SKEW_SECONDS * 1000;
 }
 

@@ -927,21 +927,19 @@ async function handleRegistrationEvent(payload: WebhookPaymentPayload, action: s
 async function alreadyDelivered(
   supabase: ReturnType<typeof svc>,
   webhookId: string,
-): Promise<boolean> {
+): Promise<'delivered' | 'not-delivered' | 'unavailable'> {
   const { data, error } = await supabase
     .from('peach_webhook_events')
     .select('webhook_id')
     .eq('webhook_id', webhookId)
     .maybeSingle();
   if (error) {
-    // Fail OPEN. A ledger that cannot be read must not stop real payment
-    // events being reconciled — the preconditions in every handler are
-    // what make that safe, and losing a settlement is worse than
-    // re-running an idempotent flip.
-    console.error('[peach-webhook] replay-ledger read failed (processing anyway)', error.message);
-    return false;
+    // Without this lookup we cannot establish uniqueness. Ask Peach to retry
+    // rather than running financial side effects with replay protection down.
+    console.error('[peach-webhook] replay-ledger read failed (requesting retry)', error.message);
+    return 'unavailable';
   }
-  return !!data;
+  return data ? 'delivered' : 'not-delivered';
 }
 
 async function recordDelivery(
@@ -1150,7 +1148,11 @@ export async function POST(request: NextRequest) {
   // reaches the ledger) and before any handler. webhookId is non-null here:
   // verifyWebhookSignature refuses without it.
   const ledger = svc();
-  if (await alreadyDelivered(ledger, webhookId!)) {
+  const deliveryState = await alreadyDelivered(ledger, webhookId!);
+  if (deliveryState === 'unavailable') {
+    return NextResponse.json({ error: 'Replay protection unavailable' }, { status: 503 });
+  }
+  if (deliveryState === 'delivered') {
     console.log('[peach-webhook] duplicate delivery — already processed', {
       webhookId, reference: (payload as WebhookPaymentPayload).merchantTransactionId,
     });

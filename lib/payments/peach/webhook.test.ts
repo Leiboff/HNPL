@@ -254,9 +254,8 @@ describe('signWebhookForTesting — round-trip integrity', () => {
 // The signature covers the timestamp, so a captured delivery used to
 // verify forever — the header was checked for PRESENCE and never read.
 // These pin the window and, just as importantly, pin the two deliberate
-// leniencies: an unrecognised timestamp SHAPE is accepted (a format change
-// at Peach must not become a reconciliation outage) and epoch seconds are
-// accepted alongside ISO-8601 (Peach's own surfaces disagree).
+// accepted formats: strict ISO-8601 plus precisely-sized epoch seconds and
+// milliseconds (Peach's own surfaces disagree).
 
 describe('webhookTimestampIsFresh', () => {
   const NOW = Date.parse('2026-09-01T12:00:00Z');
@@ -285,11 +284,27 @@ describe('webhookTimestampIsFresh', () => {
     expect(webhookTimestampIsFresh(String(Math.floor(NOW / 1000) - 3600), NOW)).toBe(false);
   });
 
-  it('accepts an unparseable timestamp rather than refusing a signed delivery', () => {
-    // Deliberate: the value is inside the signed message, so it cannot be
-    // forged. Refusing a shape we merely failed to anticipate would take
-    // down payment reconciliation over a formatting change.
-    expect(webhookTimestampIsFresh('not-a-timestamp', NOW)).toBe(true);
+  it.each([
+    'not-a-timestamp',
+    '09/01/2026 12:00:00',
+    '2026-09-01 12:00:00Z',
+    '2026-02-30T12:00:00Z',
+    '2026-09-01T24:00:00Z',
+    '999999999999999999999999',
+  ])('rejects unsupported, ambiguous, or overflow timestamp %s', (timestamp) => {
+    expect(webhookTimestampIsFresh(timestamp, NOW)).toBe(false);
+  });
+
+  it('requires exact epoch seconds or milliseconds widths', () => {
+    expect(webhookTimestampIsFresh(String(Math.floor(NOW / 1000)), NOW)).toBe(true);
+    expect(webhookTimestampIsFresh(String(NOW), NOW)).toBe(true);
+    expect(webhookTimestampIsFresh(String(Math.floor(NOW / 1000)).padStart(11, '0'), NOW)).toBe(false);
+    expect(webhookTimestampIsFresh(String(NOW).slice(0, 12), NOW)).toBe(false);
+  });
+
+  it('accepts exactly five minutes of skew and rejects one millisecond more', () => {
+    expect(webhookTimestampIsFresh(String(NOW - 300_000), NOW)).toBe(true);
+    expect(webhookTimestampIsFresh(String(NOW - 300_001), NOW)).toBe(false);
   });
 
   it('rejects a missing timestamp', () => {
