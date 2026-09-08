@@ -42,7 +42,7 @@ jobs:
     # substantially longer than a warm local run. Keep a ceiling for genuine
     # hangs without cancelling a healthy run while it is still replaying the
     # migration-heavy tests.
-    timeout-minutes: 45
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -68,29 +68,39 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      # NON-BLOCKING, and this is a deliberate choice rather than a shrug.
-      #
-      # `pnpm run lint` currently reports 29 errors and 52 warnings on code
-      # that predates this workflow — 20 of them the React-compiler rule
-      # "Calling setState synchronously within an effect", plus two impure
-      # calls during render, one ref access during render, three prefer-const,
-      # two unescaped entities and one require import.
-      #
-      # Gating on that would make CI red on its first run, on a backlog nobody
-      # here introduced, and the predictable result is that people learn to
-      # ignore a red tick — which costs more than the lint debt does. The
-      # setState-in-effect cluster in particular is a real refactor with real
-      # behavioural risk, not a formatting sweep.
-      #
-      # TO MAKE IT BLOCKING: clear the 29 errors, then delete the
-      # continue-on-error line. The warnings can follow separately. Until
-      # then the output is still printed on every run, so the count is
-      # visible and cannot quietly grow unnoticed.
-      - name: Lint (non-blocking — see note)
-        continue-on-error: true
+      - name: Lint
         run: pnpm run lint
 
-      # Runs last because it is the slowest, and because a type error makes
-      # the test result uninteresting anyway.
-      - name: Test
-        run: pnpm test
+      - name: Build
+        run: pnpm run build
+
+      - name: Assert build artifact
+        run: test -s .next/BUILD_ID
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Unit and UI tests (must exit cleanly)
+        run: pnpm run test:unit
+
+  database-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: PGlite and migration tests (must exit cleanly)
+        run: pnpm run test:database

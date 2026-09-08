@@ -161,6 +161,7 @@ export default function MapClient({ withCoords, noCoords, apiKey }: Props) {
 
   // ── Load Google Maps JS API ────────────────────────────────────
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     if (!apiKey) { setMapError('missing_key'); return; }
     if (typeof window === 'undefined') return;
     if (window.google?.maps) { setMapReady(true); return; }

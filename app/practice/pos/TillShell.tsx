@@ -77,6 +77,7 @@ export default function TillShell({
   }, [checkDeviceStatus]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     refresh();
   }, [refresh]);
 

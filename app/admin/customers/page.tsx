@@ -127,8 +127,8 @@ export default async function AdminCustomersPage({
   type PlanAgg = ReliPlan & { id: string; patient_id: string };
   type PaymentAgg = ReliPayment & { id: string; patient_id: string | null };
 
-  let plansByPatient:    Map<string, PlanAgg[]>    = new Map();
-  let paymentsByPatient: Map<string, PaymentAgg[]> = new Map();
+  const plansByPatient:    Map<string, PlanAgg[]>    = new Map();
+  const paymentsByPatient: Map<string, PaymentAgg[]> = new Map();
 
   if (patientIds.length > 0) {
     const [{ data: rawPlans }, { data: rawPayments }] = await Promise.all([
@@ -210,7 +210,7 @@ export default async function AdminCustomersPage({
         </div>
         <div className="text-right text-sm text-gray-500 tabular-nums">
           {rows.length} {rows.length === 1 ? 'customer' : 'customers'}
-          {q && <span className="ml-2">matching <strong>"{q}"</strong></span>}
+          {q && <span className="ml-2">matching <strong>&quot;{q}&quot;</strong></span>}
         </div>
       </div>
 

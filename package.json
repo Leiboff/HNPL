@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsx scripts/clean-next-types.mts && tsc --noEmit",
-    "test": "vitest run",
+    "test": "pnpm run test:unit && pnpm run test:database",
+    "test:unit": "vitest run --config vitest.unit.config.ts --reporter=default --reporter=hanging-process",
+    "test:database": "vitest run --config vitest.database.config.ts --no-file-parallelism --reporter=default --reporter=hanging-process",
     "test:fraud": "vitest run supabase/migrations/0142_fraud_risk_controls.rpc.test.ts lib/risk/*.test.ts app/risk-wiring.test.ts lib/payments/runPayoutBatches.pglite.test.ts --no-file-parallelism",
     "test:watch": "vitest",
     "test:preauth": "tsx --env-file=.env.local scripts/test-preauth.ts",
@@ -17,7 +19,7 @@
     "check:rls-drift": "tsx --env-file=.env.local scripts/check-rls-drift.ts",
     "design-sync:css": "pnpm --package=@tailwindcss/cli@4.3.0 dlx tailwindcss -i .design-sync/ds-input.css -o .design-sync/ds.css",
     "prepare": "simple-git-hooks || true",
-    "test:serial": "vitest run --no-file-parallelism"
+    "test:serial": "pnpm run test:unit -- --no-file-parallelism && pnpm run test:database"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm run typecheck"

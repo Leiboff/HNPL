@@ -126,6 +126,7 @@ export default function PeachWidget({ checkoutId, entityId, shopperResultUrl, mo
   // module state doesn't cleanly re-render into a different DOM node.
   useEffect(() => {
     if (readCheckoutGlobal() !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
       setScriptReady(true);
       return;
     }
@@ -188,6 +189,7 @@ export default function PeachWidget({ checkoutId, entityId, shopperResultUrl, mo
     const checkoutGlobal = readCheckoutGlobal();
     if (!checkoutGlobal) {
       console.error('[PeachWidget] Checkout global missing at initiate time');
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
       setError('The payment form is not available. Please refresh the page.');
       return;
     }

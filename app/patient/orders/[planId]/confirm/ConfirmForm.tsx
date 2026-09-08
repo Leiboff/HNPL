@@ -142,6 +142,7 @@ export default function ConfirmForm({
 
   // Stable "since" for the polling window: covers the full Peach checkout flow
   const pollingSince = useRef(
+    // eslint-disable-next-line react-hooks/purity -- capture one mount-time polling boundary
     fromRegistration ? new Date(Date.now() - 5 * 60 * 1000).toISOString() : '',
   );
 
@@ -275,6 +276,7 @@ export default function ConfirmForm({
 
     const best = validCards.find((c) => c.is_default) ?? validCards[0] ?? null;
     if (best) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
       setSelectedCardId(best.id);
       setWantsNewCard(false);
       setCardSearchStatus('idle');

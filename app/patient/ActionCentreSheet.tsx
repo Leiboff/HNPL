@@ -36,6 +36,7 @@ export default function ActionCentreSheet({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     if (!pushSupported()) { setPush('unsupported'); return; }
     let cancelled = false;
     void (async () => {

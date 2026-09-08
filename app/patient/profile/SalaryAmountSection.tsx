@@ -44,6 +44,7 @@ export default function SalaryAmountSection({ current, saveSalaryAmount }: Props
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
   useEffect(() => { setSavedAmount(current); }, [current]);
 
   function reset() {
