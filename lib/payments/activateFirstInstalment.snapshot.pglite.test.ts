@@ -55,6 +55,10 @@ const MIG_0151 = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/0151_atomic_first_instalment_activation.sql'),
   'utf8',
 ).replace(/\r\n/g, '\n');
+const MIG_0153 = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/0153_payout_fee_snapshot.sql'),
+  'utf8',
+).replace(/\r\n/g, '\n');
 
 // payouts as it really stands: 0001 + 0021's snapshot columns + 0087's UNIQUE.
 const SCHEMA = `
@@ -262,6 +266,7 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
   await db.exec(MIG_0151);
+  await db.exec(MIG_0153);
 });
 
 beforeEach(async () => {
@@ -385,7 +390,7 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     // that regression is now available in SQL instead. Deleting the pin
     // because the code it named moved would retire the guard exactly when the
     // ground it guards changed hands.
-    const sql = stripComments(MIG_0151, { sql: true });
+    const sql = stripComments(MIG_0153, { sql: true });
 
     // One INSERT into payouts, and the destination in it is the hard literal.
     expect((sql.match(/INSERT INTO payouts/gi) ?? [])).toHaveLength(1);
@@ -395,7 +400,7 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
     // Not one of the five snapshot columns is named, nor the membership-side
     // banking that used to fill them.
     for (const col of SNAPSHOT_COLS) {
-      expect(sql, `0151 must not write ${col}`).not.toMatch(col);
+    expect(sql, `0153 must not write ${col}`).not.toMatch(col);
     }
     expect(sql).not.toMatch(/personal_bank_name|personal_account_number|personal_branch_code/);
 
@@ -430,5 +435,90 @@ describe('activateFirstInstalment leaves every snapshot_* column NULL', () => {
           snapshot_branch_code    is not null or
           snapshot_account_type   is not null)`, [planId]);
     expect(populated.rows[0].n).toBe(0);
+  });
+});
+
+describe('contractual fee snapshot', () => {
+  async function financialState(planId: string, paymentId: string) {
+    const plan = (await q<{ status: string }>('select status from plans where id = $1', [planId])).rows[0];
+    const payment = (await q<{ status: string; collected_at: string | null }>(
+      'select status, collected_at from payments where id = $1', [paymentId])).rows[0];
+    const payouts = (await q('select * from payouts where plan_id = $1', [planId])).rows;
+    return { plan, payment, payouts };
+  }
+
+  it.each([
+    ['null', null],
+    ['negative', -0.01],
+    ['excessive', 100.01],
+    ['non-finite', 'NaN'],
+  ])('rejects a %s fee without committing any financial effect', async (_label, fee) => {
+    await q('update practices set fee_percent = $1 where id = $2', [fee, practiceId]);
+    const { planId, paymentId } = await seedPendingPlan();
+
+    await expect(activate(planId, paymentId)).resolves.toEqual({
+      ok: false, step: 'payout', error: 'fee_unavailable',
+    });
+    await expect(financialState(planId, paymentId)).resolves.toEqual({
+      plan: { status: 'pending_first_payment' },
+      payment: { status: 'processing', collected_at: null },
+      payouts: [],
+    });
+  });
+
+  it('rejects a missing practice without collecting, activating, or paying out', async () => {
+    const { planId, paymentId } = await seedPendingPlan();
+    // Model a legacy/corrupt reference that no longer resolves. Production's
+    // FK normally prevents it, but activation must still fail closed.
+    await q('alter table plans drop constraint plans_practice_id_fkey');
+    await q('delete from practices where id = $1', [practiceId]);
+
+    await expect(activate(planId, paymentId)).resolves.toEqual({
+      ok: false, step: 'payout', error: 'fee_unavailable',
+    });
+    const state = await financialState(planId, paymentId);
+    expect(state).toEqual({
+      plan: { status: 'pending_first_payment' },
+      payment: { status: 'processing', collected_at: null },
+      payouts: [],
+    });
+    await q('alter table plans add constraint plans_practice_id_fkey foreign key (practice_id) references practices(id) not valid');
+  });
+
+  it('preserves a fractional custom fee exactly in the immutable payout snapshot', async () => {
+    await q('update practices set fee_percent = 4.25 where id = $1', [practiceId]);
+    const { planId, paymentId } = await seedPendingPlan({ total: 1234.56 });
+
+    await expect(activate(planId, paymentId, null, 1234.56)).resolves.toEqual({ ok: true });
+    const payout = (await q<{
+      gross_amount: string; fee_percent_snapshot: string; fee_amount: string; net_amount: string;
+    }>(`select gross_amount, fee_percent_snapshot, fee_amount, net_amount
+          from payouts where plan_id = $1`, [planId])).rows[0];
+    expect(payout).toEqual({
+      gross_amount: '1234.56',
+      fee_percent_snapshot: '4.25',
+      fee_amount: '52.47',
+      net_amount: '1182.09',
+    });
+  });
+
+  it('a retry after fee failure creates one payment effect and one payout with the repaired fee', async () => {
+    await q('update practices set fee_percent = null where id = $1', [practiceId]);
+    const { planId, paymentId } = await seedPendingPlan({ total: 1000 });
+    await expect(activate(planId, paymentId)).resolves.toMatchObject({ ok: false, error: 'fee_unavailable' });
+
+    await q('update practices set fee_percent = 4 where id = $1', [practiceId]);
+    await expect(activate(planId, paymentId)).resolves.toEqual({ ok: true });
+    await expect(activate(planId, paymentId)).resolves.toEqual({ ok: true });
+
+    const payout = await q<{ count: number; fee: string; net: string; rate: string }>(
+      `select count(*)::int as count, min(fee_amount)::text as fee,
+              min(net_amount)::text as net, min(fee_percent_snapshot)::text as rate
+         from payouts where plan_id = $1`, [planId]);
+    expect(payout.rows[0]).toEqual({ count: 1, fee: '40.00', net: '960.00', rate: '4.00' });
+    const payment = await q<{ count: number }>(
+      `select count(*)::int as count from payments
+        where id = $1 and status = 'collected' and collected_at is not null`, [paymentId]);
+    expect(payment.rows[0].count).toBe(1);
   });
 });

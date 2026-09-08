@@ -49,18 +49,18 @@ describe('activateFirstInstalment', () => {
   it('surfaces a coded refusal from the transaction', async () => {
     const svc = service({ data: { ok: false, error: 'fee_unavailable' }, error: null });
     await expect(activateFirstInstalment(svc, input)).resolves.toEqual({
-      ok: false, step: 'payment', error: 'fee_unavailable',
+      ok: false, step: 'payout', error: 'fee_unavailable',
     });
   });
 });
 
 describe('activate_first_instalment migration contract', () => {
-  const sql = readFileSync('supabase/migrations/0151_atomic_first_instalment_activation.sql', 'utf8');
+  const sql = readFileSync('supabase/migrations/0153_payout_fee_snapshot.sql', 'utf8');
 
   it('locks the plan and payment and writes collection, activation and payout in one function', () => {
     expect(sql).toMatch(/FROM plans WHERE id = p_plan_id FOR UPDATE/);
     expect(sql).toMatch(/instalment_number = 1\s+FOR UPDATE/);
-    expect(sql).toMatch(/UPDATE payments SET status = 'collected'/);
+    expect(sql).toMatch(/UPDATE payments\s+SET status = 'collected'/);
     expect(sql).toMatch(/UPDATE plans SET status = 'active'/);
     expect(sql).toMatch(/INSERT INTO payouts/);
   });
@@ -70,6 +70,13 @@ describe('activate_first_instalment migration contract', () => {
     expect(sql).toMatch(/v_plan\.status NOT IN \('pending_first_payment', 'active'\)/);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION activate_first_instalment[\s\S]*FROM PUBLIC/);
     expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION activate_first_instalment[\s\S]*TO service_role/);
+  });
+
+  it('fails closed on an unavailable or invalid fee and snapshots the exact rate', () => {
+    expect(sql).toMatch(/SELECT fee_percent INTO STRICT v_fee/);
+    expect(sql).toMatch(/NO_DATA_FOUND OR TOO_MANY_ROWS/);
+    expect(sql).toMatch(/v_fee IS NULL[\s\S]*'NaN', 'Infinity', '-Infinity'[\s\S]*v_fee < 0[\s\S]*v_fee > 100/);
+    expect(sql).toMatch(/gross_amount, fee_percent_snapshot,[\s\S]*v_plan\.total_amount, v_fee, v_fee_amount/);
   });
 
   it('lets duplicate success webhooks re-enter the RPC to repair an orphan payout', () => {
