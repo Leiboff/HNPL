@@ -5,6 +5,7 @@ import { currentFlags } from '@/lib/featureFlags';
 import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import SalaryStepClient from './SalaryStepClient';
+import { ONBOARDING_EVENTS, recordOnboardingEvent } from '@/lib/onboarding/events';
 
 // ─── Step: salary day + amount ─────────────────────────────────────────
 //
@@ -57,6 +58,7 @@ export default async function SalaryStep() {
   }
 
   const steps = stepListFor(userForState, flags);
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.SALARY_VIEWED, { metadata: { source: 'server_page' } });
 
   return (
     <OnboardingShell
