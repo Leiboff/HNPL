@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState, type ReactNode } from 'react';
-import { setPhoneForOnboarding } from '@/lib/onboarding/actions';
+import { recordClientRecoveryFailure, setPhoneForOnboarding } from '@/lib/onboarding/actions';
 import {
   requestPhoneOtpForUser,
   verifyPhoneOtpForUser,
@@ -122,14 +122,20 @@ export default function PhoneStepClient({
     // short number comes back as "Enter a valid South African
     // cellphone number." rather than being submitted as-is.
     const e164 = nationalToE164ZA(national);
-    const result = await setPhoneForOnboarding(e164);
-    setPhoneLoading(false);
-    if (result.error) {
-      setPhoneError(result.error);
-      return;
+    try {
+      const result = await setPhoneForOnboarding(e164);
+      if (result.error) {
+        setPhoneError(result.error);
+        return;
+      }
+      setDisplayPhone(displayNumber(national));
+      setStage('otp');
+    } catch {
+      setPhoneError('We couldn\'t save your number. Please try again.');
+      void recordClientRecoveryFailure('phone_submit_failed');
+    } finally {
+      setPhoneLoading(false);
     }
-    setDisplayPhone(displayNumber(national));
-    setStage('otp');
   }
 
   if (stage === 'phone-entry') {

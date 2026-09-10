@@ -105,8 +105,10 @@ export default function IdentityStepClient({
     }
 
     setVerifyLoading(true);
-    const result = await submitIdentityForVerification({ saIdNumber: cleaned, consent });
-    setVerifyLoading(false);
+    let result;
+    try { result = await submitIdentityForVerification({ saIdNumber: cleaned, consent }); }
+    catch { setVerifyError('We couldn\'t start verification. Please try again.'); return; }
+    finally { setVerifyLoading(false); }
 
     if (result.error !== null) {
       setVerifyError(result.error);

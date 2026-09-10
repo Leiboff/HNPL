@@ -5,6 +5,7 @@ import { currentFlags } from '@/lib/featureFlags';
 import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import CreditCheckStepClient from './CreditCheckStepClient';
+import { ONBOARDING_EVENTS, recordOnboardingEvent } from '@/lib/onboarding/events';
 
 // ─── Step (SEAM): affordability / credit check ────────────────────────
 //
@@ -46,6 +47,7 @@ export default async function CreditCheckStep() {
   }
 
   const steps = stepListFor(userForState, flags);
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.CREDIT_CHECK_VIEWED, { metadata: { source: 'server_page' } });
 
   return (
     <OnboardingShell

@@ -63,17 +63,12 @@ export default function SalaryStepClient({
     }
 
     setSaving(true);
-    const result = await saveSalaryDetails({ salaryDay, salaryAmount: amount });
-    setSaving(false);
-
-    if (result.error !== null) {
-      setError(result.error);
-      return;
-    }
-
-    // The server decides what comes next — it knows whether the credit
-    // check is enabled and whether it auto-passed. Always follow it.
-    window.location.href = result.nextPath;
+    try {
+      const result = await saveSalaryDetails({ salaryDay, salaryAmount: amount });
+      if (result.error !== null) { setError(result.error); return; }
+      window.location.href = result.nextPath;
+    } catch { setError('We couldn\'t save your income details. Please try again.'); }
+    finally { setSaving(false); }
   }
 
   return (
