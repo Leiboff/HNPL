@@ -1,8 +1,14 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import ExploreView from './ExploreView';
+import ExploreHeader from './ExploreHeader';
 import PatientScreen from '../PatientScreen';
-import type { DirectoryRow } from '@/lib/practitioner/grouping';
+import {
+  decorateWithDistance,
+  groupIntoCards,
+  type DirectoryRow,
+} from '@/lib/practitioner/grouping';
+import { categoryCounts } from '@/lib/practitioner/categories';
 import { getRequestUser } from '@/lib/auth/requestUser';
 
 // ─── Find a Practitioner ───────────────────────────────────────────────
@@ -63,18 +69,18 @@ export default async function ExplorePage() {
   // Distinct practitioners (a member can appear once per practice).
   const practitionerCount = new Set(rows.map((r) => r.member_id)).size;
 
+  // Per-specialty counts for the header's subtitle. Distance plays no
+  // part in a count, so we group with a null location — the client
+  // recomputes the same cards with distances for the list itself.
+  const categories = categoryCounts(groupIntoCards(decorateWithDistance(rows, null)));
+
   // v4: a navy header carries the title + count; ExploreView renders its
   // search, filters and results on the sheet (its own Landing hero is
-  // suppressed via hideHero so the title isn't duplicated).
+  // suppressed via hideHero so the title isn't duplicated). The header is
+  // a client component because inside a specialty the title IS the
+  // specialty — it has to follow the ?specialty= param.
   const header = (
-    <>
-      <p className="text-[24px] font-semibold text-white" style={{ letterSpacing: '-.025em' }}>Find care</p>
-      <p className="mt-1.5 text-[13.5px]" style={{ color: 'rgba(255,255,255,.62)' }}>
-        {practitionerCount > 0
-          ? `Pay later at ${practitionerCount} practitioner${practitionerCount === 1 ? '' : 's'} near you.`
-          : 'Pay later at practitioners near you.'}
-      </p>
-    </>
+    <ExploreHeader practitionerCount={practitionerCount} categories={categories} />
   );
 
   return (

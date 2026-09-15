@@ -102,6 +102,7 @@ describe('the register never reaches the patient portal', () => {
   const PATIENT_SOURCES = [
     'app/patient/explore/page.tsx',
     'app/patient/explore/ExploreView.tsx',
+    'app/patient/explore/ExploreHeader.tsx',
     'app/patient/explore/Landing.tsx',
     'app/patient/explore/PractitionerListCard.tsx',
     'lib/practitioner/categories.ts',
