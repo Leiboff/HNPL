@@ -312,7 +312,7 @@ export default function ChangeLocationSheet({ onClose, onCommit }: Props) {
             disabled={!canConfirm}
             data-testid="change-location-confirm"
             className="w-full rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+            style={{ background: 'var(--brand-navy-deep)' }}
           >
             Select location
           </button>

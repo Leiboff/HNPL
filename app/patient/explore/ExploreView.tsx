@@ -275,7 +275,7 @@ function ResultsView({
                       className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                         active ? 'text-white' : 'text-[var(--portal-ink)] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
                       }`}
-                      style={active ? { background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' } : undefined}
+                      style={active ? { background: 'var(--brand-navy-deep)' } : undefined}
                     >
                       {km} km
                     </button>
@@ -355,7 +355,7 @@ function SpecialtyChip({
           ? 'text-white'
           : 'text-[var(--portal-ink)] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
       }`}
-      style={active ? { background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' } : undefined}
+      style={active ? { background: 'var(--brand-navy-deep)' } : undefined}
     >
       {children}
     </button>

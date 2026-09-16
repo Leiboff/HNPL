@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePasskeys, passkeyErrorMessage } from '@/lib/hooks/usePasskeys';
 import { useInstallPrompt } from '@/app/_pwa/useInstallPrompt';
 import { pushSupported, currentPushState, enablePush } from '@/app/_pwa/pushClient';
+import BottomSheet, { SheetRow } from './BottomSheet';
 
 // ─── ActionCentreSheet ─────────────────────────────────────────────────
 //
@@ -94,177 +95,134 @@ export default function ActionCentreSheet({ open, onClose }: Props) {
     try { await install(); } finally { setInstallBusy(false); }
   }
 
-  // ── ESC + scroll lock ────────────────────────────────────────────
-  const onKey = useCallback((e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }, [onClose]);
-  useEffect(() => {
-    if (!open) return;
-    document.addEventListener('keydown', onKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
-    };
-  }, [open, onKey]);
+  // Escape, the scroll lock, the scrim and close-on-navigation all live
+  // in BottomSheet — see the note there on why all four belong together.
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Action centre">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
-      <div className="absolute inset-0 flex flex-col justify-end md:items-end md:justify-start md:p-6">
-        <div
-          className="relative bg-white w-full md:max-w-md md:w-96 rounded-t-2xl md:rounded-2xl shadow-xl max-h-[85vh] overflow-y-auto md:mt-16"
-          data-testid="action-centre-sheet"
-        >
-          {/* Header */}
-          <div className="sticky top-0 z-10 bg-white flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100">
-            <h2 className="text-base font-semibold text-gray-900">Notifications</h2>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      label="Action centre"
+      title="Notifications"
+      blurb="One-time setup that makes betternow quicker and safer to use. Nothing here is required."
+      testid="action-centre-sheet"
+    >
+      {/* ── Payment reminders ──────────────────────────────────────── */}
+      <SheetRow
+        testid="ac-item-push"
+        tone={push === 'subscribed' ? 'teal' : 'neutral'}
+        icon={<BellGlyph />}
+        title="Turn on payment reminders"
+        body={
+          push === 'subscribed'   ? 'Reminders enabled — you\'ll get a nudge a day before each instalment.'
+          : push === 'blocked'     ? 'Notifications are blocked in this browser. Turn them on in browser settings, then come back here.'
+          : push === 'unsupported' ? 'Not supported in this browser.'
+          :                          'A friendly nudge a day before each instalment — never more.'
+        }
+        aside={push === 'subscribed' ? <DoneMark /> : undefined}
+        action={
+          push === 'idle' || push === 'dismissed'
+            ? { label: pushBusy ? 'Turning on…' : 'Turn on', onClick: turnOnPush, busy: pushBusy }
+            : null
+        }
+        error={pushErr}
+      />
 
-          <div className="p-5 space-y-3">
+      {/* ── Passkey enrolment ──────────────────────────────────────── */}
+      <SheetRow
+        testid="ac-item-passkey"
+        tone={hasPasskey && !pkLoading ? 'teal' : 'neutral'}
+        icon={<KeyGlyph />}
+        title="Add a passkey"
+        body={
+          !pkSupported  ? 'Passkeys aren\'t supported on this device.'
+          : hasPasskey  ? 'Passkey enrolled — you can sign in with a fingerprint or face.'
+          :               'Skip typing your password — sign in with your device biometrics.'
+        }
+        aside={hasPasskey && !pkLoading ? <DoneMark /> : undefined}
+        action={
+          pkSupported && !hasPasskey && !pkLoading
+            ? { label: pkBusy ? 'Enrolling…' : 'Add passkey', onClick: addPasskey, busy: pkBusy }
+            : null
+        }
+        error={pkError ? passkeyErrorMessage(pkError) : null}
+      />
 
-            {/* ── Payment reminders ──────────────────────────────── */}
-            <Item
-              testid="ac-item-push"
-              title="Turn on payment reminders"
-              body={
-                push === 'subscribed' ? 'Reminders enabled — you\'ll get a nudge a day before each instalment.'
-                : push === 'blocked'    ? 'Notifications are blocked in this browser. Turn them on in browser settings, then come back here.'
-                : push === 'unsupported' ? 'Not supported in this browser.'
-                :                          'A friendly nudge a day before each instalment — never more.'
-              }
-              done={push === 'subscribed'}
-              action={
-                push === 'idle' || push === 'dismissed'
-                  ? {
-                      label: pushBusy ? 'Turning on…' : 'Turn on',
-                      onClick: turnOnPush,
-                      busy: pushBusy,
-                    }
-                  : null
-              }
-              error={pushErr}
-            />
-
-            {/* ── Passkey enrolment ──────────────────────────────── */}
-            <Item
-              testid="ac-item-passkey"
-              title="Add a passkey"
-              body={
-                !pkSupported ? 'Passkeys aren\'t supported on this device.'
-                : hasPasskey ? 'Passkey enrolled — you can sign in with a fingerprint or face.'
-                :              'Skip typing your password — sign in with your device biometrics.'
-              }
-              done={hasPasskey && !pkLoading}
-              action={
-                pkSupported && !hasPasskey && !pkLoading
-                  ? {
-                      label: pkBusy ? 'Enrolling…' : 'Add passkey',
-                      onClick: addPasskey,
-                      busy: pkBusy,
-                    }
-                  : null
-              }
-              error={pkError ? passkeyErrorMessage(pkError) : null}
-            />
-
-            {/* ── Install the app ────────────────────────────────── */}
-            {installState === 'installed' ? (
-              <Item
-                testid="ac-item-install"
-                title="Install the app"
-                body="Installed — you're launching from the home screen."
-                done
-                action={null}
-              />
-            ) : installState === 'android' ? (
-              <Item
-                testid="ac-item-install"
-                title="Install the app"
-                body="Add betternow to your home screen for one-tap access and native-feel navigation."
-                done={false}
-                action={{
-                  label:   installBusy ? 'Opening…' : 'Install',
-                  onClick: doInstall,
-                  busy:    installBusy,
-                }}
-              />
-            ) : installState === 'ios' ? (
-              <Item
-                testid="ac-item-install"
-                title="Install the app"
-                body="Tap the Share icon in Safari, then Add to Home Screen."
-                done={false}
-                action={null}
-              />
-            ) : null /* 'none' → hidden entirely */}
-
-          </div>
-        </div>
-      </div>
-    </div>
+      {/* ── Install the app ────────────────────────────────────────── */}
+      {installState === 'installed' ? (
+        <SheetRow
+          testid="ac-item-install"
+          tone="teal"
+          icon={<InstallGlyph />}
+          title="Install the app"
+          body="Installed — you're launching from the home screen."
+          aside={<DoneMark />}
+        />
+      ) : installState === 'android' ? (
+        <SheetRow
+          testid="ac-item-install"
+          icon={<InstallGlyph />}
+          title="Install the app"
+          body="Add betternow to your home screen for one-tap access and native-feel navigation."
+          action={{ label: installBusy ? 'Opening…' : 'Install', onClick: doInstall, busy: installBusy }}
+        />
+      ) : installState === 'ios' ? (
+        <SheetRow
+          testid="ac-item-install"
+          icon={<InstallGlyph />}
+          title="Install the app"
+          body="Tap the Share icon in Safari, then Add to Home Screen."
+        />
+      ) : null /* 'none' → hidden entirely */}
+    </BottomSheet>
   );
 }
 
-// ── Item primitive ────────────────────────────────────────────────
-
-type ItemProps = {
-  testid: string;
-  title:  string;
-  body:   string;
-  done:   boolean;
-  action: { label: string; onClick: () => void; busy: boolean } | null;
-  error?: string | null;
-};
-
-function Item({ testid, title, body, done, action, error }: ItemProps) {
+/** The done mark on a completed item. Subtle, and it never vanishes —
+ *  an action centre that empties as you finish things looks broken, and a
+ *  patient checking "did I turn reminders on?" needs the row still there
+ *  saying yes. */
+function DoneMark() {
   return (
-    <div
-      data-testid={testid}
-      className={
-        'rounded-xl border p-4 ' +
-        (done
-          ? 'border-emerald-100 bg-emerald-50/40'
-          : 'border-gray-200 bg-white')
-      }
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-            {done && (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden data-testid="ac-item-done">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            )}
-            <span>{title}</span>
-          </p>
-          <p className="mt-1 text-xs text-gray-600">{body}</p>
-          {error && (
-            <p role="alert" className="mt-1 text-xs text-red-600">{error}</p>
-          )}
-        </div>
-        {action && (
-          <button
-            type="button"
-            onClick={action.onClick}
-            disabled={action.busy}
-            className="shrink-0 rounded-lg text-xs font-semibold text-white px-3 py-2 disabled:opacity-60"
-            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
-          >
-            {action.label}
-          </button>
-        )}
-      </div>
-    </div>
+    <>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden data-testid="ac-item-done" style={{ color: 'var(--portal-accent-ink)' }}>
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      <span style={{ color: 'var(--portal-accent-ink)' }}>On</span>
+    </>
+  );
+}
+
+// ── Glyphs ────────────────────────────────────────────────────────
+//
+// 24×24, currentColor, so the tile's tone drives the tint.
+
+function BellGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
+  );
+}
+
+function KeyGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="8" cy="15" r="4" />
+      <path d="M11.2 11.8 20 3M15.5 6.5l2.5 2.5M13 9l2 2" />
+    </svg>
+  );
+}
+
+function InstallGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M4 21h16" />
+    </svg>
   );
 }

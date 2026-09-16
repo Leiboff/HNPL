@@ -233,7 +233,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
                     already carries the state, so a status glyph on the
                     left was saying it twice. */}
                 <span
-                  className="flex-none w-[30px] h-[30px] rounded-[10px] flex items-center justify-center text-[12.5px] font-semibold"
+                  className="flex-none w-[30px] h-[30px] rounded-chip flex items-center justify-center text-[12.5px] font-semibold"
                   style={overdue
                     ? { background: DANGER_WASH, color: DANGER }
                     : { background: 'rgba(19,41,75,.05)', color: 'var(--portal-ink)' }}
@@ -304,7 +304,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
               <a
                 href="/contact"
                 className="bn-btn-wash flex-none text-[14.5px] font-semibold rounded-tile px-[18px] py-[15px]"
-                style={{ color: '#2C3E5C' }}
+                style={{ color: 'var(--portal-ink-2)' }}
               >
                 Get help
               </a>

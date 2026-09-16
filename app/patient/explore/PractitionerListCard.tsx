@@ -73,7 +73,8 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
 
   return (
     <article
-      className="relative bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm hover:shadow-md transition-shadow"
+      className="bn-card-hover relative bg-white rounded-card"
+      style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 8px -3px rgba(15,31,58,.09)' }}
       data-testid={`practitioner-card-${card.id}`}
     >
       {/* Whole-card link — sits UNDER the action buttons via z-index. */}
@@ -81,7 +82,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
         href={`/patient/practitioner/${card.representativeMemberId}`}
         data-testid={`practitioner-card-${card.id}-view`}
         aria-label={`View ${card.fullName}`}
-        className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)]/40"
+        className="absolute inset-0 rounded-card focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)]/40"
       />
 
       <div className="relative px-5 py-4 space-y-3">
@@ -90,16 +91,33 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
         <header className="flex items-start gap-3">
           <div
             aria-hidden
-            className="shrink-0 h-11 w-11 rounded-full flex items-center justify-center text-sm font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+            className="shrink-0 h-[46px] w-[46px] rounded-tile flex items-center justify-center text-[14px] font-semibold"
+            style={{ background: 'rgba(21,168,158,.1)', color: 'var(--portal-accent-ink)' }}
           >
             {initialsOf(card)}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-gray-900 truncate">{card.fullName}</p>
-            {card.specialty && (
-              <p className="text-xs text-gray-500 mt-0.5">{card.specialty}</p>
-            )}
+            <p className="text-[14.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{card.fullName}</p>
+            <div className="mt-[7px] flex flex-wrap items-center gap-1.5">
+              {card.specialty && (
+                <span
+                  className="text-[11px] font-medium rounded-full px-[9px] py-[5px]"
+                  style={{ background: 'var(--portal-wash)', color: 'var(--portal-muted)' }}
+                >
+                  {card.specialty}
+                </span>
+              )}
+              {/* The reason this directory exists, said on every card. It
+                  is the product's actual claim — not a marketing line —
+                  and 3 is the maximum plan_type the schema allows, so it
+                  cannot drift from what checkout will offer. */}
+              <span
+                className="text-[11px] font-medium rounded-full px-[9px] py-[5px]"
+                style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent-ink)' }}
+              >
+                Up to 3 instalments
+              </span>
+            </div>
           </div>
         </header>
 
@@ -147,8 +165,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
               <a
                 href={`tel:${nearest.phone}`}
                 data-testid={`practitioner-card-${card.id}-call`}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white shadow-sm hover:shadow"
-                style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+                className="bn-btn-navy inline-flex items-center gap-1.5 rounded-chip px-3 py-2 text-[12px] font-semibold text-white"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                   <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z" strokeLinecap="round" strokeLinejoin="round" />

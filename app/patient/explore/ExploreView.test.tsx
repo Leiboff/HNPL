@@ -192,7 +192,11 @@ describe('ExploreView — landing is the default view', () => {
     render(<ExploreView rows={rows} />);
     const dent   = screen.getByTestId('landing-category-Dentistry');
     const physio = screen.getByTestId('landing-category-Physiotherapy');
+    // The pill shows "Dentistry · 2"; the full phrase is carried in the
+    // accessible name (sr-only), so textContent holds both.
+    expect(dent.textContent).toMatch(/Dentistry · 2\b/);
     expect(dent.textContent).toMatch(/2 practitioners/);
+    expect(physio.textContent).toMatch(/Physiotherapy · 1\b/);
     expect(physio.textContent).toMatch(/1 practitioner\b/);
   });
 

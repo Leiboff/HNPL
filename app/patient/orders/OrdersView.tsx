@@ -39,7 +39,7 @@ function ResumePaymentCard({ plan }: { plan: PlanRow }) {
   return (
     <div
       className="rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
-      style={{ border: '1px solid #F2DCB2', boxShadow: CARD_SHADOW }}
+      style={{ border: '1px solid #F5D49A', boxShadow: CARD_SHADOW }}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">

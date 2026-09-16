@@ -89,6 +89,15 @@
   --portal-faint:      #8994A5;
   --portal-accent:     var(--brand-teal);
   --portal-accent-ink: var(--brand-teal-ink);
+
+  /* The camera viewfinder ground (/patient/scan), and the only near-black
+   * in the app. It is NOT a fifth navy: a live camera preview needs a
+   * NEUTRAL dark surround, because any hue in the frame shifts how the
+   * colours inside the preview read — which is why every phone's own
+   * camera UI does the same thing. Named rather than inlined so that if a
+   * second full-bleed capture surface ever appears it uses this ground
+   * instead of picking its own near-black. */
+  --portal-viewfinder: #07101F;
 }
 
 @theme inline {
@@ -113,6 +122,7 @@
   --color-portal-faint:      var(--portal-faint);
   --color-portal-accent:     var(--portal-accent);
   --color-portal-accent-ink: var(--portal-accent-ink);
+  --color-portal-viewfinder: var(--portal-viewfinder);
 
   /* The portal's radius scale. It had five values (22, 18, 15, 14, 7px);
    * 22/14/7 is a real progression — card, tile, small chip — and 18 and 15

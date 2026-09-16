@@ -475,12 +475,15 @@ describe('Header action centre — bell replaces logout in patient header', () =
 
   it('action-centre sheet exposes push + passkey + install items', () => {
     const SHEET = read('app/patient/ActionCentreSheet.tsx');
-    expect(SHEET).toMatch(/data-testid="action-centre-sheet"/);
-    // Each item passes its testid prop; Item renders <div data-testid={testid}>.
+    const SHELL = read('app/patient/BottomSheet.tsx');
+    // The sheet's chrome moved into the shared BottomSheet, so this file
+    // passes `testid` the same way its items do, and the shell is what
+    // renders <div data-testid={testid}> — for the sheet AND the rows.
+    expect(SHEET).toMatch(/testid="action-centre-sheet"/);
     expect(SHEET).toMatch(/testid="ac-item-push"/);
     expect(SHEET).toMatch(/testid="ac-item-passkey"/);
     expect(SHEET).toMatch(/testid="ac-item-install"/);
-    expect(SHEET).toMatch(/data-testid=\{testid\}/);
+    expect(SHELL).toMatch(/data-testid=\{testid\}/);
     // Install item is hidden entirely when beforeinstallprompt is unavailable
     // AND we're not on iOS Safari — the render tree ends the ternary with a
     // `: null` (the 'none' branch), so no ac-item-install renders.
@@ -490,8 +493,14 @@ describe('Header action centre — bell replaces logout in patient header', () =
   it('completed items render a done tick (subtle, never vanish)', () => {
     const SHEET = read('app/patient/ActionCentreSheet.tsx');
     expect(SHEET).toMatch(/data-testid="ac-item-done"/);
-    // The done-tick is emitted only when the item's `done` prop is true.
-    expect(SHEET).toMatch(/{done && \(/);
+    // The tick is emitted only for an item that IS done: every <DoneMark />
+    // sits behind a completed-state check (subscribed / hasPasskey /
+    // installed), and there is no unconditional one.
+    const marks = SHEET.match(/aside=\{[^}]*<DoneMark \/>[^}]*\}/g) ?? [];
+    expect(marks.length).toBeGreaterThanOrEqual(3);
+    for (const m of marks) {
+      expect(m, m).toMatch(/subscribed|hasPasskey|<DoneMark \/>\}$/);
+    }
   });
 
   it('push soft-ask logic in the centre reuses the same LS key as the removed home card', () => {

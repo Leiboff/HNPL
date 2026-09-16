@@ -296,7 +296,7 @@ export default function PaymentMethods({
             type="button"
             onClick={() => setConfirm({ kind: 'none' })}
             className="bn-btn-wash rounded-tile px-4 py-[11px] text-[13.5px] font-semibold"
-            style={{ color: '#2C3E5C' }}
+            style={{ color: 'var(--portal-ink-2)' }}
           >
             Cancel
           </button>
@@ -345,7 +345,7 @@ export default function PaymentMethods({
         <>
           <div
             className="bn-up relative rounded-card p-[20px] overflow-hidden"
-            style={{ background: 'linear-gradient(140deg,var(--brand-navy),#0B1A31)' }}
+            style={{ background: 'linear-gradient(140deg,var(--brand-navy),var(--brand-navy-deep))' }}
           >
             <div
               aria-hidden
@@ -440,7 +440,7 @@ export default function PaymentMethods({
                   disabled={loading}
                   title="Use this card for new plans. Existing plans are unaffected."
                   className="bn-btn-wash rounded-chip px-3 py-[9px] text-[12.5px] font-semibold disabled:opacity-60"
-                  style={{ color: '#2C3E5C' }}
+                  style={{ color: 'var(--portal-ink-2)' }}
                 >
                   Make default
                 </button>
@@ -462,7 +462,7 @@ export default function PaymentMethods({
         onClick={handleAddCard}
         disabled={addLoading || loading}
         className="rounded-card px-[17px] py-[17px] text-[14px] font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        style={{ border: '1px dashed #C3CBD8', background: '#fff', color: 'var(--portal-accent-ink)' }}
+        style={{ border: '1px dashed var(--portal-line)', background: '#fff', color: 'var(--portal-accent-ink)' }}
       >
         {addLoading ? 'Opening card form…' : '+ Add a card'}
       </button>
@@ -499,7 +499,7 @@ function Banner({ tone, children }: { tone: 'danger' | 'success'; children: Reac
     ? { bg: 'rgba(180,35,24,.10)',  border: 'rgba(180,35,24,.25)',  fg: '#B42318' }
     : { bg: 'rgba(21,168,158,.08)', border: 'rgba(21,168,158,.25)', fg: 'var(--portal-accent-ink)' };
   return (
-    <div role="status" className="rounded-[18px] px-4 py-[13px] text-[13px] leading-[1.5]" style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.fg }}>
+    <div role="status" className="rounded-tile px-4 py-[13px] text-[13px] leading-[1.5]" style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.fg }}>
       {children}
     </div>
   );

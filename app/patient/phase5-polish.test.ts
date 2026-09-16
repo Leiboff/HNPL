@@ -25,11 +25,21 @@ describe('bottom-nav tap target', () => {
   });
 });
 
-describe('specialty title wraps (no truncation)', () => {
-  it('the category tile title is not truncated ("General Practice" must not clip)', () => {
-    const line = LANDING.split('\n').find((l) => l.includes('{c.specialty}</p>')) ?? '';
-    expect(line).not.toContain('truncate');
-    expect(line).toMatch(/break-words|wrap|line-clamp/);
+describe('a specialty name is never clipped', () => {
+  it('the specialty pill grows sideways in a scroller instead of truncating', () => {
+    // Originally: the specialty was a <p> inside a two-column card grid,
+    // and the fix for "General Dental Practitioner" clipping was to let it
+    // wrap onto a second line. The tiles are now a horizontally scrolling
+    // PILL ROW, so the fix is the other one — the label does not wrap, the
+    // pill widens, and the row scrolls. Either way nothing is cut off, and
+    // `truncate` (which is what actually clips) must still be absent.
+    const pill = LANDING.split('\n').find((l) => l.includes('landing-category-${c.specialty}')) ?? '';
+    expect(pill).not.toBe('');
+    const block = LANDING.slice(LANDING.indexOf(pill), LANDING.indexOf('</Link>', LANDING.indexOf(pill)));
+    expect(block).not.toContain('truncate');
+    expect(block).toContain('whitespace-nowrap');
+    const row = LANDING.split('\n').find((l) => l.includes('data-testid="landing-categories"')) ?? '';
+    expect(row).toContain('overflow-x-auto');
   });
 });
 

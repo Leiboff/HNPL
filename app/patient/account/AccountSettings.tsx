@@ -80,7 +80,7 @@ const ChevronRight = (
     height={13}
     className="flex-none"
     fill="none"
-    stroke="#C3CBD8"
+    style={{ stroke: 'var(--portal-line)' }}
     strokeWidth={2}
     strokeLinecap="round"
     strokeLinejoin="round"
@@ -160,7 +160,7 @@ const ROW_ICON_PATHS: Record<RowIconName, React.ReactNode> = {
 function RowIcon({ name }: { name: RowIconName }) {
   return (
     <span
-      className="flex-none w-8 h-8 rounded-[11px] flex items-center justify-center"
+      className="flex-none w-8 h-8 rounded-chip flex items-center justify-center"
       style={{ background: 'rgba(19,41,75,.05)' }}
       aria-hidden
     >

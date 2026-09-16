@@ -4,14 +4,19 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import type { CategoryCount } from '@/lib/practitioner/categories';
 
-// ─── ExploreHeader — the navy band above the Find-care sheet ───────────
+// ─── ExploreHeader — the title block above the Find-care list ──────────
 //
-// The navy header is the only full-width, high-contrast surface on the
-// screen, so it should carry the thing the patient is actually looking
-// at. On the landing that's "Find care"; inside a specialty it's the
-// SPECIALTY — "General Dental Practitioner" — with the count of people
-// behind it, and a back control that reads as "out of here, back to the
-// other specialties".
+// The header carries the thing the patient is actually looking at. On the
+// landing that's "Find care"; inside a specialty it's the SPECIALTY —
+// "General Dental Practitioner" — with the count of people behind it, and
+// a back control that reads as "out of here, back to the other
+// specialties".
+//
+// It sits on the light sheet now, not on a navy band. Find care leads with
+// a SEARCH FIELD, and the band above it was a dark slab carrying two lines
+// of text — the loudest object on the screen spent on its own name. The
+// band is reserved for screens that lead with a figure (see the `plain`
+// tone in PatientScreen); this is not one.
 //
 // Why this replaces the old sheet-level "← Browse by specialty" link:
 // that link was 12px of text floating above the search box, competing
@@ -46,10 +51,10 @@ export default function ExploreHeader({ practitionerCount, categories }: Props) 
   if (!isResults) {
     return (
       <div data-testid="explore-header">
-        <p className="text-[24px] font-semibold text-white" style={{ letterSpacing: '-.025em' }} data-testid="explore-header-title">
+        <p className="text-[27px] font-bold" style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }} data-testid="explore-header-title">
           Find care
         </p>
-        <p className="mt-1.5 text-[13.5px]" style={{ color: 'rgba(255,255,255,.62)' }} data-testid="explore-header-count">
+        <p className="mt-2 text-[13.5px]" style={{ color: 'var(--portal-muted)' }} data-testid="explore-header-count">
           {practitionerCount > 0
             ? `Pay later at ${practitionerCount} practitioner${practitionerCount === 1 ? '' : 's'} near you.`
             : 'Pay later at practitioners near you.'}
@@ -66,9 +71,9 @@ export default function ExploreHeader({ practitionerCount, categories }: Props) 
   const title = specialtyParam ?? 'All practitioners';
 
   // Specialty names run long ("General Dental Practitioner" is 27
-  // characters) and the band is 22px-padded on a 360px phone. Step the
-  // title down one size rather than let it wrap to three lines.
-  const titleSize = title.length > 22 ? 'text-[21px]' : 'text-[24px]';
+  // characters) and the gutter is 20px on a 360px phone. Step the title
+  // down one size rather than let it wrap to three lines.
+  const titleSize = title.length > 22 ? 'text-[22px]' : 'text-[27px]';
 
   const subtitle = count > 0
     ? `Pay later at ${count} practitioner${count === 1 ? '' : 's'}.`
@@ -80,30 +85,30 @@ export default function ExploreHeader({ practitionerCount, categories }: Props) 
         href="/patient/explore"
         data-testid="results-back-to-landing"
         aria-label="Back to all specialties"
-        className="group inline-flex items-center gap-2.5 -ml-0.5 rounded-full pr-3 transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+        className="group inline-flex items-center gap-2.5 -ml-0.5 rounded-full pr-3 transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)]/50"
       >
         <span
           aria-hidden
-          className="flex-none w-[34px] h-[34px] rounded-full flex items-center justify-center transition-transform group-hover:-translate-x-0.5"
-          style={{ background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.14)' }}
+          className="flex-none w-9 h-9 rounded-full flex items-center justify-center transition-transform group-hover:-translate-x-0.5"
+          style={{ background: '#fff', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
         >
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round">
             <path d="m15 6-6 6 6 6" />
           </svg>
         </span>
-        <span className="text-[12.5px] font-semibold" style={{ color: 'rgba(255,255,255,.72)' }}>
+        <span className="text-[12.5px] font-semibold" style={{ color: 'var(--portal-muted)' }}>
           All specialties
         </span>
       </Link>
 
       <p
-        className={`mt-3 ${titleSize} font-semibold text-white`}
-        style={{ letterSpacing: '-.025em' }}
+        className={`mt-3 ${titleSize} font-bold`}
+        style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }}
         data-testid="explore-header-title"
       >
         {title}
       </p>
-      <p className="mt-1.5 text-[13.5px]" style={{ color: 'rgba(255,255,255,.62)' }} data-testid="explore-header-count">
+      <p className="mt-2 text-[13.5px]" style={{ color: 'var(--portal-muted)' }} data-testid="explore-header-count">
         {subtitle}
       </p>
     </div>

@@ -453,7 +453,7 @@ export default function ConfirmForm({
   const summary = (
     <div
       className="rounded-card p-[18px] flex flex-col gap-[13px]"
-      style={{ background: '#F8FAFB', border: '1px solid var(--portal-hairline)' }}
+      style={{ background: 'var(--portal-wash)', border: '1px solid var(--portal-hairline)' }}
     >
       <SummaryRow k="Practice" v={practiceName} />
       {invoiceNumber && <SummaryRow k="Invoice" v={invoiceNumber} />}
@@ -615,7 +615,7 @@ export default function ConfirmForm({
 
             <div className="mt-[13px] flex flex-col gap-[10px]">
               {cardSearchStatus === 'polling' ? (
-                <div className="flex items-center gap-3 rounded-[18px] px-4 py-[15px]" style={{ background: 'var(--portal-wash)' }}>
+                <div className="flex items-center gap-3 rounded-tile px-4 py-[15px]" style={{ background: 'var(--portal-wash)' }}>
                   <svg className="w-5 h-5 animate-spin shrink-0" style={{ color: 'var(--portal-accent)' }} fill="none" viewBox="0 0 24 24" aria-hidden>
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
@@ -665,7 +665,7 @@ export default function ConfirmForm({
                 </>
 
               ) : (
-                <div className="rounded-[18px] p-4 flex flex-col gap-3" style={{ background: 'rgba(245,158,11,.07)', border: '1px solid #F2DCB2' }}>
+                <div className="rounded-tile p-4 flex flex-col gap-3" style={{ background: 'rgba(245,158,11,.07)', border: '1px solid #F5D49A' }}>
                   {cardSearchStatus === 'timed-out' && (
                     <p className="text-[12px]" style={{ color: '#B45309' }}>
                       Your new card is taking a moment to confirm — try refreshing if it doesn&apos;t appear below.
@@ -771,7 +771,7 @@ function Screen({ step, onBack, children }: { step: number; onBack?: () => void;
               onClick={onBack}
               aria-label="Back"
               className="flex-none w-9 h-9 rounded-full flex items-center justify-center"
-              style={{ background: '#F8FAFB', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
+              style={{ background: 'var(--portal-wash)', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
             >
               <BackChevron />
             </button>
@@ -780,7 +780,7 @@ function Screen({ step, onBack, children }: { step: number; onBack?: () => void;
               href="/patient/orders"
               aria-label="Back to plans"
               className="flex-none w-9 h-9 rounded-full flex items-center justify-center"
-              style={{ background: '#F8FAFB', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
+              style={{ background: 'var(--portal-wash)', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
             >
               <BackChevron />
             </Link>
@@ -843,10 +843,10 @@ function Fine({ children }: { children: React.ReactNode }) {
 
 function Notice({ tone, children }: { tone: 'amber' | 'danger'; children: React.ReactNode }) {
   const cfg = tone === 'amber'
-    ? { bg: 'rgba(245,158,11,.07)', border: '#F2DCB2', fg: '#B45309' }
+    ? { bg: 'rgba(245,158,11,.07)', border: '#F5D49A', fg: '#B45309' }
     : { bg: 'rgba(180,35,24,.10)',  border: 'rgba(180,35,24,.25)', fg: DANGER };
   return (
-    <div role="alert" className="rounded-[18px] px-4 py-[14px] text-[13px] leading-[1.5]" style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.fg }}>
+    <div role="alert" className="rounded-tile px-4 py-[14px] text-[13px] leading-[1.5]" style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.fg }}>
       {children}
     </div>
   );
@@ -870,7 +870,7 @@ function CardRowLabel({
 }) {
   return (
     <label
-      className={`flex items-center gap-[13px] rounded-[18px] px-4 py-[15px] transition-colors ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+      className={`flex items-center gap-[13px] rounded-tile px-4 py-[15px] transition-colors ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
       style={{
         background: '#fff',
         border: checked ? '1.5px solid var(--portal-accent)' : '1.5px solid var(--portal-hairline)',

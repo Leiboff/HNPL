@@ -30,7 +30,7 @@ export default function AccountInstallRow() {
   const body = (
     <>
       <span
-        className="flex-none w-[38px] h-[38px] rounded-[12px] flex items-center justify-center"
+        className="flex-none w-[38px] h-[38px] rounded-chip flex items-center justify-center"
         style={{ background: 'rgba(25,194,182,.18)', color: 'var(--brand-teal-bright)' }}
         aria-hidden
       >

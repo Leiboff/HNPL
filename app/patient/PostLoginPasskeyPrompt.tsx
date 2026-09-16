@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { usePasskeys, passkeyErrorMessage } from '@/lib/hooks/usePasskeys';
+import BottomSheet, { SheetRow } from './BottomSheet';
 import { skipPasskeyPrompt, dontAskAgainPasskey } from './passkey-actions';
 
 // ─── Post-login passkey prompt — full-sheet overlay ────────────────────
@@ -75,77 +76,86 @@ export default function PostLoginPasskeyPrompt({ serverAllows }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4 sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Set up a passkey"
-      data-testid="post-login-passkey-prompt"
-    >
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-lg p-6 sm:p-8 space-y-5">
-        {/* Icon */}
-        <div
-          aria-hidden
-          className="w-14 h-14 rounded-2xl flex items-center justify-center text-white"
-          style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
-        >
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}>
-            <rect x="4" y="10" width="16" height="10" rx="2" />
-            <path d="M8 10V7a4 4 0 0 1 8 0v3" strokeLinecap="round" />
-            <circle cx="12" cy="15" r="1.5" />
-          </svg>
-        </div>
-
-        <div>
-          <h2 className="text-xl font-semibold" style={{ color: 'var(--portal-ink)' }}>
-            Sign in faster next time
-          </h2>
-          <p className="mt-2 text-sm text-gray-600 leading-relaxed">
-            Save a passkey and sign in with Face ID, your fingerprint, or your
-            device PIN — no password needed. Your passkey never leaves this device.
-          </p>
-        </div>
-
-        {error && (
-          <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-
-        <div className="space-y-2">
+    <BottomSheet
+      open
+      onClose={handleSkip}
+      label="Set up a passkey"
+      title="Sign in faster next time"
+      blurb="Save a passkey and sign in with Face ID, your fingerprint, or your device PIN — no password to type or remember."
+      testid="post-login-passkey-prompt"
+      footer={
+        <div className="flex flex-col gap-[10px]">
+          {error && (
+            <p role="alert" className="rounded-tile px-4 py-3 text-[13px]" style={{ background: 'rgba(180,35,24,.10)', border: '1px solid rgba(180,35,24,.25)', color: '#B42318' }}>
+              {error}
+            </p>
+          )}
           <button
             type="button"
             onClick={handleRegister}
             disabled={busy}
             data-testid="post-login-passkey-setup"
-            className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:shadow-lg"
-            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+            className="bn-btn-navy w-full rounded-tile py-4 text-[15px] font-semibold text-white disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {busy ? 'Setting up…' : 'Set up passkey'}
           </button>
+          {/* Two ways out, and they are NOT the same: Skip means "not
+              today" and lets the frequency cap bring this back, "Don't ask
+              again" is permanent. Keeping them visually different sizes is
+              what stops a patient spending the permanent one by accident
+              on the one they meant. */}
           <button
             type="button"
             onClick={handleSkip}
             disabled={busy}
             data-testid="post-login-passkey-skip"
-            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+            className="bn-btn-wash w-full rounded-tile py-4 text-[15px] font-semibold disabled:opacity-60"
+            style={{ color: 'var(--portal-ink-2)' }}
           >
             Skip for now
           </button>
-        </div>
-
-        <div className="text-center">
           <button
             type="button"
             onClick={handleDontAskAgain}
             disabled={busy}
             data-testid="post-login-passkey-never"
-            className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 disabled:opacity-60"
+            className="w-full py-1 text-center text-[12px] underline underline-offset-2 disabled:opacity-60"
+            style={{ color: 'var(--portal-faint)' }}
           >
             Don&apos;t ask again
           </button>
         </div>
-      </div>
-    </div>
+      }
+    >
+      <SheetRow
+        tone="teal"
+        icon={<FaceGlyph />}
+        title="Nothing to remember"
+        body="Your face or fingerprint replaces the password, so there is nothing to forget or reset."
+      />
+      <SheetRow
+        icon={<DeviceGlyph />}
+        title="Stays on this device"
+        body="The passkey never leaves this phone and we never see it — not even as a hash."
+      />
+    </BottomSheet>
+  );
+}
+
+function FaceGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+      <path d="M9 10v1M15 10v1M9.5 15a3.5 3.5 0 0 0 5 0" />
+    </svg>
+  );
+}
+
+function DeviceGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="6" y="3" width="12" height="18" rx="2.5" />
+      <path d="M10.5 18h3" />
+    </svg>
   );
 }

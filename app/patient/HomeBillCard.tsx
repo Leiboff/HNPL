@@ -58,7 +58,7 @@ export default function HomeBillCard({
   return (
     <div
       className="bn-up rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
-      style={{ border: '1px solid #F2DCB2', boxShadow: '0 2px 8px -3px rgba(15,31,58,.10)' }}
+      style={{ border: '1px solid #F5D49A', boxShadow: '0 2px 8px -3px rgba(15,31,58,.10)' }}
       data-testid="home-bill-card"
     >
       {/* The pulsing halo is the portal's only looping animation, and it
@@ -123,7 +123,7 @@ export default function HomeBillCard({
           onClick={handleDecline}
           disabled={declining}
           className="bn-btn-wash text-[14.5px] font-semibold rounded-tile px-[18px] py-[15px] disabled:opacity-50"
-          style={{ color: '#2C3E5C' }}
+          style={{ color: 'var(--portal-ink-2)' }}
         >
           {declining ? 'Declining…' : 'Not mine'}
         </button>

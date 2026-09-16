@@ -15,7 +15,7 @@ import { isPatientFrozen } from '@/lib/patient/freeze';
 import { computePlanProgress } from '@/lib/planProgress';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { summariseOutstanding } from '@/lib/patient/outstanding';
-import { formatRand, formatDate, formatDayMonth, relativeDay, todaySAST } from './_format';
+import { formatRand, formatDayMonth, relativeDay, todaySAST } from './_format';
 import { getRequestUser } from '@/lib/auth/requestUser';
 import { HeartIcon } from '@/app/_landing/icons';
 
@@ -131,7 +131,6 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
 
   const totalCount   = allPlans.length;
   const pendingPlans = allPlans.filter((p) => p.status === 'pending_acceptance');
-  const currentCount = allPlans.filter((p) => p.status === 'active').length;
 
   // ── Saved cards: default (charged) + one alternate ────────────────
   const defaultCard = cards.find((c) => c.is_default) ?? cards[0] ?? null;
@@ -422,7 +421,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
             style={{ border: '1px dashed var(--portal-line)' }}
           >
             <div
-              className="w-[46px] h-[46px] mx-auto rounded-[16px] flex items-center justify-center"
+              className="w-[46px] h-[46px] mx-auto rounded-tile flex items-center justify-center"
               style={{ background: 'rgba(21,168,158,.1)', color: 'var(--portal-accent-ink)' }}
               aria-hidden
             >
