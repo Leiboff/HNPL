@@ -83,10 +83,16 @@ export default function InstallPrompt() {
         title="Opens instantly"
         body="Straight to your balance and your next payment — no address bar, no tab to find."
       />
+      {/* NOT "works offline". The service worker deliberately refuses to
+          serve cached patient HTML and shows /offline instead, because a
+          plan status or payment schedule must reflect server truth or say
+          it cannot load (app/sw.js/route.ts). Promising a readable
+          schedule with no signal would be selling the one behaviour this
+          app has explicitly chosen not to have. */}
       <SheetRow
-        icon={<OfflineGlyph />}
-        title="Works offline"
-        body="Your plans and schedule stay readable when you have no signal."
+        icon={<HomeScreenGlyph />}
+        title="Always one tap away"
+        body="It sits with your other apps instead of behind a bookmark you have to go and find."
       />
     </BottomSheet>
   );
@@ -100,12 +106,13 @@ function BoltGlyph() {
   );
 }
 
-function OfflineGlyph() {
+function HomeScreenGlyph() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M5 12.5a7 7 0 0 1 11.3-5.5" />
-      <path d="M19 11.5a7 7 0 0 1-11.3 5.5" />
-      <path d="M3 3l18 18" />
+      <rect x="3" y="3" width="7" height="7" rx="2" />
+      <rect x="14" y="3" width="7" height="7" rx="2" />
+      <rect x="3" y="14" width="7" height="7" rx="2" />
+      <rect x="14" y="14" width="7" height="7" rx="2" />
     </svg>
   );
 }

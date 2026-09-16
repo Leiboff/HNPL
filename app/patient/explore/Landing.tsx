@@ -128,11 +128,12 @@ export default function Landing({ categories, locationRow, hideHeading = false }
                 {/* The count is a bare number in the pill — beside a
                     specialty name it reads as one, and the full phrase
                     would double the pill's width. "practitioners" is not
-                    dropped, only moved: sr-only carries it for anyone
-                    who cannot see that arrangement, so the accessible
-                    name stays a whole sentence. */}
-                <span style={{ color: 'var(--portal-faint)' }}> · {c.count}</span>
-                <span className="sr-only"> {c.count} practitioner{c.count === 1 ? '' : 's'}</span>
+                    dropped, only moved: the sr-only span carries the whole
+                    phrase for anyone who cannot see that arrangement.
+                    The visible one is aria-hidden, or the link announces
+                    the number twice ("Dentistry · 2, 2 practitioners"). */}
+                <span aria-hidden style={{ color: 'var(--portal-faint)' }}> · {c.count}</span>
+                <span className="sr-only">{` ${c.count} practitioner${c.count === 1 ? '' : 's'}`}</span>
               </Link>
             ))}
           </div>

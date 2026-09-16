@@ -134,7 +134,6 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
     : null;
   const chargeCard  = boundCard ?? cards.find((c) => c.is_default) ?? cards[0] ?? null;
 
-  const nextDueNumber = payments.find((p) => p.status !== 'collected' && p.status !== 'written_off')?.instalment_number ?? null;
   const today = todaySAST();
 
   // Outstanding set for the settle affordance (active plans only).
@@ -314,27 +313,6 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
 
         {refSegments.length > 0 && (
           <p className="text-center text-[11.5px]" style={{ color: 'var(--portal-muted)' }}>{refSegments.join(' · ')}</p>
-        )}
-
-        {/* Pay actions (active plans only). */}
-        {isActive && nextOut && (
-          <div
-            className="rounded-card bg-white px-[18px] py-[16px]"
-            style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
-          >
-            <PlanSettleAffordance
-              planId={rawPlan.id as string}
-              outstandingCount={outstanding.length}
-              outstandingTotalCents={outstandingTotalCents}
-              nextOutstanding={{
-                paymentId:         nextOut.id,
-                chargeAmountCents: Math.round(Number(nextOut.amount) * 100) + Number(nextOut.dunning_fees_cents ?? 0),
-                instalmentNumber:  nextOut.instalment_number,
-              }}
-              settleInstalment={selfSettleInstalment}
-              settleEntirePlan={selfSettleEntirePlan}
-            />
-          </div>
         )}
 
         {prog.isPaidInFull && (

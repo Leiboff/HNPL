@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 
 // ─── BottomSheet — the portal's one sheet ────────────────────────────────
@@ -65,15 +65,27 @@ export default function BottomSheet({
     };
   }, [open, onKey]);
 
-  // Close on navigation. The effect fires on the render AFTER the pathname
-  // changed, so the guard on `open` is what keeps it from firing on mount
-  // (when the sheet is closed anyway) and on every unrelated re-render.
+  // Close on navigation — on an ACTUAL route change, never on mount.
+  //
+  // The first version of this guarded on `open` alone and assumed that was
+  // enough, because a closed sheet closing again is a no-op. It is not:
+  // every caller mounts this component only once it is already open, so
+  // the mount-time effect ran with open === true and fired onClose
+  // immediately. The action centre shut the instant the bell opened it,
+  // the install sheet wrote a PERMANENT dismissal to localStorage, and the
+  // passkey prompt called its skip server action — each without the
+  // patient touching anything.
+  //
+  // So the comparison has to be against the previous pathname, not against
+  // open. The ref is seeded at mount, which is what makes the first run a
+  // no-op, and is updated on every real transition so navigating away and
+  // back still closes.
+  const prevPath = useRef(pathname);
   useEffect(() => {
+    if (prevPath.current === pathname) return;
+    prevPath.current = pathname;
     if (open) onClose();
-    // Deliberately keyed on the pathname alone: this must run when the
-    // route changes, NOT when `open` or `onClose` change identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+  }, [pathname, open, onClose]);
 
   if (!open) return null;
 

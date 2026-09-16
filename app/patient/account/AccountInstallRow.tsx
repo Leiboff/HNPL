@@ -45,9 +45,12 @@ export default function AccountInstallRow() {
           Add betternow to your home screen
         </span>
         <span className="block mt-[3px] text-[12.5px]" style={{ color: 'rgba(255,255,255,.55)' }}>
+          {/* Not "works offline" — see the note in app/_pwa/InstallPrompt:
+              the service worker serves /offline rather than stale patient
+              HTML, by design. */}
           {isIos
             ? 'Tap Share, then “Add to Home Screen”'
-            : 'Opens instantly, works offline'}
+            : 'Opens instantly, always one tap away'}
         </span>
       </span>
     </>

@@ -57,6 +57,62 @@ function isAlreadyInstalled(): boolean {
   return (navigator as Navigator & { standalone?: boolean }).standalone === true;
 }
 
+// ─── The captured event lives at MODULE scope, not in a hook ───────────
+//
+// `beforeinstallprompt` fires ONCE, early, and only the listener attached
+// at that moment sees it. While every consumer was mounted together that
+// was invisible; it stopped being invisible when AccountInstallRow was
+// added as the permanent way back after dismissing the install sheet. By
+// the time a patient reaches Account, the event has long since fired and
+// been captured by the layout's instance — a freshly mounted hook with its
+// own useState started at null, reported 'none', and the row that exists
+// precisely to be findable rendered nothing at all on Android.
+//
+// So the deferred event is stored once, for the page's lifetime, and hook
+// instances subscribe to it. Listeners are attached a single time for the
+// same reason: N mounted consumers must not race to preventDefault the
+// same event.
+
+let deferredEvent: BeforeInstallPromptEvent | null = null;
+let appInstalled = false;
+let listening = false;
+
+const subscribers = new Set<() => void>();
+const notify = () => subscribers.forEach((fn) => fn());
+
+function startListening() {
+  if (listening || typeof window === 'undefined') return;
+  listening = true;
+  window.addEventListener('beforeinstallprompt', (e: Event) => {
+    // Suppress Chrome's own mini-infobar so our surfaces own the moment.
+    e.preventDefault();
+    deferredEvent = e as BeforeInstallPromptEvent;
+    notify();
+  });
+  window.addEventListener('appinstalled', () => {
+    appInstalled = true;
+    deferredEvent = null;
+    notify();
+  });
+}
+
+/**
+ * Clear the module-level capture. TESTS ONLY.
+ *
+ * Page-lifetime state is right for the product — `beforeinstallprompt`
+ * fires once per page and every consumer must see the same one — but a
+ * test file is many "pages" in one module instance, so without this the
+ * android case leaks a captured event into whatever runs next and the
+ * appinstalled case leaves every later case reporting 'installed'. The
+ * existing suite happened to order around both; that is luck, not
+ * isolation, and the next test added to the file would have paid for it.
+ */
+export function __resetInstallPromptForTests() {
+  deferredEvent = null;
+  appInstalled  = false;
+  subscribers.clear();
+}
+
 /**
  * The shared install lifecycle hook. Returns the current install state
  * and (when applicable) a function that triggers the real install.
@@ -65,11 +121,13 @@ function isAlreadyInstalled(): boolean {
  * surface. Placed callouts can persist freely.
  */
 export function useInstallPrompt() {
-  const [deferred,    setDeferred]    = useState<BeforeInstallPromptEvent | null>(null);
-  const [installed,   setInstalled]   = useState(false);
+  // A counter rather than the event itself: the event is module state, so
+  // this only needs to make React re-read it.
+  const [, forceRead]               = useState(0);
+  const [installed,   setInstalled] = useState(false);
   // The iOS hint flag mirrors isIosSafari at mount — it never changes
   // during a page's lifetime so we don't need to re-check.
-  const [iosHint,     setIosHint]     = useState(false);
+  const [iosHint,     setIosHint]   = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -84,55 +142,58 @@ export function useInstallPrompt() {
     // client render still agree on the initial state of `false`).
     (async () => {
       if (cancelled) return;
-      if (isAlreadyInstalled()) {
+      if (isAlreadyInstalled() || appInstalled) {
         setInstalled(true);
         return;
       }
       if (isIosSafari()) setIosHint(true);
+      // The event may already have been captured before this instance
+      // mounted — which is the entire point of the module-level store.
+      if (deferredEvent) forceRead((n) => n + 1);
     })();
 
-    function onBeforeInstall(e: Event) {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEvent);
-    }
-    function onInstalled() {
-      setInstalled(true);
-      setDeferred(null);
-    }
-
-    window.addEventListener('beforeinstallprompt', onBeforeInstall);
-    window.addEventListener('appinstalled',        onInstalled);
+    startListening();
+    const onChange = () => {
+      if (appInstalled) setInstalled(true);
+      forceRead((n) => n + 1);
+    };
+    subscribers.add(onChange);
     return () => {
       cancelled = true;
-      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-      window.removeEventListener('appinstalled',        onInstalled);
+      subscribers.delete(onChange);
     };
   }, []);
 
   const state: InstallState =
-      installed  ? 'installed'
-    : deferred   ? 'android'
-    : iosHint    ? 'ios'
-    :              'none';
+      installed      ? 'installed'
+    : deferredEvent  ? 'android'
+    : iosHint        ? 'ios'
+    :                  'none';
 
   // Trigger the install flow. Only meaningful when state === 'android'.
   // We mark our local state as installed once the choice resolves (the
   // appinstalled event also fires for an accepted prompt, but races
   // with our own UI; preempting feels nicer).
   const install = useCallback(async (): Promise<{ outcome?: 'accepted' | 'dismissed' }> => {
-    if (!deferred) return {};
+    const evt = deferredEvent;
+    if (!evt) return {};
     try {
-      await deferred.prompt();
-      const choice = await deferred.userChoice;
-      setDeferred(null);
+      await evt.prompt();
+      const choice = await evt.userChoice;
+      // Cleared for EVERY consumer: the event can only be prompted once,
+      // so a second surface still offering "Install" would be a button
+      // that silently does nothing.
+      deferredEvent = null;
+      notify();
       return { outcome: choice.outcome };
     } catch {
       // Chrome rejects an unsolicited prompt() — fall back to clearing
       // the deferred so the UI doesn't get stuck.
-      setDeferred(null);
+      deferredEvent = null;
+      notify();
       return {};
     }
-  }, [deferred]);
+  }, []);
 
   return { state, install };
 }

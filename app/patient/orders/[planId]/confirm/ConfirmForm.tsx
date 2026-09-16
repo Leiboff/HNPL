@@ -533,12 +533,19 @@ export default function ConfirmForm({
           >
             Looks right — see schedule
           </button>
+          {/* This link NAVIGATES; it does not decline. The decline action
+              is confirm-gated and lives on the bill card in the plans list
+              (HomeBillCard → declinePlan), which is the only place it can
+              ask "are you sure" before telling a practice their bill is
+              wrong. So the copy names where to go rather than promising an
+              action the tap does not perform — the first draft read
+              "Decline it" and left the bill pending. */}
           <Fine>
-            Not your bill?{' '}
+            Not your bill? You can decline it from{' '}
             <Link href="/patient/orders" className="font-semibold underline underline-offset-2" style={{ color: 'var(--portal-accent-ink)' }}>
-              Decline it
+              your plans
             </Link>
-            {' '}— that tells the practice this bill is not yours.
+            {' '}— declining tells the practice this bill is not yours.
           </Fine>
         </div>
       </Screen>
@@ -835,9 +842,15 @@ function SummaryRow({ k, v }: { k: string; v: string }) {
   );
 }
 
+// Fine print, and --portal-muted rather than --portal-faint. This carries
+// the consent line — the exact amount about to be charged, and the Terms
+// and Privacy links — at 11.5px. app/globals.css states that faint is
+// 2.85:1 and is DECORATION ONLY, never text; material terms set below AA
+// is the kind of thing that makes a credit agreement unenforceable, quite
+// apart from being unreadable. muted is 4.86:1 on every portal ground.
 function Fine({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-center text-[11.5px] leading-[1.5]" style={{ color: 'var(--portal-faint)' }}>{children}</p>
+    <p className="text-center text-[11.5px] leading-[1.5]" style={{ color: 'var(--portal-muted)' }}>{children}</p>
   );
 }
 
