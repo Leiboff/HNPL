@@ -5,8 +5,9 @@ import type { DirectoryRow } from '@/lib/practitioner/grouping';
 // ─── Tests — Find a Practitioner UI (landing + results) ────────────────
 //
 // Two views under /patient/explore, controlled by URL params:
-//   • No params → Landing (data-driven categories + search + "See all").
-//   • ?view=results OR ?specialty=X OR ?q=X → Results list.
+//   • No params → Landing (data-driven categories + a specialty search).
+//   • ?view=results OR ?specialty=X OR ?q=X → Results list (one
+//     specialty, practitioner-name search, NO filter drawer).
 //
 // We drive the URL params via a mockable useSearchParams stub.
 //
@@ -139,8 +140,8 @@ describe('ExploreView — landing is the default view', () => {
     ];
     render(<ExploreView rows={rows} />);
     expect(screen.getByTestId('landing-categories')).toBeTruthy();
-    // Neither the results-list "Filters" toggle nor a card header
-    // should appear on landing.
+    // The results-list "Filters" toggle is gone everywhere — it never
+    // belonged on landing either.
     expect(screen.queryByTestId('filters-toggle')).toBeNull();
   });
 
@@ -200,6 +201,75 @@ describe('ExploreView — landing is the default view', () => {
     render(<ExploreView rows={[r({ specialty: 'Dentistry' })]} />);
     const tile = screen.getByTestId('landing-category-Dentistry') as HTMLAnchorElement;
     expect(tile.getAttribute('href')).toBe('/patient/explore?view=results&specialty=Dentistry');
+  });
+});
+
+// ─── The landing search box searches specialties, not practitioners ────
+//
+// Picking a specialty is this screen's entire job, so its search
+// narrows the tile list in place. Searching for a PERSON happens one
+// level down, inside the specialty — where the header says whose list
+// you're looking at.
+
+describe('ExploreView — landing search filters the specialty list', () => {
+  let geo: ReturnType<typeof buildGeolocationStub>;
+  beforeEach(() => {
+    setParams({});
+    geo = buildGeolocationStub();
+    installGeolocation(geo);
+  });
+  afterEach(() => { removeGeolocation(); });
+
+  const ROWS: DirectoryRow[] = [
+    r({ member_id: 'd', hpcsa_group_key: 'hd', specialty: 'Dentistry',     first_name: 'D', last_name: 'Dent' }),
+    r({ member_id: 'p', hpcsa_group_key: 'hp', specialty: 'Physiotherapy', first_name: 'P', last_name: 'Physio' }),
+    r({ member_id: 's', hpcsa_group_key: 'hs', specialty: 'Psychology',    first_name: 'S', last_name: 'Shrink' }),
+  ];
+
+  it('the search box is labelled for specialties, not practitioner names', () => {
+    render(<ExploreView rows={ROWS} />);
+    const box = screen.getByTestId('landing-search') as HTMLInputElement;
+    expect(box.getAttribute('placeholder')).toBe('Search specialties…');
+    expect(box.getAttribute('placeholder')).not.toMatch(/practitioner/i);
+  });
+
+  it('typing narrows the tiles to the matching specialties, in place', () => {
+    render(<ExploreView rows={ROWS} />);
+    act(() => { fireEvent.change(screen.getByTestId('landing-search'), { target: { value: 'psy' } }); });
+    expect(screen.getByTestId('landing-category-Psychology')).toBeTruthy();
+    expect(screen.queryByTestId('landing-category-Dentistry')).toBeNull();
+    expect(screen.queryByTestId('landing-category-Physiotherapy')).toBeNull();
+    // Still the landing — typing does NOT jump into a results list.
+    expect(screen.queryByTestId('results-search')).toBeNull();
+  });
+
+  it('matching is case-insensitive and matches anywhere in the name', () => {
+    render(<ExploreView rows={ROWS} />);
+    act(() => { fireEvent.change(screen.getByTestId('landing-search'), { target: { value: 'THERAPY' } }); });
+    expect(screen.getByTestId('landing-category-Physiotherapy')).toBeTruthy();
+    expect(screen.queryByTestId('landing-category-Dentistry')).toBeNull();
+  });
+
+  it('a search that matches nothing says so and keeps the patient on the landing', () => {
+    render(<ExploreView rows={ROWS} />);
+    act(() => { fireEvent.change(screen.getByTestId('landing-search'), { target: { value: 'cardio' } }); });
+    expect(screen.getByTestId('landing-no-matches')).toBeTruthy();
+    expect(screen.queryByTestId('landing-categories')).toBeNull();
+  });
+
+  it('clearing the search restores every specialty', () => {
+    render(<ExploreView rows={ROWS} />);
+    const box = screen.getByTestId('landing-search');
+    act(() => { fireEvent.change(box, { target: { value: 'dent' } }); });
+    expect(screen.queryByTestId('landing-category-Psychology')).toBeNull();
+    act(() => { fireEvent.change(box, { target: { value: '' } }); });
+    expect(screen.getAllByTestId(/^landing-category-/).length).toBe(3);
+  });
+
+  it('does NOT search practitioner names — a person\'s name matches no specialty', () => {
+    render(<ExploreView rows={ROWS} />);
+    act(() => { fireEvent.change(screen.getByTestId('landing-search'), { target: { value: 'Shrink' } }); });
+    expect(screen.getByTestId('landing-no-matches')).toBeTruthy();
   });
 });
 
@@ -483,9 +553,16 @@ describe('ExploreView — results view when URL params are present', () => {
   });
   afterEach(() => { removeGeolocation(); });
 
-  it('renders the results list with the Filters toggle, and leaves the back control to the header', () => {
+  it('renders the results list with NO Filters control, and leaves the back control to the header', () => {
     render(<ExploreView rows={[r()]} />);
-    expect(screen.getByTestId('filters-toggle')).toBeTruthy();
+    // The Filters drawer is gone: the specialty is the screen, and the
+    // way to a different one is the header's "All specialties" back
+    // control — not a chip that leaves the title naming the list you left.
+    expect(screen.queryByTestId('filters-toggle')).toBeNull();
+    expect(screen.queryByTestId('filter-specialty-all')).toBeNull();
+    expect(screen.queryByTestId('filter-radius-25')).toBeNull();
+    expect(document.body.textContent).not.toContain('Filters');
+    expect(document.body.textContent).not.toContain('Proximity');
     // The "back to all specialties" control lives in the navy header
     // (ExploreHeader) alongside the specialty title — the sheet must
     // not render a second one.
@@ -495,23 +572,39 @@ describe('ExploreView — results view when URL params are present', () => {
     expect(screen.queryByTestId('landing-categories')).toBeNull();
   });
 
-  it('picking a specialty chip rewrites ?specialty= so the header retitles with the list', () => {
-    setParams({ view: 'results' });
+  it('inside a specialty, the search box searches PRACTITIONERS by name', () => {
+    setParams({ view: 'results', specialty: 'Physiotherapy' });
     const rows: DirectoryRow[] = [
-      r({ member_id: 'd', hpcsa_group_key: 'hd', specialty: 'Dentistry',     first_name: 'D', last_name: 'Dent' }),
-      r({ member_id: 'p', hpcsa_group_key: 'hp', specialty: 'Physiotherapy', first_name: 'P', last_name: 'Physio' }),
+      r({ member_id: 'a', hpcsa_group_key: 'ha', specialty: 'Physiotherapy', first_name: 'Anna', last_name: 'Adams' }),
+      r({ member_id: 'b', hpcsa_group_key: 'hb', specialty: 'Physiotherapy', first_name: 'Ben',  last_name: 'Botha' }),
     ];
     render(<ExploreView rows={rows} />);
-    act(() => { fireEvent.click(screen.getByTestId('filters-toggle')); });
-    act(() => { fireEvent.click(screen.getByTestId('filter-specialty-Physiotherapy')); });
-    expect(window.location.search).toContain('specialty=Physiotherapy');
-    // Only the matching practitioner survives the filter.
-    expect(screen.getByText('P Physio')).toBeTruthy();
-    expect(screen.queryByText('D Dent')).toBeNull();
+    const box = screen.getByTestId('results-search') as HTMLInputElement;
+    expect(box.getAttribute('placeholder')).toBe('Search practitioners by name…');
 
-    // Back to "All" clears the param rather than leaving a stale title.
-    act(() => { fireEvent.click(screen.getByTestId('filter-specialty-all')); });
-    expect(window.location.search).not.toContain('specialty=');
+    act(() => { fireEvent.change(box, { target: { value: 'botha' } }); });
+    expect(screen.getByText('Ben Botha')).toBeTruthy();
+    expect(screen.queryByText('Anna Adams')).toBeNull();
+
+    // Clearing it brings the whole specialty back.
+    act(() => { fireEvent.change(box, { target: { value: '' } }); });
+    expect(screen.getByText('Anna Adams')).toBeTruthy();
+  });
+
+  it('the practitioner search never escapes the specialty it is scoped to', () => {
+    setParams({ view: 'results', specialty: 'Physiotherapy' });
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'p', hpcsa_group_key: 'hp', specialty: 'Physiotherapy', first_name: 'Sam', last_name: 'Physio' }),
+      r({ member_id: 'd', hpcsa_group_key: 'hd', specialty: 'Dentistry',     first_name: 'Sam', last_name: 'Dent' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    act(() => { fireEvent.change(screen.getByTestId('results-search'), { target: { value: 'sam' } }); });
+    // The same first name in another specialty stays out of this list —
+    // the ?specialty= filter is fixed and the search runs inside it.
+    expect(screen.getByText('Sam Physio')).toBeTruthy();
+    expect(screen.queryByText('Sam Dent')).toBeNull();
+    // And the URL is untouched — nothing here rewrites ?specialty=.
+    expect(window.location.search).not.toContain('specialty=Dentistry');
   });
 
   it('an initial ?specialty=X pre-filters the list', () => {

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { CategoryCount } from '@/lib/practitioner/categories';
 
 // ─── Landing — "Browse by specialty" ───────────────────────────────────
@@ -27,10 +27,15 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 //     it.
 //
 // Interaction:
+//   • The search box searches specialties, not practitioners: this
+//     screen's whole job is picking a specialty, so its search narrows
+//     the tile list in place rather than jumping the patient into a
+//     cross-specialty practitioner list they didn't ask for. Finding a
+//     named practitioner happens one level down, inside the specialty.
 //   • Tap a specialty tile → parent switches to results, filtered to
 //     that specialty (via a URL param the results view reads).
-//   • Search input → typing anything switches to results with the
-//     search text pre-populated.
+//   • Submitting the search when exactly one specialty matches opens
+//     that specialty — the keyboard path to the same place as the tap.
 
 type Props = {
   categories:   CategoryCount[];
@@ -41,17 +46,28 @@ type Props = {
   hideHeading?: boolean;
 };
 
+function specialtyHref(specialty: string) {
+  return `/patient/explore?view=results&specialty=${encodeURIComponent(specialty)}`;
+}
+
 export default function Landing({ categories, locationRow, hideHeading = false }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
 
+  const query = search.trim().toLowerCase();
+  const visible = useMemo(
+    () => query
+      ? categories.filter((c) => c.specialty.toLowerCase().includes(query))
+      : categories,
+    [categories, query],
+  );
+
+  // Enter with a single match is the keyboard equivalent of tapping the
+  // one tile left on screen. With 0 or 2+ matches there's nothing
+  // unambiguous to open, so the list on screen is the answer.
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
-    const q = search.trim();
-    const params = new URLSearchParams();
-    params.set('view', 'results');
-    if (q) params.set('q', q);
-    router.push(`/patient/explore?${params.toString()}`);
+    if (visible.length === 1) router.push(specialtyHref(visible[0].specialty));
   }
 
   return (
@@ -79,7 +95,8 @@ export default function Landing({ categories, locationRow, hideHeading = false }
           </svg>
           <input
             type="search"
-            placeholder="Search practitioners by name…"
+            placeholder="Search specialties…"
+            aria-label="Search specialties"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             data-testid="landing-search"
@@ -87,7 +104,7 @@ export default function Landing({ categories, locationRow, hideHeading = false }
           />
         </div>
 
-        {/* Location row — directly under the practitioner search bar */}
+        {/* Location row — directly under the specialty search bar */}
         {locationRow}
       </form>
 
@@ -102,12 +119,20 @@ export default function Landing({ categories, locationRow, hideHeading = false }
               No practitioners live on BetterNow yet. Check back soon.
             </p>
           </div>
+        ) : visible.length === 0 ? (
+          <div
+            className="rounded-2xl border border-dashed border-gray-200 py-10 text-center"
+            data-testid="landing-no-matches"
+          >
+            <p className="font-medium text-gray-500">No specialties match “{search.trim()}”</p>
+            <p className="mt-1 text-sm text-gray-400">Try a different word, or clear the search to see them all.</p>
+          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="landing-categories">
-            {categories.map((c) => (
+            {visible.map((c) => (
               <Link
                 key={c.specialty}
-                href={`/patient/explore?view=results&specialty=${encodeURIComponent(c.specialty)}`}
+                href={specialtyHref(c.specialty)}
                 data-testid={`landing-category-${c.specialty}`}
                 className="group rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm hover:shadow-md transition-shadow px-4 py-4 flex items-center justify-between gap-3"
               >
