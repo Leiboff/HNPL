@@ -44,35 +44,48 @@ const NAVY = 'var(--portal-ink)';
 
 function GroupCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm overflow-hidden">
+    <section
+      className="bg-white rounded-card overflow-hidden"
+      style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 8px -3px rgba(15,31,58,.09)' }}
+    >
       <p
-        className="px-5 pt-4 pb-3 text-[11px] font-semibold uppercase"
-        style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.45)' }}
+        className="px-[18px] pt-[15px] pb-[11px] text-[11px] font-semibold uppercase"
+        style={{ letterSpacing: '.16em', color: 'var(--portal-faint)' }}
       >
         {title}
       </p>
-      <div className="border-t border-gray-100 divide-y divide-gray-100">
-        {children}
-      </div>
+      {children}
     </section>
   );
 }
 
+// Each row draws its own top hairline rather than the group drawing
+// dividers between children, so the first row is separated from its
+// header by the same line that separates it from the next row — which is
+// what makes the header read as a label ON the card rather than as a
+// fourth row of it.
 const ROW_CLASS =
-  'w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)] focus-visible:ring-inset transition-colors min-h-15';
+  'bn-row-hover w-full flex items-center gap-[13px] px-[18px] py-[15px] min-h-[44px] '
+  + 'border-t border-[var(--portal-hairline)] '
+  + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--portal-accent)] focus-visible:ring-inset';
 
+// Narrow and light. A settings chevron is a direction mark, not a control:
+// at the weight the old one carried (a 16px grey-400 glyph) eleven of them
+// down a screen read as a column of arrows competing with the labels.
 const ChevronRight = (
   <svg
     aria-hidden
-    viewBox="0 0 20 20"
-    className="w-4 h-4 shrink-0 text-gray-400 ml-auto"
+    viewBox="0 0 8 14"
+    width={8}
+    height={13}
+    className="flex-none"
     fill="none"
-    stroke="currentColor"
+    stroke="#C3CBD8"
     strokeWidth={2}
     strokeLinecap="round"
     strokeLinejoin="round"
   >
-    <path d="M7.5 5l5 5-5 5" />
+    <path d="M1 1l6 6-6 6" />
   </svg>
 );
 
@@ -141,32 +154,48 @@ const ROW_ICON_PATHS: Record<RowIconName, React.ReactNode> = {
   ),
 };
 
+/** The glyph in its tile. The tile is what turns eleven loose outline
+ *  icons into one column — without it the row's leading edge moves with
+ *  each glyph's own bounding box. */
 function RowIcon({ name }: { name: RowIconName }) {
   return (
-    <svg
+    <span
+      className="flex-none w-8 h-8 rounded-[11px] flex items-center justify-center"
+      style={{ background: 'rgba(19,41,75,.05)' }}
       aria-hidden
-      viewBox="0 0 24 24"
-      width={19}
-      height={19}
-      fill="none"
-      stroke={NAVY}
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="flex-none"
     >
-      {ROW_ICON_PATHS[name]}
-    </svg>
+      <svg
+        viewBox="0 0 24 24"
+        width={17}
+        height={17}
+        fill="none"
+        stroke={NAVY}
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {ROW_ICON_PATHS[name]}
+      </svg>
+    </span>
   );
 }
 
-function RowContent({ title, icon }: { title: string; icon: RowIconName }) {
+function RowContent({ title, icon, detail }: { title: string; icon: RowIconName; detail?: string | null }) {
   return (
     <>
       <RowIcon name={icon} />
-      <p className="text-sm font-semibold shrink-0" style={{ color: NAVY }}>
+      <span className="flex-1 min-w-0 text-[14px] font-medium truncate" style={{ color: NAVY }}>
         {title}
-      </p>
+      </span>
+      {/* The row's current VALUE, right-aligned before the chevron —
+          "On", "Push · SMS", "Visa ···· 4417". It is what makes a settings
+          list answerable at a glance instead of requiring a tap per row to
+          find out what is already set. */}
+      {detail && (
+        <span className="flex-none text-[12.5px] truncate" style={{ color: 'var(--portal-faint)' }}>
+          {detail}
+        </span>
+      )}
       {ChevronRight}
     </>
   );
@@ -175,10 +204,10 @@ function RowContent({ title, icon }: { title: string; icon: RowIconName }) {
 /** One settings row: icon + title + chevron, navigating to its own screen.
  *  Every in-app row goes through here, so none can drift to another
  *  pattern. */
-function Row({ href, title, icon }: { href: string; title: string; icon: RowIconName }) {
+function Row({ href, title, icon, detail }: { href: string; title: string; icon: RowIconName; detail?: string | null }) {
   return (
     <Link href={href} className={ROW_CLASS}>
-      <RowContent title={title} icon={icon} />
+      <RowContent title={title} icon={icon} detail={detail} />
     </Link>
   );
 }
@@ -190,21 +219,21 @@ function Row({ href, title, icon }: { href: string; title: string; icon: RowIcon
  * footer's "Get help" link on app/patient/account/page.tsx leaves via a
  * plain <a> rather than prefetching landing.css into the patient bundle.
  */
-function ExternalRow({ href, title, icon }: { href: string; title: string; icon: RowIconName }) {
+function ExternalRow({ href, title, icon, detail }: { href: string; title: string; icon: RowIconName; detail?: string | null }) {
   return (
     <a href={href} className={ROW_CLASS}>
-      <RowContent title={title} icon={icon} />
+      <RowContent title={title} icon={icon} detail={detail} />
     </a>
   );
 }
 
-export default function AccountSettings() {
+export default function AccountSettings({ cardDetail }: { cardDetail?: string | null }) {
   return (
     <div className="flex flex-col gap-[14px]">
 
       <GroupCard title="General">
         <Row href="/patient/account/personal"      title="Personal details" icon="person" />
-        <Row href="/patient/account/pay"            title="Payment cards"    icon="card" />
+        <Row href="/patient/account/pay"            title="Payment cards"    icon="card"    detail={cardDetail} />
         <Row href="/patient/account/notifications"  title="Preferences"      icon="sliders" />
         {/* Referrals join General rather than getting a card of their own:
             this is one row, and a fourth GroupCard holding a single row reads

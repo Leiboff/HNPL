@@ -48,16 +48,33 @@ const LOADING  = codeOf('app/patient/account/loading.tsx');
 // ─── Masking ──────────────────────────────────────────────────────────────
 
 describe('sensitive values are masked consistently, and stay editable', () => {
-  it('the index page never renders a raw email — it no longer renders email at all', () => {
-    // The navy header used to print profile.email (later maskEmail'd, then
-    // the SA ID moved to Personal details). Direct product decision
-    // (2026-08-20): the header dropped the avatar initials and the email
-    // line entirely — just the name now — so there is no email column on
-    // this page's select, and no email string of any kind to leak.
+  it('the index page never renders a raw email — only a masked one', () => {
+    // History: the navy header printed profile.email, then a maskEmail'd
+    // one, then nothing at all (2026-08-20) when the header shrank to just
+    // the name. The v5 identity row brings the contact line back, because
+    // the row's actual job is "confirm WHICH account this is" and a name
+    // alone does not do that for anyone with two accounts.
+    //
+    // What this test has always been about is unchanged and is what is
+    // pinned below: no raw address reaches the screen. It comes from the
+    // AUTH record (user.email), so there is still no email column on this
+    // page's profiles select, and every render of it goes through
+    // maskEmail — which is also the single source of the masking rule, so
+    // this page and Personal details cannot mask differently.
     expect(PAGE).not.toMatch(/\{profile\?\.email/);
     expect(PAGE).not.toMatch(/value=\{profile\?\.email/);
-    expect(PAGE).not.toMatch(/maskEmail/);
-    expect(PAGE).not.toMatch(/\bemail\b/);
+    expect(PAGE).not.toMatch(/select\([^)]*email/);
+    expect(PAGE).toMatch(/import \{ maskEmail \}/);
+    // Every occurrence of the email is wrapped — never `{user.email}` bare.
+    expect(PAGE).not.toMatch(/\{\s*user\.email\s*\}/);
+    // Two forms are allowed and nothing else: the masked address, and the
+    // FIRST CHARACTER used as a fallback initial when the profile has no
+    // name yet. One character is not an address — it is exactly what
+    // maskEmail itself keeps — and the alternative is an avatar that
+    // renders as a broken glyph on a brand-new account.
+    for (const hit of PAGE.match(/.*user\.email.*/g) ?? []) {
+      expect(hit, hit.trim()).toMatch(/maskEmail\(user\.email\)|user\.email\?\.\[0\]/);
+    }
   });
 
   it('Personal details also masks email (repeated for the identity field) and SA ID — neither is hand-rolled', () => {
