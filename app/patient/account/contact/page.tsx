@@ -24,7 +24,7 @@ export default async function PatientContactPage() {
   if (!user) redirect('/login');
 
   return (
-    <PatientScreen header={<SubScreenHeader title="Contact us" />} sheetClassName="px-[18px] pt-5 pb-6">
+    <PatientScreen tone="plain" header={<SubScreenHeader title="Contact us" />} sheetClassName="px-[18px] pb-6">
       <div className="flex flex-col gap-[14px]">
         <p className="text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
           We already have your name, email, phone number and ID on file, so there&rsquo;s no need

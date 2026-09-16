@@ -103,7 +103,7 @@ export default function MergedPlansCard({ headline, activeCount, totalCount, row
           <Link
             href="/patient/explore"
             className="mt-3 inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+            style={{ background: 'var(--brand-navy-deep)' }}
             data-testid="merged-plans-find-care"
           >
             Find care →

@@ -33,7 +33,7 @@ export default function FindCareBar() {
           <span
             aria-hidden
             className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-full text-white"
-            style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+            style={{ background: 'var(--brand-navy-deep)' }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
               <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />

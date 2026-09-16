@@ -74,17 +74,17 @@ export default async function ExplorePage() {
   // recomputes the same cards with distances for the list itself.
   const categories = categoryCounts(groupIntoCards(decorateWithDistance(rows, null)));
 
-  // v4: a navy header carries the title + count; ExploreView renders its
-  // search, filters and results on the sheet (its own Landing hero is
-  // suppressed via hideHero so the title isn't duplicated). The header is
-  // a client component because inside a specialty the title IS the
-  // specialty — it has to follow the ?specialty= param.
+  // The header carries the title + count; ExploreView renders its search,
+  // filters and results below it (its own Landing hero is suppressed via
+  // hideHero so the title isn't duplicated). The header is a client
+  // component because inside a specialty the title IS the specialty — it
+  // has to follow the ?specialty= param.
   const header = (
     <ExploreHeader practitionerCount={practitionerCount} categories={categories} />
   );
 
   return (
-    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
+    <PatientScreen tone="plain" header={header} sheetClassName="px-[18px] pb-6">
       <ExploreView rows={rows} hideHero />
     </PatientScreen>
   );

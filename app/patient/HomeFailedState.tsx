@@ -3,18 +3,41 @@ import PatientScreen from './PatientScreen';
 import ActionCentreBell from './ActionCentreBell';
 import { formatRand, formatDayMonth } from './_format';
 
-// ─── HomeFailedState — v4 "Payment didn't go through" (screen 04) ─────────
+// ─── HomeFailedState — Home, in the missed-payment state ─────────────────
 //
-// Home rendered in a failed state: a red header used once, a procedural
-// (never punitive) body, and one way to pay. Triggered when the patient
-// has a failed or defaulted instalment.
+// Rendered instead of the normal Home when the patient has a failed or
+// defaulted instalment. The TRIGGER is unchanged (see the short-circuit in
+// page.tsx); what changed in v5 is that this stopped being a red screen.
 //
-// Copy honesty (per the build decision): every line is backed by real
-// data. The retry date is the row's actual next_attempt_date — never a
-// made-up "Monday 4 Aug". We do NOT promise "no late fee is charged"
-// (late/dunning fees can accrue); we state the interest-free truth and
-// surface any fee that HAS been added. The "new plans are paused" step
-// shows only when the account is genuinely frozen (a defaulted plan).
+// ─── WHY THE RED HEADER IS GONE ───────────────────────────────────────
+//
+// v4 gave this state its own canvas: a #7A1F1F band with a red glow, the
+// only place in the portal that colour appeared. It was legible, and it
+// was wrong twice over. It made a recoverable, ordinary event — a card
+// declined, which mostly means an expiry or a daily limit — look like an
+// account in disgrace; and it broke the one structural promise the shell
+// makes, that a navy band means "this screen leads with a figure" and the
+// figure means the same thing everywhere. A patient who lands here should
+// see their own home screen with one card gone red, not a different app.
+//
+// So the danger treatment now lives where the danger is: a red eyebrow, a
+// red amount and a danger chip on the top card, over the standard navy
+// hero, with a NAVY call to action. Navy, not red: the button is the way
+// out, and colouring the escape route like the problem is what makes a
+// screen feel punitive. This is the same treatment the ordinary Home gives
+// an overdue instalment, one step further along — which is the point.
+//
+// Copy honesty (unchanged): every line is backed by real data. The retry
+// date is the row's actual next_attempt_date — never a made-up "Monday 4
+// Aug". We do NOT promise "no late fee is charged" (late/dunning fees can
+// accrue); we state the interest-free truth and surface any fee that HAS
+// been added. The "new plans are paused" step shows only when the account
+// is genuinely frozen (a defaulted plan).
+
+const CARD_SHADOW = '0 2px 8px -3px rgba(15,31,58,.09)';
+const CARD_BORDER = '1px solid rgba(19,41,75,.06)';
+const DANGER      = '#B42318';
+const DANGER_WASH = 'rgba(180,35,24,.10)';
 
 function StepRow({ n, children }: { n: number; children: React.ReactNode }) {
   return (
@@ -65,38 +88,65 @@ export default function HomeFailedState({
 }) {
   const cardLabel = cardBrand && cardLast4 ? `${cardBrand} ···· ${cardLast4}` : 'your card';
 
-  const header = (
-    <>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[15.5px] font-semibold text-white">
-          Hi {firstName ?? 'there'}
-        </span>
-        <ActionCentreBell onDark />
-      </div>
+  // The chip states the mechanical fact, which is also the most useful one:
+  // whether an automatic attempt is still coming. "No retries left" is why
+  // settling by hand is now the only route, and it is true exactly when the
+  // row carries no next_attempt_date.
+  const chip = retryDate ? `Retry ${formatDayMonth(retryDate)}` : 'No retries left';
 
-      <div className="mt-[26px]">
-        <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'rgba(255,255,255,.62)' }}>
-          Payment didn&rsquo;t go through
-        </p>
-        <p className="mt-[11px] font-bold tabular-nums text-white" style={{ fontSize: 48, lineHeight: '.94', letterSpacing: '-.045em' }}>
-          {formatRand(amount).split('.')[0]}
-          <span style={{ fontSize: 28, color: 'rgba(255,255,255,.55)' }}>.{formatRand(amount).split('.')[1]}</span>
-        </p>
-        <p className="mt-3 text-[14.5px]" style={{ color: 'rgba(255,255,255,.82)' }}>
-          {practiceName} · was due {formatDayMonth(dueDate)}
-        </p>
-      </div>
-    </>
+  const header = (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[15.5px] font-semibold text-white">
+        Hi {firstName ?? 'there'}
+      </span>
+      <ActionCentreBell onDark />
+    </div>
   );
 
   return (
-    <PatientScreen tone="fail" header={header} sheetClassName="px-[18px] pt-5 pb-6">
+    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
+
+        {/* The amount owed — the same shape as Home's next-payment card, in
+            the danger treatment. Eyebrow, figure and meta go red; the CTA
+            stays navy. */}
+        <div
+          className="bn-up rounded-card bg-white p-[18px] flex flex-col gap-[16px]"
+          style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
+          data-testid="home-failed-amount"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: DANGER }}>
+                {frozen ? 'Settle to unfreeze' : 'Payment didn’t go through'}
+              </p>
+              <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: DANGER, letterSpacing: '-.04em' }}>
+                {formatRand(amount)}
+              </p>
+            </div>
+            <span
+              className="flex-none text-[12px] font-semibold rounded-full px-[13px] py-2"
+              style={{ background: DANGER_WASH, color: DANGER }}
+            >
+              {chip}
+            </span>
+          </div>
+          <p className="text-[13.5px] leading-[1.5]" style={{ color: DANGER }}>
+            {practiceName} · was due {formatDayMonth(dueDate)}
+            {cardBrand && cardLast4 ? <> · off your {cardBrand} ···· {cardLast4}</> : null}
+          </p>
+          <Link
+            href={planId ? `/patient/orders/${planId}` : '/patient/orders'}
+            className="bn-btn-navy text-center text-[14.5px] font-semibold text-white rounded-tile py-[15px] tabular-nums"
+          >
+            Pay {formatRand(amount)} now
+          </Link>
+        </div>
 
         {/* What happens now */}
         <div
-          className="rounded-card bg-white p-[18px] flex flex-col gap-[14px]"
-          style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+          className="bn-up-2 rounded-card bg-white p-[18px] flex flex-col gap-[14px]"
+          style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
         >
           <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.14em', color: 'rgba(19,41,75,.5)' }}>
             What happens now
@@ -104,7 +154,7 @@ export default function HomeFailedState({
           <StepRow n={1}>
             {retryDate
               ? <>We&rsquo;ll try {cardLabel} again on <b>{formatDayMonth(retryDate)}</b>.</>
-              : <>This payment is overdue and no more automatic retries are scheduled — please settle it below.</>}
+              : <>This payment is overdue and no more automatic retries are scheduled — please settle it above.</>}
           </StepRow>
           <StepRow n={2}>
             {feesRand > 0
@@ -118,11 +168,11 @@ export default function HomeFailedState({
 
         {/* Two ways out */}
         <div
-          className="rounded-card bg-white overflow-hidden"
-          style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+          className="bn-up-3 rounded-card bg-white overflow-hidden"
+          style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
         >
           {altCard && (
-            <Link href="/patient/account" className="flex items-center justify-between gap-3 p-[16px] hover:bg-gray-50 transition-colors">
+            <Link href="/patient/account" className="bn-row-hover flex items-center justify-between gap-3 p-[16px]">
               <div className="min-w-0">
                 <p className="text-[14px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Use a different card</p>
                 <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>
@@ -134,8 +184,8 @@ export default function HomeFailedState({
           )}
           <a
             href="mailto:support@betternow.co.za"
-            className={`flex items-center justify-between gap-3 p-[16px] hover:bg-gray-50 transition-colors ${altCard ? 'border-t' : ''}`}
-            style={altCard ? { borderColor: 'var(--portal-hairline)' } : undefined}
+            className="bn-row-hover flex items-center justify-between gap-3 p-[16px]"
+            style={altCard ? { borderTop: '1px solid var(--portal-hairline)' } : undefined}
           >
             <div className="min-w-0">
               <p className="text-[14px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Can&rsquo;t pay right now?</p>
@@ -144,15 +194,6 @@ export default function HomeFailedState({
             <Chevron />
           </a>
         </div>
-
-        {/* Pay now */}
-        <Link
-          href={planId ? `/patient/orders/${planId}` : '/patient/orders'}
-          className="block text-center text-[15px] font-semibold text-white rounded-tile py-[15px] tabular-nums"
-          style={{ background: 'var(--portal-accent)' }}
-        >
-          Pay {formatRand(amount)} now
-        </Link>
 
       </div>
     </PatientScreen>

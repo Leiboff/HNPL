@@ -50,7 +50,12 @@ export default function ApprovedBalanceCard({ limit, available }: Props) {
           // The two navies are now the SAME pair, in the same order, as the auth
           // screens' ground (AuthSurface's NAVY_GROUND) — the mid-stop was a
           // literal #1B3A6C, a fourth navy invented for this one card.
-          background: 'linear-gradient(135deg, var(--brand-navy-deep) 0%, var(--brand-navy) 60%, var(--portal-accent) 145%)',
+          // Navy to navy, the same 140° run the collection card uses. The
+          // old third stop bled brand teal into the bottom-right corner,
+          // which put the app's ACTION colour on a surface that carries no
+          // action — and made this the only navy in the portal that was
+          // not one of the two brand navies by the time it reached the edge.
+          background: 'linear-gradient(140deg, var(--brand-navy) 0%, var(--brand-navy-deep) 100%)',
           color:      '#ffffff',
         }}
         data-testid="approved-balance-card"

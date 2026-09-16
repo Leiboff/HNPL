@@ -67,7 +67,7 @@ export default async function ReferPage() {
   const rows = (data ?? []) as ReferralRow[];
 
   return (
-    <PatientScreen header={<SubScreenHeader title="Refer someone" />} sheetClassName="px-[18px] pt-5 pb-6">
+    <PatientScreen tone="plain" header={<SubScreenHeader title="Refer someone" />} sheetClassName="px-[18px] pb-6">
       <div className="flex flex-col gap-[14px]">
         <p className="text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
           Know someone who could use betternow, or a doctor who should offer it?

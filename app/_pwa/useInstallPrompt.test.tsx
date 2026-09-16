@@ -53,6 +53,10 @@ beforeEach(() => {
   setPlatform('Win32');
   setStandalone(undefined);
   setMatchMediaStandalone(false);
+  // The captured install event is page-lifetime state (it has to be — the
+  // browser fires beforeinstallprompt once, and every consumer must see
+  // the same one), so each case has to start from a clean page.
+  __resetInstallPromptForTests();
 });
 
 afterEach(() => {
@@ -64,7 +68,7 @@ afterEach(() => {
   if (originalMatchMedia) (window as WindowWithUA).matchMedia = originalMatchMedia;
 });
 
-import { useInstallPrompt } from './useInstallPrompt';
+import { useInstallPrompt, __resetInstallPromptForTests } from './useInstallPrompt';
 
 describe('useInstallPrompt — state transitions', () => {
   it('reports "installed" when display-mode is standalone (Android installed)', async () => {
@@ -114,6 +118,43 @@ describe('useInstallPrompt — state transitions', () => {
     await act(async () => { outcome = await result.current.install(); });
     expect(prompt).toHaveBeenCalledTimes(1);
     expect(outcome?.outcome).toBe('accepted');
+  });
+
+  it('a LATER consumer still sees an event captured before it mounted', async () => {
+    // The bug this guards: `beforeinstallprompt` fires once, early. While
+    // every consumer mounted together, per-hook state hid that. It stopped
+    // being hidden when AccountInstallRow arrived as the permanent way back
+    // after dismissing the install sheet — by the time a patient reaches
+    // Account the event is long gone, so a hook with its own useState
+    // started at null, reported 'none', and the row rendered nothing at all.
+    setUA('Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36');
+
+    // Consumer one — the layout's sheet — mounts and captures the event.
+    const first = renderHook(() => useInstallPrompt());
+    const evt = new Event('beforeinstallprompt');
+    Object.assign(evt, { prompt: vi.fn().mockResolvedValue(undefined), userChoice: Promise.resolve({ outcome: 'accepted' as const }) });
+    act(() => { window.dispatchEvent(evt); });
+    await waitFor(() => expect(first.result.current.state).toBe('android'));
+
+    // Consumer two — the Account row — mounts AFTER the event has fired.
+    const later = renderHook(() => useInstallPrompt());
+    await waitFor(() => expect(later.result.current.state).toBe('android'));
+  });
+
+  it('prompting from one consumer clears the offer everywhere', async () => {
+    // The event can only be prompted once, so a second surface still
+    // offering "Install" would be a button that silently does nothing.
+    setUA('Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537.36');
+    const a = renderHook(() => useInstallPrompt());
+    const b = renderHook(() => useInstallPrompt());
+
+    const evt = new Event('beforeinstallprompt');
+    Object.assign(evt, { prompt: vi.fn().mockResolvedValue(undefined), userChoice: Promise.resolve({ outcome: 'dismissed' as const }) });
+    act(() => { window.dispatchEvent(evt); });
+    await waitFor(() => expect(b.result.current.state).toBe('android'));
+
+    await act(async () => { await a.result.current.install(); });
+    await waitFor(() => expect(b.result.current.state).toBe('none'));
   });
 
   it('appinstalled flips to "installed" without a reload', async () => {

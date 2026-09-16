@@ -124,7 +124,7 @@ export default function SalaryDaySection({ current, saveSalaryDay }: Props) {
               disabled={isPending}
               data-testid="profile-salary-day-save"
               className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+              style={{ background: 'var(--brand-navy-deep)' }}
             >
               {isPending ? 'Saving…' : 'Save'}
             </button>

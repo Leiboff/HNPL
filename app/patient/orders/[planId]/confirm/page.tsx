@@ -89,22 +89,32 @@ export default async function ConfirmPage({
 
   if (!salaryDay) {
     return (
-      <div className="mx-auto max-w-md px-6 py-16">
-        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm px-8 py-10 space-y-4 text-center">
-          <h1 className="text-xl font-semibold text-gray-900">Set your salary date first</h1>
-          <p className="text-sm text-gray-600">
-            We need your salary date to schedule your instalment payments around your payday.
+      <div className="bn-app" style={{ background: '#fff', minHeight: '100%' }}>
+        <div className="mx-auto w-full max-w-md md:max-w-xl pt-[58px] px-[20px] pb-10">
+          <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'var(--portal-faint)' }}>
+            One thing first
           </p>
-          <div className="flex flex-col items-center gap-3">
+          <h1 className="mt-[9px] text-[26px] font-bold leading-[1.2]" style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }}>
+            Set your salary date
+          </h1>
+          <p className="mt-2.5 text-[13.5px] leading-[1.6]" style={{ color: 'var(--portal-muted)' }}>
+            Instalments are collected just after you get paid, so we need your salary
+            date before we can schedule them. It takes a moment and you&rsquo;ll come
+            straight back to this bill.
+          </p>
+          <div className="mt-6 flex flex-col gap-[10px]">
             <Link
               href="/patient/account/personal"
-              className="inline-flex items-center justify-center rounded-lg px-6 py-2.5 text-sm font-semibold text-white transition-all hover:shadow-lg"
-              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+              className="bn-btn-teal rounded-tile py-4 text-center text-[15px] font-semibold text-white"
             >
-              Go to account →
+              Set my salary date
             </Link>
-            <Link href="/patient/orders" className="text-sm text-gray-500 hover:underline">
-              Back to orders
+            <Link
+              href="/patient/orders"
+              className="py-2 text-center text-[13px] font-semibold"
+              style={{ color: 'var(--portal-muted)' }}
+            >
+              Back to plans
             </Link>
           </div>
         </div>
@@ -171,8 +181,11 @@ export default async function ConfirmPage({
     }
   }
 
+  // No wrapper: ConfirmForm owns the whole screen — its own white canvas,
+  // status-bar clearance, back row and step bar. A max-w column here would
+  // nest a second, narrower page inside it.
   return (
-    <div className="mx-auto max-w-xl px-6 py-10">
+    <>
       <ConfirmForm
         planId={planId}
         totalAmount={Number(rawPlan.total_amount)}
@@ -187,6 +200,6 @@ export default async function ConfirmPage({
         availableRands={availableRands}
         committedInstalments={committedInstalments}
       />
-    </div>
+    </>
   );
 }

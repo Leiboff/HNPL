@@ -259,13 +259,21 @@ describe('Part 3 — home dashboard', () => {
   });
 
   it('layout order (v4): balance hero → waiting-on-you → next payment → your plans', () => {
-    // v4 reading order: what can I spend (navy hero), is anything waiting
+    // Reading order: what can I spend (navy hero), is anything waiting
     // on me (bill card), what comes off next (Next payment), then the
     // plan list.
+    //
+    // Anchored on the CARDS (their testids) rather than on their copy.
+    // v5 derives the next-payment card's four strings — eyebrow, chip,
+    // meta, CTA — in one block above the JSX so they cannot fall out of
+    // step with each other, which puts the literal 'Next payment' earlier
+    // in the file than the card that renders it. The testids sit on the
+    // elements themselves, so this pins the order the patient actually
+    // reads instead of the order the strings happen to be declared in.
     const hero    = HOME.indexOf('Available to spend');
     const bill    = HOME.indexOf('<HomeBillCard');
-    const nextPay = HOME.indexOf('Next payment');
-    const plans   = HOME.indexOf('Your plans');
+    const nextPay = HOME.indexOf('data-testid="home-next-payment"');
+    const plans   = HOME.indexOf('data-testid="home-your-plans"');
     expect(hero).toBeGreaterThan(-1);
     expect(bill).toBeGreaterThan(hero);
     expect(nextPay).toBeGreaterThan(bill);
@@ -467,12 +475,15 @@ describe('Header action centre — bell replaces logout in patient header', () =
 
   it('action-centre sheet exposes push + passkey + install items', () => {
     const SHEET = read('app/patient/ActionCentreSheet.tsx');
-    expect(SHEET).toMatch(/data-testid="action-centre-sheet"/);
-    // Each item passes its testid prop; Item renders <div data-testid={testid}>.
+    const SHELL = read('app/patient/BottomSheet.tsx');
+    // The sheet's chrome moved into the shared BottomSheet, so this file
+    // passes `testid` the same way its items do, and the shell is what
+    // renders <div data-testid={testid}> — for the sheet AND the rows.
+    expect(SHEET).toMatch(/testid="action-centre-sheet"/);
     expect(SHEET).toMatch(/testid="ac-item-push"/);
     expect(SHEET).toMatch(/testid="ac-item-passkey"/);
     expect(SHEET).toMatch(/testid="ac-item-install"/);
-    expect(SHEET).toMatch(/data-testid=\{testid\}/);
+    expect(SHELL).toMatch(/data-testid=\{testid\}/);
     // Install item is hidden entirely when beforeinstallprompt is unavailable
     // AND we're not on iOS Safari — the render tree ends the ternary with a
     // `: null` (the 'none' branch), so no ac-item-install renders.
@@ -482,8 +493,14 @@ describe('Header action centre — bell replaces logout in patient header', () =
   it('completed items render a done tick (subtle, never vanish)', () => {
     const SHEET = read('app/patient/ActionCentreSheet.tsx');
     expect(SHEET).toMatch(/data-testid="ac-item-done"/);
-    // The done-tick is emitted only when the item's `done` prop is true.
-    expect(SHEET).toMatch(/{done && \(/);
+    // The tick is emitted only for an item that IS done: every <DoneMark />
+    // sits behind a completed-state check (subscribed / hasPasskey /
+    // installed), and there is no unconditional one.
+    const marks = SHEET.match(/aside=\{[^}]*<DoneMark \/>[^}]*\}/g) ?? [];
+    expect(marks.length).toBeGreaterThanOrEqual(3);
+    for (const m of marks) {
+      expect(m, m).toMatch(/subscribed|hasPasskey|<DoneMark \/>\}$/);
+    }
   });
 
   it('push soft-ask logic in the centre reuses the same LS key as the removed home card', () => {

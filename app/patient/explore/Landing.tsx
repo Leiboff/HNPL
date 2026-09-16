@@ -71,19 +71,20 @@ export default function Landing({ categories, locationRow, hideHeading = false }
         <div className="relative">
           <svg
             aria-hidden
-            className="absolute left-3 top-1/2 -translate-y-1/2"
-            width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
+            className="absolute left-[15px] top-1/2 -translate-y-1/2"
+            width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
           >
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" strokeLinecap="round" />
           </svg>
           <input
             type="search"
-            placeholder="Search practitioners by name…"
+            placeholder="Practice, suburb or treatment"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             data-testid="landing-search"
-            className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[var(--portal-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/15"
+            className="w-full rounded-2xl bg-white pl-[42px] pr-4 py-[13px] text-[14px] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/20"
+            style={{ border: '1px solid rgba(19,41,75,.08)', color: 'var(--portal-ink)' }}
           />
         </div>
 
@@ -91,41 +92,48 @@ export default function Landing({ categories, locationRow, hideHeading = false }
         {locationRow}
       </form>
 
-      {/* Categories */}
+      {/* ── Specialties ──────────────────────────────────────────────
+          A horizontally scrolling PILL ROW, not a two-column grid of
+          cards. Same destinations, same counts; what changes is how much
+          of the screen they take. As cards, eleven specialties filled the
+          viewport twice over and pushed the practitioners — the thing a
+          patient came for — entirely below the fold, so the screen opened
+          on a menu of categories rather than on care.
+
+          The labels do NOT wrap. A pill that grows sideways is what the
+          horizontal scroll is for; that is also what keeps a long name
+          like "General Dental Practitioner" from being clipped, which is
+          the failure app/patient/phase5-polish.test.ts pins. */}
       <section className="space-y-3">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+        <h2 className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: 'var(--portal-faint)' }}>
           Browse by specialty
         </h2>
         {categories.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-gray-200 py-10 text-center">
-            <p className="text-sm text-gray-500">
-              No practitioners live on BetterNow yet. Check back soon.
+          <div className="rounded-card py-10 text-center" style={{ border: '1px dashed var(--portal-line)' }}>
+            <p className="text-[13.5px]" style={{ color: 'var(--portal-muted)' }}>
+              No practitioners live on betternow yet. Check back soon.
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="landing-categories">
+          <div className="bn-scroll -mx-[18px] px-[18px] flex gap-2 overflow-x-auto" data-testid="landing-categories">
             {categories.map((c) => (
               <Link
                 key={c.specialty}
                 href={`/patient/explore?view=results&specialty=${encodeURIComponent(c.specialty)}`}
                 data-testid={`landing-category-${c.specialty}`}
-                className="group rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm hover:shadow-md transition-shadow px-4 py-4 flex items-center justify-between gap-3"
+                className="bn-card-hover flex-none rounded-full px-[14px] py-[9px] text-[12.5px] font-medium whitespace-nowrap"
+                style={{ background: '#fff', border: '1px solid rgba(19,41,75,.1)', color: 'var(--portal-ink)' }}
               >
-                <div className="min-w-0">
-                  <p className="font-semibold text-gray-900 leading-snug break-words">{c.specialty}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {c.count} practitioner{c.count === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <span
-                  aria-hidden
-                  className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-full text-white transition-transform group-hover:translate-x-0.5"
-                  style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25}>
-                    <path d="m9 6 6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
+                {c.specialty}
+                {/* The count is a bare number in the pill — beside a
+                    specialty name it reads as one, and the full phrase
+                    would double the pill's width. "practitioners" is not
+                    dropped, only moved: the sr-only span carries the whole
+                    phrase for anyone who cannot see that arrangement.
+                    The visible one is aria-hidden, or the link announces
+                    the number twice ("Dentistry · 2, 2 practitioners"). */}
+                <span aria-hidden style={{ color: 'var(--portal-faint)' }}> · {c.count}</span>
+                <span className="sr-only">{` ${c.count} practitioner${c.count === 1 ? '' : 's'}`}</span>
               </Link>
             ))}
           </div>

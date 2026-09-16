@@ -23,14 +23,36 @@ function formatRandCents(cents: number): string {
   return `R${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${decimal}`;
 }
 
+export type ChargeLine = {
+  label:       string;
+  amountCents: number;
+  /** Renders the figure in danger red. Reserved for a NON-ZERO late fee. */
+  danger?:     boolean;
+};
+
 type Props = {
   open:              boolean;
-  /** Plain-language headline e.g. "Pay R425.66 now?" — already includes the amount. */
+  /**
+   * Plain-language headline e.g. "Pay R425.66 now?" — already includes the
+   * amount. It is the dialog's ACCESSIBLE NAME: visually the amount leads
+   * on its own line, but a screen-reader user needs the whole question in
+   * one utterance when the dialog opens, not a bare figure.
+   */
   headline:          string;
   /** Subtitle e.g. "Your card will be charged immediately." */
   subtitle:          string;
   /** Cents we'll charge — displayed on the confirm button so it matches the headline. */
   amountCents:       number;
+  /** Small uppercase label above the figure. Defaults to "Pay now". */
+  eyebrow?:          string;
+  /**
+   * What the total is made of. Rendered only when there is more than one
+   * line — a single row restating the total it sits under is noise. The
+   * point of it is the late fee: a patient settling a failed collection is
+   * being charged more than the instalment, and this is where the app owes
+   * them that number rather than a total they have to reconcile themselves.
+   */
+  breakdown?:        ChargeLine[];
   /** True while the action is mid-flight; disables both buttons and shows "Charging…". */
   isPending:         boolean;
   onConfirm:         () => void;
@@ -42,6 +64,8 @@ export default function ConfirmChargeDialog({
   headline,
   subtitle,
   amountCents,
+  eyebrow = 'Pay now',
+  breakdown,
   isPending,
   onConfirm,
   onCancel,
@@ -87,7 +111,8 @@ export default function ConfirmChargeDialog({
           modal decision rather than a footer. Tap-outside dismisses
           unless mid-charge. */}
       <div
-        className={`absolute inset-0 bg-black/60 transition-opacity duration-300 ${entered ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 transition-opacity duration-300 ${entered ? 'opacity-100' : 'opacity-0'}`}
+        style={{ background: 'rgba(7,16,31,.45)' }}
         onClick={() => { if (!isPending) onCancel(); }}
         aria-hidden
       />
@@ -97,41 +122,76 @@ export default function ConfirmChargeDialog({
             // Layout: bottom sheet on mobile (rounded top, full width,
             // tall enough that the heading sits in the upper third);
             // centered card on desktop.
-            'relative bg-white w-full md:max-w-sm rounded-t-2xl md:rounded-2xl shadow-2xl pointer-events-auto',
+            'bn-app relative bg-white w-full md:max-w-sm rounded-t-[26px] md:rounded-card shadow-2xl pointer-events-auto',
             'min-h-[60vh] md:min-h-0',
             // Slide-up on mobile only — desktop has no transform.
             'transform transition-transform duration-300 ease-out',
             entered ? 'translate-y-0' : 'translate-y-full md:translate-y-0',
           ].join(' ')}
         >
-          <div className="px-6 pt-10 pb-4 md:pt-6">
-            <h2
-              id="confirm-charge-headline"
-              className="text-xl md:text-base font-semibold leading-tight"
-              style={{ color: 'var(--portal-ink)' }}
+          {/* Grab handle — the same 38×4 mark every sheet in the portal
+              carries, so a sheet is recognisable as a sheet before its
+              content is read. */}
+          <div className="md:hidden w-[38px] h-1 rounded-full mx-auto mt-[10px]" style={{ background: 'var(--portal-line-soft)' }} aria-hidden />
+
+          <div className="px-6 pt-8 md:pt-6 text-center">
+            {/* The amount leads. This is the one screen in the app whose
+                entire job is a single number — how much is about to leave
+                the account — so it is set at display size and centred, and
+                the question is carried by the eyebrow above it and the
+                button below. `headline` stays as the dialog's accessible
+                name for anyone who cannot see that arrangement. */}
+            <h2 id="confirm-charge-headline" className="sr-only">{headline}</h2>
+            <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'var(--portal-faint)' }}>
+              {eyebrow}
+            </p>
+            <p
+              className="mt-3 font-bold tabular-nums"
+              style={{ fontSize: 52, lineHeight: 1, letterSpacing: '-.045em', color: 'var(--portal-ink)' }}
             >
-              {headline}
-            </h2>
-            <p className="mt-3 text-sm text-gray-600 leading-relaxed">{subtitle}</p>
+              {formatRandCents(amountCents)}
+            </p>
+            <p className="mt-[11px] text-[13.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>{subtitle}</p>
           </div>
-          <div className="px-6 pb-8 md:pb-6 mt-6 md:mt-0 flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+
+          {breakdown && breakdown.length > 1 && (
+            <div className="px-6 pt-6 flex flex-col gap-3">
+              {breakdown.map((line) => (
+                <div key={line.label} className="flex items-baseline justify-between gap-3">
+                  <span className="text-[13px]" style={{ color: 'var(--portal-muted)' }}>{line.label}</span>
+                  <span
+                    className="text-[13.5px] font-semibold tabular-nums"
+                    style={{ color: line.danger ? '#B42318' : 'var(--portal-ink)' }}
+                  >
+                    {formatRandCents(line.amountCents)}
+                  </span>
+                </div>
+              ))}
+              <div className="h-px" style={{ background: 'var(--portal-hairline)' }} />
+            </div>
+          )}
+
+          <div className="px-6 pb-8 md:pb-6 pt-6 flex flex-col gap-[10px]">
             <button
               type="button"
               onClick={onConfirm}
               disabled={isPending}
-              className="inline-flex items-center justify-center rounded-lg px-5 py-3 md:py-2 text-base md:text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)' }}
+              className="bn-btn-teal rounded-tile py-4 text-[15px] font-semibold text-white disabled:opacity-50"
             >
-              {isPending ? 'Charging…' : `Confirm — pay ${formatRandCents(amountCents)}`}
+              {isPending ? 'Charging…' : `Pay ${formatRandCents(amountCents)}`}
             </button>
             <button
               type="button"
               onClick={onCancel}
               disabled={isPending}
-              className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-5 py-3 md:py-2 text-base md:text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="py-2 text-[13.5px] font-semibold disabled:opacity-50"
+              style={{ color: 'var(--portal-muted)' }}
             >
               Cancel
             </button>
+            <p className="text-center text-[11.5px]" style={{ color: 'var(--portal-faint)' }}>
+              Secured by Peach Payments · 3-D Secure
+            </p>
           </div>
         </div>
       </div>

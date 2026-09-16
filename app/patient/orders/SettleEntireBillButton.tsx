@@ -125,12 +125,12 @@ export default function SettleEntireBillButton({
   }
 
   const buttonCls = isMenuItem
-    ? 'inline-flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 text-left'
-    : 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50';
+    ? 'bn-row-hover inline-flex w-full items-center justify-between rounded-chip px-2 py-2 text-[13.5px] font-semibold disabled:opacity-50 text-left'
+    : 'bn-btn-navy inline-flex w-full items-center justify-center rounded-tile px-4 py-[15px] text-[14.5px] font-semibold text-white disabled:opacity-50';
 
   const wrapperCls = isMenuItem
     ? 'flex flex-col'
-    : 'flex flex-col items-center gap-2';
+    : 'w-full flex flex-col gap-2';
 
   return (
     <div className={wrapperCls}>
@@ -159,6 +159,7 @@ export default function SettleEntireBillButton({
           `instalment${outstandingCount === 1 ? '' : 's'} plus any accrued fees.`
         }
         amountCents={outstandingTotalCents}
+        eyebrow="Settle in full"
         isPending={isPending}
         onConfirm={fire}
         onCancel={() => setConfirming(false)}

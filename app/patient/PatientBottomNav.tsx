@@ -90,11 +90,11 @@ export default function PatientBottomNav() {
       style={{
         background: '#ffffff',
         borderTop: '1px solid rgba(19,41,75,0.08)',
-        boxShadow: '0 -2px 10px -4px rgba(11,31,58,0.15)',
+        boxShadow: '0 -2px 12px -5px rgba(11,31,58,0.18)',
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      <nav className="flex h-[68px] w-full">
+      <nav className="flex h-[66px] w-full">
         {LINKS.map(({ href, label, Icon }) => {
           const active = isActive(href);
           const isScan = href === '/patient/scan';
@@ -103,11 +103,11 @@ export default function PatientBottomNav() {
               key={href}
               href={href}
               // Full-cell tap target: flex-1 for width, h-full to fill the
-              // 68px bar height explicitly (not relying on implicit stretch),
+              // 66px bar height explicitly (not relying on implicit stretch),
               // min-h-[44px] as a floor. Icon + label + padding are all one
               // hit area.
               className="flex-1 flex flex-col items-center justify-center gap-[5px] h-full min-h-[44px]"
-              style={{ color: active ? 'var(--portal-accent)' : 'var(--portal-muted)', transition: 'color 0.15s' }}
+              style={{ color: active ? 'var(--portal-accent)' : 'var(--portal-faint)', transition: 'color 0.15s' }}
             >
               {isScan ? (
                 // Centre tab is a raised circular button, Payflex-style —
@@ -133,7 +133,7 @@ export default function PatientBottomNav() {
               )}
               <span
                 className="text-[10.5px] leading-none font-semibold"
-                style={{ color: isScan ? 'var(--portal-ink)' : active ? 'var(--portal-ink)' : 'var(--portal-muted)', transition: 'color 0.15s' }}
+                style={{ color: isScan || active ? 'var(--portal-ink)' : 'var(--portal-faint)', transition: 'color 0.15s' }}
               >
                 {label}
               </span>

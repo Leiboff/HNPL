@@ -155,7 +155,11 @@ describe('ConfirmForm — the committed rows win, then the split, then the fallb
     // Whatever the schedule ends up being, the sentence the patient agrees to
     // is keyed on it — so the excess cannot be shown in the table and omitted
     // from the consent.
-    expect(FORM).toMatch(/charged immediately for the first instalment of\{' '\}\s*<span className="font-semibold">\{formatRand\(schedule\[0\]\.amount\)\}<\/span>/);
+    // The consent line moved under the button it consents to and was
+    // rewritten to lead with the figure ("R1,200.00 is charged to your card
+    // now") rather than bury it mid-sentence. What this test is about is
+    // unchanged: the amount named is schedule[0], the row the table shows.
+    expect(FORM).toMatch(/<span className="tabular-nums">\{formatRand\(schedule\[0\]\.amount\)\}<\/span>\{' '\}\s*is charged to your card now\./);
   });
 });
 

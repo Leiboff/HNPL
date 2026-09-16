@@ -36,6 +36,10 @@ type Props = {
     paymentId:            string;
     chargeAmountCents:    number;
     instalmentNumber:     number;
+    /** Accrued dunning fees inside chargeAmountCents. Drives the confirm
+     *  sheet's breakdown, so a catch-up shows the fee rather than an
+     *  unexplained figure larger than the instalment. */
+    dunningFeesCents?:    number;
   } | null;
   settleInstalment:        (paymentId: string) => Promise<SelfSettleResult>;
   settleEntirePlan:        (planId:    string) => Promise<SettleAllOutcome>;
@@ -100,10 +104,12 @@ export default function PlanSettleAffordance({
   // ── 1 outstanding: plain primary "Pay now" — no menu needed.
   if (outstandingCount === 1) {
     return (
-      <div className="flex justify-center">
+      <div className="w-full">
         <PayNowButton
           paymentId={nextOutstanding.paymentId}
           amountToChargeCents={nextOutstanding.chargeAmountCents}
+          dunningFeesCents={nextOutstanding.dunningFeesCents}
+          instalmentNumber={nextOutstanding.instalmentNumber}
           settleAction={settleInstalment}
           variant="primary"
           label={`Pay now · ${formatRandCents(nextOutstanding.chargeAmountCents)}`}
@@ -116,16 +122,13 @@ export default function PlanSettleAffordance({
   //    two options live inside an indented sub-menu so they read as
   //    belonging to the toggle, not as peer CTAs.
   return (
-    <div ref={containerRef} className="flex flex-col items-center">
+    <div ref={containerRef} className="w-full flex flex-col">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-        style={{
-          background: 'linear-gradient(135deg, var(--portal-ink) 0%, var(--portal-accent) 145%)',
-        }}
+        className="bn-btn-navy w-full inline-flex items-center justify-center gap-2 rounded-tile px-4 py-[15px] text-[14.5px] font-semibold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
       >
         Manage payments
         <ChevronDown open={open} />
@@ -135,7 +138,8 @@ export default function PlanSettleAffordance({
         <div
           role="menu"
           aria-label="Payment options"
-          className="mt-3 w-full max-w-xs pl-3 border-l-2 border-gray-200 flex flex-col gap-1.5"
+          className="mt-3 w-full pl-3 flex flex-col gap-1.5"
+          style={{ borderLeft: '2px solid var(--portal-line-soft)' }}
         >
           {/* Pay-next-instalment — text link, not a button. Subordinate
               to the toggle. Confirm gate (ConfirmChargeDialog) is the
@@ -143,6 +147,8 @@ export default function PlanSettleAffordance({
           <PayNowButton
             paymentId={nextOutstanding.paymentId}
             amountToChargeCents={nextOutstanding.chargeAmountCents}
+            dunningFeesCents={nextOutstanding.dunningFeesCents}
+            instalmentNumber={nextOutstanding.instalmentNumber}
             settleAction={settleInstalment}
             variant="menuItem"
             label={`Pay next instalment · ${formatRandCents(nextOutstanding.chargeAmountCents)}`}

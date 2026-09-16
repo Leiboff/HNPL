@@ -192,8 +192,17 @@ describe('ExploreView — landing is the default view', () => {
     render(<ExploreView rows={rows} />);
     const dent   = screen.getByTestId('landing-category-Dentistry');
     const physio = screen.getByTestId('landing-category-Physiotherapy');
-    expect(dent.textContent).toMatch(/2 practitioners/);
-    expect(physio.textContent).toMatch(/1 practitioner\b/);
+    // The pill SHOWS "Dentistry · 2" — a bare number, because beside a
+    // specialty name it reads as one and the full phrase would double the
+    // pill's width. The count is announced ONCE: the visible span is
+    // aria-hidden and an sr-only span carries the whole phrase, so the
+    // accessible name is a sentence rather than "· 2, 2 practitioners".
+    expect(dent.getAttribute('aria-hidden')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Dentistry 2 practitioners' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Physiotherapy 1 practitioner' })).toBeTruthy();
+    // …and the visible pills still carry the compact form.
+    expect(dent.querySelector('[aria-hidden]')?.textContent).toBe(' · 2');
+    expect(physio.querySelector('[aria-hidden]')?.textContent).toBe(' · 1');
   });
 
   it('a category tile links to ?view=results&specialty=<name>', () => {

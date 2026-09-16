@@ -46,7 +46,7 @@ function BrandBadge({ brand }: { brand: string }) {
 function PollingView({ secondsLeft }: { secondsLeft: number }) {
   return (
     <ResultCard>
-      <div className="flex items-center justify-center w-14 h-14 rounded-full bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)]/10 mx-auto">
+      <div className="flex items-center justify-center w-14 h-14 rounded-full mx-auto" style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent-ink)' }}>
         <svg className="w-7 h-7 text-[var(--portal-ink)] animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3V4a8 8 0 00-8 8z" />
@@ -87,7 +87,7 @@ function SuccessView({ card }: { card: CardInfo }) {
       </p>
       <Link
         href={CARDS_SURFACE}
-        className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+        className="inline-flex items-center justify-center rounded-lg bn-btn-navy px-6 py-3 text-[14.5px] font-semibold text-white"
       >
         View my cards →
       </Link>
@@ -114,7 +114,7 @@ function TimeoutView() {
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
         <Link
           href={cardRetryDestination()}
-          className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+          className="inline-flex items-center justify-center rounded-lg bn-btn-navy px-6 py-3 text-[14.5px] font-semibold text-white"
         >
           Try again
         </Link>

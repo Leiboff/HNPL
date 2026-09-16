@@ -58,7 +58,7 @@ export default async function PaymentCardsPage() {
   const lockedCardIds = rawCardRows.filter((c) => activeTokens.has(c.token)).map((c) => c.id);
 
   return (
-    <PatientScreen header={<SubScreenHeader title="Payment cards" />} sheetClassName="px-[18px] pt-5 pb-6">
+    <PatientScreen tone="plain" header={<SubScreenHeader title="Payment cards" />} sheetClassName="px-[18px] pb-6">
       <div className="flex flex-col gap-[10px]">
         <p className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--portal-muted)' }}>
           Your card details are never stored on betternow — they&rsquo;re held by our PCI-DSS

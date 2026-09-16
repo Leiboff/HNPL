@@ -226,9 +226,18 @@ describe('looking like a page means behaving like one', () => {
     expect(LOGIN).toMatch(/auth-view-\$\{viewDir\}/);
     expect(CSS).toMatch(/\.auth-view-forward/);
     expect(CSS).toMatch(/\.auth-view-back/);
-    const reduced = CSS.slice(CSS.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
-    expect(reduced).toMatch(/auth-view-forward/);
-    expect(reduced).toMatch(/animation: none/);
+    // Find the reduced-motion block that governs THIS animation, rather
+    // than assuming it is the last one in the file. globals.css has
+    // several (the find-care ring, the auth views, the patient portal's
+    // motion set), and `lastIndexOf` silently started testing a different
+    // one the moment a new block was appended below — a pin that passes
+    // or fails on where an unrelated rule happens to sit is not pinning
+    // anything.
+    const blocks = CSS.split('@media (prefers-reduced-motion: reduce)').slice(1);
+    const reduced = blocks.find((b) => b.includes('auth-view-forward'));
+    expect(reduced, 'no reduced-motion block covers .auth-view-forward').toBeDefined();
+    expect(reduced!).toMatch(/auth-view-back/);
+    expect(reduced!).toMatch(/animation: none/);
   });
 });
 

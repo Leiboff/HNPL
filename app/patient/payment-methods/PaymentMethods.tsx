@@ -26,7 +26,7 @@ function formatExpiry(month: number, year: number): string {
 function CardThumbnail({ brand }: { brand: string }) {
   return (
     <div
-      className="w-11 h-8 rounded-lg flex items-center justify-center shrink-0 text-white text-[10px] font-black tracking-wider select-none"
+      className="w-[38px] h-[26px] rounded-chip flex items-center justify-center shrink-0 text-white text-[9px] font-black tracking-wider select-none"
       style={{ background: cardBrandGradient(brand) }}
     >
       {cardBrandLabel(brand)}
@@ -260,176 +260,247 @@ export default function PaymentMethods({
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
-          {notice}
-        </div>
-      )}
+  // The default card is the one that collects new plans, so it is the one
+  // the screen leads with — as a card-shaped object rather than another
+  // row, because a list where every entry looks the same makes the patient
+  // hunt for the "Default" pill to answer the question they opened the
+  // screen with.
+  const defaultCard = cards.find((c) => c.is_default) ?? null;
+  const backupCards = cards.filter((c) => c !== defaultCard);
 
-      {cards.length === 0 ? (
+  function renderRemoveConfirm(card: CardRow) {
+    const removalPreview = previewRemoval(card.id);
+    if (!removalPreview) return null;
+    return (
+      <div className="rounded-card px-[18px] py-[16px] flex flex-col gap-3" style={{ background: 'var(--portal-wash)', border: '1px solid var(--portal-line-soft)' }}>
+        <div>
+          <p className="text-[14px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Remove this card?</p>
+          <p className="mt-1.5 text-[12.5px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
+            {removalPreview.willPromoteToDefault && removalPreview.target
+              ? `We'll archive this card — a secure reference is kept for reconciliation — and your default for new plans moves to ${removalPreview.target.card_brand} •••• ${removalPreview.target.last_four}. Active plans are unaffected; each keeps its own card.`
+              : `We'll archive this card — a secure reference is kept for reconciliation — and take it off your list. Active plans are unaffected; each keeps its own card.`}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => handleRemove(card.id)}
+            disabled={loading}
+            data-testid="confirm-remove"
+            className="rounded-tile px-4 py-[11px] text-[13.5px] font-semibold text-white disabled:opacity-60 transition-colors"
+            style={{ background: '#B42318' }}
+          >
+            {loading ? 'Removing…' : 'Remove'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirm({ kind: 'none' })}
+            className="bn-btn-wash rounded-tile px-4 py-[11px] text-[13.5px] font-semibold"
+            style={{ color: 'var(--portal-ink-2)' }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function RemoveButton({ card }: { card: CardRow }) {
+    const locked = lockedCardIds.includes(card.id);
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          if (locked) return;
+          setError(null);
+          setNotice(null);
+          setConfirm({ kind: 'remove', cardId: card.id });
+        }}
+        disabled={loading || locked}
+        aria-disabled={locked}
+        // Quiet at rest, red on hover/focus only.
+        className="text-[12.5px] font-semibold hover:text-[#B42318] focus-visible:text-[#B42318] disabled:cursor-not-allowed transition-colors"
+        style={{ color: locked ? 'var(--portal-line)' : 'var(--portal-faint)' }}
+        title={locked ? LOCKED_REASON : undefined}
+        data-testid={`remove-card-${card.id}`}
+      >
+        Remove
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-[12px]">
+      {error  && <Banner tone="danger">{error}</Banner>}
+      {notice && <Banner tone="success">{notice}</Banner>}
+
+      {cards.length === 0 && (
         <EmptyState icon="card" title="No saved cards">
           Add one and we&rsquo;ll use it to collect your instalments on your salary date.
         </EmptyState>
-      ) : (
-        <div className="space-y-3">
-          {cards.map((card) => {
-            const isConfirmRemove        = confirm.kind === 'remove' && confirm.cardId === card.id;
-            const locked                 = lockedCardIds.includes(card.id);
-            const removalPreview         = isConfirmRemove ? previewRemoval(card.id) : null;
-            return (
-              <div
-                key={card.id}
-                className="bg-white rounded-2xl border border-[rgba(19,41,75,.08)] shadow-sm overflow-hidden"
+      )}
+
+      {/* ── The collection card ─────────────────────────────────────── */}
+      {defaultCard && (
+        <>
+          <div
+            className="bn-up relative rounded-card p-[20px] overflow-hidden"
+            style={{ background: 'linear-gradient(140deg,var(--brand-navy),var(--brand-navy-deep))' }}
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute rounded-full"
+              style={{ top: -60, right: -40, width: 200, height: 200, background: 'radial-gradient(circle, rgba(25,194,182,.28), transparent 68%)' }}
+            />
+            <div className="relative flex items-center justify-between gap-3">
+              <span className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: 'rgba(255,255,255,.5)' }}>
+                Collection card
+              </span>
+              <span className="text-[12px] font-bold text-white" style={{ letterSpacing: '.04em' }}>
+                {cardBrandLabel(defaultCard.card_brand)}
+              </span>
+            </div>
+            {/* Dots, not the digits we do not hold. Peach tokenises the
+                card; the last four is genuinely all this app has, and
+                drawing the full 16-digit shape around it is what makes
+                that legible as "a card" rather than as a fragment. */}
+            <p className="relative mt-[26px] text-[20px] font-semibold text-white tabular-nums" style={{ letterSpacing: '.14em' }}>
+              ···· ···· ···· {defaultCard.last_four}
+            </p>
+            <div className="relative mt-4 flex items-center justify-between gap-3">
+              <span className="text-[12.5px] truncate" style={{ color: 'rgba(255,255,255,.55)' }}>
+                {defaultCard.cardholder_name} · {formatExpiry(defaultCard.expiry_month, defaultCard.expiry_year)}
+              </span>
+              <span
+                className="flex-none text-[11px] font-semibold rounded-full px-2.5 py-1"
+                style={{ background: 'rgba(25,194,182,.2)', color: 'var(--brand-teal-bright)' }}
               >
-                {/* ── Card row ────────────────────────────────────────── */}
-                <div className="flex items-center gap-3 px-5 py-4">
-                  <CardThumbnail brand={card.card_brand} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-gray-900">
-                        •••• {card.last_four}
-                      </span>
-                      {card.is_default && (
-                        <span
-                          className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                          style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent)' }}
-                        >
-                          Default
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-400 mt-0.5 truncate">
-                      {card.cardholder_name} · Exp {formatExpiry(card.expiry_month, card.expiry_year)}
-                    </p>
-                    {/* Provenance. created_at is already on CardRow and already
-                        selected, so this is data the page had and did not show.
-                        `.slice(0, 10)` because created_at is a TIMESTAMPTZ and the
-                        SHARED formatDate takes YYYY-MM-DD — reused rather than
-                        copied locally.
+                Default
+              </span>
+            </div>
+            <div className="relative mt-[14px] flex items-center justify-between gap-3">
+              <span className="min-w-0 text-[11.5px] truncate" style={{ color: 'rgba(255,255,255,.4)' }}>
+                {/* Microcopy: the default is consumed only when a NEW plan
+                    is created — it never re-points existing plans. It has
+                    to say "for new plans", because the obvious reading of
+                    a card labelled Default on this screen is that every
+                    plan collects from it, and that is not true. */}
+                <span>Default for new plans</span>
+                {' · '}
+                <AddedOn card={defaultCard} />
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (lockedCardIds.includes(defaultCard.id)) return;
+                  setError(null);
+                  setNotice(null);
+                  setConfirm({ kind: 'remove', cardId: defaultCard.id });
+                }}
+                disabled={loading || lockedCardIds.includes(defaultCard.id)}
+                aria-disabled={lockedCardIds.includes(defaultCard.id)}
+                className="flex-none text-[12.5px] font-semibold disabled:cursor-not-allowed transition-colors"
+                style={{ color: lockedCardIds.includes(defaultCard.id) ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.55)' }}
+                title={lockedCardIds.includes(defaultCard.id) ? LOCKED_REASON : undefined}
+                data-testid={`remove-card-${defaultCard.id}`}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+          {lockedCardIds.includes(defaultCard.id) && (
+            <p className="px-1 text-[11.5px] leading-snug" style={{ color: 'var(--portal-faint)' }}>{LOCKED_REASON}</p>
+          )}
+          {confirm.kind === 'remove' && confirm.cardId === defaultCard.id && renderRemoveConfirm(defaultCard)}
+        </>
+      )}
 
-                        It cannot go stale: a card row is never re-pointed at a
-                        different card — adding one inserts a new row. */}
-                    <p className="text-[11px] text-gray-400 mt-0.5" data-testid="card-added-at">
-                      Added {formatDate(card.created_at.slice(0, 10))}
-                    </p>
-                    {card.is_default && (
-                      // Microcopy: the default is consumed only when a NEW
-                      // plan is created — it never re-points existing plans.
-                      <p className="text-[11px] text-gray-400 mt-0.5">Default for new plans</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {!card.is_default && (
-                      <button
-                        type="button"
-                        onClick={() => commitMakeDefault(card.id)}
-                        disabled={loading}
-                        title="Use this card for new plans. Existing plans are unaffected."
-                        className="text-xs font-medium disabled:opacity-60 transition-colors"
-                        style={{ color: 'var(--portal-accent)' }}
-                      >
-                        Make default
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (locked) return;
-                        setError(null);
-                        setNotice(null);
-                        setConfirm({ kind: 'remove', cardId: card.id });
-                      }}
-                      disabled={loading || locked}
-                      aria-disabled={locked}
-                      // Quiet at rest, red on hover/focus only.
-                      className="text-xs font-medium text-gray-500 hover:text-red-700 focus-visible:text-red-700 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
-                      title={locked ? LOCKED_REASON : undefined}
-                      data-testid={`remove-card-${card.id}`}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-
-                {/* Reason a locked card can't be removed (RULE 2). */}
-                {locked && (
-                  <p className="px-5 pb-3 -mt-1 text-[11px] leading-snug text-gray-400">
-                    {LOCKED_REASON}
-                  </p>
-                )}
-
-                {/* ── Confirm: Remove ─────────────────────────────────── */}
-                {isConfirmRemove && removalPreview && (
-                  <div className="border-t border-gray-100 bg-gray-50 px-5 py-4 space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">Remove this card?</p>
-                      <p className="text-xs text-gray-600 mt-1 leading-relaxed">
-                        {removalPreview.willPromoteToDefault && removalPreview.target
-                          ? `We'll archive this card — a secure reference is kept for reconciliation — and your default for new plans moves to ${removalPreview.target.card_brand} •••• ${removalPreview.target.last_four}. Active plans are unaffected; each keeps its own card.`
-                          : `We'll archive this card — a secure reference is kept for reconciliation — and take it off your list. Active plans are unaffected; each keeps its own card.`}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(card.id)}
-                        disabled={loading}
-                        data-testid="confirm-remove"
-                        className="rounded-lg bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60 transition-colors"
-                      >
-                        {loading ? 'Removing…' : 'Remove'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirm({ kind: 'none' })}
-                        className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
+      {/* ── Backups ─────────────────────────────────────────────────── */}
+      {backupCards.map((card) => {
+        const locked = lockedCardIds.includes(card.id);
+        return (
+          <div key={card.id} className="flex flex-col gap-[12px]">
+            <div
+              className="rounded-card bg-white p-[16px] flex items-center gap-[13px]"
+              style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
+            >
+              <CardThumbnail brand={card.card_brand} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[14px] font-semibold truncate tabular-nums" style={{ color: 'var(--portal-ink)' }}>
+                  {cardBrandLabel(card.card_brand)} ···· {card.last_four}
+                </p>
+                <p className="mt-[3px] text-[12px] truncate" style={{ color: 'var(--portal-faint)' }}>
+                  Backup · expires {formatExpiry(card.expiry_month, card.expiry_year)} · <AddedOn card={card} />
+                </p>
               </div>
-            );
-          })}
-        </div>
-      )}
+              <div className="flex-none flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => commitMakeDefault(card.id)}
+                  disabled={loading}
+                  title="Use this card for new plans. Existing plans are unaffected."
+                  className="bn-btn-wash rounded-chip px-3 py-[9px] text-[12.5px] font-semibold disabled:opacity-60"
+                  style={{ color: 'var(--portal-ink-2)' }}
+                >
+                  Make default
+                </button>
+                <RemoveButton card={card} />
+              </div>
+            </div>
+            {locked && (
+              <p className="px-1 -mt-1 text-[11.5px] leading-snug" style={{ color: 'var(--portal-faint)' }}>{LOCKED_REASON}</p>
+            )}
+            {confirm.kind === 'remove' && confirm.cardId === card.id && renderRemoveConfirm(card)}
+          </div>
+        );
+      })}
 
-      {/* No-charge card verification note — accurate for the Flow B
-          zero-amount PA recipe. No debit, no refund. */}
-      <div
-        className="rounded-xl px-4 py-3 text-xs text-[var(--portal-ink)]"
-        style={{ background: 'rgba(19,41,75,.05)', border: '1px solid rgba(19,41,75,.10)' }}
-      >
-        We verify your card with your bank — no money is taken.
-      </div>
-
-      {addError && (
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {addError}
-        </div>
-      )}
+      {addError && <Banner tone="danger">{addError}</Banner>}
 
       <button
         type="button"
         onClick={handleAddCard}
         disabled={addLoading || loading}
-        className="flex items-center justify-center gap-2 w-full rounded-2xl border border-dashed px-5 py-3.5 text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        style={{ borderColor: 'rgba(21,168,158,.4)', color: 'var(--portal-ink)' }}
+        className="rounded-card px-[17px] py-[17px] text-[14px] font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        style={{ border: '1px dashed var(--portal-line)', background: '#fff', color: 'var(--portal-accent-ink)' }}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" aria-hidden>
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        {addLoading ? 'Opening card form…' : 'Add a card'}
+        {addLoading ? 'Opening card form…' : '+ Add a card'}
       </button>
+
+      {/* No-charge card verification note — accurate for the Flow B
+          zero-amount PA recipe. No debit, no refund. Plain text, not a
+          tinted panel: it is a standing fact about every card on this
+          screen, and a box would make it read as a notice about the last
+          thing that happened. */}
+      <p className="px-1.5 mt-0.5 text-[11.5px] leading-[1.6]" style={{ color: 'var(--portal-faint)' }}>
+        Cards are tokenised by Peach Payments — betternow never stores your full card
+        number. We verify your card with your bank — no money is taken.
+      </p>
+    </div>
+  );
+}
+
+/** When this card was saved. created_at is already on CardRow and already
+ *  selected, so this is data the page had and did not show. It uses the
+ *  SHARED formatDate (created_at is a TIMESTAMPTZ; the formatter takes
+ *  YYYY-MM-DD) rather than a local copy.
+ *
+ *  It cannot go stale: a card row is never re-pointed at a different card —
+ *  adding one inserts a new row. */
+function AddedOn({ card }: { card: CardRow }) {
+  return <span data-testid="card-added-at">Added {formatDate(card.created_at.slice(0, 10))}</span>;
+}
+
+const CARD_SHADOW = '0 2px 8px -3px rgba(15,31,58,.09)';
+const CARD_BORDER = '1px solid rgba(19,41,75,.06)';
+
+function Banner({ tone, children }: { tone: 'danger' | 'success'; children: React.ReactNode }) {
+  const cfg = tone === 'danger'
+    ? { bg: 'rgba(180,35,24,.10)',  border: 'rgba(180,35,24,.25)',  fg: '#B42318' }
+    : { bg: 'rgba(21,168,158,.08)', border: 'rgba(21,168,158,.25)', fg: 'var(--portal-accent-ink)' };
+  return (
+    <div role="status" className="rounded-tile px-4 py-[13px] text-[13px] leading-[1.5]" style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.fg }}>
+      {children}
     </div>
   );
 }

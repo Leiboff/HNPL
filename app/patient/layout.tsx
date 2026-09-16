@@ -91,7 +91,11 @@ export default async function PatientLayout({
     !permanentlyDismissed && loginCount >= nextShowAt;
 
   return (
-    <div className="min-h-screen bg-[var(--portal-sheet)] flex flex-col">
+    // `bn-app` scopes the v5 portal typography (Poppins, tabular figures)
+    // to the patient shell. It is deliberately NOT on <body>: the marketing
+    // site, the practice console and admin all inherit the body font rule
+    // and are not part of this refresh. See app/globals.css.
+    <div className="bn-app min-h-screen bg-[var(--portal-sheet)] flex flex-col">
       {/* v4: no global top bar. Each screen renders its own navy header
           (PatientScreen) that runs to the top edge; the Action Centre bell
           lives inside the Home hero. Desktop keeps the sidebar. */}

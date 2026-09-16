@@ -83,7 +83,7 @@ function SuccessCard({ brand, lastFour, alreadySaved }: { brand?: string; lastFo
       </p>
       <Link
         href={CARDS_SURFACE}
-        className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+        className="inline-flex items-center justify-center rounded-lg bn-btn-navy px-6 py-3 text-[14.5px] font-semibold text-white"
       >
         View my cards →
       </Link>
@@ -123,7 +123,7 @@ function FailureCard({ reason }: { reason: string }) {
       <div className="flex flex-col sm:flex-row gap-2 items-center justify-center">
         <Link
           href={cardRetryDestination()}
-          className="inline-flex items-center justify-center rounded-lg bg-[var(--portal-ink)] [background:linear-gradient(135deg,var(--portal-ink)_0%,var(--portal-accent)_145%)] px-6 py-2.5 text-sm font-semibold text-white hover:shadow-lg transition-colors"
+          className="inline-flex items-center justify-center rounded-lg bn-btn-navy px-6 py-3 text-[14.5px] font-semibold text-white"
         >
           Try again
         </Link>

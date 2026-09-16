@@ -57,12 +57,19 @@ export default function HomeBillCard({
 
   return (
     <div
-      className="rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
-      style={{ border: '1px solid #F5D49A', boxShadow: '0 2px 6px -2px rgba(15,31,58,.08)' }}
+      className="bn-up rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
+      style={{ border: '1px solid #F5D49A', boxShadow: '0 2px 8px -3px rgba(15,31,58,.10)' }}
       data-testid="home-bill-card"
     >
+      {/* The pulsing halo is the portal's only looping animation, and it
+          marks the one card that is waiting on a decision rather than on a
+          date. The dot itself stays solid — it is the ring behind it that
+          breathes, so the mark never disappears for a reader who arrives
+          mid-cycle. Reduced motion drops the loop (app/globals.css). */}
       <div className="flex items-center gap-[9px]">
-        <span className="w-2 h-2 rounded-full" style={{ background: '#F59E0B' }} />
+        <span className="relative w-2 h-2 rounded-full" style={{ background: '#F59E0B' }} aria-hidden>
+          <span className="bn-pulse absolute rounded-full" style={{ inset: -3, background: '#F59E0B' }} />
+        </span>
         <span className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.14em', color: '#B45309' }}>
           Waiting on you
         </span>
@@ -73,7 +80,7 @@ export default function HomeBillCard({
           {practiceName} sent a bill for{' '}
           <span className="tabular-nums">{formatRand(total)}</span>
         </p>
-        <p className="mt-1.5 text-[13.5px]" style={{ color: 'var(--portal-muted)' }}>
+        <p className="mt-1.5 text-[13.5px] leading-[1.45]" style={{ color: 'var(--portal-muted)' }}>
           {perInstalment != null
             ? <>{planType} instalments of <span className="tabular-nums">{formatRand(perInstalment)}</span> · interest-free</>
             : 'Interest-free payment plan'}
@@ -106,8 +113,7 @@ export default function HomeBillCard({
         ) : (
           <Link
             href={`/patient/orders/${planId}/confirm`}
-            className="flex-1 text-center text-[14.5px] font-semibold text-white rounded-tile py-[14px]"
-            style={{ background: 'var(--portal-accent)' }}
+            className="bn-btn-teal flex-1 text-center text-[14.5px] font-semibold text-white rounded-tile py-[15px]"
           >
             Review bill
           </Link>
@@ -116,8 +122,8 @@ export default function HomeBillCard({
           type="button"
           onClick={handleDecline}
           disabled={declining}
-          className="text-[14.5px] font-semibold rounded-tile px-[18px] py-[14px] disabled:opacity-50"
-          style={{ background: 'var(--portal-wash)', color: 'var(--portal-ink-2)' }}
+          className="bn-btn-wash text-[14.5px] font-semibold rounded-tile px-[18px] py-[15px] disabled:opacity-50"
+          style={{ color: 'var(--portal-ink-2)' }}
         >
           {declining ? 'Declining…' : 'Not mine'}
         </button>
