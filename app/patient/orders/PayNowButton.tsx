@@ -15,6 +15,16 @@ type Props = {
   paymentId:                string;
   /** Cents to be charged: instalment + accrued dunning fees (for failed/defaulted rows; bare instalment on scheduled). */
   amountToChargeCents:      number;
+  /**
+   * The accrued dunning fees inside `amountToChargeCents`, in cents. Lets
+   * the confirm sheet show WHAT the total is made of rather than a figure
+   * larger than the instalment with no explanation — which is exactly the
+   * moment a patient decides the app is charging them for something they
+   * were not told about. 0 (the default) renders no breakdown.
+   */
+  dunningFeesCents?:        number;
+  /** Instalment N of M, for the confirm sheet's subtitle. Optional. */
+  instalmentNumber?:        number;
   /** Server action wrapper provided by the orders page (avoids server-action import inside a client tree). */
   settleAction: (paymentId: string) => Promise<SelfSettleResult>;
   /**
@@ -40,6 +50,8 @@ type Props = {
 export default function PayNowButton({
   paymentId,
   amountToChargeCents,
+  dunningFeesCents = 0,
+  instalmentNumber,
   settleAction,
   label = 'Pay now',
   variant = 'compact',
@@ -122,15 +134,18 @@ export default function PayNowButton({
   //               teal text colour, hover bg only.
   const buttonCls =
     variant === 'menuItem'
-      ? 'inline-flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 text-left'
+      ? 'bn-row-hover inline-flex w-full items-center justify-between rounded-chip px-2 py-2 text-[13.5px] font-semibold disabled:opacity-50 text-left'
       : variant === 'primary'
-        ? 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50'
-        : 'inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-sm disabled:opacity-50';
+        // The plan-detail primary. NAVY, not teal: the design reserves
+        // teal for the one commitment tap, and that tap is Pay inside the
+        // confirm sheet — this button only opens it.
+        ? 'bn-btn-navy inline-flex w-full items-center justify-center rounded-tile px-4 py-[15px] text-[14.5px] font-semibold text-white disabled:opacity-50'
+        : 'bn-btn-wash inline-flex items-center justify-center rounded-chip px-3 py-2 text-[12.5px] font-semibold disabled:opacity-50';
 
   // menuItem renders the label in the brand teal-on-navy gradient text
   // so it reads as "the actionable thing" while staying visually lighter
   // than a full button.
-  const labelStyle = variant === 'menuItem' ? { color: 'var(--portal-ink)' } : undefined;
+  const labelStyle = variant === 'primary' ? undefined : { color: 'var(--portal-ink)' };
 
   return (
     <>
@@ -156,8 +171,21 @@ export default function PayNowButton({
       <ConfirmChargeDialog
         open={confirming}
         headline={`Pay ${formatRandCents(amountToChargeCents)} now?`}
-        subtitle="Your card will be charged immediately."
+        // A late fee means this is a CATCH-UP, not an early payment, and
+        // the eyebrow should say which before the patient reads the figure.
+        eyebrow={dunningFeesCents > 0 ? 'Catch up' : 'Pay now'}
+        subtitle={
+          instalmentNumber
+            ? `Instalment ${instalmentNumber} · your card will be charged immediately.`
+            : 'Your card will be charged immediately.'
+        }
         amountCents={amountToChargeCents}
+        breakdown={dunningFeesCents > 0
+          ? [
+              { label: 'Instalment', amountCents: amountToChargeCents - dunningFeesCents },
+              { label: 'Late fee',   amountCents: dunningFeesCents, danger: true },
+            ]
+          : undefined}
         isPending={isPending}
         onConfirm={fire}
         onCancel={() => setConfirming(false)}

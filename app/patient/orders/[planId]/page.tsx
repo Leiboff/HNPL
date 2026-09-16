@@ -295,6 +295,7 @@ export default async function PlanDetailPage({ params }: { params: Promise<{ pla
                     paymentId:         nextOut.id,
                     chargeAmountCents: Math.round(Number(nextOut.amount) * 100) + Number(nextOut.dunning_fees_cents ?? 0),
                     instalmentNumber:  nextOut.instalment_number,
+                    dunningFeesCents:  Number(nextOut.dunning_fees_cents ?? 0),
                   }}
                   settleInstalment={selfSettleInstalment}
                   settleEntirePlan={selfSettleEntirePlan}
