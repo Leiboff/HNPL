@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import type { LatLng } from '@/lib/maps/haversine';
@@ -181,6 +180,26 @@ function ResultsView({
   const [radiusKm,    setRadiusKm]    = useState<number>(DEFAULT_RADIUS);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  // Changing the specialty in the Filters drawer rewrites ?specialty=
+  // so the navy header (ExploreHeader, which reads the param) retitles
+  // with the list instead of still naming the specialty you left.
+  //
+  // history.replaceState, not router.replace: Next syncs the native
+  // History API into useSearchParams (see the App Router "Native
+  // History API" guide) WITHOUT a server round-trip, so the directory
+  // query isn't re-run, the sheet's own search text survives, and a
+  // chip tap doesn't stack a history entry between the patient and the
+  // Back button.
+  const selectSpecialty = useCallback((next: string | null) => {
+    setSpecialty(next);
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('view', 'results');
+    if (next) params.set('specialty', next);
+    else params.delete('specialty');
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+  }, []);
+
   const filtered = useMemo(() => filterCards(cards, search, specialty), [cards, search, specialty]);
   const { nearList, otherList } = useMemo(
     () => bucketPractitionerCards(filtered, hasLocation, radiusKm),
@@ -193,15 +212,9 @@ function ResultsView({
 
   return (
     <div className="space-y-4">
-      {/* Back to categories */}
-      <Link
-        href="/patient/explore"
-        data-testid="results-back-to-landing"
-        className="inline-flex items-center gap-1 text-xs font-semibold"
-        style={{ color: 'var(--portal-ink)' }}
-      >
-        ← Browse by specialty
-      </Link>
+      {/* Back to the specialty list lives in the navy header
+          (ExploreHeader), which also carries the specialty as its
+          title — nothing here duplicates it. */}
 
       {/* Sticky search + filters */}
       <div className="space-y-3">
@@ -274,14 +287,14 @@ function ResultsView({
             {specialties.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 w-20 shrink-0">Specialty</span>
-                <SpecialtyChip active={specialty === null} onClick={() => setSpecialty(null)} testId="filter-specialty-all">
+                <SpecialtyChip active={specialty === null} onClick={() => selectSpecialty(null)} testId="filter-specialty-all">
                   All
                 </SpecialtyChip>
                 {specialties.map((s) => (
                   <SpecialtyChip
                     key={s}
                     active={specialty === s}
-                    onClick={() => setSpecialty(specialty === s ? null : s)}
+                    onClick={() => selectSpecialty(specialty === s ? null : s)}
                     testId={`filter-specialty-${s}`}
                   >
                     {s}

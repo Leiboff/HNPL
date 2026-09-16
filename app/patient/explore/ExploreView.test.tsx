@@ -483,12 +483,35 @@ describe('ExploreView — results view when URL params are present', () => {
   });
   afterEach(() => { removeGeolocation(); });
 
-  it('renders the results list with the Filters toggle and back-to-landing link', () => {
+  it('renders the results list with the Filters toggle, and leaves the back control to the header', () => {
     render(<ExploreView rows={[r()]} />);
     expect(screen.getByTestId('filters-toggle')).toBeTruthy();
-    expect(screen.getByTestId('results-back-to-landing')).toBeTruthy();
+    // The "back to all specialties" control lives in the navy header
+    // (ExploreHeader) alongside the specialty title — the sheet must
+    // not render a second one.
+    expect(screen.queryByTestId('results-back-to-landing')).toBeNull();
+    expect(document.body.textContent).not.toContain('Browse by specialty');
     // Landing surfaces are NOT rendered in results mode.
     expect(screen.queryByTestId('landing-categories')).toBeNull();
+  });
+
+  it('picking a specialty chip rewrites ?specialty= so the header retitles with the list', () => {
+    setParams({ view: 'results' });
+    const rows: DirectoryRow[] = [
+      r({ member_id: 'd', hpcsa_group_key: 'hd', specialty: 'Dentistry',     first_name: 'D', last_name: 'Dent' }),
+      r({ member_id: 'p', hpcsa_group_key: 'hp', specialty: 'Physiotherapy', first_name: 'P', last_name: 'Physio' }),
+    ];
+    render(<ExploreView rows={rows} />);
+    act(() => { fireEvent.click(screen.getByTestId('filters-toggle')); });
+    act(() => { fireEvent.click(screen.getByTestId('filter-specialty-Physiotherapy')); });
+    expect(window.location.search).toContain('specialty=Physiotherapy');
+    // Only the matching practitioner survives the filter.
+    expect(screen.getByText('P Physio')).toBeTruthy();
+    expect(screen.queryByText('D Dent')).toBeNull();
+
+    // Back to "All" clears the param rather than leaving a stale title.
+    act(() => { fireEvent.click(screen.getByTestId('filter-specialty-all')); });
+    expect(window.location.search).not.toContain('specialty=');
   });
 
   it('an initial ?specialty=X pre-filters the list', () => {
