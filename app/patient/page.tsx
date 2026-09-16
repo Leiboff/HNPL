@@ -17,6 +17,7 @@ import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { summariseOutstanding } from '@/lib/patient/outstanding';
 import { formatRand, formatDate, formatDayMonth, relativeDay, todaySAST } from './_format';
 import { getRequestUser } from '@/lib/auth/requestUser';
+import { HeartIcon } from '@/app/_landing/icons';
 
 // ─── Patient home dashboard — v4 ──────────────────────────────────────────
 //
@@ -65,6 +66,17 @@ type UpcomingPayment = {
 };
 
 type CardRow = { card_brand: string | null; last_four: string | null; is_default: boolean | null };
+
+/** The v5 card surface. One shadow across the portal — a 3px-tight,
+ *  low-opacity lift that reads as a raised sheet rather than a drop
+ *  shadow. Stated once so the six cards on this screen cannot drift. */
+const CARD_SHADOW = '0 2px 8px -3px rgba(15,31,58,.09)';
+const CARD_BORDER = '1px solid rgba(19,41,75,.06)';
+
+/** The one danger pair in the portal: overdue text and the wash behind a
+ *  danger chip. Not brand — a semantic state colour, kept literal. */
+const DANGER      = '#B42318';
+const DANGER_WASH = 'rgba(180,35,24,.10)';
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -235,6 +247,30 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
       ? { amount: overdue.overdueCents / 100, count: overdue.overdueCount }
       : null;
 
+  // ── Next-payment card copy, one place ─────────────────────────────
+  //
+  // Three states share this card, and each changes all four of its strings
+  // together — eyebrow, chip, meta and CTA. Derived here rather than inline
+  // so they cannot fall out of step (a "Next payment" eyebrow over a
+  // "Pay now to catch up" button is the failure this prevents).
+  //
+  //   frozen   — a defaulted plan has frozen the account. The dunning
+  //              ladder is spent, so there is no retry to wait for: the
+  //              only way out is to settle. The chip says exactly that.
+  //   overdue  — derived from the due date against today, never read from
+  //              the stored status.
+  //   upcoming — the ordinary case.
+  const nextCopy = nextPayment && {
+    eyebrow: isFrozen ? 'Settle to unfreeze' : nextPayment.overdue ? 'Payment overdue' : 'Next payment',
+    danger:  nextPayment.overdue || isFrozen,
+    chip:    isFrozen
+      ? 'No retries left'
+      : nextPayment.overdue
+        ? (overdueAll ? `${overdueAll.count} overdue` : 'Overdue')
+        : relativeDay(nextPayment.date, today),
+    cta:     nextPayment.overdue || isFrozen ? 'Pay now to catch up' : 'View & pay',
+  };
+
   // ── Navy hero header ──────────────────────────────────────────────
   const header = (
     <>
@@ -245,12 +281,12 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
 
       {approvedLimit != null ? (
         <div className="mt-[26px]">
-          <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'rgba(255,255,255,.55)' }}>
+          <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'rgba(255,255,255,.5)' }}>
             Available to spend
           </p>
           <p className="mt-[11px] font-bold tabular-nums text-white" style={{ fontSize: 54, lineHeight: '.94', letterSpacing: '-.045em' }}>
             {formatRand(available).split('.')[0]}
-            <span style={{ fontSize: 30, letterSpacing: '-.03em', color: 'rgba(255,255,255,.55)' }}>
+            <span style={{ fontSize: 30, letterSpacing: '-.03em', color: 'rgba(255,255,255,.5)' }}>
               .{formatRand(available).split('.')[1]}
             </span>
           </p>
@@ -262,8 +298,14 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
           </p>
         </div>
       ) : (
-        <p className="mt-[22px] text-[14px]" style={{ color: 'rgba(255,255,255,.7)' }}>
-          Welcome back — find care and pay for it over time.
+        // No approved limit — the balance block is dropped ENTIRELY rather
+        // than shown at zero or with a placeholder figure. A number on this
+        // hero is a promise about what the patient can spend; there isn't
+        // one yet, so there is nothing to print. "interest-free" is the
+        // claim we can make (and is true); "no fees" is not — late fees can
+        // accrue on a missed collection.
+        <p className="mt-[22px] max-w-[280px] text-[14px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.7)' }}>
+          Welcome back — find care near you and pay for it over time, interest-free.
         </p>
       )}
     </>
@@ -293,30 +335,29 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Next payment — the soonest instalment coming off the card. */}
         {nextPayment && (
           <div
-            className="rounded-card bg-white p-[18px] flex flex-col gap-[16px]"
-            style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+            className="bn-up-2 rounded-card bg-white p-[18px] flex flex-col gap-[16px]"
+            style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
+            data-testid="home-next-payment"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: nextPayment.overdue ? '#B42318' : 'rgba(19,41,75,.5)' }}>
-                  {nextPayment.overdue ? 'Payment overdue' : 'Next payment'}
+                <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.16em', color: nextCopy!.danger ? DANGER : 'rgba(19,41,75,.5)' }}>
+                  {nextCopy!.eyebrow}
                 </p>
-                <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: 'var(--portal-ink)', letterSpacing: '-.04em' }}>
+                <p className="mt-[9px] text-[34px] font-bold tabular-nums leading-none" style={{ color: nextCopy!.danger ? DANGER : 'var(--portal-ink)', letterSpacing: '-.04em' }}>
                   {formatRand(overdueAll ? overdueAll.amount : nextPayment.amount)}
                 </p>
               </div>
               <span
-                className="flex-none text-[12px] font-semibold rounded-full px-3 py-2"
-                style={nextPayment.overdue
-                  ? { background: 'rgba(180,35,24,.1)', color: '#B42318' }
+                className="flex-none text-[12px] font-semibold rounded-full px-[13px] py-2"
+                style={nextCopy!.danger
+                  ? { background: DANGER_WASH, color: DANGER }
                   : { background: 'rgba(21,168,158,.13)', color: 'var(--portal-accent-ink)' }}
               >
-                {nextPayment.overdue
-                  ? (overdueAll ? `${overdueAll.count} overdue` : 'Overdue')
-                  : relativeDay(nextPayment.date, today)}
+                {nextCopy!.chip}
               </span>
             </div>
-            <p className="text-[13.5px]" style={{ color: nextPayment.overdue ? '#B42318' : 'var(--portal-muted)' }}>
+            <p className="text-[13.5px] leading-[1.5]" style={{ color: nextCopy!.danger ? DANGER : 'var(--portal-muted)' }}>
               {overdueAll
                 ? <>{overdueAll.count} overdue payments across your plans · pay them all to catch up</>
                 : nextPayment.overdue
@@ -325,10 +366,9 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
             </p>
             <Link
               href={overdueAll ? '/patient/orders' : (nextPayment.planId ? `/patient/orders/${nextPayment.planId}` : '/patient/orders')}
-              className="text-center text-[14.5px] font-semibold text-white rounded-tile py-[14px]"
-              style={{ background: 'var(--brand-navy-deep)' }}
+              className="bn-btn-navy text-center text-[14.5px] font-semibold text-white rounded-tile py-[15px]"
             >
-              View &amp; pay
+              {nextCopy!.cta}
             </Link>
           </div>
         )}
@@ -336,8 +376,9 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Your plans — one row per active plan, ladder + next line. */}
         {planRows.length > 0 && (
           <div
-            className="rounded-card bg-white overflow-hidden"
-            style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+            className="bn-up-3 rounded-card bg-white overflow-hidden"
+            style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
+            data-testid="home-your-plans"
           >
             <div className="flex items-center justify-between gap-3 px-[18px] pt-[16px] pb-[14px]">
               <span className="text-[14.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Your plans</span>
@@ -347,7 +388,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
               <Link
                 key={r.id}
                 href={`/patient/orders/${r.id}`}
-                className="block px-[18px] py-[15px] hover:bg-gray-50 transition-colors"
+                className="bn-row-hover block px-[18px] py-[15px]"
                 style={{ borderTop: '1px solid var(--portal-hairline)' }}
               >
                 <div className="flex items-center justify-between gap-3">
@@ -359,7 +400,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
                 <div className="mt-[11px]">
                   <InstalmentLadder segments={ladderFromCounts(r.total, r.paid)} />
                 </div>
-                <p className="mt-[11px] text-[12.5px] tabular-nums" style={{ color: r.nextOverdue ? '#B42318' : 'var(--portal-muted)' }}>
+                <p className="mt-[11px] text-[12.5px] tabular-nums" style={{ color: r.nextOverdue ? DANGER : 'var(--portal-muted)' }}>
                   {r.isPaidInFull ? 'Paid in full' : `${r.paid} of ${r.total} paid`}
                   {r.nextAmount != null && r.nextDate
                     ? r.nextOverdue
@@ -372,14 +413,26 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
           </div>
         )}
 
-        {/* Empty state — no plans yet. */}
+        {/* Empty state — no plans yet. A DASHED card, deliberately: the
+            outline says "something belongs here and doesn't exist yet",
+            which a solid card with one grey line of text does not. */}
         {planRows.length === 0 && pendingPlans.length === 0 && (
           <div
-            className="rounded-card bg-white p-[18px] text-center"
-            style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+            className="bn-up-2 rounded-card bg-white px-[20px] py-[30px] text-center"
+            style={{ border: '1px dashed var(--portal-line)' }}
           >
-            <p className="text-[14px]" style={{ color: 'var(--portal-ink-2)' }}>
-              {totalCount === 0 ? 'No payment plans yet.' : 'Nothing outstanding right now.'}
+            <div
+              className="w-[46px] h-[46px] mx-auto rounded-[16px] flex items-center justify-center"
+              style={{ background: 'rgba(21,168,158,.1)', color: 'var(--portal-accent-ink)' }}
+              aria-hidden
+            >
+              <HeartIcon />
+            </div>
+            <p className="mt-[14px] text-[15px] font-semibold" style={{ color: 'var(--portal-ink)' }}>
+              {totalCount === 0 ? 'No payment plans yet' : 'Nothing outstanding right now'}
+            </p>
+            <p className="mt-1.5 text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
+              When a practice sends you a bill it lands here, split into interest-free instalments.
             </p>
           </div>
         )}
@@ -387,12 +440,12 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
         {/* Find care row. */}
         <Link
           href="/patient/explore"
-          className="rounded-card bg-white p-[17px] flex items-center gap-[14px]"
-          style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+          className="bn-up-4 bn-card-hover rounded-card bg-white p-[17px] flex items-center gap-[14px]"
+          style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
         >
           <div className="flex-1 min-w-0">
             <p className="text-[14.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>Find care near you</p>
-            <p className="mt-1 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Dentists, physios and optometrists near you</p>
+            <p className="mt-1 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Dentists, physios and optometrists that accept betternow</p>
           </div>
           <span
             className="flex-none w-9 h-9 rounded-full flex items-center justify-center"

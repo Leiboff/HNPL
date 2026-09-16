@@ -103,20 +103,44 @@ export default async function OrdersPage() {
     currentPlans.flatMap((p) => p.payments),
     today,
   );
+  // Header line. The framing is "what you owe, spread over how many plans"
+  // — the two facts a patient opens this screen for. The overdue count is
+  // appended only when there IS one: "nothing overdue" as a standing phrase
+  // made the good state read as a status report about a problem.
+  const activeCount = currentPlans.length;
   const summary =
-    currentPlans.length === 0 && pendingPlans.length === 0
+    activeCount === 0 && pendingPlans.length === 0
       ? 'Nothing outstanding'
-      : `${formatRand(outstandingCents / 100)} outstanding · ${overdueCount > 0 ? `${overdueCount} overdue` : 'nothing overdue'}`;
+      : `${formatRand(outstandingCents / 100)} outstanding across ${activeCount} active plan${activeCount === 1 ? '' : 's'}`;
 
+  // ── The header is no longer a navy band ───────────────────────────
+  //
+  // v4 opened this screen with the same dark slab Home uses. Home earns it:
+  // it leads with a figure (available balance) and the band is what makes
+  // that figure read as the point of the screen. Plans leads with a LIST,
+  // and the band was carrying nothing but the word "Plans" — a dark bar
+  // whose only job was to be the thing at the top. Dropping it moves the
+  // first plan card ~90px up the screen and gives the title back its
+  // hierarchy. See the `plain` tone in PatientScreen.
   const header = (
     <>
-      <p className="text-[24px] font-semibold text-white" style={{ letterSpacing: '-.025em' }}>Plans</p>
-      <p className="mt-1.5 text-[13.5px] tabular-nums" style={{ color: 'rgba(255,255,255,.62)' }}>{summary}</p>
+      <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'var(--portal-faint)' }}>
+        Payment plans
+      </p>
+      <p className="mt-2 text-[27px] font-bold" style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }}>
+        Your plans
+      </p>
+      <p className="mt-2 text-[13.5px] tabular-nums" style={{ color: 'var(--portal-muted)' }}>
+        {summary}
+        {overdueCount > 0 && (
+          <span style={{ color: '#B42318' }}> · {overdueCount} overdue</span>
+        )}
+      </p>
     </>
   );
 
   return (
-    <PatientScreen header={header} sheetClassName="px-[18px] pt-5 pb-6">
+    <PatientScreen tone="plain" header={header} sheetClassName="px-[18px] pb-6">
       <div className="flex flex-col gap-[14px]">
         <DefaultFreezeBanner frozen={isFrozen} />
         <OrdersView

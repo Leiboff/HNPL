@@ -350,3 +350,91 @@ body {
   text-align: left;
   white-space: nowrap;
 }
+
+/* ─── Patient portal — v5 visual refresh ───────────────────────────────
+ *
+ * The patient app is the one surface in the product that is designed as a
+ * PHONE app rather than as a web page, and v5 leans into that: Poppins
+ * throughout, cards that arrive rather than appear, sheets that come up
+ * from the bottom edge. Everything below is the shared vocabulary those
+ * screens draw on, defined once here so twelve screens cannot each invent
+ * their own easing curve.
+ *
+ * The typeface is scoped to .bn-app, NOT to body: the marketing site, the
+ * practice console and the admin tools all read from the same body rule
+ * and are not part of this refresh. app/patient/layout.tsx puts .bn-app on
+ * the portal shell; nothing else should.
+ *
+ * `font-variant-numeric: tabular-nums` is deliberately global inside the
+ * portal rather than per-figure. Every screen here is a column of money and
+ * dates, and proportional digits make a stack of amounts read as ragged —
+ * the design calls for tabular on all of it, so the default belongs at the
+ * root instead of on thirty individual spans. */
+
+.bn-app {
+  font-family: var(--font-poppins), Poppins, system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Motion ──────────────────────────────────────────────────────────
+ * Four movements, and only four:
+ *   bnUp    — a card arriving on first paint of a screen. Staggered by
+ *             duration (.45 → .6s) rather than by delay, so the stack
+ *             settles together instead of dealing itself out like cards.
+ *   bnSheet — a bottom sheet travelling up from the screen edge.
+ *   bnFade  — the scrim behind it.
+ *   bnPulse — the "waiting on you" dot. The ONLY looping animation in the
+ *             portal; it marks the one thing that needs a decision.
+ *
+ * `both` fill on the enter animations matters: without it the element
+ * paints at its final position for one frame before the animation starts,
+ * which reads as a flicker rather than as an arrival. */
+
+@keyframes bnUp    { from { transform: translateY(14px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+@keyframes bnSheet { from { transform: translateY(100%) }             to { transform: translateY(0) } }
+@keyframes bnFade  { from { opacity: 0 }                              to { opacity: 1 } }
+@keyframes bnPulse { 0%, 100% { opacity: .45; transform: scale(1) }   50% { opacity: .1; transform: scale(1.5) } }
+
+.bn-up     { animation: bnUp    .45s cubic-bezier(.2,.8,.2,1) both; }
+.bn-up-2   { animation: bnUp    .5s  cubic-bezier(.2,.8,.2,1) both; }
+.bn-up-3   { animation: bnUp    .55s cubic-bezier(.2,.8,.2,1) both; }
+.bn-up-4   { animation: bnUp    .6s  cubic-bezier(.2,.8,.2,1) both; }
+.bn-sheet  { animation: bnSheet .32s cubic-bezier(.2,.85,.2,1) both; }
+.bn-scrim  { animation: bnFade  .2s  ease both; }
+.bn-pulse  { animation: bnPulse 2.4s ease-in-out infinite; }
+
+/* Hide a horizontal scroller's bar without disabling the scrolling — the
+ * specialty pills on Find care and any other swipe row. */
+.bn-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+.bn-scroll::-webkit-scrollbar { width: 0; height: 0; }
+
+/* ── Hover treatments ────────────────────────────────────────────────
+ * Three, matching the three interactive objects the design defines: a
+ * CARD lifts its border to teal, a LIST ROW washes, and a BUTTON darkens
+ * one step. They are classes rather than inline styles because a :hover
+ * cannot be expressed in a React `style` prop, which is why the v4 code
+ * reached for Tailwind's `hover:bg-gray-50` — a grey that is not in the
+ * portal ramp — on the one row treatment it had. */
+
+.bn-card-hover       { transition: border-color .15s ease; }
+.bn-card-hover:hover { border-color: rgba(21,168,158,.35) !important; }
+
+.bn-row-hover        { transition: background-color .15s ease; }
+.bn-row-hover:hover  { background: #FAFCFC; }
+
+.bn-btn-teal        { background: var(--portal-accent); transition: background-color .15s ease; }
+.bn-btn-teal:hover  { background: var(--portal-accent-ink); }
+.bn-btn-navy        { background: var(--brand-navy-deep); transition: background-color .15s ease; }
+.bn-btn-navy:hover  { background: var(--brand-navy); }
+.bn-btn-wash        { background: var(--portal-wash); transition: background-color .15s ease; }
+.bn-btn-wash:hover  { background: var(--portal-line-soft); }
+
+/* Motion is decoration here — every one of these animations conveys
+ * "this arrived" or "this needs you", both of which the static layout
+ * already says. So reduced-motion removes the movement entirely rather
+ * than shortening it. The sheet keeps a fade so its appearance is still
+ * perceptible without the travel. */
+@media (prefers-reduced-motion: reduce) {
+  .bn-up, .bn-up-2, .bn-up-3, .bn-up-4, .bn-pulse { animation: none; }
+  .bn-sheet { animation: bnFade .2s ease both; }
+}

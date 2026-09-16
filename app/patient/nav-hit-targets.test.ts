@@ -27,9 +27,9 @@ describe('mobile bottom nav — full-cell tap target ≥44px', () => {
     expect(cls).toContain('flex-1');
     expect(cls).toContain('h-full');
   });
-  it('guarantees a ≥44px target (min-h floor + the 68px bar)', () => {
+  it('guarantees a ≥44px target (min-h floor + the 66px bar)', () => {
     expect(cls).toContain('min-h-[44px]');
-    expect(BOTTOM).toContain('h-[68px]');
+    expect(BOTTOM).toContain('h-[66px]');
   });
   it('destinations untouched (four routes still present)', () => {
     for (const href of ['/patient', '/patient/orders', '/patient/explore', '/patient/account']) {

@@ -7,7 +7,12 @@ import { computePlanProgress } from '@/lib/planProgress';
 import { planCompletionDate } from '@/lib/planAnchor';
 import { deriveInstalmentStatus } from '@/lib/patient/instalmentStatus';
 import { formatRand, formatDate, formatDayMonth } from '@/app/patient/_format';
+import CollectionStatusBadge, { classifyCollection, type CollectionBucket } from '@/app/admin/_components/CollectionStatusBadge';
 import type { PlanRow } from './page';
+
+/** The v5 card surface — one shadow and one border across the portal. */
+const CARD_SHADOW = '0 2px 8px -3px rgba(15,31,58,.09)';
+const CARD_BORDER = '1px solid rgba(19,41,75,.06)';
 
 // ─── OrdersView — v4 "Plans" screen ──────────────────────────────────────
 //
@@ -34,7 +39,7 @@ function ResumePaymentCard({ plan }: { plan: PlanRow }) {
   return (
     <div
       className="rounded-card bg-white p-[18px] flex flex-col gap-[13px]"
-      style={{ border: '1px solid #F5D49A', boxShadow: '0 2px 6px -2px rgba(15,31,58,.08)' }}
+      style={{ border: '1px solid #F2DCB2', boxShadow: CARD_SHADOW }}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -53,8 +58,7 @@ function ResumePaymentCard({ plan }: { plan: PlanRow }) {
       <Link
         href={`/patient/orders/${plan.id}/confirm`}
         data-testid="resume-payment-link"
-        className="inline-flex items-center justify-center rounded-tile px-5 py-[14px] text-[14.5px] font-semibold text-white"
-        style={{ background: 'var(--portal-accent)' }}
+        className="bn-btn-teal inline-flex items-center justify-center rounded-tile px-5 py-[15px] text-[14.5px] font-semibold text-white"
       >
         Resume payment →
       </Link>
@@ -66,7 +70,7 @@ function ProcessingCard({ plan }: { plan: PlanRow }) {
   return (
     <div
       className="rounded-card bg-white p-[18px] flex items-center justify-between gap-3"
-      style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+      style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
     >
       <div className="min-w-0">
         <p className="text-[15.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
@@ -96,6 +100,7 @@ function nextOutstanding(plan: PlanRow, today: string) {
     .sort((a, b) => a.instalment_number - b.instalment_number)[0];
   if (!out) return null;
   return {
+    status:  out.status,
     amount:  Number(out.amount) + Number(out.dunning_fees_cents ?? 0) / 100,
     date:    out.next_attempt_date ?? out.due_date,
     // Overdue is derived (due date vs today), not read from the stored
@@ -105,29 +110,49 @@ function nextOutstanding(plan: PlanRow, today: string) {
 }
 
 // ── Active "Paying off" card — taps through to the detail screen ───────
+//
+// The chevron is gone and a CollectionStatusBadge takes its place. The
+// chevron said "this opens" — which the whole card being tappable already
+// says — while the top-right corner is the first place the eye lands on a
+// card, so it was spending the most valuable spot on the least information.
+// The badge puts the plan's state there instead, in the SAME vocabulary the
+// schedule rows and the admin collections list use (classifyCollection), so
+// a patient reading "Overdue" here and an agent reading "Overdue" on the
+// same row are looking at one verdict.
 function PayingOffCard({ plan, today }: { plan: PlanRow; today: string }) {
   const prog  = computePlanProgress({ status: plan.status, payments: plan.payments });
   const total = prog.totalPayments || (plan.plan_type ?? 0);
   const next  = nextOutstanding(plan, today);
+
+  // The plan's bucket is its next outstanding instalment's bucket — that
+  // row is the one thing about the plan that can currently go wrong. A plan
+  // with nothing outstanding is collected, whatever its rows say.
+  const bucket: CollectionBucket = next
+    ? classifyCollection({ status: next.status, due_date: next.date }, today)
+    : 'collected';
+
+  const sub = [
+    plan.invoice_number,
+    `Started ${formatDate(plan.created_at.slice(0, 10))}`,
+  ].filter(Boolean).join(' · ');
+
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
-      className="block rounded-card bg-white p-[18px]"
-      style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+      className="bn-card-hover block rounded-card bg-white p-[18px]"
+      style={{ border: CARD_BORDER, boxShadow: CARD_SHADOW }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[15.5px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
-          <p className="mt-1 text-[12.5px]" style={{ color: 'var(--portal-muted)' }}>Started {formatDate(plan.created_at.slice(0, 10))}</p>
+          <p className="text-[15px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{getPracticeName(plan)}</p>
+          <p className="mt-[5px] text-[12.5px] truncate" style={{ color: 'var(--portal-faint)' }}>{sub}</p>
         </div>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-none mt-0.5" aria-hidden>
-          <path d="m9 6 6 6-6 6" />
-        </svg>
+        <span className="flex-none"><CollectionStatusBadge bucket={bucket} /></span>
       </div>
       <div className="mt-[13px]">
         <InstalmentLadder segments={ladderFromCounts(total, prog.paidCount)} />
       </div>
-      <div className="mt-[13px] flex items-center justify-between gap-3 tabular-nums">
+      <div className="mt-[13px] flex items-baseline justify-between gap-3 tabular-nums">
         <span className="text-[12.5px]" style={{ color: next?.overdue ? '#B42318' : 'var(--portal-muted)' }}>
           {next
             ? next.overdue
@@ -135,7 +160,7 @@ function PayingOffCard({ plan, today }: { plan: PlanRow; today: string }) {
               : `${formatRand(next.amount)} on ${formatDayMonth(next.date)}`
             : `${prog.paidCount} of ${total} paid`}
         </span>
-        <span className="text-[13.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>
+        <span className="text-[14.5px] font-semibold" style={{ color: 'var(--portal-ink)' }}>
           {prog.isPaidInFull ? 'Paid in full' : `${formatRand(prog.remainingAmount)} left`}
         </span>
       </div>
@@ -152,8 +177,8 @@ function FinishedRow({ plan }: { plan: PlanRow }) {
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
-      className="flex items-center gap-3 rounded-card bg-white px-[18px] py-[16px]"
-      style={{ border: '1px solid rgba(19,41,75,.06)' }}
+      className="bn-card-hover flex items-center gap-3 rounded-card bg-white px-[18px] py-[16px]"
+      style={{ border: CARD_BORDER }}
     >
       <span className="flex-none w-7 h-7 rounded-full flex items-center justify-center" style={{ background: '#F0FDF4' }}>
         <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="#16A34A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -177,8 +202,8 @@ function DeclinedRow({ plan }: { plan: PlanRow }) {
   return (
     <Link
       href={`/patient/orders/${plan.id}`}
-      className="flex items-center gap-3 rounded-card bg-white px-[18px] py-[16px]"
-      style={{ border: '1px solid rgba(19,41,75,.06)' }}
+      className="bn-card-hover flex items-center gap-3 rounded-card bg-white px-[18px] py-[16px]"
+      style={{ border: CARD_BORDER }}
     >
       <span className="flex-none w-7 h-7 rounded-full flex items-center justify-center" style={{ background: 'var(--portal-wash)' }}>
         <svg viewBox="0 0 20 20" width="12" height="12" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -228,16 +253,18 @@ export default function OrdersView({
   if (nothing) {
     return (
       <div
-        className="rounded-card bg-white p-[18px] text-center"
-        style={{ border: '1px solid rgba(19,41,75,.06)', boxShadow: '0 2px 6px -2px rgba(15,31,58,.07)' }}
+        className="bn-up rounded-card bg-white px-[20px] py-[30px] text-center"
+        style={{ border: '1px dashed var(--portal-line)' }}
       >
-        <p className="text-[14px]" style={{ color: 'var(--portal-ink-2)' }}>You don&rsquo;t have any plans yet.</p>
+        <p className="text-[15px] font-semibold" style={{ color: 'var(--portal-ink)' }}>No payment plans yet</p>
+        <p className="mt-1.5 text-[13px] leading-[1.55]" style={{ color: 'var(--portal-muted)' }}>
+          When a practice sends you a bill it lands here, split into interest-free instalments.
+        </p>
         <Link
           href="/patient/explore"
-          className="mt-3 inline-flex items-center rounded-tile px-4 py-2.5 text-[13.5px] font-semibold text-white"
-          style={{ background: 'var(--portal-accent)' }}
+          className="bn-btn-teal mt-4 inline-flex items-center rounded-tile px-[18px] py-[13px] text-[13.5px] font-semibold text-white"
         >
-          Find care →
+          Find care near you
         </Link>
       </div>
     );

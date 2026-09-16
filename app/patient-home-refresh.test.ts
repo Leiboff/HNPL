@@ -259,13 +259,21 @@ describe('Part 3 — home dashboard', () => {
   });
 
   it('layout order (v4): balance hero → waiting-on-you → next payment → your plans', () => {
-    // v4 reading order: what can I spend (navy hero), is anything waiting
+    // Reading order: what can I spend (navy hero), is anything waiting
     // on me (bill card), what comes off next (Next payment), then the
     // plan list.
+    //
+    // Anchored on the CARDS (their testids) rather than on their copy.
+    // v5 derives the next-payment card's four strings — eyebrow, chip,
+    // meta, CTA — in one block above the JSX so they cannot fall out of
+    // step with each other, which puts the literal 'Next payment' earlier
+    // in the file than the card that renders it. The testids sit on the
+    // elements themselves, so this pins the order the patient actually
+    // reads instead of the order the strings happen to be declared in.
     const hero    = HOME.indexOf('Available to spend');
     const bill    = HOME.indexOf('<HomeBillCard');
-    const nextPay = HOME.indexOf('Next payment');
-    const plans   = HOME.indexOf('Your plans');
+    const nextPay = HOME.indexOf('data-testid="home-next-payment"');
+    const plans   = HOME.indexOf('data-testid="home-your-plans"');
     expect(hero).toBeGreaterThan(-1);
     expect(bill).toBeGreaterThan(hero);
     expect(nextPay).toBeGreaterThan(bill);

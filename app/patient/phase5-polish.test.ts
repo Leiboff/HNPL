@@ -18,10 +18,10 @@ const POLLING    = read('app/patient/payment-methods/complete/PollingConfirmatio
 
 describe('bottom-nav tap target', () => {
   it('each item is a single full-cell Link (icon + label both inside, flex-1)', () => {
-    // flex-1 makes the Link fill the cell width; the h-[68px] nav + stretch
+    // flex-1 makes the Link fill the cell width; the h-[66px] nav + stretch
     // gives full height — so tapping the label (not just the icon) registers.
     expect(BOTTOM_NAV).toMatch(/<Link[\s\S]*?className="flex-1 flex flex-col/);
-    expect(BOTTOM_NAV).toContain('h-[68px]');
+    expect(BOTTOM_NAV).toContain('h-[66px]');
   });
 });
 
@@ -35,8 +35,16 @@ describe('specialty title wraps (no truncation)', () => {
 
 describe('home next-payment CTA labels the two-step action', () => {
   it('reads "View & pay" (it opens the plan detail, where Pay lives)', () => {
-    expect(HOME).toContain('View &amp; pay');
+    // A plain JS string now, not JSX text, so no &amp; entity: the label
+    // is one of the four strings the v5 next-payment card derives together
+    // (eyebrow / chip / meta / CTA) so an overdue eyebrow can never sit
+    // over an upcoming button.
+    expect(HOME).toContain("'View & pay'");
     expect(HOME).not.toContain('Pay it now');
+  });
+
+  it('the overdue CTA sends the patient to catch up, not to browse', () => {
+    expect(HOME).toContain("'Pay now to catch up'");
   });
 });
 
@@ -66,7 +74,11 @@ describe('card-brand chip is single-sourced', () => {
   it('the Account thumbnail and plan-detail chip both use cardBrandLabel', () => {
     expect(THUMB).toMatch(/from '@\/lib\/patient\/cardBrand'/);
     expect(THUMB).toContain('cardBrandLabel(brand)');
-    expect(DETAIL).toContain('cardBrandLabel(chargeCard?.card_brand)');
+    // The plan-detail label moved into the Schedule card's header, where
+    // it is built inside a `chargeCard?.last_four` guard — so the call
+    // itself no longer needs the optional chain.
+    expect(DETAIL).toMatch(/from '@\/lib\/patient\/cardBrand'/);
+    expect(DETAIL).toContain('cardBrandLabel(chargeCard.card_brand)');
     // The old case-sensitive/truncating renderings are gone.
     expect(THUMB).not.toContain("brand === 'Visa'");
     expect(DETAIL).not.toContain("toUpperCase().slice(0, 4)");
