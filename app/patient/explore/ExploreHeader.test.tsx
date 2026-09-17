@@ -1,19 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { CategoryCount } from '@/lib/practitioner/categories';
 
 // ─── Tests — the navy Find-care header ────────────────────────────────
 //
-// Landing → "Find care" + the total count (unchanged brand line).
+// Landing → "Find care" + the total count (unchanged brand line), plus the
+// search field, which moved up here off the sheet when the header became
+// the navy crown.
 // Inside a specialty → the SPECIALTY is the title, the count is that
 // specialty's own, and a labelled back control returns to the specialty
 // list. The title has to follow the URL param, because the Filters
 // drawer in the sheet rewrites it (ExploreView.selectSpecialty).
 
 const currentParams = new URLSearchParams();
+const pushed: string[] = [];
 vi.mock('next/navigation', async () => {
   const actual = await vi.importActual<typeof import('next/navigation')>('next/navigation');
-  return { ...actual, useSearchParams: () => currentParams };
+  return {
+    ...actual,
+    useSearchParams: () => currentParams,
+    // The landing's search field navigates on submit. Outside an app
+    // router the real hook throws, so it is stubbed here — and the pushes
+    // are captured, because "typing a query takes you to the results" is
+    // behaviour this header now owns.
+    useRouter: () => ({
+      push: (href: string) => { pushed.push(href); },
+      replace: () => {}, prefetch: () => {}, back: () => {}, forward: () => {}, refresh: () => {},
+    }),
+  };
 });
 
 function setParams(next: Record<string, string>) {
@@ -29,7 +44,7 @@ const CATEGORIES: CategoryCount[] = [
 ];
 
 describe('ExploreHeader — landing', () => {
-  beforeEach(() => { setParams({}); });
+  beforeEach(() => { setParams({}); pushed.length = 0; });
 
   it('titles "Find care" and counts the whole directory', () => {
     render(<ExploreHeader practitionerCount={9} categories={CATEGORIES} />);
@@ -44,6 +59,31 @@ describe('ExploreHeader — landing', () => {
     render(<ExploreHeader practitionerCount={0} categories={[]} />);
     expect(screen.getByTestId('explore-header-count').textContent)
       .toBe('Pay later at practitioners near you.');
+  });
+
+  it('carries the search field, and submitting it opens the results view', async () => {
+    render(<ExploreHeader practitionerCount={9} categories={CATEGORIES} />);
+    const input = screen.getByTestId('landing-search') as HTMLInputElement;
+    await userEvent.type(input, 'berger{enter}');
+    expect(pushed).toEqual(['/patient/explore?view=results&q=berger']);
+  });
+
+  it('an empty search still opens the results view, unfiltered', async () => {
+    render(<ExploreHeader practitionerCount={9} categories={CATEGORIES} />);
+    // Whitespace is not a query. Submitting blank means "show me everyone",
+    // which is the results view with no ?q= at all — not ?q=%20.
+    await userEvent.type(screen.getByTestId('landing-search'), '   {enter}');
+    expect(pushed).toEqual(['/patient/explore?view=results']);
+  });
+});
+
+describe('ExploreHeader — inside a specialty, the search field comes off', () => {
+  it('leaves searching to the sheet, which live-filters the list', () => {
+    setParams({ view: 'results', specialty: 'Physiotherapy' });
+    render(<ExploreHeader practitionerCount={9} categories={CATEGORIES} />);
+    // Two search boxes on one screen is one too many, and the sheet's is
+    // the one that actually filters as you type (ResultsView).
+    expect(screen.queryByTestId('landing-search')).toBeNull();
   });
 });
 

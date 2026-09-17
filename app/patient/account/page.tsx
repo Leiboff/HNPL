@@ -150,35 +150,46 @@ export default async function AccountPage() {
     cleanRecord     ? `${madeCount} payment${madeCount === 1 ? '' : 's'}, all on time` :
                       `${madeCount} payment${madeCount === 1 ? '' : 's'} made`;
 
-  // ── An identity row, not a navy band ──────────────────────────────
+  // ── The identity row IS the crown ─────────────────────────────────
   //
-  // v4 put the patient's name on the same dark slab Home uses for the
-  // balance. Account has no figure to lead with, so the band was carrying
-  // a name — and the name is not news to the person reading it. As a
-  // plain row it does the one job it should: confirm WHICH account this
-  // is, which is what the masked email under it is for.
+  // Account has no figure to lead with, so it gets the crown rather than
+  // Home's tall band — but it is a bottom-nav tab, and every tab meets the
+  // status bar in the same navy. The name reads as the title here, with the
+  // "Account" eyebrow above it doing what the eyebrow does on Plans: naming
+  // the tab you are standing in, so the title is free to be the one fact
+  // this screen exists to confirm — WHICH account this is, which is also
+  // what the masked email under it is for.
+  //
+  // The avatar drops from 52px to 46px and its navy fill becomes a
+  // translucent white: a --brand-navy-deep disc ON --brand-navy-deep is not
+  // a disc.
   const header = (
-    <div className="flex items-center gap-[14px]">
-      <span
-        className="flex-none w-[52px] h-[52px] rounded-full flex items-center justify-center text-[18px] font-semibold text-white"
-        style={{ background: 'var(--brand-navy-deep)' }}
-        aria-hidden
-      >
-        {initials}
-      </span>
-      <div className="min-w-0">
-        <p className="text-[17px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>{fullName}</p>
-        {maskEmail(user.email) && (
-          <p className="mt-[3px] text-[12.5px] truncate" style={{ color: 'var(--portal-faint)' }}>
-            {maskEmail(user.email)}
-          </p>
-        )}
+    <>
+      <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'rgba(255,255,255,.5)' }}>
+        Account
+      </p>
+      <div className="mt-2 flex items-center gap-[14px]">
+        <span
+          className="flex-none w-[46px] h-[46px] rounded-full flex items-center justify-center text-[16px] font-semibold text-white"
+          style={{ background: 'rgba(255,255,255,.10)', border: '1px solid rgba(255,255,255,.16)' }}
+          aria-hidden
+        >
+          {initials}
+        </span>
+        <p className="min-w-0 truncate text-[24px] font-bold text-white" style={{ letterSpacing: '-.035em' }}>
+          {fullName}
+        </p>
       </div>
-    </div>
+      {maskEmail(user.email) && (
+        <p className="mt-2 text-[13.5px] truncate" style={{ color: 'rgba(255,255,255,.6)' }}>
+          {maskEmail(user.email)}
+        </p>
+      )}
+    </>
   );
 
   return (
-    <PatientScreen tone="plain" header={header} sheetClassName="px-[18px] pb-6">
+    <PatientScreen tone="crown" header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
 
         {/* ── On-time record ───────────────────────────────────────────

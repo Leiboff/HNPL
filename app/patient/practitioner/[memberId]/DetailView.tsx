@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useMemo, useEffect } from 'react';
+import PatientScreen from '@/app/patient/PatientScreen';
 import { formatDistanceKm, type LatLng } from '@/lib/maps/haversine';
 import { readStoredLocation } from '@/lib/patient/sharedLocation';
 import {
@@ -73,15 +74,39 @@ export default function DetailView({ rows }: Props) {
   const primaryMaps = primary ? mapsHref(primary, primary.latitude, primary.longitude) : null;
 
   return (
-    <div className="mx-auto max-w-2xl px-4 sm:px-5 py-6 sm:py-8 space-y-6 pb-24">
-      {/* Back to the list */}
-      <Link
-        href="/patient/explore"
-        className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--portal-ink)] hover:underline"
-      >
-        ← Back to practitioners
-      </Link>
-
+    // ── The shell, at last ────────────────────────────────────────────
+    //
+    // This screen used to lay itself out: its own max-w-2xl column, its own
+    // padding, and — the part that showed — no status-bar clearance, so on
+    // a phone its back link sat under the notch while every other patient
+    // screen cleared it by 58px. It is a SECOND-LEVEL screen (you reach it
+    // from Find care, not from the nav bar), so it takes the same `plain`
+    // tone and the same back-chevron header as the Account sub-screens.
+    <PatientScreen
+      tone="plain"
+      header={
+        <div className="flex items-center gap-3">
+          <Link
+            href="/patient/explore"
+            aria-label="Back to practitioners"
+            className="flex-none w-9 h-9 rounded-full flex items-center justify-center"
+            style={{ background: '#fff', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="m15 6-6 6 6 6" />
+            </svg>
+          </Link>
+          <h1 className="text-[17px] font-semibold truncate" style={{ color: 'var(--portal-ink)' }}>
+            {card.fullName}
+          </h1>
+        </div>
+      }
+      // The sheet's bottom padding clears BOTH fixed bars — the action bar
+      // and the nav under it — so the last location row is never stranded
+      // behind them.
+      sheetClassName="px-[18px] pb-[150px] md:pb-10"
+    >
+    <div className="space-y-6">
       {/* Hero */}
       <header className="rounded-2xl bg-white border border-[rgba(19,41,75,.08)] shadow-sm p-6">
         <div className="flex items-start gap-4">
@@ -92,10 +117,14 @@ export default function DetailView({ rows }: Props) {
           >
             {initials}
           </div>
+          {/* The name is NOT repeated here. It moved up to the screen
+              header when this page joined the shell, and printing it twice
+              40px apart reads as a rendering fault rather than emphasis.
+              What is left is what the header can't carry: the avatar, the
+              specialty, and the one claim the directory exists to make. */}
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold text-gray-900 truncate">{card.fullName}</h1>
             {card.specialty && (
-              <p className="text-sm text-gray-500 mt-0.5">{card.specialty}</p>
+              <p className="text-[17px] font-semibold text-gray-900">{card.specialty}</p>
             )}
             <p className="text-xs text-gray-400 mt-2 flex items-center gap-1.5">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
@@ -121,11 +150,30 @@ export default function DetailView({ rows }: Props) {
       </section>
 
       {/* Sticky bottom action bar — Call to book + Directions for the
-          PRIMARY (nearest) location. Discovery-style, BetterNow-branded. */}
+          PRIMARY (nearest) location. Discovery-style, BetterNow-branded.
+          
+          It sits ABOVE the bottom nav, not under it. At `bottom-0 z-10` it
+          was drawn at the same place as PatientBottomNav (bottom-0, z-30) —
+          which wins on z-index, so on a phone the whole bar, Call to book
+          included, was invisible behind the nav. The offset is the nav's own
+          geometry: 66px of bar plus whatever the home indicator takes. On
+          desktop there is no bottom nav, so it goes back to the screen edge. */}
       {primary && (
-        <div className="fixed inset-x-0 bottom-0 z-10 bg-white border-t border-gray-200 px-4 py-3">
-          <div className="mx-auto max-w-2xl flex items-center gap-3">
-            <p className="text-xs text-gray-500 flex-1 min-w-0 truncate">
+        <div
+          className="fixed inset-x-0 z-40 bg-white px-4 py-3"
+          style={{
+            bottom: 'calc(66px + env(safe-area-inset-bottom))',
+            borderTop: '1px solid var(--portal-hairline)',
+            boxShadow: '0 -2px 12px -5px rgba(11,31,58,0.18)',
+          }}
+        >
+          {/* Wraps rather than truncates. At 390px the two buttons take
+              ~270px of a 358px row, which left the practice name about
+              sixty pixels and "Bryanston De…" — the one thing the bar has
+              to be unambiguous about, since the buttons act on THIS
+              location and a practitioner can have several. */}
+          <div className="mx-auto max-w-md md:max-w-3xl lg:max-w-5xl flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p className="text-xs text-gray-500 w-full md:w-auto md:flex-1 min-w-0 truncate">
               <span className="font-medium text-gray-900">{primary.practice_name}</span>
               {primary.distanceKm != null && (
                 <span style={{ color: 'var(--portal-accent)' }}> · {formatDistanceKm(primary.distanceKm)}</span>
@@ -137,7 +185,7 @@ export default function DetailView({ rows }: Props) {
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid="detail-primary-directions"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[var(--portal-ink)] hover:bg-gray-50"
+                className="ml-auto md:ml-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[var(--portal-ink)] hover:bg-gray-50"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                   <path d="M3 11l18-7-7 18-2.5-7.5L3 11z" strokeLinecap="round" strokeLinejoin="round" />
@@ -162,6 +210,7 @@ export default function DetailView({ rows }: Props) {
         </div>
       )}
     </div>
+    </PatientScreen>
   );
 }
 

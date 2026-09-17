@@ -1,21 +1,35 @@
 // ─── PatientScreen — the v5 patient shell ────────────────────────────────
 //
-// Two shapes, and only two. Every patient screen is one of them:
+// One navy crown, three heights. Every patient screen is one of them:
 //
-//   'navy' — the screen LEADS WITH A NUMBER. A --brand-navy-deep block
-//            carrying a soft teal glow, with the light content sheet
-//            lifting over it (rounded top corners, pulled up 18px). Home
-//            (available balance) and Plan detail (amount left) — that is
-//            the whole list, and it should stay that way: the navy band
-//            is what makes a figure read as the point of the screen, so
-//            spending it on a screen without one spends it for nothing.
+//   'navy' — the screen LEADS WITH A NUMBER. A tall --brand-navy-deep
+//            block carrying a soft teal glow, with the light content
+//            sheet lifting over it (rounded top corners, pulled up 18px).
+//            Home (available balance) and Plan detail (amount left) — that
+//            is the whole list, and it should stay that way: the HEIGHT is
+//            what makes a figure read as the point of the screen.
 //
-//   'plain' — everything else. A flat --portal-sheet screen whose header
-//            sits ON the sheet: an eyebrow + title, or a back row. v4 gave
-//            these the navy band too, which meant Plans, Find care,
-//            Account and Payment methods each opened with a dark slab
-//            carrying nothing but their own name. The refresh takes it
-//            back and lets the content start at the top.
+//   'crown' — a BOTTOM-NAV TAB that has no figure to lead with: Plans,
+//            Find care, Account. Same navy, same glow, same sheet lift —
+//            but only as tall as its title needs, so it reads as chrome
+//            rather than as a hero.
+//
+//            v5 took the band off these screens entirely, on the argument
+//            that a dark slab carrying nothing but a name spends the
+//            loudest object on the screen for nothing. That argument was
+//            about a ~150px slab; it is not about ~110px of chrome, and
+//            stripping the band had a cost the argument missed. A phone
+//            shows the status bar over whatever the app paints under it,
+//            so Home met the notch in navy and the other three tabs met it
+//            in pale grey — the five tabs of one app opening five
+//            different ways. The crown is the band earning its keep at
+//            chrome height: one shell, one top edge, one app.
+//
+//   'plain' — SECOND-LEVEL screens: the Account sub-screens, Refer, the
+//            practitioner detail. These are reached from a tab, not from
+//            the nav bar, and their header is a back row — a back chevron
+//            on navy would promise a hero that isn't coming. Flat
+//            --portal-sheet, header on the sheet, content starts at the top.
 //
 //   'fail' — the missed-payment state (#7A1F1F, red glow). A 'navy'
 //            screen in every respect but the colour; it leads with the
@@ -35,12 +49,14 @@
 // screens stay capped (centred, symmetric margins — never a dead right-side
 // void). Every patient screen flows through here, so the width is uniform.
 
+// The 280px glow circle is offset off the top-right corner so only its
+// lower-left quadrant falls on the band — a glow arriving from off-screen
+// rather than a blob centred in the corner. `pb` is the ONLY thing that
+// separates a crown from a hero: same colour, same glow, same sheet lift.
 const CANVAS = {
-  // 280px circle, offset off the top-right corner so only its lower-left
-  // quadrant falls on the band — a glow arriving from off-screen rather
-  // than a blob centred in the corner.
-  navy: { bg: 'var(--brand-navy-deep)', glow: 'rgba(25,194,182,.30)', size: 280, top: -90, right: -70 },
-  fail: { bg: '#7A1F1F',               glow: 'rgba(255,107,90,.34)', size: 280, top: -90, right: -70 },
+  navy:  { bg: 'var(--brand-navy-deep)', glow: 'rgba(25,194,182,.30)', size: 280, top: -90, right: -70, pb: 30 },
+  crown: { bg: 'var(--brand-navy-deep)', glow: 'rgba(25,194,182,.30)', size: 280, top: -90, right: -70, pb: 26 },
+  fail:  { bg: '#7A1F1F',                glow: 'rgba(255,107,90,.34)', size: 280, top: -90, right: -70, pb: 30 },
 } as const;
 
 export default function PatientScreen({
@@ -54,7 +70,7 @@ export default function PatientScreen({
 }: {
   header: React.ReactNode;
   children: React.ReactNode;
-  tone?: 'navy' | 'fail' | 'plain';
+  tone?: 'navy' | 'crown' | 'fail' | 'plain';
   sheetClassName?: string;
   sheetOverlap?: number;
 }) {
@@ -94,7 +110,7 @@ export default function PatientScreen({
               background: `radial-gradient(circle, ${canvas.glow}, transparent 68%)`,
             }}
           />
-          <div className="relative px-[20px] pt-[58px] pb-[30px]">{header}</div>
+          <div className="relative px-[20px] pt-[58px]" style={{ paddingBottom: canvas.pb }}>{header}</div>
         </div>
 
         {/* Light sheet, lifted over the navy. */}
