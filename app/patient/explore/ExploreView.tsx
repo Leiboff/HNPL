@@ -13,7 +13,6 @@ import {
   groupIntoCards,
   filterCards,
   bucketPractitionerCards,
-  specialtiesFromCards,
   type DirectoryRow,
 } from '@/lib/practitioner/grouping';
 import { categoryCounts } from '@/lib/practitioner/categories';
@@ -28,7 +27,9 @@ import ChangeLocationSheet from './ChangeLocationSheet';
 //   • Landing (default, no ?view / no ?specialty / no ?q) — data-driven
 //     categories, search box.
 //   • Results (?view=results OR ?specialty=X OR ?q=X) — the redesigned
-//     list with grouping + filters.
+//     list with grouping. Filtering is URL-driven (?specialty=, ?q=)
+//     plus the sheet's own live search box; there is no Filters
+//     drawer.
 //
 // Location handling — GESTURE-GATED ONLY:
 //   • On mount we hydrate the location from sessionStorage if present;
@@ -44,7 +45,10 @@ import ChangeLocationSheet from './ChangeLocationSheet';
 // ChangeLocationSheet replace the old "Use my location" pill and
 // "Near your current location" caption entirely.
 
-const RADIUS_PRESETS = [10, 25, 50] as const;
+// The results list has no Filters drawer: the specialty comes from the
+// URL (?specialty=, set by the landing's category tiles) and the radius
+// is fixed. Nothing on this screen changes either, so there is nothing
+// left to toggle.
 const DEFAULT_RADIUS = 25;
 
 type Props = {
@@ -100,9 +104,8 @@ export default function ExploreView({ rows, hideHero = false }: Props) {
     () => decorateWithDistance(rows, userLocation),
     [rows, userLocation],
   );
-  const cards       = useMemo(() => groupIntoCards(decorated),        [decorated]);
-  const specialties = useMemo(() => specialtiesFromCards(cards),      [cards]);
-  const categories  = useMemo(() => categoryCounts(cards),            [cards]);
+  const cards      = useMemo(() => groupIntoCards(decorated), [decorated]);
+  const categories = useMemo(() => categoryCounts(cards),    [cards]);
 
   const rowLabel = location?.label ?? null;
 
@@ -135,7 +138,6 @@ export default function ExploreView({ rows, hideHero = false }: Props) {
     <>
       <ResultsView
         cards={cards}
-        specialties={specialties}
         hasLocation={location != null}
         locationRow={
           <LocationRow
@@ -160,7 +162,6 @@ export default function ExploreView({ rows, hideHero = false }: Props) {
 
 type ResultsProps = {
   cards:            ReturnType<typeof groupIntoCards>;
-  specialties:      string[];
   hasLocation:      boolean;
   locationRow:      React.ReactNode;
   initialSpecialty: string | null;
@@ -169,46 +170,24 @@ type ResultsProps = {
 
 function ResultsView({
   cards,
-  specialties,
   hasLocation,
   locationRow,
   initialSpecialty,
   initialQuery,
 }: ResultsProps) {
-  const [search,      setSearch]      = useState(initialQuery);
-  const [specialty,   setSpecialty]   = useState<string | null>(initialSpecialty);
-  const [radiusKm,    setRadiusKm]    = useState<number>(DEFAULT_RADIUS);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [search, setSearch] = useState(initialQuery);
 
-  // Changing the specialty in the Filters drawer rewrites ?specialty=
-  // so the navy header (ExploreHeader, which reads the param) retitles
-  // with the list instead of still naming the specialty you left.
-  //
-  // history.replaceState, not router.replace: Next syncs the native
-  // History API into useSearchParams (see the App Router "Native
-  // History API" guide) WITHOUT a server round-trip, so the directory
-  // query isn't re-run, the sheet's own search text survives, and a
-  // chip tap doesn't stack a history entry between the patient and the
-  // Back button.
-  const selectSpecialty = useCallback((next: string | null) => {
-    setSpecialty(next);
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    params.set('view', 'results');
-    if (next) params.set('specialty', next);
-    else params.delete('specialty');
-    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
-  }, []);
+  // The specialty is whatever the URL says — set by the landing's
+  // category tiles and retitled by the navy header (ExploreHeader reads
+  // the same param). Nothing on this screen changes it, so it is not
+  // state; the back control in the header is the way out of a specialty.
+  const specialty = initialSpecialty;
 
   const filtered = useMemo(() => filterCards(cards, search, specialty), [cards, search, specialty]);
   const { nearList, otherList } = useMemo(
-    () => bucketPractitionerCards(filtered, hasLocation, radiusKm),
-    [filtered, hasLocation, radiusKm],
+    () => bucketPractitionerCards(filtered, hasLocation, DEFAULT_RADIUS),
+    [filtered, hasLocation],
   );
-
-  const activeFilterCount =
-    (specialty ? 1 : 0) +
-    (hasLocation && radiusKm !== DEFAULT_RADIUS ? 1 : 0);
 
   return (
     <div className="space-y-4">
@@ -216,94 +195,28 @@ function ResultsView({
           (ExploreHeader), which also carries the specialty as its
           title — nothing here duplicates it. */}
 
-      {/* Sticky search + filters */}
+      {/* Search — the only control on this screen. */}
       <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <svg
-              aria-hidden
-              className="absolute left-3 top-1/2 -translate-y-1/2"
-              width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
-            >
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" strokeLinecap="round" />
-            </svg>
-            <input
-              type="search"
-              placeholder="Search practitioners…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[var(--portal-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/15"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((o) => !o)}
-            data-testid="filters-toggle"
-            aria-expanded={filtersOpen}
-            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-[var(--portal-ink)] hover:bg-gray-50"
+        <div className="relative">
+          <svg
+            aria-hidden
+            className="absolute left-3 top-1/2 -translate-y-1/2"
+            width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-              <path d="M4 6h16M7 12h10M10 18h4" strokeLinecap="round" />
-            </svg>
-            Filters
-            {activeFilterCount > 0 && (
-              <span className="ml-0.5 inline-flex items-center justify-center min-w-4.5 h-4.5 rounded-full bg-[var(--portal-accent)] text-white text-[10px] font-semibold px-1">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+          </svg>
+          <input
+            type="search"
+            placeholder="Search practitioners…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-xl border border-gray-200 bg-white pl-9 pr-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[var(--portal-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/15"
+          />
         </div>
 
         {/* Location row — directly under the search bar */}
         {locationRow}
-
-        {/* Filters drawer */}
-        {filtersOpen && (
-          <div className="rounded-2xl border border-[rgba(19,41,75,.08)] bg-white shadow-sm px-4 py-3 space-y-3">
-            {hasLocation && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 w-20 shrink-0">Proximity</span>
-                {RADIUS_PRESETS.map((km) => {
-                  const active = radiusKm === km;
-                  return (
-                    <button
-                      key={km}
-                      type="button"
-                      onClick={() => setRadiusKm(km)}
-                      data-testid={`filter-radius-${km}`}
-                      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-                        active ? 'text-white' : 'text-[var(--portal-ink)] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
-                      }`}
-                      style={active ? { background: 'var(--brand-navy-deep)' } : undefined}
-                    >
-                      {km} km
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {specialties.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 w-20 shrink-0">Specialty</span>
-                <SpecialtyChip active={specialty === null} onClick={() => selectSpecialty(null)} testId="filter-specialty-all">
-                  All
-                </SpecialtyChip>
-                {specialties.map((s) => (
-                  <SpecialtyChip
-                    key={s}
-                    active={specialty === s}
-                    onClick={() => selectSpecialty(specialty === s ? null : s)}
-                    testId={`filter-specialty-${s}`}
-                  >
-                    {s}
-                  </SpecialtyChip>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Results */}
@@ -312,7 +225,7 @@ function ResultsView({
           <p className="font-medium text-gray-500">No practitioners found</p>
           <p className="mt-1 text-sm text-gray-400">
             {hasLocation && nearList.length === 0
-              ? 'Try a wider radius or a different search.'
+              ? 'Try a different search, or change your location.'
               : 'Try a different search or specialty.'}
           </p>
         </div>
@@ -329,35 +242,5 @@ function ResultsView({
         </div>
       )}
     </div>
-  );
-}
-
-// ─── Small shared pieces ───────────────────────────────────────────────
-
-function SpecialtyChip({
-  active,
-  onClick,
-  testId,
-  children,
-}: {
-  active:   boolean;
-  onClick:  () => void;
-  testId:   string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid={testId}
-      className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-        active
-          ? 'text-white'
-          : 'text-[var(--portal-ink)] bg-[rgba(19,41,75,.06)] hover:bg-[rgba(19,41,75,.1)]'
-      }`}
-      style={active ? { background: 'var(--brand-navy-deep)' } : undefined}
-    >
-      {children}
-    </button>
   );
 }
