@@ -101,10 +101,12 @@ export default function DetailView({ rows }: Props) {
           </h1>
         </div>
       }
-      // The sheet's bottom padding clears BOTH fixed bars — the action bar
-      // and the nav under it — so the last location row is never stranded
-      // behind them.
-      sheetClassName="px-[18px] pb-[150px] md:pb-10"
+      // The sheet's bottom padding clears the fixed action bar — plus, on a
+      // phone, the nav under it — so the last location row is never
+      // stranded behind them. Desktop loses the nav's 66px but still has a
+      // ~60px bar sitting on the screen edge, so it keeps a clearance of
+      // its own rather than dropping to ordinary page padding.
+      sheetClassName="px-[18px] pb-[150px] md:pb-[104px]"
     >
     <div className="space-y-6">
       {/* Hero */}
@@ -156,13 +158,18 @@ export default function DetailView({ rows }: Props) {
           was drawn at the same place as PatientBottomNav (bottom-0, z-30) —
           which wins on z-index, so on a phone the whole bar, Call to book
           included, was invisible behind the nav. The offset is the nav's own
-          geometry: 66px of bar plus whatever the home indicator takes. On
-          desktop there is no bottom nav, so it goes back to the screen edge. */}
+          geometry: 66px of bar plus whatever the home indicator takes.
+
+          The offset is a RESPONSIVE CLASS, not an inline style, and that is
+          the whole reason it can't be inline: PatientBottomNav is md:hidden,
+          so from md up there is no nav to clear and the bar belongs on the
+          screen edge. An inline `bottom` carries no breakpoint, so it went
+          on reserving 66px for a nav that wasn't there and left the bar
+          floating in the margin. */}
       {primary && (
         <div
-          className="fixed inset-x-0 z-40 bg-white px-4 py-3"
+          className="fixed inset-x-0 z-40 bg-white px-4 py-3 bottom-[calc(66px+env(safe-area-inset-bottom))] md:bottom-0"
           style={{
-            bottom: 'calc(66px + env(safe-area-inset-bottom))',
             borderTop: '1px solid var(--portal-hairline)',
             boxShadow: '0 -2px 12px -5px rgba(11,31,58,0.18)',
           }}
