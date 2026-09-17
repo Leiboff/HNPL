@@ -1,8 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 import type { CategoryCount } from '@/lib/practitioner/categories';
 
 // ─── Landing — "Browse by specialty" ───────────────────────────────────
@@ -20,6 +18,8 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 //   • No "Use my location" pill / "Near your current location" caption —
 //     replaced by the LocationRow the parent renders below the search
 //     bar, which drives the shared ChangeLocationSheet.
+//   • No search field. It moved onto the navy crown with the title —
+//     see LandingSearch in ExploreHeader.
 //   • No "See all practitioners" tile (removed 2026-08-21, direct
 //     product decision) — specialty is now the only way in below the
 //     search box, and the categories themselves sort A→Z
@@ -29,12 +29,11 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 // Interaction:
 //   • Tap a specialty tile → parent switches to results, filtered to
 //     that specialty (via a URL param the results view reads).
-//   • Search input → typing anything switches to results with the
-//     search text pre-populated.
 
 type Props = {
   categories:   CategoryCount[];
-  /** LocationRow rendered by the orchestrator; sits directly under the search bar. */
+  /** LocationRow rendered by the orchestrator; sits directly under the
+   *  crown's search bar, which is the first thing on the sheet now. */
   locationRow:  React.ReactNode;
   /** v4: hide the in-view "Find care" hero when the navy PatientScreen
    *  header already carries the title (avoids a duplicate heading). */
@@ -42,18 +41,6 @@ type Props = {
 };
 
 export default function Landing({ categories, locationRow, hideHeading = false }: Props) {
-  const router = useRouter();
-  const [search, setSearch] = useState('');
-
-  function submitSearch(e: React.FormEvent) {
-    e.preventDefault();
-    const q = search.trim();
-    const params = new URLSearchParams();
-    params.set('view', 'results');
-    if (q) params.set('q', q);
-    router.push(`/patient/explore?${params.toString()}`);
-  }
-
   return (
     <div className="space-y-6">
       {/* Hero — suppressed under the v4 navy header (which owns the title). */}
@@ -66,31 +53,8 @@ export default function Landing({ categories, locationRow, hideHeading = false }
         </header>
       )}
 
-      {/* Search + Location row */}
-      <form onSubmit={submitSearch} className="space-y-3">
-        <div className="relative">
-          <svg
-            aria-hidden
-            className="absolute left-[15px] top-1/2 -translate-y-1/2"
-            width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
-          >
-            <circle cx="11" cy="11" r="8" />
-            <path d="m21 21-4.35-4.35" strokeLinecap="round" />
-          </svg>
-          <input
-            type="search"
-            placeholder="Practice, suburb or treatment"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            data-testid="landing-search"
-            className="w-full rounded-2xl bg-white pl-[42px] pr-4 py-[13px] text-[14px] focus:outline-none focus:ring-2 focus:ring-[var(--portal-accent)]/20"
-            style={{ border: '1px solid rgba(19,41,75,.08)', color: 'var(--portal-ink)' }}
-          />
-        </div>
-
-        {/* Location row — directly under the practitioner search bar */}
-        {locationRow}
-      </form>
+      {/* Location row — directly under the crown's search bar */}
+      {locationRow}
 
       {/* ── Specialties ──────────────────────────────────────────────
           A horizontally scrolling PILL ROW, not a two-column grid of
@@ -121,7 +85,7 @@ export default function Landing({ categories, locationRow, hideHeading = false }
                 key={c.specialty}
                 href={`/patient/explore?view=results&specialty=${encodeURIComponent(c.specialty)}`}
                 data-testid={`landing-category-${c.specialty}`}
-                className="bn-card-hover flex-none rounded-full px-[14px] py-[9px] text-[12.5px] font-medium whitespace-nowrap"
+                className="bn-card-hover relative flex-none rounded-full px-[14px] py-[9px] text-[12.5px] font-medium whitespace-nowrap"
                 style={{ background: '#fff', border: '1px solid rgba(19,41,75,.1)', color: 'var(--portal-ink)' }}
               >
                 {c.specialty}
@@ -131,7 +95,23 @@ export default function Landing({ categories, locationRow, hideHeading = false }
                     dropped, only moved: the sr-only span carries the whole
                     phrase for anyone who cannot see that arrangement.
                     The visible one is aria-hidden, or the link announces
-                    the number twice ("Dentistry · 2, 2 practitioners"). */}
+                    the number twice ("Dentistry · 2, 2 practitioners").
+
+                    `relative` on the pill above is what keeps that span
+                    from breaking the page, and it is not decoration.
+                    `sr-only` is `position: absolute`, so it resolves
+                    against the nearest POSITIONED ancestor — and there
+                    wasn't one, all the way up to the viewport. A span
+                    belonging to a pill scrolled off the right-hand end of
+                    this row was therefore laid out against the viewport at
+                    x≈650 instead of being clipped by the scroller with its
+                    pill, and the whole document grew to 649px wide on a
+                    390px phone: Find care panned sideways into 259px of
+                    nothing, and browsers that shrink-to-fit rendered the
+                    screen zoomed out like a desktop page. Making the pill
+                    a containing block puts the span back inside the
+                    scroller, where the overflow is already handled.
+                    Pinned by app/patient/explore/landing-overflow.test.tsx. */}
                 <span aria-hidden style={{ color: 'var(--portal-faint)' }}> · {c.count}</span>
                 <span className="sr-only">{` ${c.count} practitioner${c.count === 1 ? '' : 's'}`}</span>
               </Link>

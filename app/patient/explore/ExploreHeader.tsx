@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
 import type { CategoryCount } from '@/lib/practitioner/categories';
 
 // ─── ExploreHeader — the title block above the Find-care list ──────────
@@ -12,11 +13,19 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 // a back control that reads as "out of here, back to the other
 // specialties".
 //
-// It sits on the light sheet now, not on a navy band. Find care leads with
-// a SEARCH FIELD, and the band above it was a dark slab carrying two lines
-// of text — the loudest object on the screen spent on its own name. The
-// band is reserved for screens that lead with a figure (see the `plain`
-// tone in PatientScreen); this is not one.
+// It sits on the navy CROWN — the short band every bottom-nav tab opens
+// with (see the `crown` tone in PatientScreen). v5 had taken the band off
+// this screen on the argument that a dark slab carrying two lines of text
+// spends the loudest object on the screen for nothing. At chrome height
+// that argument runs out, and it never covered the cost: Home met the
+// phone's status bar in navy while Find care met it in pale grey.
+//
+// The landing's SEARCH FIELD rides up here with the title, which is what
+// makes the crown carry its own weight rather than just being a coloured
+// bar — a white field on navy is also the strongest that field has looked.
+// Inside a specialty it comes back off: there the sheet's own search box
+// live-filters the list as you type (ResultsView), and two search fields on
+// one screen is one too many.
 //
 // Why this replaces the old sheet-level "← Browse by specialty" link:
 // that link was 12px of text floating above the search box, competing
@@ -47,18 +56,19 @@ export default function ExploreHeader({ practitionerCount, categories }: Props) 
   const qParam         = searchParams?.get('q') ?? null;
   const isResults      = searchParams?.get('view') === 'results' || !!specialtyParam || !!qParam;
 
-  // ── Landing: the brand title, unchanged. ──────────────────────────
+  // ── Landing: the brand title, and the search field. ───────────────
   if (!isResults) {
     return (
       <div data-testid="explore-header">
-        <p className="text-[27px] font-bold" style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }} data-testid="explore-header-title">
+        <p className="text-[27px] font-bold text-white" style={{ letterSpacing: '-.035em' }} data-testid="explore-header-title">
           Find care
         </p>
-        <p className="mt-2 text-[13.5px]" style={{ color: 'var(--portal-muted)' }} data-testid="explore-header-count">
+        <p className="mt-2 text-[13.5px]" style={{ color: 'rgba(255,255,255,.6)' }} data-testid="explore-header-count">
           {practitionerCount > 0
             ? `Pay later at ${practitionerCount} practitioner${practitionerCount === 1 ? '' : 's'} near you.`
             : 'Pay later at practitioners near you.'}
         </p>
+        <LandingSearch />
       </div>
     );
   }
@@ -90,27 +100,71 @@ export default function ExploreHeader({ practitionerCount, categories }: Props) 
         <span
           aria-hidden
           className="flex-none w-9 h-9 rounded-full flex items-center justify-center transition-transform group-hover:-translate-x-0.5"
-          style={{ background: '#fff', border: '1px solid var(--portal-hairline)', color: 'var(--portal-ink)' }}
+          style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.14)', color: '#fff' }}
         >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round">
             <path d="m15 6-6 6 6 6" />
           </svg>
         </span>
-        <span className="text-[12.5px] font-semibold" style={{ color: 'var(--portal-muted)' }}>
+        <span className="text-[12.5px] font-semibold" style={{ color: 'rgba(255,255,255,.6)' }}>
           All specialties
         </span>
       </Link>
 
       <p
-        className={`mt-3 ${titleSize} font-bold`}
-        style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }}
+        className={`mt-3 ${titleSize} font-bold text-white`}
+        style={{ letterSpacing: '-.035em' }}
         data-testid="explore-header-title"
       >
         {title}
       </p>
-      <p className="mt-2 text-[13.5px]" style={{ color: 'var(--portal-muted)' }} data-testid="explore-header-count">
+      <p className="mt-2 text-[13.5px]" style={{ color: 'rgba(255,255,255,.6)' }} data-testid="explore-header-count">
         {subtitle}
       </p>
     </div>
+  );
+}
+
+// ─── LandingSearch — the search field, on the crown ────────────────────
+//
+// Moved up from <Landing>, which no longer has a search field at all —
+// there is one on this screen and it lives here. Same behaviour it always
+// had: submit navigates to the results view with ?q=,
+// and typing alone changes nothing (the landing has no list to filter).
+// Styled for navy — a white field with no visible border, because on navy
+// the field's own fill is the edge.
+function LandingSearch() {
+  const router = useRouter();
+  const [search, setSearch] = useState('');
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const q = search.trim();
+    const params = new URLSearchParams();
+    params.set('view', 'results');
+    if (q) params.set('q', q);
+    router.push(`/patient/explore?${params.toString()}`);
+  }
+
+  return (
+    <form onSubmit={submit} className="relative mt-[18px]">
+      <svg
+        aria-hidden
+        className="absolute left-[15px] top-1/2 -translate-y-1/2"
+        width="17" height="17" viewBox="0 0 24 24" fill="none" style={{ stroke: 'var(--portal-faint)' }} strokeWidth={2}
+      >
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.35-4.35" strokeLinecap="round" />
+      </svg>
+      <input
+        type="search"
+        placeholder="Practice, suburb or treatment"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        data-testid="landing-search"
+        className="w-full rounded-2xl bg-white pl-[42px] pr-4 py-[13px] text-[14px] focus:outline-none focus:ring-2 focus:ring-[var(--brand-teal-bright)]/40"
+        style={{ border: '1px solid rgba(255,255,255,.14)', color: 'var(--portal-ink)' }}
+      />
+    </form>
   );
 }

@@ -113,34 +113,37 @@ export default async function OrdersPage() {
       ? 'Nothing outstanding'
       : `${formatRand(outstandingCents / 100)} outstanding across ${activeCount} active plan${activeCount === 1 ? '' : 's'}`;
 
-  // ── The header is no longer a navy band ───────────────────────────
+  // ── The header is a crown, not a hero ─────────────────────────────
   //
-  // v4 opened this screen with the same dark slab Home uses. Home earns it:
-  // it leads with a figure (available balance) and the band is what makes
-  // that figure read as the point of the screen. Plans leads with a LIST,
-  // and the band was carrying nothing but the word "Plans" — a dark bar
-  // whose only job was to be the thing at the top. Dropping it moves the
-  // first plan card ~90px up the screen and gives the title back its
-  // hierarchy. See the `plain` tone in PatientScreen.
+  // Plans leads with a LIST, not a figure, so it does not get Home's tall
+  // band — but it IS a bottom-nav tab, and a tab that meets the status bar
+  // in pale grey while Home meets it in navy is the same app opening two
+  // different ways. The crown is the band at chrome height: eyebrow, title,
+  // the one line of running totals. See the `crown` tone in PatientScreen.
+  //
+  // Overdue moves from #B42318 to #FF6B5A. The dark red is a text colour
+  // for the white sheet; on navy it is barely a colour at all. #FF6B5A is
+  // the red this shell already uses ON navy (the 'fail' tone's glow), so
+  // the crown gains no sixth red — see app/portal-tokens.test.ts.
   const header = (
     <>
-      <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'var(--portal-faint)' }}>
+      <p className="text-[11px] font-semibold uppercase" style={{ letterSpacing: '.18em', color: 'rgba(255,255,255,.5)' }}>
         Payment plans
       </p>
-      <p className="mt-2 text-[27px] font-bold" style={{ letterSpacing: '-.035em', color: 'var(--portal-ink)' }}>
+      <p className="mt-2 text-[27px] font-bold text-white" style={{ letterSpacing: '-.035em' }}>
         Your plans
       </p>
-      <p className="mt-2 text-[13.5px] tabular-nums" style={{ color: 'var(--portal-muted)' }}>
+      <p className="mt-2 text-[13.5px] tabular-nums" style={{ color: 'rgba(255,255,255,.6)' }}>
         {summary}
         {overdueCount > 0 && (
-          <span style={{ color: '#B42318' }}> · {overdueCount} overdue</span>
+          <span style={{ color: '#FF6B5A' }}> · {overdueCount} overdue</span>
         )}
       </p>
     </>
   );
 
   return (
-    <PatientScreen tone="plain" header={header} sheetClassName="px-[18px] pb-6">
+    <PatientScreen tone="crown" header={header} sheetClassName="px-[18px] pt-5 pb-6">
       <div className="flex flex-col gap-[14px]">
         <DefaultFreezeBanner frozen={isFrozen} />
         <OrdersView
