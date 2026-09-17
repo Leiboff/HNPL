@@ -30,6 +30,11 @@ import type { LocationOnCard, PractitionerCard } from '@/lib/practitioner/groupi
 //     — the detail screen names each practice.
 //   • Any "Cover" / "In Network" / "Premier Plus" language.
 //   • Any Vet/Hospital/Pharmacy chip.
+//   • The "Up to 3 instalments" chip. Every practitioner in this
+//     directory is a pay-later practitioner — the crown already says
+//     "Pay later at N practitioners", so repeating the term count on
+//     each card was the same claim twice. The plan the patient
+//     actually gets is chosen at checkout, not here.
 //
 // Location line — STACKED (two lines):
 //   1. Suburb, City (with a pin icon)
@@ -107,16 +112,6 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
                   {card.specialty}
                 </span>
               )}
-              {/* The reason this directory exists, said on every card. It
-                  is the product's actual claim — not a marketing line —
-                  and 3 is the maximum plan_type the schema allows, so it
-                  cannot drift from what checkout will offer. */}
-              <span
-                className="text-[11px] font-medium rounded-full px-[9px] py-[5px]"
-                style={{ background: 'rgba(21,168,158,.12)', color: 'var(--portal-accent-ink)' }}
-              >
-                Up to 3 instalments
-              </span>
             </div>
           </div>
         </header>
@@ -145,7 +140,7 @@ export default function PractitionerListCard({ card }: { card: PractitionerCard 
                   style={{ color: 'var(--portal-accent)' }}
                   data-testid={`practitioner-card-${card.id}-distance`}
                 >
-                  {distText} away
+                  {distText}
                 </p>
               )}
               {totalLocations >= 2 && (
