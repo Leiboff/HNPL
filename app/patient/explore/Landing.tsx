@@ -32,7 +32,8 @@ import type { CategoryCount } from '@/lib/practitioner/categories';
 
 type Props = {
   categories:   CategoryCount[];
-  /** LocationRow rendered by the orchestrator; sits directly under the search bar. */
+  /** LocationRow rendered by the orchestrator; sits directly under the
+   *  crown's search bar, which is the first thing on the sheet now. */
   locationRow:  React.ReactNode;
   /** v4: hide the in-view "Find care" hero when the navy PatientScreen
    *  header already carries the title (avoids a duplicate heading). */

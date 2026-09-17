@@ -127,8 +127,9 @@ export default function ExploreHeader({ practitionerCount, categories }: Props) 
 
 // ─── LandingSearch — the search field, on the crown ────────────────────
 //
-// Moved up from <Landing>, which is why Landing takes `hideSearch`. Same
-// behaviour it always had: submit navigates to the results view with ?q=,
+// Moved up from <Landing>, which no longer has a search field at all —
+// there is one on this screen and it lives here. Same behaviour it always
+// had: submit navigates to the results view with ?q=,
 // and typing alone changes nothing (the landing has no list to filter).
 // Styled for navy — a white field with no visible border, because on navy
 // the field's own fill is the edge.
