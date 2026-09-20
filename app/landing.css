@@ -263,29 +263,6 @@
   align-items: center;
 }
 
-.lp-root .eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--teal);
-  background: var(--tint);
-  padding: 7px 14px;
-  border-radius: 999px;
-  margin-bottom: 24px;
-}
-
-.lp-root .eyebrow .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--teal);
-  box-shadow: 0 0 0 4px rgba(21,168,158,.18);
-}
-
 .lp-root h1 {
   font-weight: 600;
   font-size: clamp(2.5rem,10.5vw,5.2rem);
@@ -297,48 +274,6 @@
   justify-content: center;
   gap: .26em;
   flex-wrap: nowrap;
-}
-
-.lp-root .verb-slot {
-  position: relative;
-  display: inline-block;
-  text-align: right;
-  vertical-align: baseline;
-}
-
-.lp-root .verb-strut { visibility: hidden; }
-
-.lp-root .verb-clip {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  overflow: hidden;
-}
-
-.lp-root .verb {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  white-space: nowrap;
-  color: var(--navy);
-  will-change: transform, opacity;
-  transition: transform .55s cubic-bezier(.22,1,.36,1), opacity .5s;
-}
-
-.lp-root .verb.current { transform: translateY(0); opacity: 1; }
-
-.lp-root .verb.out {
-  transform: translateY(-115%);
-  opacity: 0;
-  transition: transform .55s cubic-bezier(.5,0,.5,1), opacity .45s;
-}
-
-.lp-root .verb.enter {
-  transform: translateY(115%);
-  opacity: 0;
-  transition: none;
 }
 
 .lp-root .wordmark { font-weight: 600; letter-spacing: -.03em; }
@@ -1212,8 +1147,6 @@
 /* ── Reduced motion ────────────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
-  .lp-root .verb { transition: opacity .4s !important; }
-  .lp-root .verb.out, .lp-root .verb.enter { transform: none !important; }
   .lp-root .reveal {
     opacity: 1 !important;
     transform: none !important;
@@ -1224,9 +1157,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    v3 landing refresh — scoped to .lp-v3 so the SHARED SiteHeader / SiteFooter
    / .stage (also used by /practices under a plain .lp-root) are untouched.
-   Navy hero, over-navy translucent header, bill splitter, verb marquee, navy
-   getting-started band, hover cards, rounded overlapping final CTA, 4-col
-   footer. Reverts to the light base treatment wherever a rule isn't overridden.
+   Navy hero, over-navy translucent header, bill splitter, navy getting-
+   started band, hover cards, rounded overlapping final CTA, 4-col footer. Reverts to the light base treatment wherever a rule isn't overridden.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Header: translucent navy over the hero; light once scrolled past it ──── */
@@ -1306,22 +1238,28 @@
 }
 
 .lp-v3 .hero { padding-bottom: clamp(44px, 8vh, 84px); }
-.lp-v3 .hero .eyebrow {
-  color: #5CD9CE;
-  background: rgba(92,217,206,.12);
-  border: 1px solid rgba(92,217,206,.28);
-  margin-bottom: 22px;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 13px;
+
+/* Offer-first headline. The base .lp-root h1 is a baseline-aligned flex
+   row sized for the rotating verb + wordmark (still how /practices uses
+   it); this hero is one wrapped sentence, so it reverts to a plain
+   centred block on a measure that holds it to three lines on desktop. */
+.lp-v3 .stage h1 {
+  display: block;
+  text-align: center;
+  max-width: 17ch;
+  margin: 0;
+  font-size: clamp(2.2rem, 5.4vw, 3.5rem);
+  line-height: 1.04;
+  letter-spacing: -.045em;
+  color: #fff;
 }
-.lp-v3 .hero .eyebrow svg { width: 16px; height: 16px; }
-.lp-v3 .stage h1 { color: #fff; letter-spacing: -.045em; }
-.lp-v3 .stage .verb { color: #5CD9CE; }
-.lp-v3 .stage .wordmark .lp-b { color: #fff; }
-.lp-v3 .stage .wordmark .lp-n { color: #5CD9CE; }
-.lp-v3 .hero .tagline { color: #fff; }
-.lp-v3 .hero .sub { color: rgba(255,255,255,.72); }
+
+/* The payment terms — the half of the headline that carries the offer. */
+.lp-v3 .stage h1 .hero-accent { color: #5CD9CE; }
+
+/* Wider measure than the base 36ch: the subline leads with a specialty
+   list, which reads badly when broken every few words. */
+.lp-v3 .hero .sub { max-width: 44ch; color: rgba(255,255,255,.72); }
 .lp-v3 .stage .ctas .btn-primary {
   background: #fff;
   color: var(--navy);
@@ -1334,37 +1272,6 @@
   border: 1.5px solid rgba(255,255,255,.30);
 }
 .lp-v3 .stage .ctas .btn-outline:hover { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.5); }
-
-/* ── Verb marquee ─────────────────────────────────────────────────────────── */
-.lp-v3 .verb-marquee {
-  border-top: 1px solid rgba(255,255,255,.12);
-  overflow: hidden;
-  padding: 22px 0;
-}
-.lp-v3 .verb-marquee-track {
-  display: flex;
-  /* Intrinsic width (sum of both rows' natural content width), NOT a
-     forced 200% — on a narrow phone viewport the row's natural content
-     (7 words + dots at 44px gaps) is far wider than 50% of the
-     viewport, and a forced percentage here left the rows' own flex
-     children (default flex-shrink:1) squeezed below their content
-     size, overlapping text. translateX(-50%) below still slides by
-     exactly one row's width because both rows are identical content,
-     so the track's natural width is always exactly 2x one row. */
-  width: max-content;
-  animation: v3Marquee 26s linear infinite;
-}
-.lp-v3 .verb-marquee-row {
-  display: flex;
-  align-items: center;
-  gap: 44px;
-  flex: none;
-  padding-right: 44px;
-}
-.lp-v3 .verb-marquee-row > span { display: inline-flex; align-items: center; gap: 44px; flex-shrink: 0; }
-.lp-v3 .verb-marquee .vm-word { font-size: 19px; font-weight: 600; letter-spacing: .02em; color: rgba(255,255,255,.34); }
-.lp-v3 .verb-marquee .vm-dot { color: #5CD9CE; }
-@keyframes v3Marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 
 /* ── Bill splitter — now embedded as the "How it works" visual (was its
    own top-level section; the .split-sec host class is gone) ────────────── */
@@ -1499,8 +1406,7 @@
   .lp-v3 .gs-band .gs-two-col { grid-template-columns: minmax(0, 1fr); gap: 44px; }
 }
 
-/* ── Reduced motion: still the hero glow + marquee ────────────────────────── */
+/* ── Reduced motion: still the hero glow ──────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .lp-v3 .stage::before { animation: none !important; }
-  .lp-v3 .verb-marquee-track { animation: none !important; }
 }

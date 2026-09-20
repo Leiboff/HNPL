@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import SiteHeader from './_landing/SiteHeader';
@@ -22,8 +22,6 @@ import './landing.css';
 // bookmarks that included it are redirected to /practices by the
 // hash-redirect effect below.
 
-const WORDS = ['Smile', 'See', 'Hear', 'Move', 'Heal', 'Feel', 'Live'];
-
 // Relative timing labels for the bill-splitter illustration. Deliberately
 // NOT real dates — the real schedule comes from the patient's chosen
 // salary_day (lib/salaryDates.ts) at checkout.
@@ -35,8 +33,6 @@ function randLabel(n: number): string {
 }
 
 export default function LandingPage() {
-  const slotRef = useRef<HTMLSpanElement>(null);
-
   // Bill-splitter — presentational only (no fetch, no persistence). The
   // example bill is a fixed R3,000 (no slider); only the plan choice is
   // interactive. The arithmetic mirrors the FAQ: equal instalments,
@@ -61,54 +57,6 @@ export default function LandingPage() {
     }
   }, []);
 
-  // Verb cycling animation — unchanged from the original.
-  useEffect(() => {
-    const slot = slotRef.current;
-    if (!slot) return;
-
-    const clip  = slot.querySelector('.verb-clip')  as HTMLElement;
-    const strut = slot.querySelector('.verb-strut') as HTMLElement;
-
-    clip.innerHTML = `<span class="verb current">${WORDS[0]}</span>`;
-
-    const probe = document.createElement('span');
-    const cs    = getComputedStyle(clip.querySelector('.verb.current') as Element);
-    probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${cs.font};letter-spacing:${cs.letterSpacing}`;
-    document.body.appendChild(probe);
-
-    let max = 0;
-    WORDS.forEach(w => { probe.textContent = w; max = Math.max(max, probe.offsetWidth); });
-    slot.style.width  = Math.ceil(max) + 'px';
-    strut.textContent = WORDS.reduce((a, b) => b.length > a.length ? b : a, WORDS[0]);
-    probe.remove();
-
-    let i = 0;
-    const timeouts: ReturnType<typeof setTimeout>[] = [];
-
-    function cycle() {
-      clip.querySelectorAll<HTMLElement>('.verb.out').forEach(el => el.remove());
-
-      const old = clip.querySelector('.verb.current') as HTMLElement | null;
-      i = (i + 1) % WORDS.length;
-      const next = document.createElement('span');
-      next.className   = 'verb enter';
-      next.textContent = WORDS[i];
-      clip.appendChild(next);
-      void next.offsetWidth;
-      old?.classList.remove('current');
-      old?.classList.add('out');
-      next.classList.remove('enter');
-      next.classList.add('current');
-      timeouts.push(setTimeout(() => old?.remove(), 700));
-    }
-
-    const id = setInterval(cycle, 2200);
-    return () => {
-      clearInterval(id);
-      timeouts.forEach(clearTimeout);
-    };
-  }, []);
-
   // Scroll-reveal IntersectionObserver
   useEffect(() => {
     const io = new IntersectionObserver(
@@ -127,51 +75,28 @@ export default function LandingPage() {
       <SiteHeader />
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
+      {/*
+          Offer-first hero: the headline states what betternow does in one
+          line, so the proposition is the first thing read on the page. The
+          brand slogan and the rotating-verb wordmark that used to carry
+          this slot said nothing about the offer, so they are gone. */}
       <div className="stage">
         <div className="wrap hero">
-          <div className="eyebrow"><BoltIcon /> 1-minute approval</div>
-          <h1 aria-label="betternow">
-            <span ref={slotRef} className="verb-slot" aria-hidden={true}>
-              <span className="verb-strut">Smile</span>
-              <span className="verb-clip">
-                <span className="verb current">Smile</span>
-              </span>
-            </span>
-            <span className="wordmark" aria-hidden={true}>
-              <span className="lp-b">better</span><span className="lp-n">now</span>
-            </span>
+          <h1>
+            Split any medical expense into{' '}
+            <span className="hero-accent">3 interest-free payments</span>
           </h1>
-          <p className="tagline">
-            Get better now. Pay better later.
-          </p>
           <p className="sub">
-            Split any healthcare bill into interest-free instalments, timed to your salary dates. Get the care you need today.
+            Dentist, optometrist, specialist, vet, pharmacy — pay a third today, the rest on your next two paydays.
           </p>
           <div className="ctas">
-            <Link className="btn btn-primary btn-lg" href="/signup">Get started</Link>
+            <Link className="btn btn-primary btn-lg" href="/signup">See what I qualify for</Link>
             {/* Plain <a>, not next/link's <Link> — same-page hash
                 navigation via Link is a documented App Router no-op
                 (see SiteHeader.tsx), so this silently failed to scroll
                 to #how while already on /. */}
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
-            <a className="btn btn-outline btn-lg" href="/#how">See how it works</a>
-          </div>
-        </div>
-
-        {/* Verb marquee — a scrolling strip of the hero verbs. Decorative;
-            duplicated once for a seamless loop, whole strip aria-hidden. */}
-        <div className="verb-marquee" aria-hidden={true}>
-          <div className="verb-marquee-track">
-            {[0, 1].map((dup) => (
-              <div className="verb-marquee-row" key={dup}>
-                {WORDS.map((w) => (
-                  <span key={w}>
-                    <span className="vm-word">{w}</span>
-                    <span className="vm-dot">•</span>
-                  </span>
-                ))}
-              </div>
-            ))}
+            <a className="btn btn-outline btn-lg" href="/#how">How it works</a>
           </div>
         </div>
       </div>
