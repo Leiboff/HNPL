@@ -22,9 +22,11 @@ import { resolve } from 'node:path';
 // Pins:
 //   1. Forbidden strings absent (all card-hold / card-limit /
 //      no-check / debit-order / DebiCheck claims removed).
-//   2. Seven approved slogans present exactly once, in the right
+//   2. Six approved slogans present exactly once, in the right
 //      section container (S4's home moved to the "Getting started"
-//      sec-head sub-line).
+//      sec-head sub-line). S1 ("Get better now. Pay better later.")
+//      lost its home when the hero went offer-first, and is no longer
+//      on the page.
 //   3. Two reserved slogans absent from the landing page entirely.
 //   4. Still-true claims preserved (interest-free promise, POPIA,
 //      credit check answered honestly).
@@ -111,20 +113,43 @@ function slice(startMarker: string, endMarker: string): string {
   return LANDING.slice(startIdx, endIdx);
 }
 
-describe('Slogan 1 — hero tagline: "Get better now. Pay better later."', () => {
+describe('Hero headline — offer-first, states the proposition in one line', () => {
   const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
 
-  it('appears in the hero section', () => {
-    expect(heroScope).toContain('Get better now. Pay better later.');
+  // The hero used to open with the brand: a rotating-verb wordmark H1
+  // ("Smile / See / Hear …" + betternow), the "1-minute approval"
+  // eyebrow above it and Slogan 1 as the tagline below. None of that
+  // said what betternow DOES, so the whole stack was replaced by a
+  // single headline that states the offer. Slogan 1 has no home on the
+  // landing page any more — it is NOT pinned absent here, because
+  // re-homing it elsewhere is a copy decision, not a regression.
+
+  it('the H1 is the offer, not the brand', () => {
+    expect(heroScope).toMatch(
+      /<h1>\s*Split any medical expense into\{' '\}\s*<span className="hero-accent">3 interest-free payments<\/span>\s*<\/h1>/,
+    );
   });
 
-  it('the tagline paragraph carries the .tagline class (positioned above the functional sub)', () => {
-    expect(heroScope).toMatch(/<p className="tagline">[\s\S]*?Get better now\. Pay better later\./);
+  it('the H1 carries no aria-label override — it is real, readable copy now', () => {
+    expect(heroScope).not.toMatch(/<h1 aria-label=/);
   });
 
-  it('appears exactly once on the page', () => {
-    const matches = LANDING.match(/Get better now\. Pay better later\./g) ?? [];
-    expect(matches.length).toBe(1);
+  it('the subline names the specialties and the payday schedule', () => {
+    expect(heroScope).toMatch(
+      /<p className="sub">[\s\S]*?Dentist, optometrist, specialist, vet, pharmacy — pay a third today, the rest on your next two paydays\./,
+    );
+  });
+
+  it('the eyebrow badge, rotating-verb wordmark and hero tagline are gone', () => {
+    expect(heroScope).not.toContain('className="eyebrow"');
+    expect(heroScope).not.toContain('verb-slot');
+    expect(heroScope).not.toContain('className="wordmark"');
+    expect(heroScope).not.toContain('className="tagline"');
+  });
+
+  it('the decorative verb marquee goes with the verbs it mirrored', () => {
+    expect(LANDING).not.toContain('verb-marquee');
+    expect(LANDING).not.toContain("const WORDS");
   });
 });
 
@@ -207,19 +232,22 @@ describe('Slogan 4 — allowance strapline: "Give your health some credit — it
   });
 });
 
-describe('Hero CTAs — two-button pair (Get started + See how it works)', () => {
+describe('Hero CTAs — two-button pair (See what I qualify for + How it works)', () => {
   const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
 
-  it('hero has BOTH a filled primary "Get started" and an outlined "See how it works" button', () => {
+  it('hero has BOTH a filled primary "See what I qualify for" and an outlined "How it works" button', () => {
     // Filled primary → /signup (the canonical create-an-account screen).
-    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup"[^>]*>Get started<\/Link>/);
+    // Labelled for the question the hero just raised ("can I get this?")
+    // rather than the generic "Get started", which survives as the
+    // Getting-started band's closing CTA.
+    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup"[^>]*>See what I qualify for<\/Link>/);
     // Outlined secondary → the How-it-works anchor. v3 moves Sign in to
     // the header (still asserted in the SiteHeader block below) and makes
-    // the hero's secondary CTA "See how it works". A plain <a>, not
+    // the hero's secondary CTA "How it works". A plain <a>, not
     // next/link's <Link> — Link's same-pathname hash navigation is a
     // documented App Router no-op when the page doesn't change, which
     // silently broke the scroll while already on /.
-    expect(heroScope).toMatch(/<a className="btn btn-outline btn-lg" href="\/#how">See how it works<\/a>/);
+    expect(heroScope).toMatch(/<a className="btn btn-outline btn-lg" href="\/#how">How it works<\/a>/);
   });
 
   it('no practice CTA in the hero', () => {
