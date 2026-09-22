@@ -5,48 +5,76 @@ import Link from 'next/link';
 import Image from 'next/image';
 import SiteHeader from './_landing/SiteHeader';
 import SiteFooter from './_landing/SiteFooter';
-import {
-  CalendarIcon,
-  ClockIcon,
-  EcgIcon,
-  BoltIcon,
-  CardIcon,
-} from './_landing/icons';
+import { splitInstalments } from '@/lib/finance';
+import { formatRand } from './patient/_format';
 import './landing.css';
 
 // ─── Landing page — patient audience only ──────────────────────────────
 //
-// This file is the SINGLE-AUDIENCE landing page. Provider-facing
-// content lives on /practices; the header + footer link there. The
-// legacy in-page #practices anchor is deliberately dropped —
-// bookmarks that included it are redirected to /practices by the
-// hash-redirect effect below.
+// v4 layout (Sep 2026), built from the "betternow landing concept":
+// mint hero with a consultation photo, an overlapping proof card, colour-
+// blocked reason cards, the real app screenshot beside an accordion of
+// steps, a "what you'll need" grid, a navy bill calculator, a two-column
+// FAQ and a navy closing band. Everything is scoped under .lp-v4 in
+// landing.css, so the SHARED SiteHeader / SiteFooter / .lp-root base that
+// /practices, /contact, /legal/* and the auth surfaces render through is
+// untouched.
+//
+// This file is the SINGLE-AUDIENCE landing page. Provider-facing content
+// lives on /practices; the header + footer link there. The legacy in-page
+// #practices anchor is deliberately dropped — bookmarks that included it
+// are redirected to /practices by the hash-redirect effect below.
+//
+// Copy rule carried over from the concept: the interest promise is
+// unconditional (no interest is ever charged), but the FEE promise is
+// conditional on paying on time — the patient T&Cs carry a capped default
+// fee, so "no fees" is never stated without "when you pay on time".
 
-// Relative timing labels for the bill-splitter illustration. Deliberately
-// NOT real dates — the real schedule comes from the patient's chosen
-// salary_day (lib/salaryDates.ts) at checkout.
+// Relative timing labels for the calculator. Deliberately NOT real dates —
+// the real schedule comes from the patient's chosen salary_day
+// (lib/salaryDates.ts) at checkout.
 const WHEN = ['Today', 'Next payday', 'The payday after'];
 
-function randLabel(n: number): string {
-  const [i, d] = n.toFixed(2).split('.');
-  return 'R' + i.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '.' + d;
+// Calculator bounds. The ceiling is an illustration, not a promise — what a
+// patient can actually spend is their approved allowance, which the note
+// under the calculator says in plain words.
+const CALC_MIN = 500;
+const CALC_MAX = 20000;
+const CALC_STEP = 500;
+
+// "R3,000" for whole Rands, "R166.68" when there are cents — the portal's
+// deterministic formatter (no toLocaleString, so server and browser render
+// identical strings), minus the trailing ".00" on whole amounts.
+function rands(n: number): string {
+  return formatRand(n).replace(/\.00$/, '');
 }
 
-export default function LandingPage() {
-  // Bill-splitter — presentational only (no fetch, no persistence). The
-  // example bill is a fixed R3,000 (no slider); only the plan choice is
-  // interactive. The arithmetic mirrors the FAQ: equal instalments,
-  // instalment 1 absorbs the rounding remainder, total never exceeds the
-  // bill.
-  const bill = 3000;
-  const [plan, setPlan] = useState<2 | 3>(3);
+const STEPS = [
+  {
+    title: 'Apply online',
+    body: 'Have your ID and card ready. We do a quick credit and affordability check and show you the healthcare allowance you qualify for.',
+  },
+  {
+    title: 'Choose Pay in 2 or Pay in 3',
+    body: 'At the practice, scan the betternow QR code at reception or tap the payment link they send you. Pick your plan and pay the first instalment when you accept it.',
+  },
+  {
+    title: 'Pay over your paydays',
+    body: 'Each instalment is charged to your saved card automatically on the date you chose. Pay early any time, free.',
+  },
+];
 
-  const splitBase = Math.floor((bill / plan) * 100) / 100;
-  const splitRows = Array.from({ length: plan }, (_, k) => ({
-    n:      k + 1,
-    when:   WHEN[k],
-    amount: randLabel(k === 0 ? Math.round((bill - splitBase * (plan - 1)) * 100) / 100 : splitBase),
-  }));
+export default function LandingPage() {
+  // Calculator — presentational only (no fetch, no persistence). The split
+  // is the SAME function checkout uses (lib/finance.ts splitInstalments):
+  // equal instalments, the first absorbs the rounding remainder, and the
+  // total never differs from the bill.
+  const [bill, setBill] = useState(3000);
+  const [plan, setPlan] = useState<2 | 3>(3);
+  const instalments = splitInstalments(bill, plan);
+
+  // How-it-works accordion: exactly one step open at a time.
+  const [openStep, setOpenStep] = useState(0);
 
   // Old #practices anchor → /practices. Handles bookmarks and any
   // external link that used the old fragment.
@@ -70,218 +98,231 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="lp-root lp-v3">
+    <div className="lp-root lp-v4">
 
       <SiteHeader />
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      {/*
-          Offer-first hero: the headline states what betternow does in one
-          line, so the proposition is the first thing read on the page. The
-          brand slogan and the rotating-verb wordmark that used to carry
-          this slot said nothing about the offer, so they are gone. */}
-      <div className="stage">
-        <div className="wrap hero">
-          <h1>
-            Split any medical expense into{' '}
-            <span className="hero-accent">3 interest-free payments</span>
-          </h1>
-          <p className="sub">
-            Dentist, optometrist, specialist, vet, pharmacy — pay a third today, the rest on your next two paydays.
-          </p>
-          <div className="ctas">
-            <Link className="btn btn-primary btn-lg" href="/signup">See what I qualify for</Link>
-            {/* Plain <a>, not next/link's <Link> — same-page hash
-                navigation via Link is a documented App Router no-op
-                (see SiteHeader.tsx), so this silently failed to scroll
-                to #how while already on /. */}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
-            <a className="btn btn-outline btn-lg" href="/#how">How it works</a>
+      <div className="l4-hero">
+        <div className="wrap l4-hero-grid">
+          <div className="l4-hero-copy">
+            <span className="l4-eyebrow"><span className="l4-pulse" aria-hidden="true" />Interest-free healthcare payments</span>
+            <h1>
+              Get treated today.{' '}
+              <em>Pay over payday.</em>
+            </h1>
+            <p className="l4-hero-sub">
+              Dentist, optometrist, specialist, vet, pharmacy — pay a share today and the rest on your next paydays. No interest, and no fees when you pay on time.
+            </p>
+            <div className="l4-hero-ctas">
+              <Link className="l4-btn l4-btn-navy" href="/signup">See what I qualify for <span aria-hidden="true">↗</span></Link>
+              {/* Plain <a>, not next/link's <Link> — same-page hash
+                  navigation via Link is a documented App Router no-op
+                  (see SiteHeader.tsx), so this silently failed to scroll
+                  to #how while already on /. */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- deliberate, see comment above */}
+              <a className="l4-play" href="/#how"><span className="l4-play-dot" aria-hidden="true">▶</span>See how it works</a>
+            </div>
+          </div>
+          <div className="l4-hero-visual">
+            <Image
+              className="l4-hero-photo"
+              src="/marketing/hero-consultation.webp"
+              alt="A patient smiling and holding her phone while talking with a doctor in a bright consultation room"
+              width={1536}
+              height={1024}
+              sizes="(max-width: 900px) 100vw, 560px"
+              preload
+            />
+            <span className="l4-photo-note"><b>Healthcare now.</b> Payments over payday.</span>
           </div>
         </div>
       </div>
 
-      {/* ── Why betternow — exactly 3 reason cards (Payflex pattern) ───── */}
-      <section id="why" className="band">
+      {/* ── Proof card + where to use it ─────────────────────────────────── */}
+      <div className="l4-proof-wrap">
         <div className="wrap">
-          <div className="sec-head reveal">
-            <div className="kicker">Why betternow</div>
-            <h2>Why betternow</h2>
+          <div className="l4-proof">
+            <div><b>0%</b><span>Interest, always</span></div>
+            <i aria-hidden="true" />
+            <div><b>2 or 3</b><span>Equal instalments</span></div>
+            <i aria-hidden="true" />
+            <div><b>1 min</b><span>Online application</span></div>
           </div>
-          <div className="lp-grid why-grid">
-            <div className="feature reveal">
-              <div className="ic"><CalendarIcon /></div>
-              <h4>Flexible payment options</h4>
-              <p>Choose Pay in 2 or Pay in 3 — interest-free instalments timed to your salary dates. Pay early any time, free.</p>
+          <div className="l4-uses">
+            <b>Use it for</b>
+            <ul>
+              <li>Dental</li><li>Optometry</li><li>Specialists</li><li>Pharmacy</li><li>Veterinary</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Why betternow — exactly 3 reason cards ─────────────────────── */}
+      <section id="why" className="l4-why">
+        <div className="wrap">
+          <div className="l4-kicker">Why betternow</div>
+          <div className="l4-why-head reveal">
+            <h2>Use your allowance. <span>Split the bill.</span></h2>
+            <div>
+              <p className="l4-lead">Once you&apos;re approved, you get an interest-free healthcare allowance you can use at any betternow practice.</p>
+              <p>Pay the first instalment when you accept a plan. The rest is charged to your card on the salary dates you choose.</p>
             </div>
-            <div className="feature reveal">
-              <div className="ic"><EcgIcon /></div>
-              <h4>Always interest-free</h4>
-              <p>You pay your bill, never a cent more. No interest, no fees on your plan.</p>
-            </div>
-            <div className="feature reveal">
-              <div className="ic"><BoltIcon /></div>
-              <h4>1-minute approval</h4>
+          </div>
+          <div className="l4-cards">
+            <article className="l4-card l4-card-navy reveal">
+              <span className="l4-card-ic" aria-hidden="true">0%</span>
+              <h3>Always interest-free</h3>
+              <p>No interest, ever. Pay each instalment on its due date and you repay exactly your bill — never a cent more, and no fees.</p>
+            </article>
+            <article className="l4-card l4-card-mint reveal">
+              <span className="l4-card-ic" aria-hidden="true">½</span>
+              <h3>Flexible payment options</h3>
+              <p>Choose Pay in 2 or Pay in 3 — equal instalments timed to your salary dates. Pay early any time, free.</p>
+            </article>
+            <article className="l4-card l4-card-sky reveal">
+              <span className="l4-card-ic" aria-hidden="true">↗</span>
+              <h3>1-minute approval</h3>
               <p>Get approved online in 1 minute. No paperwork, no branch visits.</p>
-            </div>
+            </article>
           </div>
         </div>
       </section>
 
-      {/* ── How it works — vertical timeline + live bill-splitter widget ── */}
-      <section id="how">
-        <div className="wrap">
-          <div className="sec-head reveal">
-            <div className="kicker">How it works</div>
-            <h2>Health can&apos;t wait. Payments can.</h2>
-            <p>Take your bill in smaller doses.</p>
+      {/* ── How it works — real app screenshot + one-open accordion ─────── */}
+      <section id="how" className="l4-how">
+        <div className="wrap l4-how-grid">
+          <div className="l4-phone-stage reveal">
+            <div className="l4-orbit" aria-hidden="true" />
+            <Image
+              className="l4-device"
+              src="/marketing/device-approved.png"
+              alt="betternow app showing an approved interest-free healthcare allowance"
+              width={630}
+              height={1290}
+              sizes="300px"
+            />
           </div>
-
-          <div className="how-two-col">
-            <ol className="timeline reveal">
-              <li className="tl-step">
-                <div className="tl-num">1</div>
-                <div className="tl-body">
-                  <h3>Get treated today</h3>
-                  <p>Ask for betternow at your practice, or tap the payment link they send you. No waiting for payday.</p>
-                </div>
-              </li>
-              <li className="tl-step">
-                <div className="tl-num">2</div>
-                <div className="tl-body">
-                  <h3>Choose Pay in 2 or Pay in 3</h3>
-                  <p>Split your bill into 2 or 3 equal, interest-free instalments timed to your salary dates. Pay the first today, the rest charged automatically to your card on your next paydays.</p>
-                </div>
-              </li>
-              <li className="tl-step">
-                <div className="tl-num">3</div>
-                <div className="tl-body">
-                  <h3>Pay over your paydays</h3>
-                  <p>Each instalment is charged to your saved card automatically on the date you chose. The price never changes — you pay your bill, never a cent more. Pay early any time, free.</p>
-                </div>
-              </li>
+          <div className="l4-how-copy">
+            <div className="l4-kicker">How it works</div>
+            <h2>Health can&apos;t wait. <span>Payments can.</span></h2>
+            <p className="l4-how-sub">Take your bill in smaller doses.</p>
+            <ol className="l4-steps">
+              {STEPS.map((s, i) => (
+                <li key={s.title} className={openStep === i ? 'open' : undefined}>
+                  <button
+                    type="button"
+                    aria-expanded={openStep === i}
+                    aria-controls={`l4-step-${i}`}
+                    onClick={() => setOpenStep(i)}
+                  >
+                    <b>0{i + 1}</b>
+                    <span>{s.title}</span>
+                    <i aria-hidden="true">{openStep === i ? '−' : '+'}</i>
+                  </button>
+                  <p id={`l4-step-${i}`} hidden={openStep !== i}>{s.body}</p>
+                </li>
+              ))}
             </ol>
-
-            <div className="how-visual reveal">
-              <div className="split-two-col">
-                <div className="split-intro">
-                  <div className="kicker">Your bill, in doses</div>
-                  <p className="split-lead">A R3,000 example bill, split into equal, interest-free instalments timed to your salary dates. Pick your plan.</p>
-                  <div className="split-controls">
-                    <div className="split-bill">
-                      <span className="split-bill-label">Your bill</span>
-                      <span className="split-bill-amt">{randLabel(bill)}</span>
-                    </div>
-                    <div className="split-plans">
-                      <button type="button" className={`split-plan${plan === 2 ? ' on' : ''}`} onClick={() => setPlan(2)}>Pay in 2</button>
-                      <button type="button" className={`split-plan${plan === 3 ? ' on' : ''}`} onClick={() => setPlan(3)}>Pay in 3</button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="split-card">
-                  <div className="split-card-top">
-                    <span className="split-card-eyebrow">Your plan</span>
-                    <span className="split-chip">
-                      <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 10.5l3 3 7-7" /></svg>
-                      Interest-free
-                    </span>
-                  </div>
-                  <div className="split-per">
-                    <span className="split-per-name">{plan === 2 ? 'Pay in 2' : 'Pay in 3'} · equal instalments</span>
-                    <span className="split-per-amt">{randLabel(splitBase)}</span>
-                    <span className="split-per-sub">per instalment</span>
-                  </div>
-                  <div className="split-rows">
-                    {splitRows.map((r) => (
-                      <div className="split-row" key={r.n}>
-                        <span className="split-row-n">{r.n}</span>
-                        <span className="split-row-when">{r.when}</span>
-                        <span className="split-row-amt">{r.amount}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="split-totals">
-                    <div className="split-total-row"><span>Total you pay</span><span>{randLabel(bill)}</span></div>
-                    <div className="split-fees"><span>Interest and plan fees</span><span className="split-zero">R0.00</span></div>
-                  </div>
-                  <p className="split-note">Illustration only. Your allowance and instalments depend on your approved limit and chosen salary dates.</p>
-                </div>
-              </div>
-            </div>
+            <Link className="l4-arrow" href="/signup">Check my allowance <span aria-hidden="true">→</span></Link>
           </div>
         </div>
       </section>
 
-      {/* ── All you need to get started — soft-tinted band, text+CTA left,
-             device-approved.png right on desktop ────────────────────────── */}
-      <section className="gs-band">
+      {/* ── What you'll need ────────────────────────────────────────────── */}
+      <section id="requirements" className="l4-reqs">
         <div className="wrap">
-          <div className="gs-two-col reveal">
-            <div className="gs-text">
-              <div className="kicker">Getting started</div>
-              <h2>All you need to get started</h2>
-              <p>Give your health some credit — it&apos;s due.</p>
-              <div className="gs-reqs">
-                <div className="pillar">
-                  <div className="ic"><CardIcon /></div>
-                  <h4>A debit or credit card</h4>
-                  <p>Your instalments are charged automatically to your Visa or Mastercard — debit or credit.</p>
-                </div>
-                <div className="pillar">
-                  <div className="ic"><ClockIcon /></div>
-                  <h4>1 minute</h4>
-                  <p>Sign up, have your ID handy, and complete a quick credit and affordability check — all online in about 1 minute. You&apos;ll need to be 18 or older with a good credit record.</p>
-                </div>
-              </div>
+          <div className="l4-reqs-head reveal">
+            <div>
+              <div className="l4-kicker">Getting started</div>
+              <h2>What you&apos;ll need.</h2>
             </div>
-            <div className="gs-visual">
-              <Image
-                className="device"
-                src="/marketing/device-approved.png"
-                alt="betternow app showing an approved interest-free healthcare allowance"
-                width={630}
-                height={1290}
-                priority={false}
-              />
-            </div>
+            <p>Give your health some credit — it&apos;s due. The application takes about 1 minute; have these ready before you start.</p>
           </div>
-          {/* CTA lives OUTSIDE the two-column grid so the read order is
-              content → image → CTA on both mobile (stacked) and desktop
-              (centered row below both columns). */}
-          <div className="gs-cta reveal">
-            <Link className="btn btn-primary btn-lg" href="/signup">Get started</Link>
+          <div className="l4-req-grid">
+            <article className="reveal"><span aria-hidden="true">18+</span><div><h3>Be 18 or older</h3><p>With a good credit record.</p></div></article>
+            <article className="reveal"><span aria-hidden="true">ID</span><div><h3>Your South African ID</h3><p>We use it to verify your identity.</p></div></article>
+            <article className="reveal"><span aria-hidden="true">✓</span><div><h3>A debit or credit card</h3><p>Visa or Mastercard. Your instalments are charged to it automatically.</p></div></article>
+            <article className="reveal"><span aria-hidden="true">1m</span><div><h3>1 minute</h3><p>For a quick credit and affordability check.</p></div></article>
+          </div>
+          <div className="l4-secure"><b>Your information stays private.</b><span>Encrypted and handled in line with POPIA. We never sell your information.</span></div>
+        </div>
+      </section>
+
+      {/* ── Calculator — slider + Pay in 2 / Pay in 3 ───────────────────── */}
+      <section className="l4-calc-sec">
+        <div className="wrap">
+          <div className="l4-calc reveal">
+            <div className="l4-calc-copy">
+              <div className="l4-kicker l4-kicker-light">Try an amount</div>
+              <h2>What will each payment be?</h2>
+              <p>Move the slider and pick a plan to see how a bill splits into equal, interest-free instalments.</p>
+            </div>
+            <div className="l4-calc-card">
+              <label className="l4-bill" htmlFor="l4-bill-range">
+                <span>Your healthcare bill</span>
+                <strong>{rands(bill)}</strong>
+              </label>
+              <input
+                id="l4-bill-range"
+                type="range"
+                min={CALC_MIN}
+                max={CALC_MAX}
+                step={CALC_STEP}
+                value={bill}
+                onChange={(e) => setBill(Number(e.target.value))}
+                aria-valuetext={rands(bill)}
+              />
+              <div className="l4-range-ends" aria-hidden="true"><span>{rands(CALC_MIN)}</span><span>{rands(CALC_MAX)}</span></div>
+              <div className="l4-toggle" role="group" aria-label="Plan">
+                <button type="button" aria-pressed={plan === 2} onClick={() => setPlan(2)}>Pay in 2</button>
+                <button type="button" aria-pressed={plan === 3} onClick={() => setPlan(3)}>Pay in 3</button>
+              </div>
+              <div className={`l4-pays l4-pays-${plan}`} aria-live="polite">
+                {instalments.map((amt, k) => (
+                  <div key={k}><small>{WHEN[k]}</small><b>{rands(amt)}</b></div>
+                ))}
+              </div>
+              <div className="l4-total">
+                <span>Total you pay</span>
+                <strong>{rands(bill)} <small>0% interest</small></strong>
+              </div>
+              <p className="l4-calc-note">Illustration only. What you can spend depends on your approved allowance, and your dates on the salary day you choose.</p>
+            </div>
           </div>
         </div>
       </section>
 
       {/* ── FAQ (patient-only) ──────────────────────────────────────────── */}
-      <section id="faq">
-        <div className="wrap">
-          <div className="sec-head reveal">
-            <div className="kicker">Questions</div>
-            <h2>Good to know</h2>
+      <section id="faq" className="l4-faq">
+        <div className="wrap l4-faq-grid">
+          <div className="l4-faq-intro">
+            <div className="l4-kicker">Good to know</div>
+            <h2>Questions, <span>answered.</span></h2>
+            <p>Still unsure about something? Get in touch and we&apos;ll help.</p>
+            <Link className="l4-arrow" href="/contact">Contact us <span aria-hidden="true">→</span></Link>
           </div>
-          <div className="faq">
-            <details className="q reveal"><summary>Is it really interest-free?<span className="pm" /></summary><div className="a">Yes. You repay exactly your bill amount, split into 2 or 3 instalments. No interest, no fees added to your plan. Instalments, not a loan that snowballs — the total never grows beyond your original bill.</div></details>
-            <details className="q reveal"><summary>How does my allowance work?<span className="pm" /></summary><div className="a">Once you&apos;re approved, you get an interest-free healthcare allowance — a spending limit you can use at any betternow practice. Bills get split into 2 or 3 instalments against your allowance, and your available balance reflects what you&apos;ve repaid.</div></details>
-            <details className="q reveal"><summary>Is there a credit check?<span className="pm" /></summary><div className="a">Yes — a quick credit and affordability check when you sign up, done once, to set your allowance responsibly. It takes about 1 minute online, so you never take on more than you can manage.</div></details>
-            <details className="q reveal"><summary>What do I need to use betternow?<span className="pm" /></summary><div className="a">You&apos;ll need to be 18 or older with a good credit record. On the practical side: a debit or credit card (Visa or Mastercard) for us to charge instalments to, your ID for a quick verification, and about 1 minute to complete the credit and affordability check.</div></details>
-            <details className="q reveal"><summary>When are instalments collected?<span className="pm" /></summary><div className="a">Automatically charged to your saved card on the salary dates you choose. Pay early any time, free of charge.</div></details>
-            <details className="q reveal"><summary>Is my information safe?<span className="pm" /></summary><div className="a">Your data is encrypted end-to-end and processed over secure, audited rails, and handled in line with POPIA. We never sell your information.</div></details>
+          <div className="l4-faq-list">
+            <details open><summary>Is it really interest-free?<span aria-hidden="true">+</span></summary><p>Yes. Your bill is split into 2 or 3 instalments and no interest is ever added. Pay each instalment on time and you repay exactly your bill amount, with no fees either. If a payment fails and stays unpaid, a capped default fee applies, as set out in our Terms.</p></details>
+            <details><summary>How does my allowance work?<span aria-hidden="true">+</span></summary><p>Once you&apos;re approved, you get an interest-free healthcare allowance — a spending limit you can use at any betternow practice. Bills get split into 2 or 3 instalments against your allowance, and your available balance reflects what you&apos;ve repaid.</p></details>
+            <details><summary>Is there a credit check?<span aria-hidden="true">+</span></summary><p>Yes — a quick credit and affordability check when you sign up, done once, to set your allowance responsibly. It takes about 1 minute online, so you never take on more than you can manage.</p></details>
+            <details><summary>What do I need to use betternow?<span aria-hidden="true">+</span></summary><p>You&apos;ll need to be 18 or older with a good credit record. On the practical side: a debit or credit card (Visa or Mastercard) for us to charge instalments to, your ID for a quick verification, and about 1 minute to complete the credit and affordability check.</p></details>
+            <details><summary>When are instalments collected?<span aria-hidden="true">+</span></summary><p>Automatically charged to your saved card on the salary dates you choose. Pay early any time, free of charge.</p></details>
+            <details><summary>Is my information safe?<span aria-hidden="true">+</span></summary><p>Your data is encrypted end-to-end and processed over secure, audited rails, and handled in line with POPIA. We never sell your information.</p></details>
           </div>
         </div>
       </section>
 
       {/* ── Final CTA ────────────────────────────────────────────────────── */}
-      <section>
-        <div className="wrap">
-          <div className="final reveal">
-            <h2>Full recovery. Zero interest.</h2>
+      <section className="l4-final">
+        <div className="wrap l4-final-grid">
+          <div>
+            <div className="l4-kicker l4-kicker-light">Need healthcare now?</div>
+            <h2>Full recovery. <em>Zero interest.</em></h2>
+          </div>
+          <div>
             <p>The best bill of health is one you can actually afford.</p>
-            <div className="ctas">
-              <Link className="btn btn-primary btn-lg" href="/signup">Get started</Link>
-            </div>
+            <Link className="l4-btn l4-btn-white" href="/signup">Check my allowance <span aria-hidden="true">↗</span></Link>
           </div>
         </div>
       </section>

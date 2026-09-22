@@ -1154,259 +1154,411 @@
   }
 }
 
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   v3 landing refresh — scoped to .lp-v3 so the SHARED SiteHeader / SiteFooter
-   / .stage (also used by /practices under a plain .lp-root) are untouched.
-   Navy hero, over-navy translucent header, bill splitter, navy getting-
-   started band, hover cards, rounded overlapping final CTA, 4-col footer. Reverts to the light base treatment wherever a rule isn't overridden.
+   v4 landing — scoped to .lp-v4 so the SHARED SiteHeader / SiteFooter / base
+   .lp-root rules (also rendered by /practices, /contact, /legal/*, the auth
+   surfaces) are untouched. Visual direction: the "betternow landing concept"
+   (mint hero + photo, overlapping proof card, colour-blocked cards, phone +
+   accordion, requirements grid, navy calculator, two-column FAQ, navy close),
+   re-expressed in the brand tokens — Poppins, navy #13294B / teal #15A89E.
+
+   Contrast notes (WCAG):
+     • Hero ground is a LIGHT mint (#CBF5F0 → #93E6DE), not the concept's
+       saturated #58DFD2: the concept's white accent on saturated mint is
+       ~1.7:1 and its "now" wordmark vanished into the mint header. Teal-ink
+       #0F766F on this ground is ≥3.8:1 (large text) and navy-deep ≥11:1.
+     • Header stays the light, shared treatment for the same reason.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Header: translucent navy over the hero; light once scrolled past it ──── */
-.lp-v3 header:not(.scrolled) {
-  background: rgba(15,37,68,.72);
-  backdrop-filter: saturate(180%) blur(18px);
-  -webkit-backdrop-filter: saturate(180%) blur(18px);
-  border-bottom-color: rgba(255,255,255,.10);
+.lp-v4 {
+  --mint:      #5CD9CE;
+  --mint-soft: #CBF5F0;
+  --mint-card: #BDF4EF;
+  --sky-card:  #DCE8FF;
+  --ice:       #F2F8F8;
+  --teal-ink:  var(--brand-teal-ink);
+  background: #fff;
 }
-.lp-v3 header:not(.scrolled) .brand .lp-b,
-.lp-v3 header:not(.scrolled) .nav-links a { color: #fff; }
-.lp-v3 header:not(.scrolled) .brand .lp-n { color: #5CD9CE; }
-.lp-v3 header:not(.scrolled) .nav-links a:hover { color: #fff; background: rgba(255,255,255,.12); }
-.lp-v3 header:not(.scrolled) .signin { color: #fff; border-color: rgba(255,255,255,.28); background: transparent; }
-.lp-v3 header:not(.scrolled) .signin:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.5); }
-.lp-v3 header:not(.scrolled) .burger span { background: #fff; }
-.lp-v3 header:not(.scrolled) .burger:hover { background: rgba(255,255,255,.12); }
 
-/* Pill-hover nav in v3 (both header states) */
-.lp-v3 .nav-links { gap: 2px; }
-.lp-v3 .nav-links a { padding: 9px 14px; border-radius: 999px; }
-.lp-v3 .nav-links a:hover { background: #F1F5F6; }
+.lp-v4 section { padding: 0; }
+.lp-v4 h1, .lp-v4 h2, .lp-v4 h3 { margin: 0; color: var(--navy); }
+.lp-v4 h2 {
+  font-size: clamp(2.1rem, 4.6vw, 3.6rem);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -.035em;
+}
+.lp-v4 h2 span, .lp-v4 h2 em { color: var(--teal); font-style: normal; }
 
-/* Sign in button in the header right cluster — the hero already carries
-   the primary "Get started" CTA, so this pill is Sign in instead. */
-.lp-v3 .nav-cta .nav-signin {
+.lp-v4 .l4-kicker {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--teal-ink);
+  margin-bottom: 18px;
+}
+.lp-v4 .l4-kicker-light { color: var(--mint); }
+
+/* ── Header (shared component; v4 treatment only) ─────────────────────────── */
+.lp-v4 header { background: rgba(255,255,255,.9); }
+.lp-v4 .nav-links { gap: 2px; }
+.lp-v4 .nav-links a { padding: 9px 14px; border-radius: 999px; }
+.lp-v4 .nav-links a:hover { background: var(--ice); }
+.lp-v4 .nav-cta .nav-signin {
   text-decoration: none;
   font-weight: 600;
   font-size: 15px;
   padding: 10px 18px;
-  border-radius: 999px;
+  border-radius: 10px;
   white-space: nowrap;
-  background: var(--teal);
+  background: var(--navy-deep);
   color: #fff;
-  box-shadow: 0 8px 18px -10px rgba(21,168,158,.95);
   transition: background .2s;
 }
-.lp-v3 .nav-cta .nav-signin:hover { background: #12958C; }
-.lp-v3 header:not(.scrolled) .nav-cta .nav-signin { background: #5CD9CE; color: #0F2544; }
-.lp-v3 header:not(.scrolled) .nav-cta .nav-signin:hover { background: #8BE8E0; }
-
-/* Mobile menu CTAs */
-.lp-v3 .mobile-menu .mobile-cta {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.lp-v4 .nav-cta .nav-signin:hover { background: var(--navy); }
+.lp-v4 .mobile-menu .mobile-cta {
+  display: flex; flex-direction: column; gap: 10px;
   padding: 14px clamp(20px, 5vw, 40px) 4px;
 }
-.lp-v3 .mobile-menu .mobile-cta a {
-  padding: 15px;
-  border-radius: 14px;
-  text-align: center;
-  font-weight: 600;
-  font-size: 15px;
+.lp-v4 .mobile-menu .mobile-cta a {
+  padding: 15px; border-radius: 12px; text-align: center; font-weight: 600; font-size: 15px;
 }
-.lp-v3 .mobile-menu .mobile-cta .m-get { background: var(--teal); color: #fff; }
-.lp-v3 .mobile-menu .mobile-cta .m-signin { background: #F1F5F6; color: var(--navy); }
+.lp-v4 .mobile-menu .mobile-cta .m-get { background: var(--navy-deep); color: #fff; }
+.lp-v4 .mobile-menu .mobile-cta .m-signin { background: var(--ice); color: var(--navy); }
 
-/* ── Hero: full-bleed navy, pulled up under the sticky header ─────────────── */
-.lp-v3 .stage {
-  background: #0F2544;
-  color: #fff;
-  isolation: isolate;
-  margin-top: -66px;
-  padding: clamp(120px, 16vh, 168px) 0 0;
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.lp-v4 .l4-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 15px 24px;
+  border-radius: 10px;
+  font-weight: 600; font-size: 16px; line-height: 1.2;
+  text-decoration: none;
+  transition: transform .2s ease, background .2s ease;
 }
-.lp-v3 .stage::after { display: none; }          /* drop the light grid overlay */
-.lp-v3 .stage::before {
-  background:
-    radial-gradient(44% 40% at 74% 14%, rgba(21,168,158,.55), transparent 66%),
-    radial-gradient(40% 42% at 4% 92%, rgba(21,168,158,.22), transparent 70%);
-  animation: v3GlowDrift 18s ease-in-out infinite;
-}
-@keyframes v3GlowDrift {
-  0%, 100% { transform: translate3d(0,0,0) scale(1); opacity: .6; }
-  50%      { transform: translate3d(-3%,4%,0) scale(1.08); opacity: .8; }
-}
+.lp-v4 .l4-btn:hover { transform: translateY(-2px); }
+.lp-v4 .l4-btn-navy { background: var(--navy-deep); color: #fff; box-shadow: 0 12px 28px -12px rgba(14,33,64,.55); }
+.lp-v4 .l4-btn-navy:hover { background: var(--navy); }
+.lp-v4 .l4-btn-white { background: #fff; color: var(--navy-deep); }
+.lp-v4 .l4-btn-white:hover { background: var(--mint); }
 
-.lp-v3 .hero { padding-bottom: clamp(44px, 8vh, 84px); }
-
-/* Offer-first headline. The base .lp-root h1 is a baseline-aligned flex
-   row sized for the rotating verb + wordmark (still how /practices uses
-   it); this hero is one wrapped sentence, so it reverts to a plain
-   centred block on a measure that holds it to three lines on desktop. */
-.lp-v3 .stage h1 {
-  display: block;
-  text-align: center;
-  max-width: 17ch;
-  margin: 0;
-  font-size: clamp(2.2rem, 5.4vw, 3.5rem);
-  line-height: 1.04;
-  letter-spacing: -.045em;
-  color: #fff;
+.lp-v4 .l4-arrow {
+  display: inline-flex; gap: 26px;
+  margin-top: 30px; padding-bottom: 5px;
+  font-weight: 600; text-decoration: none; color: var(--navy);
+  border-bottom: 1.5px solid var(--navy);
 }
+.lp-v4 .l4-arrow span { transition: transform .2s; }
+.lp-v4 .l4-arrow:hover span { transform: translateX(4px); }
 
-/* The payment terms — the half of the headline that carries the offer. */
-.lp-v3 .stage h1 .hero-accent { color: #5CD9CE; }
-
-/* Wider measure than the base 36ch: the subline leads with a specialty
-   list, which reads badly when broken every few words. */
-.lp-v3 .hero .sub { max-width: 44ch; color: rgba(255,255,255,.72); }
-.lp-v3 .stage .ctas .btn-primary {
-  background: #fff;
-  color: var(--navy);
-  box-shadow: 0 16px 32px -18px rgba(0,0,0,.55);
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+.lp-v4 .l4-hero {
+  background: linear-gradient(135deg, var(--mint-soft) 0%, #93E6DE 100%);
+  padding: clamp(40px, 7vw, 88px) 0 clamp(110px, 12vw, 150px);
 }
-.lp-v3 .stage .ctas .btn-primary:hover { background: #E8FBF9; }
-.lp-v3 .stage .ctas .btn-outline {
-  color: #fff;
-  background: transparent;
-  border: 1.5px solid rgba(255,255,255,.30);
-}
-.lp-v3 .stage .ctas .btn-outline:hover { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.5); }
-
-/* ── Bill splitter — now embedded as the "How it works" visual (was its
-   own top-level section; the .split-sec host class is gone) ────────────── */
-.lp-v3 .split-two-col {
+.lp-v4 .l4-hero-grid {
   display: grid;
-  gap: 44px;
   grid-template-columns: minmax(0, 1fr);
+  gap: 40px;
   align-items: center;
 }
-@media(min-width: 1080px) {
-  .lp-v3 .split-two-col { grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: 72px; }
+@media (min-width: 900px) {
+  .lp-v4 .l4-hero-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 64px; }
 }
-/* @media is viewport-relative, not container-relative — the rule above
-   assumed .split-two-col always had the full ~1140px wrap to itself
-   (true when it was its own top-level section), but nested inside
-   .how-visual it only ever gets that column's own share (~500-585px at
-   any desktop width), so the 2-up grid above squeezed both halves and
-   overlapped. Force it back to a single stacked column at every width
-   in THIS context; how-two-col's own breakpoint already put the whole
-   widget in the right-hand column of the section's 2-up layout. */
-.lp-v3 .how-visual .split-two-col {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 32px;
+.lp-v4 .l4-eyebrow {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--teal-ink);
 }
-.lp-v3 .split-intro .kicker { display: block; }
-.lp-v3 .split-lead {
-  margin-top: 10px;
-  max-width: 46ch;
-  color: var(--muted);
-  font-size: clamp(1rem, 2.4vw, 1.12rem);
-  line-height: 1.6;
+.lp-v4 .l4-pulse {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--navy-deep);
+  box-shadow: 0 0 0 6px rgba(14,33,64,.1);
 }
-.lp-v3 .split-controls { margin-top: 26px; max-width: 520px; display: flex; flex-direction: column; gap: 20px; }
-.lp-v3 .split-bill { display: flex; align-items: baseline; justify-content: space-between; }
-.lp-v3 .split-bill-label { font-size: 13px; font-weight: 600; color: var(--muted); }
-.lp-v3 .split-bill-amt { font-size: 30px; font-weight: 700; letter-spacing: -.03em; color: var(--navy); font-variant-numeric: tabular-nums; }
-.lp-v3 .split-plans { display: flex; gap: 10px; }
-.lp-v3 .split-plan {
-  flex: 1;
-  border: 1.5px solid #E2E8EE;
-  background: #FBFCFD;
-  color: #41556F;
-  border-radius: 16px;
-  padding: 16px;
-  font-family: inherit;
-  font-size: 15.5px;
+.lp-v4 .l4-hero h1 {
+  display: block;
+  margin: 22px 0 22px;
+  font-size: clamp(2.6rem, 6.4vw, 4.9rem);
   font-weight: 600;
-  cursor: pointer;
-  transition: all .18s ease;
+  line-height: 1.02;
+  letter-spacing: -.045em;
+  color: var(--navy-deep);
+  text-align: left;
 }
-.lp-v3 .split-plan.on { background: var(--teal); color: #fff; border-color: var(--teal); }
-
-.lp-v3 .split-card {
-  position: relative;
-  background: #fff;
-  border: 1px solid rgba(19,41,75,.08);
+.lp-v4 .l4-hero h1 em { display: block; font-style: normal; color: var(--teal-ink); }
+.lp-v4 .l4-hero-sub {
+  max-width: 34rem;
+  font-size: clamp(1.05rem, 1.6vw, 1.22rem);
+  line-height: 1.55;
+  color: rgba(14,33,64,.8);
+}
+.lp-v4 .l4-hero-ctas {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px 28px;
+  margin-top: 34px;
+}
+.lp-v4 .l4-play {
+  display: inline-flex; align-items: center; gap: 12px;
+  font-weight: 600; text-decoration: none; color: var(--navy-deep);
+}
+.lp-v4 .l4-play-dot {
+  width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px;
+  border: 1.5px solid rgba(14,33,64,.35);
+}
+.lp-v4 .l4-hero-visual { position: relative; }
+.lp-v4 .l4-hero-photo {
+  display: block;
+  width: 100%;
+  height: clamp(300px, 42vw, 490px);
+  object-fit: cover;
+  object-position: 57% center;
   border-radius: 28px;
-  box-shadow: 0 40px 70px -44px rgba(15,31,58,.45);
-  padding: 32px 30px 30px;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
+  box-shadow: 0 24px 58px -18px rgba(14,33,64,.35);
 }
-.lp-v3 .split-card-top { display: flex; align-items: center; justify-content: space-between; }
-.lp-v3 .split-card-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: #93A2B4; }
-.lp-v3 .split-chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-size: 12px; font-weight: 600; color: #0F766E;
-  background: rgba(21,168,158,.12); border-radius: 999px; padding: 7px 13px;
+.lp-v4 .l4-photo-note {
+  position: absolute; right: 18px; bottom: 18px;
+  max-width: 230px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.95);
+  color: var(--muted);
+  font-size: 13px; line-height: 1.35;
+  box-shadow: 0 10px 30px rgba(14,33,64,.17);
 }
-.lp-v3 .split-per { display: flex; flex-direction: column; gap: 2px; }
-.lp-v3 .split-per-name { font-size: 13px; color: #8496AA; }
-.lp-v3 .split-per-amt { font-size: clamp(38px, 4vw, 52px); line-height: 1.05; font-weight: 700; letter-spacing: -.04em; color: var(--navy); font-variant-numeric: tabular-nums; }
-.lp-v3 .split-per-sub { font-size: 14px; color: var(--muted); }
-.lp-v3 .split-rows { display: flex; flex-direction: column; }
-.lp-v3 .split-row { display: flex; align-items: center; gap: 16px; padding: 16px 0; border-top: 1px solid #EEF2F5; }
-.lp-v3 .split-row-n { flex: none; width: 34px; height: 34px; border-radius: 999px; background: #F1F5F6; color: var(--navy); display: flex; align-items: center; justify-content: center; font-size: 13.5px; font-weight: 600; }
-.lp-v3 .split-row-when { flex: 1; font-size: 15px; color: #41556F; }
-.lp-v3 .split-row-amt { font-size: 16px; font-weight: 600; color: var(--navy); font-variant-numeric: tabular-nums; }
-.lp-v3 .split-totals { border-top: 1px solid #EEF2F5; padding-top: 18px; display: flex; flex-direction: column; gap: 8px; }
-.lp-v3 .split-total-row { display: flex; align-items: center; justify-content: space-between; font-size: 15px; font-weight: 600; color: var(--navy); }
-.lp-v3 .split-fees { display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #8496AA; }
-.lp-v3 .split-zero { font-weight: 600; color: var(--teal); }
-.lp-v3 .split-note { margin: 0; font-size: 11.5px; line-height: 1.5; color: #A8B4C2; }
+.lp-v4 .l4-photo-note b { display: block; color: var(--navy); font-size: 14px; }
 
-/* ── Feature cards: tinted band so white cards pop + hover lift ───────────── */
-.lp-v3 .band { background: var(--bg); }
-.lp-v3 .feature { background: #fff; transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
-.lp-v3 .feature:hover {
-  transform: translateY(-6px);
-  box-shadow: 0 30px 50px -34px rgba(15,31,58,.4);
-  border-color: rgba(21,168,158,.4);
+/* ── Proof card (overlaps the hero) + "Use it for" ────────────────────────── */
+.lp-v4 .l4-proof-wrap { position: relative; z-index: 2; }
+.lp-v4 .l4-proof {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-top: -76px;
+  padding: 26px 24px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: 0 20px 55px -20px rgba(19,41,75,.25);
 }
-
-/* ── Getting-started band → navy ──────────────────────────────────────────── */
-.lp-v3 .gs-band {
-  background: #0F2544;
-  border-top: none;
-  border-bottom: none;
+.lp-v4 .l4-proof > div { display: flex; align-items: baseline; gap: 12px; }
+.lp-v4 .l4-proof b { color: var(--teal); font-size: 30px; font-weight: 700; letter-spacing: -.03em; line-height: 1; white-space: nowrap; }
+.lp-v4 .l4-proof span { color: var(--muted); font-weight: 600; }
+.lp-v4 .l4-proof > i { height: 1px; background: var(--line); }
+@media (min-width: 760px) {
+  .lp-v4 .l4-proof { grid-template-columns: 1fr 1px 1fr 1px 1fr; align-items: center; padding: 32px 44px; }
+  .lp-v4 .l4-proof > div { justify-content: center; }
+  .lp-v4 .l4-proof > i { width: 1px; height: 42px; }
 }
-.lp-v3 .gs-band .kicker { color: #5CD9CE; }
-.lp-v3 .gs-band h2 { color: #fff; }
-.lp-v3 .gs-band .gs-text > p { color: rgba(255,255,255,.72); }
-.lp-v3 .gs-band .gs-reqs .pillar {
-  background: rgba(255,255,255,.06);
-  border-color: rgba(255,255,255,.12);
+.lp-v4 .l4-uses {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 20px;
+  padding-top: 28px;
+  color: var(--navy);
 }
-.lp-v3 .gs-band .gs-reqs .pillar h4 { color: #fff; }
-.lp-v3 .gs-band .gs-reqs .pillar p { color: rgba(255,255,255,.72); }
-.lp-v3 .gs-band .gs-reqs .pillar .ic { background: rgba(92,217,206,.14); color: #5CD9CE; }
-
-/* ── FAQ rows on a soft surface ───────────────────────────────────────────── */
-.lp-v3 .faq { max-width: 840px; }
-.lp-v3 .q { background: var(--bg); border-radius: 20px; }
-
-/* ── Final CTA: rounded panel overlapping the footer ──────────────────────── */
-.lp-v3 section:has(.final) { padding-bottom: 0; }
-.lp-v3 .final { border-radius: 34px; transform: translateY(60px); }
-.lp-v3 footer { padding-top: 116px; }
-
-/* ── Footer: four-column grid + POPIA mark ────────────────────────────────── */
-.lp-v3 footer { background: var(--bg); }
-@media(min-width: 760px) {
-  .lp-v3 .foot { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 56px; }
-}
-.lp-v3 .foot-popia { display: inline-flex; align-items: center; gap: 9px; }
-.lp-v3 .foot-popia svg { width: 18px; height: 18px; color: var(--teal); }
-
-/* ── Responsive: collapse the two-column rows below the 1080 nav breakpoint ── */
-@media(min-width: 900px) and (max-width: 1079px) {
-  .lp-v3 .how-two-col,
-  .lp-v3 .gs-band .gs-two-col { grid-template-columns: minmax(0, 1fr); gap: 44px; }
+.lp-v4 .l4-uses ul { display: flex; flex-wrap: wrap; gap: 10px; list-style: none; margin: 0; padding: 0; }
+.lp-v4 .l4-uses li {
+  padding: 5px 15px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--ice);
+  font-size: 14px; color: var(--ink);
 }
 
-/* ── Reduced motion: still the hero glow ──────────────────────────────────── */
+/* ── Why ──────────────────────────────────────────────────────────────────── */
+.lp-v4 .l4-why { padding: clamp(72px, 10vw, 120px) 0; }
+.lp-v4 .l4-why-head {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px;
+}
+@media (min-width: 900px) {
+  .lp-v4 .l4-why-head { grid-template-columns: 1.1fr .9fr; gap: 90px; align-items: start; }
+}
+.lp-v4 .l4-why-head p { margin: 0 0 16px; color: var(--muted); font-size: 17px; }
+.lp-v4 .l4-why-head .l4-lead { color: var(--ink); font-size: clamp(1.15rem, 1.8vw, 1.4rem); line-height: 1.45; }
+.lp-v4 .l4-cards {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px;
+  margin-top: clamp(44px, 6vw, 72px);
+}
+@media (min-width: 700px) { .lp-v4 .l4-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.lp-v4 .l4-card { padding: 30px 28px; border-radius: 18px; min-height: 230px; }
+.lp-v4 .l4-card h3 { font-size: 20px; font-weight: 600; letter-spacing: -.02em; margin-top: 26px; }
+.lp-v4 .l4-card p { margin: 10px 0 0; color: var(--muted); font-size: 15.5px; }
+.lp-v4 .l4-card-ic {
+  display: grid; place-items: center;
+  width: 48px; height: 48px; border-radius: 13px;
+  background: rgba(255,255,255,.75); color: var(--teal-ink); font-weight: 700;
+}
+.lp-v4 .l4-card-navy { background: var(--navy); }
+.lp-v4 .l4-card-navy h3 { color: #fff; }
+.lp-v4 .l4-card-navy p { color: rgba(255,255,255,.78); }
+.lp-v4 .l4-card-navy .l4-card-ic { background: rgba(255,255,255,.12); color: var(--mint); }
+.lp-v4 .l4-card-mint { background: var(--mint-card); }
+.lp-v4 .l4-card-mint p, .lp-v4 .l4-card-sky p { color: #3E516B; }
+.lp-v4 .l4-card-sky { background: var(--sky-card); }
+
+/* ── How it works ─────────────────────────────────────────────────────────── */
+.lp-v4 .l4-how { background: var(--ice); padding: clamp(72px, 10vw, 115px) 0; overflow: hidden; }
+.lp-v4 .l4-how-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 48px; align-items: center; }
+@media (min-width: 900px) {
+  .lp-v4 .l4-how-grid { grid-template-columns: .95fr 1.05fr; gap: 90px; }
+}
+.lp-v4 .l4-phone-stage { position: relative; display: grid; place-items: center; min-height: 480px; }
+.lp-v4 .l4-orbit {
+  position: absolute; top: 50%; left: 50%;
+  width: min(440px, 92vw); aspect-ratio: 1; border-radius: 50%;
+  background: var(--mint);
+  transform: translate(-50%, -50%);
+}
+.lp-v4 .l4-orbit::after {
+  content: ""; position: absolute; inset: 34px;
+  border: 1px solid rgba(14,33,64,.14); border-radius: 50%;
+}
+.lp-v4 .l4-device {
+  position: relative; z-index: 1;
+  width: min(270px, 64vw); height: auto;
+  /* No drop-shadow filter: the PNG carries its own baked-in shadow, and a
+     filter traces that faint alpha into a visible grey box. */
+}
+@media (min-width: 900px) { .lp-v4 .l4-device { width: 290px; } .lp-v4 .l4-phone-stage { min-height: 620px; } }
+.lp-v4 .l4-how-copy .l4-how-sub { margin: 14px 0 30px; color: var(--muted); font-size: 17px; }
+.lp-v4 .l4-steps { list-style: none; margin: 0; padding: 0; }
+.lp-v4 .l4-steps li { border-top: 1px solid #CAD9DC; }
+.lp-v4 .l4-steps li:last-child { border-bottom: 1px solid #CAD9DC; }
+.lp-v4 .l4-steps button {
+  width: 100%;
+  display: grid; grid-template-columns: 46px 1fr auto; align-items: center;
+  padding: 20px 0;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  font: inherit; font-size: 17px; font-weight: 600; color: var(--navy);
+}
+.lp-v4 .l4-steps button b { font-size: 13px; color: var(--teal-ink); }
+.lp-v4 .l4-steps button i { font-style: normal; font-size: 24px; font-weight: 300; color: var(--navy); }
+.lp-v4 .l4-steps p { margin: -4px 34px 22px 46px; color: var(--muted); }
+
+/* ── What you'll need ─────────────────────────────────────────────────────── */
+.lp-v4 .l4-reqs { padding: clamp(72px, 10vw, 110px) 0; }
+.lp-v4 .l4-reqs-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-bottom: 44px; }
+@media (min-width: 900px) { .lp-v4 .l4-reqs-head { grid-template-columns: 1fr .8fr; gap: 90px; align-items: end; } }
+.lp-v4 .l4-reqs-head p { margin: 0 0 6px; max-width: 30rem; color: var(--muted); font-size: 17px; }
+.lp-v4 .l4-req-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+@media (min-width: 600px) { .lp-v4 .l4-req-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .lp-v4 .l4-req-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.lp-v4 .l4-req-grid article {
+  display: flex; gap: 15px;
+  padding: 22px 20px;
+  border: 1px solid #DCE7E8; border-radius: 15px; background: #fff;
+}
+.lp-v4 .l4-req-grid article > span {
+  flex: 0 0 42px; height: 42px;
+  display: grid; place-items: center;
+  border-radius: 11px; background: #E5FAF7; color: var(--teal-ink);
+  font-size: 13px; font-weight: 700;
+}
+.lp-v4 .l4-req-grid h3 { margin: 3px 0 6px; font-size: 16.5px; font-weight: 600; letter-spacing: -.01em; }
+.lp-v4 .l4-req-grid p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.lp-v4 .l4-secure {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px;
+  margin-top: 26px; padding: 16px 22px;
+  border-radius: 12px; background: var(--ice);
+  color: var(--muted); font-size: 14px; text-align: center;
+}
+.lp-v4 .l4-secure b { color: var(--navy); }
+
+/* ── Calculator ───────────────────────────────────────────────────────────── */
+.lp-v4 .l4-calc-sec { padding: 0 0 clamp(72px, 10vw, 110px); }
+.lp-v4 .l4-calc {
+  position: relative; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px;
+  padding: clamp(32px, 6vw, 64px) clamp(20px, 5vw, 64px);
+  border-radius: 28px;
+  background: var(--navy-deep); color: #fff;
+}
+@media (min-width: 900px) { .lp-v4 .l4-calc { grid-template-columns: .8fr 1.2fr; gap: 72px; align-items: center; } }
+.lp-v4 .l4-calc::before {
+  content: ""; position: absolute; left: -230px; bottom: -280px;
+  width: 420px; height: 420px; border-radius: 50%;
+  border: 1px solid rgba(92,217,206,.18);
+}
+.lp-v4 .l4-calc-copy h2 { color: #fff; font-size: clamp(2rem, 4vw, 3.2rem); }
+.lp-v4 .l4-calc-copy p { margin-top: 16px; color: rgba(255,255,255,.72); font-size: 17px; }
+.lp-v4 .l4-calc-card { position: relative; background: #fff; color: var(--ink); border-radius: 18px; padding: clamp(20px, 3vw, 32px); }
+.lp-v4 .l4-bill { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.lp-v4 .l4-bill span { color: var(--muted); }
+.lp-v4 .l4-bill strong { font-size: 30px; font-weight: 700; letter-spacing: -.03em; color: var(--navy); font-variant-numeric: tabular-nums; }
+.lp-v4 .l4-calc-card input[type="range"] { width: 100%; margin: 22px 0 4px; accent-color: var(--teal); }
+.lp-v4 .l4-range-ends { display: flex; justify-content: space-between; font-size: 12px; color: #6B7A8C; }
+.lp-v4 .l4-toggle {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+  margin: 22px 0; padding: 4px;
+  background: #EDF4F4; border-radius: 10px;
+}
+.lp-v4 .l4-toggle button {
+  padding: 11px; border: 0; border-radius: 8px;
+  background: transparent; color: #4A5B70;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.lp-v4 .l4-toggle button[aria-pressed="true"] { background: var(--navy-deep); color: #fff; }
+.lp-v4 .l4-pays { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+@media (min-width: 520px) {
+  .lp-v4 .l4-pays-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lp-v4 .l4-pays-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.lp-v4 .l4-pays div { padding: 13px 14px; border-radius: 10px; background: #F2F7F7; }
+.lp-v4 .l4-pays small { display: block; font-size: 12px; color: var(--muted); }
+.lp-v4 .l4-pays b { font-size: 17px; color: var(--navy); font-variant-numeric: tabular-nums; }
+.lp-v4 .l4-total {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px;
+  margin-top: 20px; padding-top: 18px; border-top: 1px solid #DCE7E8;
+}
+.lp-v4 .l4-total span { white-space: nowrap; }
+.lp-v4 .l4-total strong { white-space: nowrap; font-size: 22px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+.lp-v4 .l4-total small {
+  margin-left: 6px; padding: 4px 9px; border-radius: 999px;
+  background: #DFF8F5; color: var(--teal-ink);
+  font-size: 11px; font-weight: 700; vertical-align: middle;
+}
+.lp-v4 .l4-calc-note { margin: 14px 0 0; font-size: 12px; line-height: 1.5; color: #6B7A8C; }
+
+/* ── FAQ ──────────────────────────────────────────────────────────────────── */
+.lp-v4 .l4-faq { padding: 0 0 clamp(72px, 10vw, 115px); }
+.lp-v4 .l4-faq-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 36px; }
+@media (min-width: 900px) { .lp-v4 .l4-faq-grid { grid-template-columns: .8fr 1.2fr; gap: 100px; } }
+.lp-v4 .l4-faq-intro p { margin-top: 16px; max-width: 22rem; color: var(--muted); }
+.lp-v4 .l4-faq-list { border-top: 1px solid #DCE7E8; }
+.lp-v4 .l4-faq-list details { border-bottom: 1px solid #DCE7E8; }
+.lp-v4 .l4-faq-list summary {
+  display: flex; justify-content: space-between; gap: 20px;
+  padding: 22px 0;
+  list-style: none; cursor: pointer;
+  font-size: 17px; font-weight: 600; color: var(--navy);
+}
+.lp-v4 .l4-faq-list summary::-webkit-details-marker { display: none; }
+.lp-v4 .l4-faq-list summary span { flex: none; color: var(--teal); font-size: 24px; font-weight: 300; line-height: 1; transition: transform .2s; }
+.lp-v4 .l4-faq-list details[open] summary span { transform: rotate(45deg); }
+.lp-v4 .l4-faq-list details p { margin: -4px 40px 22px 0; color: var(--muted); }
+
+/* ── Final CTA band ───────────────────────────────────────────────────────── */
+.lp-v4 .l4-final { background: var(--navy); color: #fff; padding: clamp(64px, 9vw, 110px) 0; }
+.lp-v4 .l4-final-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+@media (min-width: 900px) { .lp-v4 .l4-final-grid { grid-template-columns: 1fr .65fr; gap: 90px; align-items: end; } }
+.lp-v4 .l4-final h2 { color: #fff; font-size: clamp(2.4rem, 5.6vw, 4.4rem); }
+.lp-v4 .l4-final h2 em { display: block; color: var(--mint); }
+.lp-v4 .l4-final p { margin: 0 0 24px; color: rgba(255,255,255,.78); font-size: 18px; }
+
+/* ── Footer (shared component; dark v4 treatment) ─────────────────────────── */
+.lp-v4 footer { margin-top: 0; padding: 64px 0 28px; border-top: 0; background: #0A1C36; color: #B9C5D1; }
+.lp-v4 .foot .lead .brand .lp-b { color: #fff; }
+.lp-v4 .foot .lead .brand .lp-n { color: var(--mint); }
+.lp-v4 .foot .lead p { color: #B9C5D1; }
+.lp-v4 .foot .col h5 { color: #fff; }
+.lp-v4 .foot .col a { color: #B9C5D1; opacity: 1; }
+.lp-v4 .foot .col a:hover { color: var(--mint); }
+.lp-v4 .copy { border-top-color: rgba(255,255,255,.1); color: #93A3B5; }
+.lp-v4 .foot-popia { display: inline-flex; align-items: center; gap: 9px; }
+.lp-v4 .foot-popia svg { width: 18px; height: 18px; color: var(--mint); }
+@media (min-width: 760px) {
+  .lp-v4 .foot { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 56px; }
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .lp-v3 .stage::before { animation: none !important; }
+  .lp-v4 .l4-btn, .lp-v4 .l4-arrow span, .lp-v4 .l4-faq-list summary span { transition: none; }
+  .lp-v4 .l4-btn:hover { transform: none; }
 }
