@@ -2,47 +2,69 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// ─── Landing page copy pass (patient-only) ─────────────────────────────
+// ─── Landing page copy + structure pins (patient-only, v4) ─────────────
 //
 // The landing page describes the LAUNCH model for patients:
 //   • credit + affordability check at signup → interest-free healthcare
 //     allowance (a spending limit).
-//   • bills split into 2 or 3 interest-free instalments.
+//   • bills split into 3 interest-free instalments (Pay in 3 only).
 //   • instalments collected by tokenised card charges on chosen salary
 //     dates. NEVER card holds, NEVER card preauth, NEVER DebiCheck /
 //     debit orders.
 //
-// Post-restructure (July 2026), the landing page is PATIENT-ONLY:
-//   • Practice content moved to /practices — its pins live in
-//     practices-copy.test.ts alongside this file.
-//   • The WHY section is now exactly 3 reason cards (Payflex pattern).
-//   • The hero has ONE patient CTA (no "I run a practice").
-//   • Time wording is normalised: "1 minute" everywhere.
+// v4 (Sep 2026) rebuilt the page from the "betternow landing concept":
+// mint hero + photo, proof card, colour-blocked reason cards, the real app
+// screenshot beside a one-open accordion of steps, a "What you'll need"
+// grid, a navy slider calculator, a two-column FAQ and a navy close. The
+// layout-only pins of v3 (timeline, gs-band, fixed R3,000, no slider)
+// were retired with that layout; every CLAIM pin carried over.
 //
 // Pins:
-//   1. Forbidden strings absent (all card-hold / card-limit /
-//      no-check / debit-order / DebiCheck claims removed).
-//   2. Six approved slogans present exactly once, in the right
-//      section container (S4's home moved to the "Getting started"
-//      sec-head sub-line). S1 ("Get better now. Pay better later.")
-//      lost its home when the hero went offer-first, and is no longer
-//      on the page.
-//   3. Two reserved slogans absent from the landing page entirely.
-//   4. Still-true claims preserved (interest-free promise, POPIA,
-//      credit check answered honestly).
-//   5. The 3-card WHY grid is EXACTLY these 3 cards in this order.
-//   6. Practice content is GONE from the landing page (moved to
-//      /practices).
+//   1. Forbidden strings absent (card-hold / card-limit / no-check /
+//      debit-order / unconditional-fee claims).
+//   1b. Pay in 3 is the only plan — "Pay in 2" / "2 or 3" banned.
+//   2. Fee promises are ALWAYS conditional on paying on time — the T&Cs
+//      carry a capped default fee. Interest promises stay unconditional
+//      (no interest is ever charged, default included).
+//   3. Five approved slogans present exactly once, in their section.
+//   4. Two reserved slogans absent.
+//   5. Honest claims preserved (credit check = yes, card-charge
+//      collection, 18+/good credit, POPIA).
+//   6. WHY = exactly 3 reason cards, in order.
+//   7. Calculator uses checkout's own split (splitInstalments) and says
+//      it is an illustration bounded by the approved allowance.
+//   8. Practice content is GONE from the landing (lives on /practices).
+//   9. Shared header/footer wiring + #practices redirect.
 
 const ROOT = resolve(process.cwd());
 // Normalise CRLF→LF at read: these are source-text assertions, and git
-// (core.autocrlf) checks the files out with CRLF on Windows. Without this,
-// any pin keying on "\n" silently mismatches. Line endings are not part of
-// what this suite means to assert.
+// (core.autocrlf) checks the files out with CRLF on Windows.
 const LANDING = readFileSync(resolve(ROOT, 'app/LandingPage.tsx'), 'utf8').replace(/\r\n/g, '\n');
 const HEADER  = readFileSync(resolve(ROOT, 'app/_landing/SiteHeader.tsx'), 'utf8').replace(/\r\n/g, '\n');
 
-// ─── Forbidden card-preauth / card-limit / no-check / debit-order strings ─
+// Slice between two markers. Called INSIDE it() blocks only — an expect()
+// at describe-collection time fails the whole file with "no tests".
+function slice(startMarker: string, endMarker: string): string {
+  const startIdx = LANDING.indexOf(startMarker);
+  const endIdx   = LANDING.indexOf(endMarker, startIdx + 1);
+  expect(startIdx, `start marker not found: ${startMarker}`).toBeGreaterThan(-1);
+  expect(endIdx,   `end marker not found: ${endMarker}`  ).toBeGreaterThan(startIdx);
+  return LANDING.slice(startIdx, endIdx);
+}
+
+function count(needle: string): number {
+  return LANDING.split(needle).length - 1;
+}
+
+const HERO  = () => slice('{/* ── Hero', '{/* ── Proof card');
+const WHY   = () => slice('<section id="why"', '</section>');
+const HOW   = () => slice('<section id="how"', '</section>');
+const REQS  = () => slice('<section id="requirements"', '</section>');
+const CALC  = () => slice('{/* ── Calculator', '{/* ── FAQ');
+const FAQ   = () => slice('<section id="faq"', '</section>');
+const FINAL = () => slice('{/* ── Final CTA', '<SiteFooter />');
+
+// ─── 1. Forbidden strings ─────────────────────────────────────────────
 
 describe('Forbidden strings — all absent from landing', () => {
   const FORBIDDEN = [
@@ -94,6 +116,17 @@ describe('Forbidden strings — all absent from landing', () => {
     '6 months',
     '12 months',
     '24 months',
+    // v4: an unconditional fee promise contradicts the T&Cs' capped default
+    // fee. "No fees" may only ever appear qualified by paying on time
+    // (see the dedicated describe below) — these bare forms are banned.
+    'No interest, no fees on your plan',
+    'no fees added to your plan',
+    'the total never grows beyond your original bill',
+    // Sep 2026 product decision: Pay in 3 is the ONLY plan. Pay in 2 must
+    // not be offered anywhere on the landing page.
+    'Pay in 2',
+    '2 or 3',
+    'setPlan',
   ];
 
   for (const bad of FORBIDDEN) {
@@ -103,654 +136,280 @@ describe('Forbidden strings — all absent from landing', () => {
   }
 });
 
-// ─── Seven approved slogans — present exactly once, correct section ────
 
-function slice(startMarker: string, endMarker: string): string {
-  const startIdx = LANDING.indexOf(startMarker);
-  const endIdx   = LANDING.indexOf(endMarker, startIdx + 1);
-  expect(startIdx, `start marker not found: ${startMarker}`).toBeGreaterThan(-1);
-  expect(endIdx,   `end marker not found: ${endMarker}`  ).toBeGreaterThan(startIdx);
-  return LANDING.slice(startIdx, endIdx);
-}
+// ─── 2. Fee claims are conditional; interest claims are not ────────────
 
-describe('Hero headline — offer-first, states the proposition in one line', () => {
-  const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
-
-  // The hero used to open with the brand: a rotating-verb wordmark H1
-  // ("Smile / See / Hear …" + betternow), the "1-minute approval"
-  // eyebrow above it and Slogan 1 as the tagline below. None of that
-  // said what betternow DOES, so the whole stack was replaced by a
-  // single headline that states the offer. Slogan 1 has no home on the
-  // landing page any more — it is NOT pinned absent here, because
-  // re-homing it elsewhere is a copy decision, not a regression.
-
-  it('the H1 is the offer, not the brand', () => {
-    expect(heroScope).toMatch(
-      /<h1>\s*Split any medical expense into\{' '\}\s*<span className="hero-accent">3 interest-free payments<\/span>\s*<\/h1>/,
-    );
+describe('Fee promises — always qualified by paying on time', () => {
+  it('every sentence that promises "no fees" also says "on time"', () => {
+    // Split rendered copy into sentences and check each one that mentions
+    // "no fees" (or "with no fees") carries the on-time condition.
+    const sentences = LANDING.split(/(?<=[.!?])\s+/);
+    const feeClaims = sentences.filter((s) => /\bno fees\b/i.test(s));
+    expect(feeClaims.length).toBeGreaterThan(0);
+    for (const s of feeClaims) {
+      expect(s, `unqualified fee promise: ${s}`).toMatch(/on (its due date|time)/i);
+    }
   });
 
-  it('the H1 carries no aria-label override — it is real, readable copy now', () => {
-    expect(heroScope).not.toMatch(/<h1 aria-label=/);
+  it('the interest FAQ discloses the capped default fee and points at the Terms', () => {
+    expect(FAQ()).toMatch(/Is it really interest-free\?/);
+    expect(FAQ()).toMatch(/no interest is ever added/);
+    expect(FAQ()).toMatch(/a capped default fee applies, as set out in our Terms/);
+  });
+
+  it('the WHY interest card keeps "never a cent more" tied to paying on the due date', () => {
+    expect(WHY()).toMatch(/Pay each instalment on its due date and you repay exactly your bill — never a cent more, and no fees\./);
+  });
+});
+
+// ─── Hero ─────────────────────────────────────────────────────────────
+
+describe('Hero — offer-first, one patient CTA', () => {
+  it('the H1 states the offer: Pay in 3 (the only plan)', () => {
+    expect(HERO()).toMatch(/<h1>\s*Get treated today\.\{' '\}\s*<em>Pay in 3\.<\/em>\s*<\/h1>/);
   });
 
   it('the subline names the specialties and the payday schedule', () => {
-    expect(heroScope).toMatch(
-      /<p className="sub">[\s\S]*?Dentist, optometrist, specialist, vet, pharmacy — pay a third today, the rest on your next two paydays\./,
-    );
+    expect(HERO()).toMatch(/Dentist, optometrist, specialist, vet, pharmacy/);
+    expect(HERO()).toMatch(/pay a third today and the rest over your next two paydays/);
   });
 
-  it('the eyebrow badge, rotating-verb wordmark and hero tagline are gone', () => {
-    expect(heroScope).not.toContain('className="eyebrow"');
-    expect(heroScope).not.toContain('verb-slot');
-    expect(heroScope).not.toContain('className="wordmark"');
-    expect(heroScope).not.toContain('className="tagline"');
-  });
-
-  it('the decorative verb marquee goes with the verbs it mirrored', () => {
-    expect(LANDING).not.toContain('verb-marquee');
-    expect(LANDING).not.toContain("const WORDS");
-  });
-});
-
-describe('Slogan 2 — how-it-works heading: "Health can\'t wait. Payments can."', () => {
-  // Section body now uses a two-column layout (timeline + mockup)
-  // instead of the old horizontal .steps grid. Slice up to that
-  // container to scope the assertions to the section header.
-  const howHead = slice('id="how"', 'className="how-two-col"');
-
-  it('appears as the section h2', () => {
-    expect(howHead).toMatch(/<h2>Health can&apos;t wait\. Payments can\.<\/h2>/);
-  });
-
-  it('the old heading is gone', () => {
-    expect(LANDING).not.toContain("Care shouldn&apos;t wait for payday");
-    expect(LANDING).not.toContain("Care shouldn't wait for payday");
-  });
-
-  it('appears exactly once', () => {
-    const matches = LANDING.match(/Health can&apos;t wait\. Payments can\./g) ?? [];
-    expect(matches.length).toBe(1);
-  });
-});
-
-describe('Slogan 3 — how-it-works sec-head sub-line: "Take your bill in smaller doses."', () => {
-  // Post-restructure the old R3,600 split visual is retired; the
-  // live bill-splitter widget (embedded in How-it-works's right
-  // column) does its explanatory job now. S3 relocates from that
-  // old visual's lead line to the How-it-works sec-head sub-line so
-  // the slogan survives the visual retirement.
-  const howHead = slice('id="how"', 'className="how-two-col"');
-
-  it('appears as the how-it-works sec-head sub-line under the h2', () => {
-    expect(howHead).toMatch(/<h2>Health can&apos;t wait\. Payments can\.<\/h2>[\s\S]*?<p>Take your bill in smaller doses\.<\/p>/);
-  });
-
-  it('appears exactly once on the page', () => {
-    const matches = LANDING.match(/Take your bill in smaller doses\./g) ?? [];
-    expect(matches.length).toBe(1);
-  });
-
-  it('the old "A R3,600 bill — Pay in 3" lead is gone', () => {
-    expect(LANDING).not.toMatch(/<div className="lead">A R3,600 bill/);
-  });
-});
-
-describe('Old R3,600 split visual — RETIRED entirely', () => {
-  it('no R1,200 chip present anywhere on the landing', () => {
-    expect(LANDING).not.toContain('R1,200');
-  });
-
-  it('no R3,600 total present anywhere on the landing', () => {
-    expect(LANDING).not.toContain('R3,600');
-  });
-
-  it('no <div className="example reveal"> container present', () => {
-    expect(LANDING).not.toMatch(/className="example reveal"/);
-  });
-});
-
-describe('Slogan 4 — allowance strapline: "Give your health some credit — it\'s due."', () => {
-  // Post-restructure this slogan is no longer an h4 in a features
-  // grid — the six-card feature soup was collapsed into three
-  // reason cards. The slogan now lives as the sub-line under the
-  // "All you need to get started" heading, where the credit-check
-  // reality is most relevant.
-  const gettingStarted = slice('{/* ── All you need to get started', '{/* ── FAQ');
-
-  it('appears as the "Getting started" sec-head sub-line', () => {
-    expect(gettingStarted).toMatch(/<div className="kicker">Getting started<\/div>[\s\S]*?<h2>All you need to get started<\/h2>[\s\S]*?<p>Give your health some credit — it&apos;s due\.<\/p>/);
-  });
-
-  it('the old "Your own credit, used smarter" phrasing stays gone', () => {
-    expect(LANDING).not.toContain('Your own credit');
-  });
-
-  it('appears exactly once', () => {
-    const matches = LANDING.match(/Give your health some credit — it&apos;s due\./g) ?? [];
-    expect(matches.length).toBe(1);
-  });
-});
-
-describe('Hero CTAs — two-button pair (See what I qualify for + How it works)', () => {
-  const heroScope = slice('{/* ── Hero ──', '{/* ── Why betternow');
-
-  it('hero has BOTH a filled primary "See what I qualify for" and an outlined "How it works" button', () => {
-    // Filled primary → /signup (the canonical create-an-account screen).
-    // Labelled for the question the hero just raised ("can I get this?")
-    // rather than the generic "Get started", which survives as the
-    // Getting-started band's closing CTA.
-    expect(heroScope).toMatch(/<Link[^>]*className="btn btn-primary btn-lg"[^>]*href="\/signup"[^>]*>See what I qualify for<\/Link>/);
-    // Outlined secondary → the How-it-works anchor. v3 moves Sign in to
-    // the header (still asserted in the SiteHeader block below) and makes
-    // the hero's secondary CTA "How it works". A plain <a>, not
-    // next/link's <Link> — Link's same-pathname hash navigation is a
-    // documented App Router no-op when the page doesn't change, which
-    // silently broke the scroll while already on /.
-    expect(heroScope).toMatch(/<a className="btn btn-outline btn-lg" href="\/#how">How it works<\/a>/);
+  it('primary CTA → /signup, secondary is a plain <a> to /#how (Link hash nav is a no-op)', () => {
+    expect(HERO()).toMatch(/<Link className="l4-btn l4-btn-navy" href="\/signup">See what I qualify for/);
+    expect(HERO()).toMatch(/<a className="l4-play" href="\/#how">/);
   });
 
   it('no practice CTA in the hero', () => {
-    expect(heroScope).not.toContain('I run a practice');
-    expect(heroScope).not.toMatch(/href="\/signup\/practice"/);
+    expect(HERO()).not.toContain('I run a practice');
+    expect(HERO()).not.toMatch(/href="\/signup\/practice"/);
   });
 
-  it('the old dual-audience "I\'m a patient" / "I run a practice" pair stays gone', () => {
-    expect(heroScope).not.toContain('I&apos;m a patient');
-  });
-});
-
-describe('Slogan 6 — final CTA sub-line: "The best bill of health is one you can actually afford."', () => {
-  // Post-restructure S6 relocates. Its home was the trust section
-  // sub-line; the trust section is gone (its claims folded into
-  // FAQ answers). S6 now sits under "Full recovery. Zero interest."
-  // as the affordability closer — thematically the strongest fit.
-  const finalScope = slice('className="final reveal"', '<SiteFooter');
-
-  it('appears immediately under the "Full recovery. Zero interest." heading', () => {
-    const headIdx    = finalScope.indexOf('<h2>Full recovery. Zero interest.</h2>');
-    const sloganIdx  = finalScope.indexOf('The best bill of health is one you can actually afford.');
-    const ctaIdx     = finalScope.indexOf('className="ctas"');
-    expect(headIdx).toBeGreaterThan(-1);
-    expect(sloganIdx).toBeGreaterThan(headIdx);
-    expect(ctaIdx).toBeGreaterThan(sloganIdx);
+  it('the hero photo is the optimised WebP, preloaded, with descriptive alt', () => {
+    expect(HERO()).toMatch(/src="\/marketing\/hero-reception\.webp"/);
+    expect(HERO()).toMatch(/alt="A patient smiling at her phone at a practice reception desk[^"]*"/);
+    // Next 16 deprecated `priority` in favour of `preload`.
+    expect(HERO()).toMatch(/\bpreload\b/);
+    expect(HERO()).not.toMatch(/\bpriority\b/);
   });
 
-  it('appears exactly once', () => {
-    const matches = LANDING.match(/The best bill of health is one you can actually afford\./g) ?? [];
-    expect(matches.length).toBe(1);
+  it('the retired rotating-verb wordmark does not come back', () => {
+    expect(LANDING).not.toContain('verb-slot');
+    expect(LANDING).not.toContain('verb-marquee');
+    expect(LANDING).not.toContain('const WORDS');
   });
 });
 
-describe('Slogan 7 — final CTA band headline: "Full recovery. Zero interest."', () => {
-  const finalScope = slice('className="final reveal"', '<SiteFooter');
+// ─── 3. Approved slogans — present once, in their section ─────────────
 
-  it('appears as the final band h2', () => {
-    expect(finalScope).toMatch(/<h2>Full recovery\. Zero interest\.<\/h2>/);
+describe('Approved slogans — each exactly once, in the right section', () => {
+  it('S2 "Health can\'t wait. Payments can." is the How-it-works h2', () => {
+    expect(HOW()).toMatch(/<h2>Health can&apos;t wait\. <span>Payments can\.<\/span><\/h2>/);
+    expect(count('Health can&apos;t wait.')).toBe(1);
   });
 
-  it('the final CTA is a SINGLE patient CTA (no "I run a practice" here either)', () => {
-    expect(finalScope).toMatch(/href="\/signup"/);
-    expect(finalScope).not.toContain('I run a practice');
-    expect(finalScope).not.toMatch(/href="\/signup\/practice"/);
+  it('S3 "Take your bill in smaller doses." sits under the How h2', () => {
+    expect(HOW()).toMatch(/<\/h2>\s*<p className="l4-how-sub">Take your bill in smaller doses\.<\/p>/);
+    expect(count('Take your bill in smaller doses.')).toBe(1);
   });
 
-  it('the old "Healthcare you can afford. Now." headline is gone', () => {
-    expect(LANDING).not.toContain('Healthcare you can afford. Now.');
+  it('S4 "Give your health some credit — it\'s due." leads the requirements intro', () => {
+    expect(REQS()).toMatch(/<p>Give your health some credit — it&apos;s due\./);
+    expect(count('Give your health some credit')).toBe(1);
+  });
+
+  it('S7 "Full recovery. Zero interest." is the final band h2', () => {
+    expect(FINAL()).toMatch(/<h2>Full recovery\. <em>Zero interest\.<\/em><\/h2>/);
+    expect(count('Full recovery.')).toBe(1);
+  });
+
+  it('S6 "The best bill of health is one you can actually afford." sits in the final band', () => {
+    expect(FINAL()).toMatch(/<p>The best bill of health is one you can actually afford\.<\/p>/);
+    expect(count('The best bill of health')).toBe(1);
+  });
+
+  it('the final CTA is a SINGLE patient CTA → /signup', () => {
+    expect(FINAL()).toMatch(/href="\/signup"/);
+    expect(FINAL()).not.toContain('I run a practice');
+    expect(FINAL()).not.toMatch(/href="\/signup\/practice"/);
   });
 });
-
-// ─── Reserved slogans (must not appear on the landing page) ───────────
 
 describe('Reserved slogans — absent from the landing page', () => {
   it('does NOT contain "First aid for big bills"', () => {
     expect(LANDING).not.toContain('First aid for big bills');
   });
-
   it('does NOT contain "Split the bill, not your priorities"', () => {
     expect(LANDING).not.toContain('Split the bill, not your priorities');
   });
 });
 
-// ─── The 3-card WHY grid (Payflex pattern) ────────────────────────────
+// ─── 6. Why betternow — exactly 3 reason cards ────────────────────────
 
-describe('Why betternow — EXACTLY 3 reason cards', () => {
-  const whyScope = slice('id="why"', '{/* ── How it works');
-
-  it('the section heading is "Why betternow"', () => {
-    expect(whyScope).toMatch(/<h2>Why betternow<\/h2>/);
+describe('Why betternow — EXACTLY 3 reason cards, in order', () => {
+  it('three <h3> cards: Always interest-free → Three simple payments → 1-minute approval', () => {
+    const titles = [...WHY().matchAll(/<h3>([^<]+)<\/h3>/g)].map((m) => m[1]);
+    expect(titles).toEqual(['Always interest-free', 'Three simple payments', '1-minute approval']);
   });
 
-  it('card (a): "Flexible payment options" — mentions Pay in 2, Pay in 3, salary dates', () => {
-    expect(whyScope).toMatch(/<h4>Flexible payment options<\/h4>/);
-    // The card body must NOT invent options we don't offer.
-    const cardA = whyScope.slice(
-      whyScope.indexOf('Flexible payment options'),
-      whyScope.indexOf('Always interest-free'),
-    );
-    expect(cardA).toMatch(/Pay in 2/);
-    expect(cardA).toMatch(/Pay in 3/);
-    expect(cardA).toMatch(/salary dates/);
+  it('Three simple payments: a third today, two payments on salary dates', () => {
+    expect(WHY()).toMatch(/Pay a third today, then two equal payments timed to your salary dates/);
   });
 
-  it('card (b): "Always interest-free" — describes the interest-free promise', () => {
-    expect(whyScope).toMatch(/<h4>Always interest-free<\/h4>/);
-    const cardB = whyScope.slice(
-      whyScope.indexOf('Always interest-free'),
-      whyScope.indexOf('1-minute approval'),
-    );
-    expect(cardB).toMatch(/never a cent more/);
-    expect(cardB).toMatch(/No interest, no fees/);
-  });
-
-  it('card (c): "1-minute approval" — 1 minute, no paperwork, no branch visits', () => {
-    expect(whyScope).toMatch(/<h4>1-minute approval<\/h4>/);
-    const cardC = whyScope.slice(
-      whyScope.indexOf('1-minute approval'),
-      whyScope.length,
-    );
-    expect(cardC).toMatch(/in 1 minute/);
-    expect(cardC).toMatch(/No paperwork/);
-    expect(cardC).toMatch(/No .*? branch visits/i);
-  });
-
-  it('does NOT carry the six-card feature soup any more (allowance card, portal card, data-protection card GONE from features grid)', () => {
-    // These h4s used to live in the .lp-grid — they must not
-    // reappear as feature cards on the landing.
-    expect(whyScope).not.toMatch(/<h4>One simple portal<\/h4>/);
-    expect(whyScope).not.toMatch(/<h4>Your data, protected<\/h4>/);
-    expect(whyScope).not.toMatch(/<h4>Approved online, in minutes<\/h4>/);
-    expect(whyScope).not.toMatch(/<h4>Timed to your salary<\/h4>/);
-    // The allowance card as an h4 is gone (S4 moved to Getting-started sub-line).
-    expect(whyScope).not.toMatch(/<h4>Give your health some credit — it&apos;s due\.<\/h4>/);
+  it('1-minute approval: in 1 minute, no paperwork, no branch visits', () => {
+    expect(WHY()).toMatch(/Get approved online in 1 minute\. No paperwork, no branch visits\./);
   });
 });
 
-// ─── 1-minute consistency sweep ───────────────────────────────────────
+// ─── How it works ─────────────────────────────────────────────────────
 
-describe('Time wording — consistently "1 minute" (never a stray "in minutes")', () => {
-  it('the Getting-started pillar heading is "1 minute" (not "A couple of minutes")', () => {
-    expect(LANDING).toMatch(/<h4>1 minute<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>A couple of minutes<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>30 seconds<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>A South African bank account<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>A credit card<\/h4>/);
+describe('How it works — real app screenshot + one-open accordion', () => {
+  it('uses the real device-approved.png screenshot (not a hand-drawn phone)', () => {
+    expect(HOW()).toMatch(/src="\/marketing\/device-approved\.png"/);
+    expect(HOW()).toMatch(/alt="betternow app showing an approved interest-free healthcare allowance"/);
   });
 
-  it('the WHY card (c) claims "in 1 minute" (not "in minutes")', () => {
-    // Guard against the previous "Approved online, in minutes" phrasing.
-    expect(LANDING).not.toMatch(/Approved online, in minutes/);
-    expect(LANDING).not.toMatch(/minutes, not weeks/);
+  it('three steps in order, each a button with aria-expanded/aria-controls', () => {
+    const titles = [...LANDING.matchAll(/title: '([^']+)'/g)].map((m) => m[1]);
+    expect(titles).toEqual(['Apply online', 'Use betternow at the practice', 'Pay the next two thirds']);
+    expect(HOW()).toMatch(/aria-expanded=\{openStep === i\}/);
+    expect(HOW()).toMatch(/aria-controls=\{`l4-step-\$\{i\}`\}/);
+    expect(HOW()).toMatch(/hidden=\{openStep !== i\}/);
   });
 
-  it('FAQ answers align to "about 1 minute"', () => {
-    // Old copy said "a couple of minutes online" in the credit-check
-    // FAQ answer — swept to "about 1 minute online".
-    expect(LANDING).toMatch(/about 1 minute online/);
-    expect(LANDING).not.toMatch(/a couple of minutes online/);
-    expect(LANDING).toMatch(/about 1 minute to complete the credit and affordability check/);
-    expect(LANDING).not.toMatch(/a couple of minutes to complete the credit and affordability check/);
-  });
-});
-
-// ─── Practice content GONE from the landing page ──────────────────────
-
-describe('Practice content — moved to /practices, absent from landing', () => {
-  it('no practice-signup CTA anywhere on the landing page', () => {
-    expect(LANDING).not.toMatch(/href="\/signup\/practice"/);
-  });
-
-  it('no "For practices" tag inline (that content moved to its own page)', () => {
-    expect(LANDING).not.toMatch(/className="tag pro"/);
-  });
-
-  it('the practice-fee FAQ is GONE (moved to /practices)', () => {
-    expect(LANDING).not.toMatch(/What does it cost my practice\?/);
-    expect(LANDING).not.toMatch(/less a small percentage we keep as our fee/);
-  });
-
-  it('the practice-side "Paid upfront" + "Collection is on us" features are GONE from landing', () => {
-    expect(LANDING).not.toMatch(/<h4>Paid upfront<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>Collection is on us<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>More patients say yes<\/h4>/);
-  });
-
-  it('the practice steps are GONE from landing', () => {
-    expect(LANDING).not.toMatch(/<h3>Record the bill<\/h3>/);
-    expect(LANDING).not.toMatch(/<h3>Patient pays in 2 or 3<\/h3>/);
-    expect(LANDING).not.toMatch(/<h3>Get paid upfront<\/h3>/);
-  });
-
-  it('the R3,600-shortfall STATS strip is GONE from landing (it belongs to /practices)', () => {
-    // The patient split visual ("R1,200 today / next payday / payday after")
-    // stays; the practice stats ("Days / R0 / 0 min admin") do not.
-    expect(LANDING).not.toMatch(/<div className="lbl">to get paid<\/div>/);
-    expect(LANDING).not.toMatch(/<div className="lbl">to chase<\/div>/);
-    expect(LANDING).not.toMatch(/<div className="lbl">admin<\/div>/);
-  });
-
-  it('the specialties strip is GONE from landing (moved to /practices — provider-targeting)', () => {
-    expect(LANDING).not.toMatch(/className="specialty-pills/);
-    expect(LANDING).not.toMatch(/Built for South African healthcare\./);
-  });
-});
-
-// ─── Still-true claims preserved ──────────────────────────────────────
-
-describe('Still-true claims preserved', () => {
-  it('the "Always interest-free" claim is present (as the WHY card b)', () => {
-    expect(LANDING).toMatch(/<h4>Always interest-free<\/h4>/);
-  });
-
-  it('the interest-free promise still lives in WHY card (b) copy (the R3,600 example that used to carry it is retired)', () => {
-    // Old wording ("You pay R3,600 in total — never more.") retired
-    // with the split visual. The WHY card copy carries the same
-    // promise in the current landing.
-    expect(LANDING).toMatch(/You pay your bill, never a cent more/);
-    // And FAQ 1 covers "no interest, no fees".
-    expect(LANDING).toMatch(/No interest, no fees added to your plan/);
-  });
-
-  // The trust section is GONE — its four claims fold into FAQ answers.
-
-  it('trust claim: "Genuinely interest-free" folded into FAQ 1 (loan-that-snowballs phrasing)', () => {
-    // The FAQ "Is it really interest-free?" answer now carries the
-    // extra reassurance that lived in the trust pillar.
-    expect(LANDING).toMatch(/Is it really interest-free\?/);
-    expect(LANDING).toMatch(/Instalments, not a loan that snowballs — the total never grows beyond your original bill/);
-  });
-
-  it('trust claim: "Checked for affordability" folded into FAQ 3 (never take on more than you can manage)', () => {
-    expect(LANDING).toMatch(/Is there a credit check\?/);
-    expect(LANDING).toMatch(/you never take on more than you can manage/);
-  });
-
-  it('trust claim: "Bank-grade security" folded into the POPIA FAQ (encrypted end-to-end + secure audited rails)', () => {
-    expect(LANDING).toMatch(/Is my information safe\?/);
-    expect(LANDING).toMatch(/encrypted end-to-end and processed over secure, audited rails/);
-    expect(LANDING).toMatch(/handled in line with POPIA/);
-  });
-
-  it('the "Built on trust." section header is GONE (folded into FAQ)', () => {
-    expect(LANDING).not.toMatch(/<h2>Built on trust\.<\/h2>/);
-    // Pillar h4s from the removed trust section are gone too.
-    expect(LANDING).not.toMatch(/<h4>Genuinely interest-free<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>Checked for affordability<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>Bank-grade security<\/h4>/);
-    expect(LANDING).not.toMatch(/<h4>POPIA-conscious<\/h4>/);
-    // The trust section's own <section id="trust"> is gone.
-    expect(LANDING).not.toMatch(/id="trust"/);
-  });
-});
-
-// ─── Honest allowance/credit-check framing present ────────────────────
-
-describe('Honest allowance + credit-check framing present', () => {
-  it('the "Is there a credit check?" FAQ exists and answers honestly (YES)', () => {
-    expect(LANDING).toMatch(/Is there a credit check\?/);
-    expect(LANDING).toMatch(/Yes[\s\S]*?credit and affordability check/);
-  });
-
-  it('the "How does my allowance work?" FAQ describes the allowance model', () => {
-    expect(LANDING).toMatch(/How does my allowance work\?/);
-    expect(LANDING).toMatch(/interest-free healthcare allowance[\s\S]*?spending limit/);
-  });
-
-  it('the "When are instalments collected?" FAQ describes card-charge collection (no debit order)', () => {
-    expect(LANDING).toMatch(/When are instalments collected\?/);
-    expect(LANDING).toMatch(/Automatically charged to your saved card on the salary dates you choose/);
-  });
-
-  it('the "What do I need to use betternow?" FAQ names eligibility (18+, good credit) + debit or credit card + ID', () => {
-    expect(LANDING).toMatch(/What do I need to use betternow\?/);
-    expect(LANDING).toMatch(/18 or older with a good credit record/);
-    expect(LANDING).toMatch(/debit or credit card \(Visa or Mastercard\)/);
-    expect(LANDING).toMatch(/your ID for a quick verification/);
-    expect(LANDING).toMatch(/credit and affordability check/);
-  });
-
-  it('the affordability language is preserved (folded into FAQ 3, not the removed trust pillar)', () => {
-    // The old "<h4>Checked for affordability</h4>" pillar is gone;
-    // the words that mattered ("credit and affordability check")
-    // survive inside the credit-check FAQ.
-    expect(LANDING).toMatch(/credit and affordability check/);
-  });
-
-  it('the getting-started pillars are "A debit or credit card" + "1 minute"', () => {
-    expect(LANDING).toMatch(/<h4>A debit or credit card<\/h4>/);
-    expect(LANDING).toMatch(/<h4>1 minute<\/h4>/);
-    // Pillar 1 body describes tokenised card charges.
-    expect(LANDING).toMatch(/charged automatically to your Visa or Mastercard/);
-    // Pillar 2 body states eligibility (18+ / good credit record).
-    expect(LANDING).toMatch(/18 or older with a good credit record/);
-  });
-
-  it('patient Step 2 and Step 3 describe card charges (no debit order language)', () => {
-    expect(LANDING).toMatch(/charged automatically to your card on your next paydays/);
+  it('step 3 describes card-charge collection on the chosen date', () => {
     expect(LANDING).toMatch(/Each instalment is charged to your saved card automatically on the date you chose/);
   });
 });
 
-// ─── Header + footer wiring ───────────────────────────────────────────
+// ─── What you'll need ─────────────────────────────────────────────────
 
-describe('Header + footer wiring — "For practices" routes to /practices', () => {
+describe("What you'll need — eligibility stated honestly", () => {
+  it('four requirements: 18+, SA ID, debit or credit card, 1 minute', () => {
+    const titles = [...REQS().matchAll(/<h3>([^<]+)<\/h3>/g)].map((m) => m[1]);
+    expect(titles).toEqual(['Be 18 or older', 'Your South African ID', 'A debit or credit card', '1 minute']);
+  });
+
+  it('names the good-credit requirement and the credit + affordability check', () => {
+    expect(REQS()).toMatch(/With a good credit record/);
+    expect(REQS()).toMatch(/credit and affordability check/);
+  });
+
+  it('POPIA line present', () => {
+    expect(REQS()).toMatch(/handled in line with POPIA/);
+  });
+});
+
+// ─── 7. Calculator ────────────────────────────────────────────────────
+
+describe('Calculator — checkout\'s own maths, labelled as an illustration', () => {
+  it('splits with lib/finance splitInstalments (the function checkout uses)', () => {
+    expect(LANDING).toMatch(/import \{ splitInstalments \} from '@\/lib\/finance';/);
+    expect(LANDING).toMatch(/const instalments = splitInstalments\(bill, 3\);/);
+  });
+
+  it('has a labelled range input and a fixed Pay in 3 label (no plan toggle)', () => {
+    expect(CALC()).toMatch(/<label className="l4-bill" htmlFor="l4-bill-range">/);
+    expect(CALC()).toMatch(/id="l4-bill-range"\s+type="range"/);
+    expect(CALC()).toMatch(/<div className="l4-plan"><b>Pay in 3<\/b>/);
+    expect(CALC()).not.toMatch(/aria-pressed/);
+  });
+
+  it('formats money deterministically (no toLocaleString → no hydration mismatch)', () => {
+    expect(LANDING).not.toMatch(/\.toLocaleString\(/);
+    expect(LANDING).toMatch(/from '\.\/patient\/_format'/);
+  });
+
+  it('says it is an illustration bounded by the approved allowance', () => {
+    expect(CALC()).toMatch(/Illustration only\. What you can spend depends on your approved allowance/);
+  });
+
+  it('warns that a bill over the allowance loads the excess onto the first payment', () => {
+    // Checkout splits with splitInstalmentsWithExcess: anything above the
+    // available allowance is added to instalment 1, so equal thirds are
+    // only true for a bill that fits inside the allowance.
+    expect(CALC()).toMatch(/If a bill is more than your available allowance, the difference is added to your first payment\./);
+  });
+
+  it('shows relative timing labels, never real dates', () => {
+    expect(LANDING).toMatch(/const WHEN = \['Today', 'Next payday', 'The payday after'\];/);
+  });
+});
+
+// ─── 5. Honest FAQ ────────────────────────────────────────────────────
+
+describe('FAQ — honest allowance, credit-check and collection answers', () => {
+  it('credit check answered YES', () => {
+    expect(FAQ()).toMatch(/Is there a credit check\?/);
+    expect(FAQ()).toMatch(/Yes — a quick credit and affordability check/);
+    expect(FAQ()).toMatch(/you never take on more than you can manage/);
+  });
+
+  it('allowance described as a spending limit', () => {
+    expect(FAQ()).toMatch(/interest-free healthcare allowance — a spending limit/);
+  });
+
+  it('collection = automatic card charges on chosen salary dates', () => {
+    expect(FAQ()).toMatch(/Automatically charged to your saved card on the salary dates you choose/);
+  });
+
+  it('eligibility FAQ names 18+, good credit, card, ID', () => {
+    expect(FAQ()).toMatch(/18 or older with a good credit record/);
+    expect(FAQ()).toMatch(/debit or credit card \(Visa or Mastercard\)/);
+    expect(FAQ()).toMatch(/your ID for a quick verification/);
+  });
+
+  it('security FAQ: encrypted, audited rails, POPIA', () => {
+    expect(FAQ()).toMatch(/encrypted end-to-end and processed over secure, audited rails, and handled in line with POPIA/);
+  });
+
+  it('contact link routes to /contact', () => {
+    expect(FAQ()).toMatch(/href="\/contact">Contact us/);
+  });
+});
+
+// ─── 8. Practice content — absent ─────────────────────────────────────
+
+describe('Practice content — lives on /practices, absent from landing', () => {
+  it('no practice-signup CTA or practice-fee copy', () => {
+    expect(LANDING).not.toMatch(/href="\/signup\/practice"/);
+    expect(LANDING).not.toMatch(/What does it cost my practice\?/);
+    expect(LANDING).not.toMatch(/less a small percentage we keep as our fee/);
+    expect(LANDING).not.toMatch(/Paid upfront|Collection is on us|Get paid upfront/);
+  });
+});
+
+// ─── 9. Header / footer wiring + section order ────────────────────────
+
+describe('Shared chrome + redirect', () => {
   it('landing imports the shared SiteHeader + SiteFooter', () => {
     expect(LANDING).toMatch(/from '\.\/_landing\/SiteHeader'/);
     expect(LANDING).toMatch(/from '\.\/_landing\/SiteFooter'/);
-  });
-
-  it('the legacy inline <header> and <footer> markup are gone from LandingPage.tsx', () => {
-    // The old inline nav is replaced by <SiteHeader />. Guards
-    // against a copy-paste regression bringing them back.
-    expect(LANDING).not.toMatch(/<header>\s*<div className="wrap nav">/);
-    expect(LANDING).not.toMatch(/<footer>\s*<div className="wrap">\s*<div className="foot">/);
   });
 
   it('client-side redirect from the legacy #practices anchor to /practices', () => {
     expect(LANDING).toMatch(/window\.location\.hash === '#practices'/);
     expect(LANDING).toMatch(/window\.location\.replace\('\/practices'\)/);
   });
-});
 
-// ─── Cherry-style How-it-works: vertical timeline + phone mockup ──────
-
-describe('How it works — vertical timeline (Cherry pattern)', () => {
-  it('the How-it-works section uses a two-column layout on desktop', () => {
-    expect(LANDING).toMatch(/className="how-two-col"/);
-  });
-
-  it('renders an ordered timeline with numbered circles 1 → 2 → 3', () => {
-    // The <ol> carries the timeline; each tl-step has a tl-num
-    // labelled 1, 2, or 3. Order matters — the numbered circles
-    // are the visual anchor.
-    const idx1 = LANDING.indexOf('<div className="tl-num">1</div>');
-    const idx2 = LANDING.indexOf('<div className="tl-num">2</div>');
-    const idx3 = LANDING.indexOf('<div className="tl-num">3</div>');
-    expect(idx1).toBeGreaterThan(-1);
-    expect(idx2).toBeGreaterThan(idx1);
-    expect(idx3).toBeGreaterThan(idx2);
-  });
-
-  it('the three step titles ride inside the timeline (as h3s in tl-body)', () => {
-    expect(LANDING).toMatch(/<div className="tl-body">[\s\S]*?<h3>Get treated today<\/h3>/);
-    expect(LANDING).toMatch(/<div className="tl-body">[\s\S]*?<h3>Choose Pay in 2 or Pay in 3<\/h3>/);
-    expect(LANDING).toMatch(/<div className="tl-body">[\s\S]*?<h3>Pay over your paydays<\/h3>/);
-  });
-
-  it('the old horizontal .steps grid is GONE from the landing', () => {
-    // Guards against a copy-paste regression bringing the old
-    // three-card layout back.
-    expect(LANDING).not.toMatch(/<div className="steps">/);
-    expect(LANDING).not.toMatch(/<div className="num">STEP 1<\/div>/);
-  });
-
-  it('the timeline sits INSIDE the two-column how-two-col container (LEFT), the bill-splitter widget on the RIGHT', () => {
-    const twoColIdx  = LANDING.indexOf('className="how-two-col"');
-    const timelineIdx = LANDING.indexOf('className="timeline reveal"');
-    const visualIdx = LANDING.indexOf('className="how-visual reveal"');
-    expect(twoColIdx).toBeGreaterThan(-1);
-    expect(timelineIdx).toBeGreaterThan(twoColIdx);
-    expect(visualIdx).toBeGreaterThan(timelineIdx);
+  it('v4 styles are scoped under .lp-v4 on the root (shared .lp-root pages untouched)', () => {
+    expect(LANDING).toMatch(/<div className="lp-root lp-v4">/);
+    expect(LANDING).not.toMatch(/lp-v3/);
   });
 });
 
-describe('Mockups — live bill-splitter in How-it-works + device-approved in Getting-started band', () => {
-  // Post-restructure (2026-08-20): the static plan-chooser.png mockup is
-  // retired — the How-it-works right column now embeds the actual
-  // bill-splitter widget (the "Your bill, in doses" demo, formerly its
-  // own top-level section between the hero and Why betternow) in its
-  // place, so a visitor sees the real thing instead of a screenshot of
-  // one. The bill amount itself is a fixed R3,000 example (no drag
-  // slider) — only the Pay in 2 / Pay in 3 plan choice is interactive.
-  it('landing imports next/image', () => {
-    expect(LANDING).toMatch(/from 'next\/image'/);
-  });
-
-  it('plan-chooser.png is gone — no static mockup image in How-it-works any more', () => {
-    expect(LANDING).not.toMatch(/plan-chooser\.png/);
-    expect(LANDING).not.toMatch(/className="plan-chooser"/);
-  });
-
-  it('How-it-works right column carries the bill-splitter widget with a fixed R3,000 example, no slider', () => {
-    const howIdx    = LANDING.indexOf('id="how"');
-    const visualIdx = LANDING.indexOf('className="how-visual reveal"', howIdx);
-    const widgetIdx = LANDING.indexOf('className="split-two-col"', howIdx);
-    expect(visualIdx).toBeGreaterThan(howIdx);
-    expect(widgetIdx).toBeGreaterThan(visualIdx);
-    expect(LANDING).toMatch(/<div className="kicker">Your bill, in doses<\/div>/);
-    expect(LANDING).toMatch(/const bill = 3000;/);
-    expect(LANDING).not.toMatch(/<input/);
-    expect(LANDING).not.toMatch(/className="split-range"/);
-  });
-
-  it('the Pay in 2 / Pay in 3 toggle is still interactive', () => {
-    expect(LANDING).toMatch(/const \[plan, setPlan\] = useState<2 \| 3>\(3\);/);
-    expect(LANDING).toMatch(/onClick=\{\(\) => setPlan\(2\)\}>Pay in 2</);
-    expect(LANDING).toMatch(/onClick=\{\(\) => setPlan\(3\)\}>Pay in 3</);
-  });
-
-  it('the old standalone "Bill splitter" section (id="split") is gone — it now lives inside How-it-works', () => {
-    expect(LANDING).not.toMatch(/id="split"/);
-    expect(LANDING).not.toMatch(/className="split-sec"/);
-  });
-
-  it('the bill-splitter widget lives inside the How-it-works section, not the Getting-started band', () => {
-    const widgetIdx = LANDING.indexOf('className="split-two-col"');
-    const gsBandIdx = LANDING.indexOf('<section className="gs-band">');
-    expect(widgetIdx).toBeGreaterThan(-1);
-    expect(gsBandIdx).toBeGreaterThan(widgetIdx);
-  });
-
-  it('Getting-started band carries device-approved.png with the specified alt', () => {
-    expect(LANDING).toMatch(/src="\/marketing\/device-approved\.png"/);
-    expect(LANDING).toMatch(/alt="betternow app showing an approved interest-free healthcare allowance"/);
-    expect(LANDING).toMatch(/className="device"[\s\S]{0,400}width=\{\d+\}[\s\S]{0,80}height=\{\d+\}/);
-  });
-
-  it('the device-approved mockup lives INSIDE the Getting-started band', () => {
-    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
-    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
-    expect(gsBandStart).toBeGreaterThan(-1);
-    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    expect(bandContent).toMatch(/src="\/marketing\/device-approved\.png"/);
-  });
-
-  it('NO "Illustration" caption anywhere near the device mockup — removed with the CTA reorder', () => {
-    // The R15,000 figure inside the phone screen must still not be
-    // read as guaranteed. The caption removal is deliberate; NO
-    // replacement copy is allowed to compensate for it, so the pin
-    // asserts absence rather than presence.
-    const gsBandStart = LANDING.indexOf('<section className="gs-band">');
-    const gsBandEnd   = LANDING.indexOf('</section>', gsBandStart);
-    const bandContent = LANDING.slice(gsBandStart, gsBandEnd);
-    expect(bandContent).not.toMatch(/className="illustration-note"/);
-    expect(bandContent).not.toContain('Illustration');
-  });
-});
-
-describe('Getting-started band — narrative order: what you need → what you get → act', () => {
-  function bandContent(): string {
-    const start = LANDING.indexOf('<section className="gs-band">');
-    const end   = LANDING.indexOf('</section>', start);
-    expect(start).toBeGreaterThan(-1);
-    return LANDING.slice(start, end);
-  }
-
-  it('renders as a .gs-band section (not the old .band alternate)', () => {
-    expect(LANDING).toMatch(/<section className="gs-band">/);
-  });
-
-  it('uses the two-column layout (gs-two-col > gs-text + gs-visual)', () => {
-    const bc = bandContent();
-    expect(bc).toMatch(/className="gs-two-col reveal"/);
-    expect(bc).toMatch(/className="gs-text"/);
-    expect(bc).toMatch(/className="gs-visual"/);
-    // Text column comes before the visual column in DOM order.
-    const textIdx = bc.indexOf('className="gs-text"');
-    const visIdx  = bc.indexOf('className="gs-visual"');
-    expect(textIdx).toBeLessThan(visIdx);
-  });
-
-  it('DOM order is content → image → CTA (mobile stacks in that order; desktop reads content-left / image-right / CTA below)', () => {
-    // The narrative: what you need (pillars in gs-text) → what
-    // you get (approved-screen image in gs-visual) → act (CTA).
-    // On desktop the gs-cta sits OUTSIDE the two-column grid as
-    // a full-width centered row so it reads as the closing step.
-    const bc = bandContent();
-    const textIdx = bc.indexOf('className="gs-text"');
-    const visIdx  = bc.indexOf('className="gs-visual"');
-    const ctaIdx  = bc.indexOf('className="gs-cta');
-    expect(textIdx).toBeGreaterThan(-1);
-    expect(visIdx).toBeGreaterThan(textIdx);
-    expect(ctaIdx).toBeGreaterThan(visIdx);
-  });
-
-  it('the primary CTA lives OUTSIDE the two-column grid (sibling to gs-two-col, not nested in gs-text or gs-visual)', () => {
-    const bc = bandContent();
-    const gridStart = bc.indexOf('className="gs-two-col');
-    const ctaIdx    = bc.indexOf('className="gs-cta');
-    expect(gridStart).toBeGreaterThan(-1);
-    // Narrative order: the CTA is the closing step, after the grid content.
-    expect(ctaIdx).toBeGreaterThan(gridStart);
-    // Sibling, not nested: the two-column wrapper closes (gs-visual's
-    // </div> then gs-two-col's </div>) before the CTA. Matched
-    // whitespace-flexibly so it survives reformatting / CRLF — the
-    // structure is what matters, not the exact indentation.
-    const beforeCta = bc.slice(gridStart, ctaIdx);
-    expect(beforeCta).toMatch(/<\/div>\s*<\/div>/);
-    // The CTA still targets patient signup with the expected label.
-    expect(bc).toMatch(/className="gs-cta[^"]*"[\s\S]{0,200}href="\/signup"[^>]*>Get started</);
-  });
-
-  it('the two pillars ("A debit or credit card" + "1 minute") stay inside the band', () => {
-    const bc = bandContent();
-    expect(bc).toMatch(/<h4>A debit or credit card<\/h4>/);
-    expect(bc).toMatch(/<h4>1 minute<\/h4>/);
-  });
-
-  it('NO "Illustration" caption anywhere in the band (removed with the CTA reorder)', () => {
-    const bc = bandContent();
-    // The task requires the caption to be gone entirely, and no
-    // replacement copy anywhere near the image.
-    expect(bc).not.toContain('Illustration');
-    expect(bc).not.toMatch(/className="illustration-note"/);
-  });
-});
-
-// ─── Section order (post-restructure) ─────────────────────────────────
-
-describe('Landing section order — Why → How → Getting started → FAQ', () => {
-  it('sections appear in the specified order', () => {
-    const whyIdx    = LANDING.indexOf('id="why"');
-    const howIdx    = LANDING.indexOf('id="how"');
-    const gsIdx     = LANDING.indexOf('{/* ── All you need to get started');
-    const faqIdx    = LANDING.indexOf('id="faq"');
-    const finalIdx  = LANDING.indexOf('{/* ── Final CTA');
-    expect(whyIdx).toBeGreaterThan(-1);
-    expect(howIdx).toBeGreaterThan(whyIdx);         // Why before How
-    expect(gsIdx).toBeGreaterThan(howIdx);          // How before Getting started
-    expect(faqIdx).toBeGreaterThan(gsIdx);          // Getting started before FAQ
-    expect(finalIdx).toBeGreaterThan(faqIdx);       // FAQ before Final CTA
+describe('Landing section order — Hero → Why → How → Needs → Calculator → FAQ → Final', () => {
+  it('sections appear in order', () => {
+    const order = [
+      '{/* ── Hero',
+      'id="why"',
+      'id="how"',
+      'id="requirements"',
+      '{/* ── Calculator',
+      'id="faq"',
+      '{/* ── Final CTA',
+    ].map((m) => LANDING.indexOf(m));
+    order.forEach((idx) => expect(idx).toBeGreaterThan(-1));
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 });
 
@@ -796,19 +455,26 @@ describe('SiteHeader — nav link order matches spec (Why / How / For practices 
 
 // ─── Diff scope — landing page only ───────────────────────────────────
 
-describe('Diff scope — landing page only, no app-portal / payment / auth changes', () => {
-  it('the landing page does not import payment / webhook / finance modules', () => {
+describe('Diff scope — no payment / auth / webhook modules on the landing', () => {
+  it('imports nothing from payment, webhook, lifecycle or auth code', () => {
     const FORBIDDEN = [
       '@/lib/payments/',
       '@/lib/paystack/',
       '@/lib/bills/lifecycle',
       'app/api/webhooks/paystack',
-      '@/lib/finance',
       '@/lib/auth/',
     ];
     for (const mod of FORBIDDEN) {
       expect(LANDING).not.toContain(`from '${mod}`);
       expect(LANDING).not.toContain(`from "${mod}`);
     }
+  });
+
+  it('from @/lib/finance it takes ONLY the pure splitInstalments', () => {
+    // The calculator must show checkout's real split, so this one pure
+    // function is allowed; anything else from finance stays off the page.
+    const financeImports = [...LANDING.matchAll(/import \{([^}]+)\} from '@\/lib\/finance'/g)]
+      .flatMap((m) => m[1].split(',').map((s) => s.trim()).filter(Boolean));
+    expect(financeImports).toEqual(['splitInstalments']);
   });
 });
