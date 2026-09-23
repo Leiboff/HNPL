@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 // The landing page describes the LAUNCH model for patients:
 //   • credit + affordability check at signup → interest-free healthcare
 //     allowance (a spending limit).
-//   • bills split into 2 or 3 interest-free instalments.
+//   • bills split into 3 interest-free instalments (Pay in 3 only).
 //   • instalments collected by tokenised card charges on chosen salary
 //     dates. NEVER card holds, NEVER card preauth, NEVER DebiCheck /
 //     debit orders.
@@ -321,6 +321,13 @@ describe('Calculator — checkout\'s own maths, labelled as an illustration', ()
 
   it('says it is an illustration bounded by the approved allowance', () => {
     expect(CALC()).toMatch(/Illustration only\. What you can spend depends on your approved allowance/);
+  });
+
+  it('warns that a bill over the allowance loads the excess onto the first payment', () => {
+    // Checkout splits with splitInstalmentsWithExcess: anything above the
+    // available allowance is added to instalment 1, so equal thirds are
+    // only true for a bill that fits inside the allowance.
+    expect(CALC()).toMatch(/If a bill is more than your available allowance, the difference is added to your first payment\./);
   });
 
   it('shows relative timing labels, never real dates', () => {

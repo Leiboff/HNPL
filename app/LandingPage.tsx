@@ -283,7 +283,7 @@ export default function LandingPage() {
                 <span>Total you pay</span>
                 <strong>{rands(bill)} <small>0% interest</small></strong>
               </div>
-              <p className="l4-calc-note">Illustration only. What you can spend depends on your approved allowance, and your dates on the salary day you choose.</p>
+              <p className="l4-calc-note">Illustration only. What you can spend depends on your approved allowance, and your dates on the salary day you choose. If a bill is more than your available allowance, the difference is added to your first payment.</p>
             </div>
           </div>
         </div>

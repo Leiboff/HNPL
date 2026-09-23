@@ -1189,7 +1189,7 @@
   line-height: 1.08;
   letter-spacing: -.035em;
 }
-.lp-v4 h2 span, .lp-v4 h2 em { color: var(--teal); font-style: normal; }
+.lp-v4 h2 span, .lp-v4 h2 em { color: var(--teal-ink); font-style: normal; }
 
 .lp-v4 .l4-kicker {
   font-size: 12px;
