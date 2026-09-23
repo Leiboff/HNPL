@@ -1484,20 +1484,15 @@
 .lp-v4 .l4-bill strong { font-size: 30px; font-weight: 700; letter-spacing: -.03em; color: var(--navy); font-variant-numeric: tabular-nums; }
 .lp-v4 .l4-calc-card input[type="range"] { width: 100%; margin: 22px 0 4px; accent-color: var(--teal); }
 .lp-v4 .l4-range-ends { display: flex; justify-content: space-between; font-size: 12px; color: #6B7A8C; }
-.lp-v4 .l4-toggle {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-  margin: 22px 0; padding: 4px;
-  background: #EDF4F4; border-radius: 10px;
+.lp-v4 .l4-plan {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px;
+  margin: 22px 0; padding: 12px 15px;
+  background: #EDF7F6; border-radius: 10px;
 }
-.lp-v4 .l4-toggle button {
-  padding: 11px; border: 0; border-radius: 8px;
-  background: transparent; color: #4A5B70;
-  font: inherit; font-weight: 600; cursor: pointer;
-}
-.lp-v4 .l4-toggle button[aria-pressed="true"] { background: var(--navy-deep); color: #fff; }
+.lp-v4 .l4-plan b { color: var(--navy-deep); }
+.lp-v4 .l4-plan small { color: #4A5B70; font-size: 13px; }
 .lp-v4 .l4-pays { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 @media (min-width: 520px) {
-  .lp-v4 .l4-pays-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lp-v4 .l4-pays-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .lp-v4 .l4-pays div { padding: 13px 14px; border-radius: 10px; background: #F2F7F7; }

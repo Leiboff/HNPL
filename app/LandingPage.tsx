@@ -55,11 +55,11 @@ const STEPS = [
     body: 'Have your ID and card ready. We do a quick credit and affordability check and show you the healthcare allowance you qualify for.',
   },
   {
-    title: 'Choose Pay in 2 or Pay in 3',
-    body: 'At the practice, scan the betternow QR code at reception or tap the payment link they send you. Pick your plan and pay the first instalment when you accept it.',
+    title: 'Use betternow at the practice',
+    body: 'Scan the betternow QR code at reception or tap the payment link the practice sends you. Pay the first third when you accept the plan.',
   },
   {
-    title: 'Pay over your paydays',
+    title: 'Pay the next two thirds',
     body: 'Each instalment is charged to your saved card automatically on the date you chose. Pay early any time, free.',
   },
 ];
@@ -68,10 +68,9 @@ export default function LandingPage() {
   // Calculator — presentational only (no fetch, no persistence). The split
   // is the SAME function checkout uses (lib/finance.ts splitInstalments):
   // equal instalments, the first absorbs the rounding remainder, and the
-  // total never differs from the bill.
+  // total never differs from the bill. Pay in 3 is the only plan offered.
   const [bill, setBill] = useState(3000);
-  const [plan, setPlan] = useState<2 | 3>(3);
-  const instalments = splitInstalments(bill, plan);
+  const instalments = splitInstalments(bill, 3);
 
   // How-it-works accordion: exactly one step open at a time.
   const [openStep, setOpenStep] = useState(0);
@@ -109,10 +108,10 @@ export default function LandingPage() {
             <span className="l4-eyebrow"><span className="l4-pulse" aria-hidden="true" />Interest-free healthcare payments</span>
             <h1>
               Get treated today.{' '}
-              <em>Pay over payday.</em>
+              <em>Pay in 3.</em>
             </h1>
             <p className="l4-hero-sub">
-              Dentist, optometrist, specialist, vet, pharmacy — pay a share today and the rest on your next paydays. No interest, and no fees when you pay on time.
+              Dentist, optometrist, specialist, vet, pharmacy — pay a third today and the rest over your next two paydays. No interest, and no fees when you pay on time.
             </p>
             <div className="l4-hero-ctas">
               <Link className="l4-btn l4-btn-navy" href="/signup">See what I qualify for <span aria-hidden="true">↗</span></Link>
@@ -145,7 +144,7 @@ export default function LandingPage() {
           <div className="l4-proof">
             <div><b>0%</b><span>Interest, always</span></div>
             <i aria-hidden="true" />
-            <div><b>2 or 3</b><span>Equal instalments</span></div>
+            <div><b>3</b><span>Equal payments</span></div>
             <i aria-hidden="true" />
             <div><b>1 min</b><span>Online application</span></div>
           </div>
@@ -166,7 +165,7 @@ export default function LandingPage() {
             <h2>Use your allowance. <span>Split the bill.</span></h2>
             <div>
               <p className="l4-lead">Once you&apos;re approved, you get an interest-free healthcare allowance you can use at any betternow practice.</p>
-              <p>Pay the first instalment when you accept a plan. The rest is charged to your card on the salary dates you choose.</p>
+              <p>Pay a third when you accept the plan. The next two payments are charged to your card on the salary dates you choose.</p>
             </div>
           </div>
           <div className="l4-cards">
@@ -176,9 +175,9 @@ export default function LandingPage() {
               <p>No interest, ever. Pay each instalment on its due date and you repay exactly your bill — never a cent more, and no fees.</p>
             </article>
             <article className="l4-card l4-card-mint reveal">
-              <span className="l4-card-ic" aria-hidden="true">½</span>
-              <h3>Flexible payment options</h3>
-              <p>Choose Pay in 2 or Pay in 3 — equal instalments timed to your salary dates. Pay early any time, free.</p>
+              <span className="l4-card-ic" aria-hidden="true">⅓</span>
+              <h3>Three simple payments</h3>
+              <p>Pay a third today, then two equal payments timed to your salary dates. Pay early any time, free.</p>
             </article>
             <article className="l4-card l4-card-sky reveal">
               <span className="l4-card-ic" aria-hidden="true">↗</span>
@@ -249,14 +248,14 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Calculator — slider + Pay in 2 / Pay in 3 ───────────────────── */}
+      {/* ── Calculator — slider, Pay in 3 ───────────────────────────────── */}
       <section className="l4-calc-sec">
         <div className="wrap">
           <div className="l4-calc reveal">
             <div className="l4-calc-copy">
               <div className="l4-kicker l4-kicker-light">Try an amount</div>
               <h2>What will each payment be?</h2>
-              <p>Move the slider and pick a plan to see how a bill splits into equal, interest-free instalments.</p>
+              <p>Move the slider to see how a bill splits into three equal, interest-free payments.</p>
             </div>
             <div className="l4-calc-card">
               <label className="l4-bill" htmlFor="l4-bill-range">
@@ -274,11 +273,8 @@ export default function LandingPage() {
                 aria-valuetext={rands(bill)}
               />
               <div className="l4-range-ends" aria-hidden="true"><span>{rands(CALC_MIN)}</span><span>{rands(CALC_MAX)}</span></div>
-              <div className="l4-toggle" role="group" aria-label="Plan">
-                <button type="button" aria-pressed={plan === 2} onClick={() => setPlan(2)}>Pay in 2</button>
-                <button type="button" aria-pressed={plan === 3} onClick={() => setPlan(3)}>Pay in 3</button>
-              </div>
-              <div className={`l4-pays l4-pays-${plan}`} aria-live="polite">
+              <div className="l4-plan"><b>Pay in 3</b><small>Three equal, interest-free payments</small></div>
+              <div className="l4-pays l4-pays-3" aria-live="polite">
                 {instalments.map((amt, k) => (
                   <div key={k}><small>{WHEN[k]}</small><b>{rands(amt)}</b></div>
                 ))}
@@ -303,8 +299,8 @@ export default function LandingPage() {
             <Link className="l4-arrow" href="/contact">Contact us <span aria-hidden="true">→</span></Link>
           </div>
           <div className="l4-faq-list">
-            <details open><summary>Is it really interest-free?<span aria-hidden="true">+</span></summary><p>Yes. Your bill is split into 2 or 3 instalments and no interest is ever added. Pay each instalment on time and you repay exactly your bill amount, with no fees either. If a payment fails and stays unpaid, a capped default fee applies, as set out in our Terms.</p></details>
-            <details><summary>How does my allowance work?<span aria-hidden="true">+</span></summary><p>Once you&apos;re approved, you get an interest-free healthcare allowance — a spending limit you can use at any betternow practice. Bills get split into 2 or 3 instalments against your allowance, and your available balance reflects what you&apos;ve repaid.</p></details>
+            <details open><summary>Is it really interest-free?<span aria-hidden="true">+</span></summary><p>Yes. Your bill is split into 3 equal payments and no interest is ever added. Pay each instalment on time and you repay exactly your bill amount, with no fees either. If a payment fails and stays unpaid, a capped default fee applies, as set out in our Terms.</p></details>
+            <details><summary>How does my allowance work?<span aria-hidden="true">+</span></summary><p>Once you&apos;re approved, you get an interest-free healthcare allowance — a spending limit you can use at any betternow practice. Bills get split into 3 equal payments against your allowance, and your available balance reflects what you&apos;ve repaid.</p></details>
             <details><summary>Is there a credit check?<span aria-hidden="true">+</span></summary><p>Yes — a quick credit and affordability check when you sign up, done once, to set your allowance responsibly. It takes about 1 minute online, so you never take on more than you can manage.</p></details>
             <details><summary>What do I need to use betternow?<span aria-hidden="true">+</span></summary><p>You&apos;ll need to be 18 or older with a good credit record. On the practical side: a debit or credit card (Visa or Mastercard) for us to charge instalments to, your ID for a quick verification, and about 1 minute to complete the credit and affordability check.</p></details>
             <details><summary>When are instalments collected?<span aria-hidden="true">+</span></summary><p>Automatically charged to your saved card on the salary dates you choose. Pay early any time, free of charge.</p></details>

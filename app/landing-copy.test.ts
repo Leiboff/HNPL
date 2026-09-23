@@ -22,6 +22,7 @@ import { resolve } from 'node:path';
 // Pins:
 //   1. Forbidden strings absent (card-hold / card-limit / no-check /
 //      debit-order / unconditional-fee claims).
+//   1b. Pay in 3 is the only plan — "Pay in 2" / "2 or 3" banned.
 //   2. Fee promises are ALWAYS conditional on paying on time — the T&Cs
 //      carry a capped default fee. Interest promises stay unconditional
 //      (no interest is ever charged, default included).
@@ -121,6 +122,11 @@ describe('Forbidden strings — all absent from landing', () => {
     'No interest, no fees on your plan',
     'no fees added to your plan',
     'the total never grows beyond your original bill',
+    // Sep 2026 product decision: Pay in 3 is the ONLY plan. Pay in 2 must
+    // not be offered anywhere on the landing page.
+    'Pay in 2',
+    '2 or 3',
+    'setPlan',
   ];
 
   for (const bad of FORBIDDEN) {
@@ -159,15 +165,13 @@ describe('Fee promises — always qualified by paying on time', () => {
 // ─── Hero ─────────────────────────────────────────────────────────────
 
 describe('Hero — offer-first, one patient CTA', () => {
-  it('the H1 states the offer and names payday, not a single plan length', () => {
-    // "Pay over payday" rather than "Pay in 3": entry-tier patients are
-    // offered Pay in 2 only, so a Pay-in-3-only headline over-promises.
-    expect(HERO()).toMatch(/<h1>\s*Get treated today\.\{' '\}\s*<em>Pay over payday\.<\/em>\s*<\/h1>/);
+  it('the H1 states the offer: Pay in 3 (the only plan)', () => {
+    expect(HERO()).toMatch(/<h1>\s*Get treated today\.\{' '\}\s*<em>Pay in 3\.<\/em>\s*<\/h1>/);
   });
 
   it('the subline names the specialties and the payday schedule', () => {
     expect(HERO()).toMatch(/Dentist, optometrist, specialist, vet, pharmacy/);
-    expect(HERO()).toMatch(/the rest on your next paydays/);
+    expect(HERO()).toMatch(/pay a third today and the rest over your next two paydays/);
   });
 
   it('primary CTA → /signup, secondary is a plain <a> to /#how (Link hash nav is a no-op)', () => {
@@ -242,13 +246,13 @@ describe('Reserved slogans — absent from the landing page', () => {
 // ─── 6. Why betternow — exactly 3 reason cards ────────────────────────
 
 describe('Why betternow — EXACTLY 3 reason cards, in order', () => {
-  it('three <h3> cards: Always interest-free → Flexible payment options → 1-minute approval', () => {
+  it('three <h3> cards: Always interest-free → Three simple payments → 1-minute approval', () => {
     const titles = [...WHY().matchAll(/<h3>([^<]+)<\/h3>/g)].map((m) => m[1]);
-    expect(titles).toEqual(['Always interest-free', 'Flexible payment options', '1-minute approval']);
+    expect(titles).toEqual(['Always interest-free', 'Three simple payments', '1-minute approval']);
   });
 
-  it('Flexible payment options names Pay in 2, Pay in 3 and salary dates', () => {
-    expect(WHY()).toMatch(/Choose Pay in 2 or Pay in 3 — equal instalments timed to your salary dates/);
+  it('Three simple payments: a third today, two payments on salary dates', () => {
+    expect(WHY()).toMatch(/Pay a third today, then two equal payments timed to your salary dates/);
   });
 
   it('1-minute approval: in 1 minute, no paperwork, no branch visits', () => {
@@ -266,7 +270,7 @@ describe('How it works — real app screenshot + one-open accordion', () => {
 
   it('three steps in order, each a button with aria-expanded/aria-controls', () => {
     const titles = [...LANDING.matchAll(/title: '([^']+)'/g)].map((m) => m[1]);
-    expect(titles).toEqual(['Apply online', 'Choose Pay in 2 or Pay in 3', 'Pay over your paydays']);
+    expect(titles).toEqual(['Apply online', 'Use betternow at the practice', 'Pay the next two thirds']);
     expect(HOW()).toMatch(/aria-expanded=\{openStep === i\}/);
     expect(HOW()).toMatch(/aria-controls=\{`l4-step-\$\{i\}`\}/);
     expect(HOW()).toMatch(/hidden=\{openStep !== i\}/);
@@ -300,14 +304,14 @@ describe("What you'll need — eligibility stated honestly", () => {
 describe('Calculator — checkout\'s own maths, labelled as an illustration', () => {
   it('splits with lib/finance splitInstalments (the function checkout uses)', () => {
     expect(LANDING).toMatch(/import \{ splitInstalments \} from '@\/lib\/finance';/);
-    expect(LANDING).toMatch(/const instalments = splitInstalments\(bill, plan\);/);
+    expect(LANDING).toMatch(/const instalments = splitInstalments\(bill, 3\);/);
   });
 
-  it('has a labelled range input and a Pay in 2 / Pay in 3 toggle with aria-pressed', () => {
+  it('has a labelled range input and a fixed Pay in 3 label (no plan toggle)', () => {
     expect(CALC()).toMatch(/<label className="l4-bill" htmlFor="l4-bill-range">/);
     expect(CALC()).toMatch(/id="l4-bill-range"\s+type="range"/);
-    expect(CALC()).toMatch(/aria-pressed=\{plan === 2\} onClick=\{\(\) => setPlan\(2\)\}>Pay in 2</);
-    expect(CALC()).toMatch(/aria-pressed=\{plan === 3\} onClick=\{\(\) => setPlan\(3\)\}>Pay in 3</);
+    expect(CALC()).toMatch(/<div className="l4-plan"><b>Pay in 3<\/b>/);
+    expect(CALC()).not.toMatch(/aria-pressed/);
   });
 
   it('formats money deterministically (no toLocaleString → no hydration mismatch)', () => {
