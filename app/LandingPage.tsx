@@ -126,8 +126,8 @@ export default function LandingPage() {
           <div className="l4-hero-visual">
             <Image
               className="l4-hero-photo"
-              src="/marketing/hero-consultation.webp"
-              alt="A patient smiling and holding her phone while talking with a doctor in a bright consultation room"
+              src="/marketing/hero-reception.webp"
+              alt="A patient smiling at her phone at a practice reception desk while the receptionist helps her"
               width={1536}
               height={1024}
               sizes="(max-width: 900px) 100vw, 560px"

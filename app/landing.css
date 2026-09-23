@@ -1312,7 +1312,9 @@
   width: 100%;
   height: clamp(300px, 42vw, 490px);
   object-fit: cover;
-  object-position: 57% center;
+  /* Both people sit left of centre in this shot; 42% keeps them in frame
+     on the narrower desktop column and on mobile. */
+  object-position: 42% center;
   border-radius: 28px;
   box-shadow: 0 24px 58px -18px rgba(14,33,64,.35);
 }

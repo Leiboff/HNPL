@@ -185,8 +185,8 @@ describe('Hero — offer-first, one patient CTA', () => {
   });
 
   it('the hero photo is the optimised WebP, preloaded, with descriptive alt', () => {
-    expect(HERO()).toMatch(/src="\/marketing\/hero-consultation\.webp"/);
-    expect(HERO()).toMatch(/alt="A patient smiling[^"]+"/);
+    expect(HERO()).toMatch(/src="\/marketing\/hero-reception\.webp"/);
+    expect(HERO()).toMatch(/alt="A patient smiling at her phone at a practice reception desk[^"]*"/);
     // Next 16 deprecated `priority` in favour of `preload`.
     expect(HERO()).toMatch(/\bpreload\b/);
     expect(HERO()).not.toMatch(/\bpriority\b/);
