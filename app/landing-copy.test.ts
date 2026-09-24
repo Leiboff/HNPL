@@ -212,8 +212,8 @@ describe('Approved slogans — each exactly once, in the right section', () => {
     expect(count('Health can&apos;t wait.')).toBe(1);
   });
 
-  it('S4 "Give your health the credit it deserves." is the requirements h2', () => {
-    expect(REQS()).toMatch(/<h2>Give your health <span>the credit it deserves\.<\/span><\/h2>/);
+  it('S4 "Give your health the credit it deserves." is the Why betternow h2', () => {
+    expect(WHY()).toMatch(/<h2>Give your health <span>the credit it deserves\.<\/span><\/h2>/);
     expect(count('Give your health')).toBe(1);
   });
 

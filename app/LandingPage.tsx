@@ -162,7 +162,7 @@ export default function LandingPage() {
         <div className="wrap">
           <div className="l4-kicker">Why betternow</div>
           <div className="l4-why-head reveal">
-            <h2>Use your allowance. <span>Split the bill.</span></h2>
+            <h2>Give your health <span>the credit it deserves.</span></h2>
             <div>
               <p className="l4-lead">Once you&apos;re approved, you get an interest-free healthcare allowance you can use at any betternow practice.</p>
               <p>Pay a third when you accept the plan. The next two payments are charged to your card on the salary dates you choose.</p>
@@ -233,8 +233,8 @@ export default function LandingPage() {
         <div className="wrap">
           <div className="l4-reqs-head reveal">
             <div>
-              <div className="l4-kicker">What you&apos;ll need</div>
-              <h2>Give your health <span>the credit it deserves.</span></h2>
+              <div className="l4-kicker">Getting started</div>
+              <h2>What you&apos;ll need.</h2>
             </div>
             <p>The application takes about 1 minute; have these ready before you start.</p>
           </div>
