@@ -27,8 +27,10 @@ export default function CreditCheckStepClient() {
   async function handleRun() {
     setError(null);
     setLoading(true);
-    const result = await runCreditCheck();
-    setLoading(false);
+    let result;
+    try { result = await runCreditCheck(); }
+    catch { setError('We couldn\'t run the check. Please try again.'); return; }
+    finally { setLoading(false); }
     if (result.error) {
       setError(result.error);
       return;

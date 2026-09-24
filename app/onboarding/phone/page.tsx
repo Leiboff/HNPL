@@ -5,6 +5,7 @@ import { currentFlags } from '@/lib/featureFlags';
 import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import PhoneStepClient from './PhoneStepClient';
+import { ONBOARDING_EVENTS, recordOnboardingEvent } from '@/lib/onboarding/events';
 
 // ─── Step: cell number + phone OTP ────────────────────────────────────
 //
@@ -45,6 +46,7 @@ export default async function PhoneStep() {
   }
 
   const steps = stepListFor(userForState, flags);
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.PHONE_VIEWED, { metadata: { source: 'server_page' } });
 
   return (
     <OnboardingShell

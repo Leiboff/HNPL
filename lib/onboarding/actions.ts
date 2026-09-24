@@ -20,6 +20,7 @@ import { enquiryStoreDeps, persistSignupGate } from '@/lib/experian/enquiryStore
 import { experianConfig, experianConfigured } from '@/lib/experian/config';
 import { assessAtSignup } from '@/lib/experian/assessAtSignup';
 import { signupRiskGate } from '@/lib/experian/signupRiskGate';
+import { ONBOARDING_EVENTS, recordOnboardingEvent } from './events';
 
 // ─── Server actions for the stepped onboarding gate ───────────────────
 //
@@ -141,6 +142,7 @@ async function maybeFinalize(
       })
       .eq('id', userId);
     revalidatePath('/patient', 'layout');
+    await recordOnboardingEvent(userId, ONBOARDING_EVENTS.ONBOARDING_COMPLETED, { outcome: 'success', metadata: { source: 'server_action' }, dedupeKey: `onboarding-completed:${userId}` });
     return { done: true, nextPath: '/patient' };
   }
   if (status.done) return { done: true, nextPath: '/patient' };
@@ -159,14 +161,24 @@ export async function setPhoneForOnboarding(phoneRaw: string): Promise<ActionRes
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
 
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.PHONE_SUBMIT_STARTED, { outcome: 'started', metadata: { source: 'server_action' } });
+
   const phone = normalizePhoneZA(phoneRaw);
-  if (!phone) return { error: 'Enter a valid South African cellphone number.' };
+  if (!phone) {
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.PHONE_SUBMIT_FAILED, { outcome: 'failure', errorCode: 'invalid_phone', metadata: { source: 'server_action' } });
+    return { error: 'Enter a valid South African cellphone number.' };
+  }
 
   const { error } = await svc()
     .from('profiles')
     .update({ phone })
     .eq('id', loaded.userId);
-  if (error) return { error: error.message };
+  if (error) {
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.PHONE_SUBMIT_FAILED, { outcome: 'failure', errorCode: 'save_failed', metadata: { source: 'server_action' } });
+    return { error: 'We couldn\'t save your number. Please try again.' };
+  }
+
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.PHONE_SAVED, { outcome: 'success', metadata: { source: 'server_action' } });
 
   return { error: null, nextPath: '/onboarding/phone' };
 }
@@ -202,12 +214,15 @@ export type SaveSalaryDetailsInput = {
 export async function saveSalaryDetails(input: SaveSalaryDetailsInput): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.SALARY_SUBMIT_STARTED, { outcome: 'started', metadata: { source: 'server_action' } });
 
   if (!Number.isInteger(input.salaryDay) || !isAllowedSalaryDay(input.salaryDay)) {
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.SALARY_SUBMIT_FAILED, { outcome: 'failure', errorCode: 'invalid_salary', metadata: { source: 'server_action' } });
     return { error: 'Please choose when your salary is paid.' };
   }
 
   if (!isValidSalaryAmount(input.salaryAmount)) {
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.SALARY_SUBMIT_FAILED, { outcome: 'failure', errorCode: 'invalid_salary', metadata: { source: 'server_action' } });
     return { error: 'Please enter how much you earn a month.' };
   }
 
@@ -232,7 +247,11 @@ export async function saveSalaryDetails(input: SaveSalaryDetailsInput): Promise<
     .from('profiles')
     .update(patch)
     .eq('id', loaded.userId);
-  if (error) return { error: error.message };
+  if (error) {
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.SALARY_SUBMIT_FAILED, { outcome: 'failure', errorCode: 'save_failed', metadata: { source: 'server_action' } });
+    return { error: 'We couldn\'t save your income details. Please try again.' };
+  }
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.SALARY_SAVED, { outcome: 'success', metadata: { source: 'server_action' } });
 
   const nextProfile: ProfileForOnboarding = {
     ...loaded.profile,
@@ -608,6 +627,7 @@ export type SubmitIdentityResult =
 export async function submitIdentityForVerification(input: SubmitIdentityInput): Promise<SubmitIdentityResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.IDENTITY_SUBMIT_STARTED, { outcome: 'started', metadata: { source: 'server_action' } });
 
   const cleanedId = input.saIdNumber.replace(/\s+/g, '');
   const check = validateSaId(cleanedId);
@@ -723,6 +743,7 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
       });
     } catch (err) {
       console.error('[onboarding] DHA session create failed:', err instanceof Error ? err.message : err);
+      await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.IDENTITY_PROVIDER_FAILED, { outcome: 'failure', errorCode: 'provider_unavailable', metadata: { provider: 'didit', source: 'server_action' } });
       return { error: 'Could not start identity verification. Please try again.' };
     }
 
@@ -759,6 +780,7 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
       .eq('id', loaded.userId);
     if (error) return { error: error.message };
 
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.IDENTITY_PROVIDER_STARTED, { outcome: 'success', metadata: { provider: 'didit', source: 'server_action' } });
     return { error: null, outcome: 'redirect', url: session.url };
   }
 
@@ -867,6 +889,7 @@ export async function submitIdentityForVerification(input: SubmitIdentityInput):
 export async function runCreditCheck(): Promise<ActionResult> {
   const loaded = await loadUserAndProfile();
   if (!loaded.ok) return { error: loaded.error };
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.CREDIT_CHECK_STARTED, { outcome: 'started', metadata: { source: 'server_action' } });
 
   // ── Rate limit (audit A-11's second half) ────────────────────────
   //
@@ -979,6 +1002,7 @@ export async function runCreditCheck(): Promise<ActionResult> {
       .from('profiles')
       .update({ credit_check_status: 'failed', credit_check_completed_at: now })
       .eq('id', loaded.userId);
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.CREDIT_CHECK_FAILED, { outcome: 'failure', errorCode: 'provider_declined', metadata: { source: 'server_action' } });
     return { error: 'We could not approve an amount right now.' };
   }
 
@@ -1010,6 +1034,7 @@ export async function runCreditCheck(): Promise<ActionResult> {
     // Onboarding still completes — see the header. The applicant has a
     // usable account and a pending assessment, which is the honest state.
     const pendingFinalize = await maybeFinalize(loaded.userId, loaded.user, pendingProfile);
+    await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.CREDIT_CHECK_COMPLETED, { outcome: 'success', metadata: { source: 'server_action' } });
     return { error: null, nextPath: pendingFinalize.nextPath };
   }
 
@@ -1029,7 +1054,19 @@ export async function runCreditCheck(): Promise<ActionResult> {
     credit_check_status: 'passed',
   };
   const finalize = await maybeFinalize(loaded.userId, loaded.user, nextProfile);
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.CREDIT_CHECK_COMPLETED, { outcome: 'success', metadata: { source: 'server_action' } });
   return { error: null, nextPath: finalize.nextPath };
+}
+
+/** Client recovery signal: closed event, authenticated identity, no caller metadata/user id. */
+export async function recordClientRecoveryFailure(event: 'phone_submit_failed'): Promise<void> {
+  const loaded = await loadUserAndProfile();
+  if (!loaded.ok || event !== ONBOARDING_EVENTS.PHONE_SUBMIT_FAILED) return;
+  await recordOnboardingEvent(loaded.userId, ONBOARDING_EVENTS.PHONE_SUBMIT_FAILED, {
+    outcome: 'failure', errorCode: 'network_error', metadata: { source: 'client_recovery' },
+    // Coalesces refresh/retry spam to one recovery event per minute while preserving real later attempts.
+    dedupeKey: `client-recovery:${loaded.userId}:${Math.floor(Date.now() / 60_000)}`,
+  });
 }
 
 // ─── refreshOnboardingState ───────────────────────────────────────────

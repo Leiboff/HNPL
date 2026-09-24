@@ -5,6 +5,7 @@ import { currentFlags } from '@/lib/featureFlags';
 import { requireTermsAccepted } from '@/lib/legal/termsGate';
 import OnboardingShell from '@/components/onboarding/OnboardingShell';
 import IdentityStepClient from './IdentityStepClient';
+import { ONBOARDING_EVENTS, recordOnboardingEvent } from '@/lib/onboarding/events';
 
 // ─── Step: identity verification ───────────────────────────────────────
 //
@@ -59,6 +60,7 @@ export default async function IdentityStep({ searchParams }: Props) {
   }
 
   const steps = stepListFor(userForState, flags);
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.IDENTITY_VIEWED, { metadata: { source: 'server_page' } });
 
   return (
     <OnboardingShell

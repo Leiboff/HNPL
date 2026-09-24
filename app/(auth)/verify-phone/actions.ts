@@ -6,6 +6,7 @@ import { normalizePhoneZA } from '@/lib/validation';
 import { generateOtpCode, hashOtpCode } from '@/lib/sms/otp';
 import { sendSms, buildOtpSmsBody } from '@/lib/sms/smsportal';
 import { evaluateRisk, mayProceed } from '@/lib/risk/evaluate';
+import { ONBOARDING_EVENTS, recordOnboardingEvent, sanitiseOnboardingError } from '@/lib/onboarding/events';
 
 // ─── Organic-signup phone-verification server actions ────────────────────
 //
@@ -61,6 +62,10 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, code: 'unauthenticated' };
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.OTP_SEND_STARTED, { outcome: 'started', metadata: { source: 'server_action' } });
+  const sendFailed = async (code: string) => {
+    await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.OTP_SEND_FAILED, { outcome: 'failure', errorCode: sanitiseOnboardingError(code), metadata: { source: 'server_action' } });
+  };
 
   // Phone comes from the profile row written at signup-form submit.
   // We deliberately do not accept it as an argument here — the action
@@ -77,10 +82,10 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
     .eq('id', user.id)
     .maybeSingle();
 
-  if (!profile?.phone) return { ok: false, code: 'no_phone_on_profile' };
+  if (!profile?.phone) { await sendFailed('invalid_phone'); return { ok: false, code: 'no_phone_on_profile' }; }
 
   const normalizedPhone = normalizePhoneZA(profile.phone);
-  if (!normalizedPhone) return { ok: false, code: 'invalid_phone' };
+  if (!normalizedPhone) { await sendFailed('invalid_phone'); return { ok: false, code: 'invalid_phone' }; }
 
   // Already-verified short-circuit reads from phone_verifications (the
   // source of truth), NOT profiles.phone_verified_at — defence in
@@ -111,7 +116,7 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
     accountId: user.id,
     phone:     normalizedPhone,
   });
-  if (!mayProceed(risk)) return { ok: false, code: 'risk_refused' };
+  if (!mayProceed(risk)) { await sendFailed('risk_refused'); return { ok: false, code: 'risk_refused' }; }
 
   let code: string;
   let codeHash: string;
@@ -149,10 +154,11 @@ export async function requestPhoneOtpForUser(): Promise<PhoneOtpStartResultForUs
   const smsResult = await sendSms(normalizedPhone, buildOtpSmsBody(code));
   if (!smsResult.ok) {
     if (smsResult.error === 'sms_not_configured') {
-      return { ok: false, code: 'sms_not_configured' };
+      await sendFailed('sms_not_configured'); return { ok: false, code: 'sms_not_configured' };
     }
-    return { ok: false, code: 'sms_failed' };
+    await sendFailed('sms_failed'); return { ok: false, code: 'sms_failed' };
   }
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.OTP_SENT, { outcome: 'success', metadata: { source: 'server_action' } });
   return { ok: true };
 }
 
@@ -197,9 +203,11 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, code: 'unauthenticated' };
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.OTP_VERIFY_STARTED, { outcome: 'started', metadata: { source: 'server_action' } });
+  const verifyFailed = async (code: string) => recordOnboardingEvent(user.id, ONBOARDING_EVENTS.OTP_VERIFY_FAILED, { outcome: 'failure', errorCode: sanitiseOnboardingError(code), metadata: { source: 'server_action' } });
 
   const trimmed = (enteredCode ?? '').trim();
-  if (!/^\d{6}$/.test(trimmed)) return { ok: false, code: 'invalid_code_format' };
+  if (!/^\d{6}$/.test(trimmed)) { await verifyFailed('invalid_code_format'); return { ok: false, code: 'invalid_code_format' }; }
 
   const svc = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -301,6 +309,7 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
   const code = result as string;
   if (code !== 'ok') {
     if (code === 'wrong_code' || code === 'expired' || code === 'too_many_attempts' || code === 'not_found') {
+      await verifyFailed(code);
       return { ok: false, code };
     }
     return { ok: false, code: 'unknown' };
@@ -321,6 +330,7 @@ export async function verifyPhoneOtpForUser(enteredCode: string): Promise<PhoneO
   const stamped = await stampPhoneVerified(vrow?.verified_at ?? new Date().toISOString());
   if (stamped !== 'ok') return { ok: false, code: stamped };
 
+  await recordOnboardingEvent(user.id, ONBOARDING_EVENTS.OTP_VERIFIED, { outcome: 'success', metadata: { source: 'server_action' } });
   return { ok: true };
 }
 

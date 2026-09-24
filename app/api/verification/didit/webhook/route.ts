@@ -9,6 +9,7 @@ import { validateSaId, saIdAge } from '@/lib/validation';
 import { encryptId, decryptId, hashIdForLookup } from '@/lib/idEncryption';
 import { findPatientBySaId } from '@/lib/patients/findPatientBySaId';
 import type { DiditWebhookEvent } from '@/lib/didit/types';
+import { ONBOARDING_EVENTS, recordOnboardingEvent } from '@/lib/onboarding/events';
 import { resolveFaceMatchThresholds } from '@/lib/didit/faceMatchPolicy';
 
 // ─── Didit webhook receiver — onboarding identity verification ─────────
@@ -498,6 +499,15 @@ export async function POST(request: NextRequest) {
         }
         // Not Started / In Progress / Awaiting User / Resubmitted —
         // nothing to persist; the user is mid-flow.
+      }
+      if (parsed.status === 'Approved' || TERMINAL_STATUS[parsed.status]) {
+        const { data: terminal } = await supabase.from('profiles').select('identity_verification_status').eq('id', userId).maybeSingle();
+        const approved = terminal?.identity_verification_status === 'approved';
+        await recordOnboardingEvent(userId, approved ? ONBOARDING_EVENTS.IDENTITY_APPROVED : ONBOARDING_EVENTS.IDENTITY_DECLINED, {
+          outcome: approved ? 'success' : 'failure', errorCode: approved ? null : 'provider_declined',
+          metadata: { provider: 'didit', source: 'webhook' }, dedupeKey: `didit-terminal:${parsed.event_id}`,
+          client: supabase,
+        });
       }
     }
     await finishEvent(supabase, parsed.event_id, 'processed');
