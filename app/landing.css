@@ -1479,6 +1479,7 @@
   border: 1px solid rgba(92,217,206,.18);
 }
 .lp-v4 .l4-calc-copy h2 { color: #fff; font-size: clamp(2rem, 4vw, 3.2rem); }
+.lp-v4 .l4-calc-copy h2 span { color: var(--mint); }
 .lp-v4 .l4-calc-copy p { margin-top: 16px; color: rgba(255,255,255,.72); font-size: 17px; }
 .lp-v4 .l4-calc-card { position: relative; background: #fff; color: var(--ink); border-radius: 18px; padding: clamp(20px, 3vw, 32px); }
 .lp-v4 .l4-bill { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
