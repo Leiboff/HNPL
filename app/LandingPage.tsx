@@ -162,7 +162,7 @@ export default function LandingPage() {
         <div className="wrap">
           <div className="l4-kicker">Why betternow</div>
           <div className="l4-why-head reveal">
-            <h2>Use your allowance. <span>Split the bill.</span></h2>
+            <h2>Give your health <span>the credit it deserves.</span></h2>
             <div>
               <p className="l4-lead">Once you&apos;re approved, you get an interest-free healthcare allowance you can use at any betternow practice.</p>
               <p>Pay a third when you accept the plan. The next two payments are charged to your card on the salary dates you choose.</p>
@@ -204,8 +204,8 @@ export default function LandingPage() {
           </div>
           <div className="l4-how-copy">
             <div className="l4-kicker">How it works</div>
-            <h2>Health can&apos;t wait. <span>Payments can.</span></h2>
-            <p className="l4-how-sub">Take your bill in smaller doses.</p>
+            <h2>Pay your bill <span>in smaller doses.</span></h2>
+            <p className="l4-how-sub">Health can&apos;t wait. Payments can.</p>
             <ol className="l4-steps">
               {STEPS.map((s, i) => (
                 <li key={s.title} className={openStep === i ? 'open' : undefined}>
@@ -236,7 +236,7 @@ export default function LandingPage() {
               <div className="l4-kicker">Getting started</div>
               <h2>What you&apos;ll need.</h2>
             </div>
-            <p>Give your health some credit — it&apos;s due. The application takes about 1 minute; have these ready before you start.</p>
+            <p>The application takes about 1 minute; have these ready before you start.</p>
           </div>
           <div className="l4-req-grid">
             <article className="reveal"><span aria-hidden="true">18+</span><div><h3>Be 18 or older</h3><p>With a good credit record.</p></div></article>
@@ -314,10 +314,10 @@ export default function LandingPage() {
         <div className="wrap l4-final-grid">
           <div>
             <div className="l4-kicker l4-kicker-light">Need healthcare now?</div>
-            <h2>Full recovery. <em>Zero interest.</em></h2>
+            <h2>A bill of health <em>you can afford.</em></h2>
           </div>
           <div>
-            <p>The best bill of health is one you can actually afford.</p>
+            <p>Full recovery. Zero interest.</p>
             <Link className="l4-btn l4-btn-white" href="/signup">Check my allowance <span aria-hidden="true">↗</span></Link>
           </div>
         </div>

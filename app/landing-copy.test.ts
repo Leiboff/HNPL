@@ -202,29 +202,29 @@ describe('Hero — offer-first, one patient CTA', () => {
 // ─── 3. Approved slogans — present once, in their section ─────────────
 
 describe('Approved slogans — each exactly once, in the right section', () => {
-  it('S2 "Health can\'t wait. Payments can." is the How-it-works h2', () => {
-    expect(HOW()).toMatch(/<h2>Health can&apos;t wait\. <span>Payments can\.<\/span><\/h2>/);
+  it('S3 "Pay your bill in smaller doses." is the How-it-works h2', () => {
+    expect(HOW()).toMatch(/<h2>Pay your bill <span>in smaller doses\.<\/span><\/h2>/);
+    expect(count('Pay your bill')).toBe(1);
+  });
+
+  it('S2 "Health can\'t wait. Payments can." sits under the How h2', () => {
+    expect(HOW()).toMatch(/<\/h2>\s*<p className="l4-how-sub">Health can&apos;t wait\. Payments can\.<\/p>/);
     expect(count('Health can&apos;t wait.')).toBe(1);
   });
 
-  it('S3 "Take your bill in smaller doses." sits under the How h2', () => {
-    expect(HOW()).toMatch(/<\/h2>\s*<p className="l4-how-sub">Take your bill in smaller doses\.<\/p>/);
-    expect(count('Take your bill in smaller doses.')).toBe(1);
+  it('S4 "Give your health the credit it deserves." is the Why betternow h2', () => {
+    expect(WHY()).toMatch(/<h2>Give your health <span>the credit it deserves\.<\/span><\/h2>/);
+    expect(count('Give your health')).toBe(1);
   });
 
-  it('S4 "Give your health some credit — it\'s due." leads the requirements intro', () => {
-    expect(REQS()).toMatch(/<p>Give your health some credit — it&apos;s due\./);
-    expect(count('Give your health some credit')).toBe(1);
+  it('S6 "A bill of health you can afford." is the final band h2', () => {
+    expect(FINAL()).toMatch(/<h2>A bill of health <em>you can afford\.<\/em><\/h2>/);
+    expect(count('A bill of health')).toBe(1);
   });
 
-  it('S7 "Full recovery. Zero interest." is the final band h2', () => {
-    expect(FINAL()).toMatch(/<h2>Full recovery\. <em>Zero interest\.<\/em><\/h2>/);
+  it('S7 "Full recovery. Zero interest." sits in the final band', () => {
+    expect(FINAL()).toMatch(/<p>Full recovery\. Zero interest\.<\/p>/);
     expect(count('Full recovery.')).toBe(1);
-  });
-
-  it('S6 "The best bill of health is one you can actually afford." sits in the final band', () => {
-    expect(FINAL()).toMatch(/<p>The best bill of health is one you can actually afford\.<\/p>/);
-    expect(count('The best bill of health')).toBe(1);
   });
 
   it('the final CTA is a SINGLE patient CTA → /signup', () => {
