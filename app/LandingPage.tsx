@@ -205,7 +205,7 @@ export default function LandingPage() {
           <div className="l4-how-copy">
             <div className="l4-kicker">How it works</div>
             <h2>Health can&apos;t wait. <span>Payments can.</span></h2>
-            <p className="l4-how-sub">Take your bill in smaller doses.</p>
+            <p className="l4-how-sub">Pay your bill in smaller doses.</p>
             <ol className="l4-steps">
               {STEPS.map((s, i) => (
                 <li key={s.title} className={openStep === i ? 'open' : undefined}>
@@ -236,7 +236,7 @@ export default function LandingPage() {
               <div className="l4-kicker">Getting started</div>
               <h2>What you&apos;ll need.</h2>
             </div>
-            <p>Give your health some credit — it&apos;s due. The application takes about 1 minute; have these ready before you start.</p>
+            <p>Give your health the credit it deserves. The application takes about 1 minute; have these ready before you start.</p>
           </div>
           <div className="l4-req-grid">
             <article className="reveal"><span aria-hidden="true">18+</span><div><h3>Be 18 or older</h3><p>With a good credit record.</p></div></article>
@@ -317,7 +317,7 @@ export default function LandingPage() {
             <h2>Full recovery. <em>Zero interest.</em></h2>
           </div>
           <div>
-            <p>The best bill of health is one you can actually afford.</p>
+            <p>A bill of health you can afford.</p>
             <Link className="l4-btn l4-btn-white" href="/signup">Check my allowance <span aria-hidden="true">↗</span></Link>
           </div>
         </div>

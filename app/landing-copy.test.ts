@@ -207,14 +207,14 @@ describe('Approved slogans — each exactly once, in the right section', () => {
     expect(count('Health can&apos;t wait.')).toBe(1);
   });
 
-  it('S3 "Take your bill in smaller doses." sits under the How h2', () => {
-    expect(HOW()).toMatch(/<\/h2>\s*<p className="l4-how-sub">Take your bill in smaller doses\.<\/p>/);
-    expect(count('Take your bill in smaller doses.')).toBe(1);
+  it('S3 "Pay your bill in smaller doses." sits under the How h2', () => {
+    expect(HOW()).toMatch(/<\/h2>\s*<p className="l4-how-sub">Pay your bill in smaller doses\.<\/p>/);
+    expect(count('Pay your bill in smaller doses.')).toBe(1);
   });
 
-  it('S4 "Give your health some credit — it\'s due." leads the requirements intro', () => {
-    expect(REQS()).toMatch(/<p>Give your health some credit — it&apos;s due\./);
-    expect(count('Give your health some credit')).toBe(1);
+  it('S4 "Give your health the credit it deserves." leads the requirements intro', () => {
+    expect(REQS()).toMatch(/<p>Give your health the credit it deserves\./);
+    expect(count('Give your health the credit')).toBe(1);
   });
 
   it('S7 "Full recovery. Zero interest." is the final band h2', () => {
@@ -222,9 +222,9 @@ describe('Approved slogans — each exactly once, in the right section', () => {
     expect(count('Full recovery.')).toBe(1);
   });
 
-  it('S6 "The best bill of health is one you can actually afford." sits in the final band', () => {
-    expect(FINAL()).toMatch(/<p>The best bill of health is one you can actually afford\.<\/p>/);
-    expect(count('The best bill of health')).toBe(1);
+  it('S6 "A bill of health you can afford." sits in the final band', () => {
+    expect(FINAL()).toMatch(/<p>A bill of health you can afford\.<\/p>/);
+    expect(count('A bill of health you can afford')).toBe(1);
   });
 
   it('the final CTA is a SINGLE patient CTA → /signup', () => {
