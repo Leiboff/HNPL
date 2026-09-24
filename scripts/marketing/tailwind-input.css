@@ -1,0 +1,5 @@
+/* Tailwind build for the capture: the app's own globals + every class used
+   under app/ and in this folder. Compiled by render.ts via @tailwindcss/postcss. */
+@import "../../app/globals.css";
+@source "../../app";
+@source "./";
