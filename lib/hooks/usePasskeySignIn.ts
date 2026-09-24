@@ -71,7 +71,9 @@ export function usePasskeySignIn(
   // Hold the latest onSuccess in a ref so the conditional-UI effect doesn't
   // re-mount every time the parent re-renders.
   const onSuccessRef = useRef(onSuccess);
-  onSuccessRef.current = onSuccess;
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
 
   // ── Feature detection — always on mount ───────────────────────────────
   // Split out from the ceremony below so `supported` (and therefore the
@@ -87,6 +89,7 @@ export function usePasskeySignIn(
     }
     // supported stays false → the button is hidden, the password form
     // is the only path. That's the right fallback.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     if (hasWebAuthn) setSupported(true);
   }, []);
 

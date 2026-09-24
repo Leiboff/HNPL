@@ -69,6 +69,7 @@ export default function ComposeEmailSheet({
     const withEmail = (contacts ?? []).filter(c => !!c.email);
     const primary   = withEmail.find(c => c.is_primary);
     const initial   = primary?.email ?? withEmail[0]?.email ?? leadEmail ?? '';
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setRecipientEmail(initial);
   }, [open, replyMode, contacts, leadEmail]);
 

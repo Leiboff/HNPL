@@ -158,6 +158,8 @@ export default async function CardRegistrationCompletePage({
 
   const supabaseUser       = await createServerClient();
   const { data: { user } } = await supabaseUser.auth.getUser();
+  // This server request needs a fresh boundary for Peach's recent-card query.
+  // eslint-disable-next-line react-hooks/purity -- request-time value, not client render state
   const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
   // NOTE: idempotency is enforced in step 4, SCOPED to this checkout's

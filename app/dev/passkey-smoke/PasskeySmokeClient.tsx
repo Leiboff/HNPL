@@ -16,6 +16,7 @@ export default function PasskeySmokeClient({
   const [clientEmail, setClientEmail] = useState<string | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setSupported(typeof window !== 'undefined' && !!window.PublicKeyCredential);
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user } }) => {

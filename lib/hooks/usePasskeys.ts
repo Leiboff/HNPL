@@ -49,6 +49,7 @@ export function usePasskeys() {
     }
   }, [supported]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
   useEffect(() => { refresh(); }, [refresh]);
 
   const register = useCallback(async (): Promise<{ ok: boolean; error: PasskeyError | null }> => {

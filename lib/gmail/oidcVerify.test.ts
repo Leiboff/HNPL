@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { generateKeyPairSync, createSign } from 'node:crypto';
+import { generateKeyPairSync, createPublicKey, createSign } from 'node:crypto';
 import {
   verifyGoogleIdToken,
   __resetJwksCacheForTests,
@@ -26,7 +26,7 @@ function generateKeys() {
     publicKeyEncoding:  { type: 'spki',  format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
-  const jwk = require('node:crypto').createPublicKey(publicKey).export({ format: 'jwk' });
+  const jwk = createPublicKey(publicKey).export({ format: 'jwk' });
   return { publicKey, privateKey, jwk };
 }
 

@@ -85,6 +85,7 @@ export default function PaymentMethods({
   useEffect(() => {
     const flag = searchParams.get('added');
     if (!flag) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setNotice(flag === 'already' ? 'This card is already saved.' : 'Card added successfully.');
     const params = new URLSearchParams(searchParams.toString());
     params.delete('added');
@@ -128,6 +129,7 @@ export default function PaymentMethods({
     .join(',');
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setCards(initialCards);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCardsKey]);

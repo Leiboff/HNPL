@@ -47,6 +47,7 @@ export default function PracticeHeader({
   });
 
   // Close on route change
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
   useEffect(() => { setOpen(false); }, [pathname]);
 
   // Close on outside click

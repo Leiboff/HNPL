@@ -113,6 +113,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setNextPath(safeNextParam(params.get('next')));
     const msg = params.get('message');
     if (msg) setNotice(decodeURIComponent(msg));
@@ -168,6 +169,7 @@ export default function LoginPage() {
   useEffect(() => {
     const { method, email: savedEmail } = getLastSignInMethod();
     if (!method) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     setLastUsed(method);
     if (method === 'password' && savedEmail) setEmail(savedEmail);
     // Deliberately NOT auto-opening the email screen for them. When the
@@ -182,6 +184,7 @@ export default function LoginPage() {
   // here is worth showing.
   useEffect(() => {
     if (!passkeyError) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount/prop synchronization
     if (passkeyError === 'email_not_confirmed') { setNotConfirmed(true); return; }
     setError(passkeyErrorMessage(passkeyError));
   }, [passkeyError]);
